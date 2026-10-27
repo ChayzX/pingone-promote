@@ -24,6 +24,10 @@ type nativeFixture struct {
 	page2                     bool
 	omitTarget                bool
 	seenBody                  map[string]any
+	// liveTarget, when set, alters the target inventory served for any fresh
+	// (non-pinned) target snapshot, simulating console edits after review.
+	liveTarget     func([]pingone.Resource) []pingone.Resource
+	liveTargetFail bool
 }
 
 func fixture(t *testing.T) *nativeFixture {
@@ -101,8 +105,12 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 		if env == "target" {
 			inv = dst
 		}
+		resources := inv.Resources
+		if env == "target" && f.liveTarget != nil && strings.Contains(path, "/versions/targetlive/") {
+			resources = f.liveTarget(resources)
+		}
 		items := []any{}
-		for _, res := range inv.Resources {
+		for _, res := range resources {
 			if f.mutatedSource && res.ID == "flow" {
 				res.Configuration["name"] = "Changed"
 			}
@@ -115,6 +123,13 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && env != "target" {
 			http.Error(w, "source pin bypass", 400)
 			return
+		}
+		if r.Method == "POST" && env == "target" && f.liveTargetFail {
+			http.Error(w, "snapshot unavailable", 503)
+			return
+		}
+		if env == "target" && (f.liveTarget != nil || f.liveTargetFail) && (r.Method == "POST" || strings.Contains(path, "/versions/targetlive")) {
+			pin = "targetlive"
 		}
 		json.NewEncoder(w).Encode(map[string]any{"snapshotId": pin, "resource": map[string]string{"id": env}, "status": "COMPLETE"})
 		return
@@ -366,5 +381,136 @@ func TestApplyPendingNativePlanNeverAuthorizesOrExecutes(t *testing.T) {
 	called := false
 	if _, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error { called = true; return nil }); err == nil || called || f.execute != 0 {
 		t.Fatalf("pending apply: err=%v authorize=%v execute=%d", err, called, f.execute)
+	}
+}
+
+// Regression for HANDOFF review item 1: a reviewed plan must not execute when the
+// live destination has drifted from the pinned target snapshot for any resource the
+// plan touches, and an unreadable live target must fail closed.
+func TestApplyBlocksLiveTargetDriftForAffectedResources(t *testing.T) {
+	edit := func(field string, value any) func([]pingone.Resource) []pingone.Resource {
+		return func(in []pingone.Resource) []pingone.Resource {
+			out := []pingone.Resource{}
+			for _, r := range in {
+				if r.ID == "dest" {
+					cfg := map[string]any{}
+					for k, v := range r.Configuration {
+						cfg[k] = v
+					}
+					cfg[field] = value
+					r.Configuration = cfg
+				}
+				out = append(out, r)
+			}
+			return out
+		}
+	}
+	cases := map[string]struct {
+		live    func([]pingone.Resource) []pingone.Resource
+		fail    bool
+		allowed bool
+	}{
+		"unchanged": {live: func(in []pingone.Resource) []pingone.Resource { return in }, allowed: true},
+		"unrelated-added": {live: func(in []pingone.Resource) []pingone.Resource {
+			return append(in, pingone.Resource{ID: "tpl", URL: "PLACEHOLDER/v1/environments/target/templates/tpl", Type: "templates", Configuration: map[string]any{"name": "New"}})
+		}, allowed: true},
+		"edited":      {live: edit("name", "Edited in console")},
+		"secret-only": {live: edit("clientSecret", "rotated")},
+		"deleted": {live: func(in []pingone.Resource) []pingone.Resource {
+			out := []pingone.Resource{}
+			for _, r := range in {
+				if r.ID != "dest" {
+					out = append(out, r)
+				}
+			}
+			return out
+		}},
+		"unavailable": {fail: true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := fixture(t)
+			e := &Engine{Client: f.client}
+			a, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.live != nil {
+				live := c.live
+				f.liveTarget = func(in []pingone.Resource) []pingone.Resource {
+					out := live(in)
+					for i := range out {
+						out[i].URL = strings.Replace(out[i].URL, "PLACEHOLDER", f.origin, 1)
+					}
+					return out
+				}
+			}
+			f.liveTargetFail = c.fail
+			_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error { return nil })
+			if c.allowed {
+				if err != nil || f.execute != 1 {
+					t.Fatalf("expected execution: err=%v execute=%d", err, f.execute)
+				}
+				return
+			}
+			if err == nil || f.execute != 0 {
+				t.Fatalf("drift not blocked: err=%v execute=%d", err, f.execute)
+			}
+		})
+	}
+}
+
+func TestRollbackApplyBlocksLiveTargetDrift(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	a, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Status = "COMPLETED"
+	rb, err := e.RollbackPlan(context.Background(), a, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.liveTarget = func(in []pingone.Resource) []pingone.Resource {
+		for i := range in {
+			if in[i].ID == "dest" {
+				in[i].Configuration["name"] = "Manual edit after rollback review"
+			}
+		}
+		return in
+	}
+	if _, err = e.Apply(context.Background(), rb, rb.Review.Digest, func(context.Context, Artifact) error { return nil }); err == nil || f.execute != 0 {
+		t.Fatalf("rollback drift not blocked: err=%v execute=%d", err, f.execute)
+	}
+}
+
+func TestApplyBlocksConcurrentCreateIntoPlannedCollection(t *testing.T) {
+	for name, c := range map[string]struct {
+		typ     string
+		allowed bool
+	}{"same-collection": {"flows", false}, "other-collection": {"templates", true}} {
+		t.Run(name, func(t *testing.T) {
+			f := fixture(t)
+			src, dst := testInventories(f.origin)
+			req, err := NewRequest(src, dst, "us", "us", []string{"flow"}, nil, "create")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.native.Mapping = nil
+			f.steps = []pingone.Step{{Action: "POST", URL: f.origin + "/v1/environments/target/flows", Source: pingone.Ref{ID: "flow"}, Payload: json.RawMessage(`{"name":"Flow"}`)}}
+			e := &Engine{Client: f.client}
+			a, err := e.Plan(context.Background(), req, testOrigin())
+			if err != nil || len(a.Review.Issues) > 0 {
+				t.Fatalf("plan err=%v issues=%v", err, a.Review.Issues)
+			}
+			f.liveTarget = func(in []pingone.Resource) []pingone.Resource {
+				return append(in, pingone.Resource{ID: "new", URL: f.origin + "/v1/environments/target/" + c.typ + "/new", Type: c.typ, Configuration: map[string]any{"name": "Flow"}})
+			}
+			_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error { return nil })
+			if c.allowed != (err == nil && f.execute == 1) {
+				t.Fatalf("allowed=%v err=%v execute=%d", c.allowed, err, f.execute)
+			}
+		})
 	}
 }

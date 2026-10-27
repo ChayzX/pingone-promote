@@ -348,6 +348,11 @@ func (e *Engine) Apply(ctx context.Context, a Artifact, approvedDigest string, a
 	if err = authorize(ctx, fresh); err != nil {
 		return result, err
 	}
+	// Last gate before the native mutation: the pinned target snapshot cannot
+	// reveal destination edits made after review, so compare the live target.
+	if err = e.checkTargetDrift(ctx, fresh); err != nil {
+		return result, err
+	}
 	if err = e.Client.Do(ctx, "POST", pingone.EnvPath(a.Request.Source.ID)+"/promotions/"+a.NativeID, pingone.ExecuteType, nil, &result); err != nil {
 		return result, err
 	}
