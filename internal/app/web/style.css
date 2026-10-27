@@ -284,7 +284,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .brand { gap: 7px; font-size: 13px; }
   .brand-mark { width: 27px; height: 27px; }
   .topbar-actions { gap: 3px; }
-  .local-status { gap: 5px; }
+  .local-status { display: none; }
   .button-quiet { font-size: 10px; }
   .page-shell { width: calc(100% - 32px); }
   .environment-footer { display: block; }
@@ -292,3 +292,12 @@ tbody tr:last-child td { border-bottom: 0; }
   .history-heading { display: block; }
   .history-heading .button { margin-top: 10px; text-align: left; }
 }
+
+.gitlab-preview { display: grid; gap: 16px; margin-top: 18px; }
+.preview-section { padding: 16px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
+.preview-section h3 { margin: 0 0 8px; font-size: 14px; }
+.preview-section p { margin: 5px 0; }
+.preview-section summary { cursor: pointer; font-weight: 650; }
+.preview-json { max-height: 420px; overflow: auto; padding: 12px; border-radius: 6px; background: #f3f5f8; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.preview-actions .section-help { margin: 0; }

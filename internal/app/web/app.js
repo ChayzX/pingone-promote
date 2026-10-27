@@ -7,7 +7,7 @@
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
     confirmMode: 'deploy', planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null
   };
 
   const el = (tag, className, value) => {
@@ -33,6 +33,7 @@
   const isRollbackRecord = record => /rollback/i.test(String(record?.kind || '')) || Boolean(record?.rollbackOf || record?.previousPromotionId);
   const profilesDialog = $('#profiles-dialog');
   const deployDialog = $('#deploy-dialog');
+  const gitlabDialog = $('#gitlab-dialog');
 
   async function request(path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
@@ -293,7 +294,9 @@
 
   function updateBuildButton() {
     const canBuild = Boolean(state.sourceInventory && state.targetInventory && state.selected.size > 0);
+    const isGitLab = Boolean(selectedProfile('target') && !state.localTargets.includes(String(selectedProfile('target').environmentId)));
     $('#build-plan').disabled = !canBuild;
+    $('#build-plan').textContent = isGitLab ? 'Build submission preview' : 'Build review';
     $('#selection-count').textContent = `${state.selected.size} selected`;
   }
 
@@ -610,6 +613,13 @@
     state.plan = plan;
     $('#plan-state').hidden = true;
     const content = $('#plan-content'); content.replaceChildren(); content.hidden = false;
+    if (plan.gitlabRequired || plan.request) {
+      state.plan.gitlabRequired = true;
+      renderGitLabPreview(plan, content);
+      $('#deploy-bar').hidden = true;
+      clearTimer();
+      return;
+    }
     const overview = el('div', 'plan-overview');
     const summary = el('div', 'plan-summary');
     const status = normalizedStatus(plan.status);
@@ -639,6 +649,89 @@
     $('#deploy-state-label').textContent = complete ? (status === 'ROLLED_BACK' ? 'Promotion rolled back' : state.planMode === 'rollback' ? 'Rollback completed' : 'Promotion completed') : ready ? 'Review is ready' : 'Deployment is blocked';
     $('#deploy-reason').textContent = complete ? 'This operation has finished. Check promotion history for its final status.' : ready ? 'The current review is ready for explicit confirmation.' : errors.length ? 'Resolve the listed issues, then build a new review.' : `PingOne plan status is ${status.replaceAll('_', ' ')}. Refresh or resolve the status before deployment.`;
     schedulePoll(plan, generation);
+  }
+
+  function renderGitLabPreview(plan, content) {
+    const req = plan.request || plan;
+    const box = el('div', 'gitlab-preview');
+    box.append(el('div', 'warning-box', 'Submission preview: final PingOne plan and deployment approval happen in GitLab. No production changes are made from this browser.'));
+    const meta = el('section', 'preview-section');
+    meta.append(el('h3', '', 'Pinned request'));
+    meta.append(el('p', 'mono', `Request ${text(req.id)} · Created ${text(req.createdAt)}`));
+    meta.append(el('p', '', `Source environment ${text(req.source?.id)} · ${text(req.source?.region)} · organization ${text(req.source?.organizationId)} · snapshot ${text(req.source?.snapshotId)}`));
+    meta.append(el('p', '', `Target environment ${text(req.target?.id)} · ${text(req.target?.region)} · organization ${text(req.target?.organizationId)} · snapshot ${text(req.target?.snapshotId)}`));
+    box.append(meta);
+    const selected = el('section', 'preview-section'); selected.append(el('h3', '', 'Selected resources and mappings'));
+    const list = el('ul', 'issues-list');
+    const mappings = req.mappings || {};
+    for (const id of safeArray(req.selected)) list.append(el('li', '', `${id} → ${text(mappings[id], 'automatic / create')}`));
+    selected.append(list); box.append(selected);
+    const exports = req.configurations || {};
+    const configuration = el('details', 'preview-section'); configuration.append(el('summary', '', 'Redacted configuration exports'));
+    configuration.append(el('pre', 'preview-json', stringify(exports))); box.append(configuration);
+    const fingerprints = el('details', 'preview-section'); fingerprints.append(el('summary', '', 'Configuration fingerprints'));
+    fingerprints.append(el('pre', 'preview-json', stringify(req.fingerprints || {}))); box.append(fingerprints);
+    const issues = safeArray(plan.issues);
+    if (issues.length) { const ul = el('ul', 'issues-list'); issues.forEach(issue => ul.append(el('li', '', stringify(issue)))); box.append(ul); }
+    const actions = el('div', 'preview-actions');
+    const submit = el('button', 'button button-primary', 'Submit to GitLab'); submit.type = 'button';
+    submit.disabled = !state.gitlab?.configured && !state.gitlab?.tokenAvailable;
+    submit.title = submit.disabled ? 'Configure GitLab in GitLab settings before submitting.' : '';
+    submit.addEventListener('click', () => openGitLabConfirmation(req));
+    actions.append(submit);
+    if (submit.disabled) actions.append(el('span', 'section-help', 'Configure GitLab settings before submitting this request.'));
+    box.append(actions); content.append(box);
+  }
+
+  function openGitLabConfirmation(req) {
+    state.reviewedRequestId = String(req.id || '');
+    state.confirmGeneration = ++state.planGeneration;
+    state.confirmMode = 'gitlab-submit';
+    $('#confirm-eyebrow').textContent = 'GitLab submission';
+    $('#deploy-dialog-title').textContent = 'Submit this request to GitLab?';
+    $('#confirm-target-name').textContent = profileLabel(state.planTarget);
+    $('#deploy-warning').hidden = false;
+    $('#deploy-warning').textContent = 'This creates a branch and merge request in the configured private GitLab project. Production planning, approval, deployment and rollback happen through your protected GitLab runner.';
+    $('#deploy-confirm-copy').textContent = `Submit reviewed request ${text(req.id)} with its pinned source snapshot, target environment, resource selection, mappings, redacted exports and fingerprints.`;
+    $('#deploy-confirm-check').checked = false;
+    $('#confirm-deploy').disabled = true;
+    $('#confirm-deploy').textContent = 'Submit to GitLab';
+    $('#deploy-error').hidden = true;
+    deployDialog.showModal();
+  }
+
+  async function openGitLabSettings() {
+    const generation = ++state.gitlabConfigGeneration;
+    const form = $('#gitlab-form');
+    $('#gitlab-error').hidden = true;
+    try {
+      const result = await request('/api/gitlab');
+      if (generation !== state.gitlabConfigGeneration) return;
+      state.gitlab = result;
+      const config = result.config || {};
+      for (const key of ['baseUrl', 'projectId', 'tokenEnv', 'environment']) form.elements[key].value = config[key] || (key === 'tokenEnv' ? 'GITLAB_TOKEN' : key === 'environment' ? 'production' : '');
+      form.elements.token.value = '';
+      $('#gitlab-config-state').textContent = result.configured ? `Configured · private project verified · token ${result.tokenAvailable ? 'available' : 'unavailable'}` : 'GitLab is not configured.';
+      gitlabDialog.showModal();
+    } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; gitlabDialog.showModal(); } }
+  }
+
+  async function saveGitLabSettings() {
+    const generation = ++state.gitlabConfigGeneration;
+    const form = $('#gitlab-form');
+    if (!form.reportValidity()) return;
+    const body = Object.fromEntries(new FormData(form));
+    $('#gitlab-save').disabled = true; $('#gitlab-error').hidden = true;
+    try {
+      const result = await request('/api/gitlab', { method: 'POST', body });
+      if (generation !== state.gitlabConfigGeneration) return;
+      state.gitlab = result;
+      form.elements.token.value = '';
+      $('#gitlab-config-state').textContent = `Configured · ${text(result.project?.pathWithNamespace || result.project?.name, 'private project verified')} · token ${result.tokenAvailable ? 'available' : 'unavailable'}`;
+      showToast('GitLab settings saved and project verified.');
+      invalidatePlan('GitLab settings changed. Rebuild the request preview before submitting.');
+    } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; } }
+    finally { if (generation === state.gitlabConfigGeneration) $('#gitlab-save').disabled = false; }
   }
 
   function schedulePoll(plan, generation = state.planGeneration) {
@@ -688,11 +781,13 @@
     setStateBox($('#plan-state'), { title: 'Building review', message: 'Creating a native plan and collecting its complete operation details.', kind: 'loading', icon: '…' });
     $('#plan-content').hidden = true; $('#deploy-bar').hidden = true;
     try {
-      const plan = await request('/api/plans', { method: 'POST', body });
+      const gitlabRequired = !state.localTargets.includes(String(target?.environmentId || ''));
+      const plan = await request(gitlabRequired ? '/api/requests/preview' : '/api/plans', { method: 'POST', body });
       if (generation !== state.planGeneration || String(state.sourceInventory?.id) !== sourceInventoryID || String(state.targetInventory?.id) !== targetInventoryID || String(selectedProfile('source')?.id) !== String(source?.id) || String(selectedProfile('target')?.id) !== String(target?.id)) return;
       state.planMode = 'promotion';
       state.planSource = source;
       state.planTarget = target;
+      if (plan.request || plan.gitlabRequired) plan.gitlabRequired = true;
       renderPlan(plan, generation);
     } catch (failure) {
       if (generation === state.planGeneration) setStateBox($('#plan-state'), { title: 'Could not build review', message: failure.message, kind: 'error', icon: '!' });
@@ -754,7 +849,17 @@
     button.textContent = state.confirmMode === 'rollback-draft' ? 'Creating review…' : 'Submitting…';
     $('#deploy-error').hidden = true;
     try {
-      if (state.confirmMode === 'rollback-draft') {
+      if (state.confirmMode === 'gitlab-submit') {
+        const requestId = state.reviewedRequestId;
+        if (!requestId || !state.plan?.gitlabRequired) throw new Error('The reviewed GitLab request is missing. Build a fresh submission preview.');
+        const result = await request('/api/gitlab/submit', { method: 'POST', body: { requestId } });
+        if (generation !== state.planGeneration || requestId !== state.reviewedRequestId) return;
+        deployDialog.close();
+        const toast = el('div', 'toast'); toast.setAttribute('role', 'status'); toast.append(document.createTextNode('Merge request created: '));
+        const link = document.createElement('a'); link.textContent = `${text(result.branch)} !${text(result.iid)}`;
+        try { const url = new URL(result.url); if (url.protocol === 'https:' && url.origin === new URL(state.gitlab?.config?.baseUrl || '').origin) { link.href = url.href; link.target = '_blank'; link.rel = 'noopener'; } else throw new Error(); } catch (_) { toast.textContent = 'GitLab created a merge request, but returned an unsafe or unverified URL.'; }
+        if (link.href) toast.append(link); $('#toast-region').append(toast); window.setTimeout(() => toast.remove(), 12000);
+      } else if (state.confirmMode === 'rollback-draft') {
         const record = state.rollbackRecord;
         const rollback = await request(`/api/plans/${encodeURIComponent(record.id)}/rollback`, { method: 'POST', body: { confirm: true } });
         if (generation !== state.planGeneration) return;
@@ -779,14 +884,19 @@
       }
     } catch (failure) {
       if (generation !== state.planGeneration) return;
-      $('#deploy-error').textContent = `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
+      $('#deploy-error').textContent = state.confirmMode === 'gitlab-submit' ? `${failure.message} Check GitLab for the request before submitting again.` : `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
       $('#deploy-error').hidden = false;
       button.disabled = true;
-      button.textContent = 'Check history';
+      button.textContent = state.confirmMode === 'gitlab-submit' ? 'Check GitLab' : 'Check history';
     }
   }
 
+  function recordRequiresGitLab(record) {
+    return Boolean(record?.gitlabRequired || !state.localTargets.includes(String(record?.target?.environmentId || '')));
+  }
+
   function canOfferRollback(record) {
+    if (recordRequiresGitLab(record)) return false;
     const status = normalizedStatus(record.status);
     return !isRollbackRecord(record) && ['COMPLETED', 'ERROR'].includes(status);
   }
@@ -797,6 +907,10 @@
     review.type = 'button'; review.dataset.reviewId = String(record.id);
     review.addEventListener('click', () => reviewHistory(record));
     actions.append(review);
+    if (recordRequiresGitLab(record)) {
+      actions.append(el('span', 'history-sub', 'Use the GitLab pipeline for production plan, deployment, and rollback.'));
+      return actions;
+    }
     const rollback = el('button', 'history-action', 'Rollback');
     rollback.type = 'button'; rollback.disabled = !canOfferRollback(record);
     rollback.title = rollback.disabled ? (isRollbackRecord(record) ? 'Rollback records cannot be rolled back again.' : 'Only completed or failed promotions can be offered for rollback; PingOne checks latest-only eligibility.') : 'Create a reviewable rollback draft.';
@@ -869,11 +983,13 @@
     try {
       const session = await request('/api/session');
       state.csrf = session.csrf || '';
+      state.localTargets = safeArray(session.localTargets).map(String);
       state.regions = session.regions || {};
       const [profiles, history] = await Promise.all([request('/api/profiles'), request('/api/history')]);
       state.profiles = Array.isArray(profiles) ? profiles : profiles?.profiles || [];
       state.history = Array.isArray(history) ? history : history?.records || [];
       renderProfileSelects(); renderProfiles(); renderHistory();
+      try { state.gitlab = await request('/api/gitlab'); } catch (_) { state.gitlab = null; }
       if (!state.csrf) showToast('The local session did not provide a CSRF token. Reload the app before saving or deploying.', true);
     } catch (failure) {
       renderProfileSelects(); renderHistory();
@@ -885,6 +1001,8 @@
   }
 
   $('#profiles-open').addEventListener('click', openProfiles);
+  $('#gitlab-open').addEventListener('click', openGitLabSettings);
+  $('#gitlab-save').addEventListener('click', saveGitLabSettings);
   $('#add-first-profile').addEventListener('click', openProfiles);
   $('#profile-save').addEventListener('click', saveProfile);
   $('#profile-cancel-edit').addEventListener('click', resetProfileForm);
@@ -895,6 +1013,7 @@
   $('#resource-search').addEventListener('input', updateFilterValues);
   $('#type-filter').addEventListener('change', updateFilterValues);
   $('#build-plan').addEventListener('click', buildPlan);
+  $('#plan-description').addEventListener('input', () => { if (state.plan) invalidatePlan('Promotion description changed. Build a new review before continuing.'); });
   $('#deploy-button').addEventListener('click', () => openDeployConfirmation(state.planMode === 'rollback' ? 'rollback-execute' : 'deploy'));
   $('#refresh-history').addEventListener('click', () => refreshHistory());
   $('#clear-selection').addEventListener('click', () => {

@@ -15,6 +15,7 @@
       <div class="topbar-actions">
         <span class="local-status"><span class="status-dot" aria-hidden="true"></span>Local app</span>
         <button class="button button-quiet" id="profiles-open" type="button">Environment profiles</button>
+        <button class="button button-quiet" id="gitlab-open" type="button">GitLab settings</button>
       </div>
     </div>
   </header>
@@ -24,7 +25,7 @@
       <div>
         <p class="eyebrow">Configuration promotion</p>
         <h1 id="page-title">Promote between environments</h1>
-        <p class="lede">Choose resources, match destination records, then review the complete plan before deployment.</p>
+        <p class="lede">Choose resources, match destination records, then review the complete plan before submitting it for approval.</p>
       </div>
       <div class="scope-note"><span class="scope-icon" aria-hidden="true">i</span><span>Only configuration resources supported by PingOne promotion are available here.</span></div>
     </section>
@@ -78,7 +79,7 @@
 
     <section class="panel review-panel" aria-labelledby="review-title">
       <div class="section-heading review-heading">
-        <div><p class="eyebrow">Step 3</p><h2 id="review-title">Review promotion</h2><p class="section-help">Build a plan to inspect every operation and change before deployment.</p></div>
+        <div><p class="eyebrow">Step 3</p><h2 id="review-title">Review promotion</h2><p class="section-help">Build a review of the selected changes before submission or deployment.</p></div>
         <button class="button button-secondary" id="build-plan" type="button" disabled>Build review</button>
       </div>
       <div id="plan-state" class="state-box state-empty">
@@ -129,6 +130,25 @@
         </details>
       </div>
       <footer class="dialog-footer"><p>Secrets are not included in profile or activity records.</p></footer>
+    </form>
+  </dialog>
+
+  <dialog class="dialog profile-dialog" id="gitlab-dialog" aria-labelledby="gitlab-dialog-title">
+    <form method="dialog" class="dialog-shell" id="gitlab-form">
+      <header class="dialog-header"><div><p class="eyebrow">Private project</p><h2 id="gitlab-dialog-title">GitLab settings</h2></div><button class="icon-button" value="cancel" aria-label="Close GitLab settings">×</button></header>
+      <div class="dialog-content">
+        <p class="section-help">Production requests are reviewed and deployed through your private GitLab project and protected runner. Store production write credentials only in protected CI variables. Local credentials should have read and snapshot permissions.</p>
+        <fieldset class="form-grid"><legend class="sr-only">GitLab project connection</legend>
+          <label class="field field-wide">Base URL<input class="control" name="baseUrl" type="url" required autocomplete="url" placeholder="https://gitlab.example.com"></label>
+          <label class="field field-wide">Numeric project ID<input class="control" name="projectId" inputmode="numeric" pattern="[0-9]+" required autocomplete="off"></label>
+          <label class="field">Token environment variable<input class="control" name="tokenEnv" required value="GITLAB_TOKEN" autocomplete="off"></label>
+          <label class="field">GitLab environment name<input class="control" name="environment" required value="production" autocomplete="off"></label>
+          <label class="field field-wide">Session token (optional)<input class="control" name="token" type="password" autocomplete="new-password"><span class="field-help">Used for this app session only. Never returned or saved.</span></label>
+        </fieldset>
+        <p id="gitlab-config-state" class="inline-state" aria-live="polite"></p>
+        <p class="form-error" id="gitlab-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Close</button><button class="button button-primary" id="gitlab-save" type="button">Save and verify</button></footer>
     </form>
   </dialog>
 

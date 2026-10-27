@@ -1,5 +1,7 @@
 # PingOne Promote
 
+> Integration handoff: the GitLab-controlled workflow is on `feat/gitlab-production`. Start with [docs/HANDOFF.md](docs/HANDOFF.md). Local execution is denied by default; live GitLab/PingOne acceptance and a complete production-readiness review remain outstanding. The older `v0.1.0`/`main` build does not contain this new policy.
+
 PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It is written in Go 1.24 or newer and has no third-party runtime dependencies. The API must be enabled for the tenant.
 
 ## Requirements
@@ -23,6 +25,10 @@ Start the local UI:
 ```sh
 ./pingone-promote --listen 127.0.0.1:8787
 ```
+
+Destinations use the GitLab submission workflow by default. Configure a **private** GitLab project through the UI and install the reviewed [pipeline template](examples/gitlab/.gitlab-ci.yml) using [the setup guide](docs/gitlab.md). Company configuration is committed only to that private project.
+
+For a disposable or explicitly designated non-production environment only, startup option `--local-target NON_PRODUCTION_ENVIRONMENT_ID` enables the original local deploy/rollback workflow for that exact ID. Repeat the flag for additional non-production IDs. Renaming a profile does not change the execution policy. Never allowlist production. Keeping production write credentials only in protected GitLab variables and enforcing PingOne roles is the actual organization-wide credential boundary; a local application cannot prevent administrators from using credentials they independently hold.
 
 The app prints a one-time bootstrap URL for the current run. Open that URL in your browser; the bootstrap credential is generated again at every start. Keep the server bound to loopback. `--no-browser` disables automatic browser opening, and `--data-dir PATH` selects where local profiles and operation history are stored. Use `--help` to see the available options.
 
@@ -96,6 +102,7 @@ In another terminal, run:
 ```sh
 python3 scripts/test_browser.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_races.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
+python3 scripts/test_browser_gitlab.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 ```
 
 Stop the fixture with Ctrl+C when finished. Screenshots go to `/tmp/pingone-browser-evidence` unless `--output-dir` is supplied. These checks verify local behavior only. See [verification notes](docs/verification.md) for the live acceptance checklist and API limitations.

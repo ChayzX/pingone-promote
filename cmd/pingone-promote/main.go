@@ -50,6 +50,12 @@ func acquireLock(dir string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+type targetsFlag []string
+
+func (t *targetsFlag) String() string     { return fmt.Sprint([]string(*t)) }
+func (t *targetsFlag) Set(v string) error { *t = append(*t, v); return nil }
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "PingOne Promote:", err)
@@ -60,6 +66,8 @@ func run() error {
 	address := flag.String("listen", "127.0.0.1:8787", "loopback address for the browser interface")
 	dataDir := flag.String("data-dir", "", "local configuration directory (defaults to OS user config directory)")
 	noBrowser := flag.Bool("no-browser", false, "print startup URL without opening a browser")
+	var localTargets targetsFlag
+	flag.Var(&localTargets, "local-target", "allow direct deployment to this NON-PRODUCTION environment ID; repeat for additional non-production targets (default: GitLab-only)")
 	flag.Parse()
 	if flag.NArg() > 0 {
 		return errors.New("unexpected positional arguments; use --help")
@@ -89,7 +97,10 @@ func run() error {
 	}
 	defer listener.Close()
 	token := app.RandomToken()
-	handler := app.New(st, token)
+	handler, err := app.NewWithPolicy(st, token, app.Policy{LocalTargets: localTargets})
+	if err != nil {
+		return err
+	}
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 16}
 	link := "http://" + listener.Addr().String() + "/?token=" + token
 	fmt.Printf("PingOne Promote is running locally.\nOpen: %s\nProfiles and history: %s\nPress Ctrl+C to stop.\n", link, *dataDir)
