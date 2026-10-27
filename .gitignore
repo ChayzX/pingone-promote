@@ -1,0 +1,13 @@
+/dist/
+/.superpowers/
+*.local.json
+.DS_Store
+
+__pycache__/
+*.pyc
+.env
+profiles.json
+records.json
+/.lock
+/pingone-promote
+/local-data/

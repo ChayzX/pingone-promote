@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>PingOne Promote</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#top" aria-label="PingOne Promote home"><span class="brand-mark" aria-hidden="true">P</span><span>PingOne <strong>Promote</strong></span></a>
+      <div class="topbar-actions">
+        <span class="local-status"><span class="status-dot" aria-hidden="true"></span>Local app</span>
+        <button class="button button-quiet" id="profiles-open" type="button">Environment profiles</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="top" class="page-shell">
+    <section class="page-heading" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">Configuration promotion</p>
+        <h1 id="page-title">Promote between environments</h1>
+        <p class="lede">Choose resources, match destination records, then review the complete plan before deployment.</p>
+      </div>
+      <div class="scope-note"><span class="scope-icon" aria-hidden="true">i</span><span>Only configuration resources supported by PingOne promotion are available here.</span></div>
+    </section>
+
+    <section class="panel environment-panel" aria-labelledby="environment-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Step 1</p><h2 id="environment-title">Choose environments</h2></div>
+        <span class="section-help">Source and destination can use different names for the same resource.</span>
+      </div>
+      <div class="environment-grid">
+        <div class="environment-card">
+          <div class="environment-label"><span class="environment-symbol source-symbol" aria-hidden="true">↑</span><div><h3>Source</h3><p>Read configuration from</p></div></div>
+          <label class="sr-only" for="source-profile">Source environment profile</label>
+          <select id="source-profile" class="control profile-select"><option value="">Choose a saved profile</option></select>
+          <p class="environment-meta" id="source-meta">No source profile selected</p>
+        </div>
+        <div class="environment-card">
+          <div class="environment-label"><span class="environment-symbol target-symbol" aria-hidden="true">↓</span><div><h3>Destination</h3><p>Review changes for</p></div></div>
+          <label class="sr-only" for="target-profile">Destination environment profile</label>
+          <select id="target-profile" class="control profile-select"><option value="">Choose a saved profile</option></select>
+          <p class="environment-meta" id="target-meta">No destination profile selected</p>
+        </div>
+      </div>
+      <div class="environment-footer"><p id="profile-hint">Add an environment profile to start.</p><button class="button button-secondary button-small" id="add-first-profile" type="button">Add profile</button></div>
+    </section>
+
+    <section class="panel resources-panel" aria-labelledby="resources-title">
+      <div class="section-heading resource-heading">
+        <div><p class="eyebrow">Step 2</p><h2 id="resources-title">Choose resources</h2><p class="section-help">Selecting a resource approves it for update. Dependencies stay unselected until you choose them.</p></div>
+        <button class="button button-primary" id="load-resources" type="button" disabled>Load resources</button>
+      </div>
+      <div class="resource-toolbar">
+        <label class="search-field"><span class="sr-only">Search resources by name, type, or ID</span><span class="search-icon" aria-hidden="true">⌕</span><input class="control" id="resource-search" type="search" placeholder="Search name, type, or ID" autocomplete="off" disabled></label>
+        <label class="type-filter"><span class="sr-only">Filter by resource type</span><select id="type-filter" class="control" disabled><option value="">All types</option></select></label>
+        <span class="selection-count" id="selection-count" aria-live="polite">0 selected</span>
+      </div>
+      <label class="description-field" for="plan-description">Promotion description <span>Optional · saved with history</span><textarea class="control" id="plan-description" rows="2" maxlength="200" placeholder="Add a short note for this promotion"></textarea></label>
+      <div id="resource-state" class="state-box state-empty">
+        <span class="state-icon" aria-hidden="true">↥</span><div><h3>Resources have not been loaded</h3><p>Choose a source and destination profile, then load their supported configuration resources.</p></div>
+      </div>
+      <div class="table-wrap" id="resource-table-wrap" hidden tabindex="0" aria-label="Scrollable resource mapping table">
+        <table class="resource-table">
+          <thead><tr><th scope="col" class="check-col"><span class="sr-only">Select</span></th><th scope="col">Source resource</th><th scope="col" class="type-col">Type</th><th scope="col" class="dependency-col">Dependencies</th><th scope="col" class="mapping-col">Destination mapping</th></tr></thead>
+          <tbody id="resource-rows"></tbody>
+        </table>
+      </div>
+      <p class="table-hint" id="table-hint" hidden>Scroll horizontally to view every mapping field.</p>
+      <div class="mapping-warnings" id="mapping-warnings" hidden></div>
+      <div class="resource-footer" id="resource-footer" hidden><span id="resource-total"></span><button class="text-button" id="clear-selection" type="button">Clear selection</button></div>
+    </section>
+
+    <section class="panel review-panel" aria-labelledby="review-title">
+      <div class="section-heading review-heading">
+        <div><p class="eyebrow">Step 3</p><h2 id="review-title">Review promotion</h2><p class="section-help">Build a plan to inspect every operation and change before deployment.</p></div>
+        <button class="button button-secondary" id="build-plan" type="button" disabled>Build review</button>
+      </div>
+      <div id="plan-state" class="state-box state-empty">
+        <span class="state-icon" aria-hidden="true">✓</span><div><h3>No review ready</h3><p>Load resources and select at least one resource to build a review.</p></div>
+      </div>
+      <div id="plan-content" hidden></div>
+      <div class="deploy-bar" id="deploy-bar" hidden>
+        <div><strong id="deploy-state-label">Deployment is blocked</strong><p id="deploy-reason">Build a valid review before deploying.</p></div>
+        <button class="button button-primary" id="deploy-button" type="button" disabled>Deploy</button>
+      </div>
+    </section>
+
+    <section class="panel history-panel" aria-labelledby="history-title">
+      <div class="section-heading history-heading">
+        <div><p class="eyebrow">Activity</p><h2 id="history-title">Promotion history</h2><p class="section-help">Review saved operations and inspect rollback eligibility with PingOne.</p></div>
+        <button class="button button-quiet" id="refresh-history" type="button">Refresh history</button>
+      </div>
+      <div id="history-state" class="state-box state-empty"><span class="state-icon" aria-hidden="true">◷</span><div><h3>Loading history</h3><p>Fetching saved promotion records.</p></div></div>
+      <div class="table-wrap history-table-wrap" id="history-table-wrap" hidden>
+        <table class="history-table"><thead><tr><th scope="col">Promotion</th><th scope="col">Source</th><th scope="col">Destination</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody id="history-rows"></tbody></table>
+      </div>
+      <div class="history-cards" id="history-cards" hidden></div>
+    </section>
+
+    <footer class="page-footer"><span>PingOne Promote</span><span>Local browser interface</span></footer>
+  </main>
+
+  <dialog class="dialog profile-dialog" id="profiles-dialog" aria-labelledby="profiles-dialog-title">
+    <form method="dialog" class="dialog-shell" id="profiles-form">
+      <header class="dialog-header"><div><p class="eyebrow">Saved environments</p><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" value="cancel" aria-label="Close environment profiles">×</button></header>
+      <div class="dialog-content">
+        <div id="profile-list-state" class="inline-state"></div><div id="profile-list" class="profile-list"></div>
+        <details class="profile-editor" id="profile-editor" open>
+          <summary id="profile-editor-summary">Add an environment profile</summary>
+          <fieldset class="form-grid">
+            <legend class="sr-only">Environment connection details</legend>
+            <label class="field field-wide">Profile name<input class="control" name="name" required maxlength="80" autocomplete="off" placeholder="e.g. Staging"></label>
+            <label class="field">Region<select class="control" name="region" required><option value="us">United States</option><option value="ca">Canada</option><option value="eu">Europe</option><option value="asia">Asia</option><option value="au">Australia</option><option value="sg">Singapore</option></select></label>
+            <label class="field">Environment ID<input class="control" name="environmentId" required autocomplete="off" spellcheck="false"></label>
+            <label class="field">Authentication environment ID<input class="control" name="authEnvironmentId" required autocomplete="off" spellcheck="false"></label>
+            <label class="field">Worker client ID<input class="control" name="clientId" required autocomplete="off" spellcheck="false"></label>
+            <label class="field field-wide">Client secret storage<select class="control" name="secretMode" required><option value="session">Session only</option><option value="env">Environment variable</option><option value="keychain">macOS Keychain</option></select></label>
+            <label class="field field-wide secret-env-field" hidden>Environment variable name<input class="control" name="secretEnv" autocomplete="off" spellcheck="false" placeholder="PINGONE_CLIENT_SECRET"><span class="field-help">The variable is read by the local app process.</span></label>
+            <label class="field field-wide secret-value-field">Client secret<input class="control" name="secret" type="password" autocomplete="new-password"><span class="field-help" id="secret-help">Kept in memory for this app session.</span></label>
+          </fieldset>
+          <p class="form-error" id="profile-error" role="alert" hidden></p>
+          <div class="dialog-actions"><button class="button button-quiet" id="profile-cancel-edit" type="button" hidden>Cancel edit</button><button class="button button-primary" id="profile-save" type="button">Save profile</button></div>
+        </details>
+      </div>
+      <footer class="dialog-footer"><p>Secrets are not included in profile or activity records.</p></footer>
+    </form>
+  </dialog>
+
+  <dialog class="dialog confirm-dialog" id="deploy-dialog" aria-labelledby="deploy-dialog-title">
+    <form method="dialog" class="dialog-shell" id="deploy-confirm-form">
+      <header class="dialog-header"><div><p class="eyebrow" id="confirm-eyebrow">Final check</p><h2 id="deploy-dialog-title">Deploy this promotion?</h2></div><button class="icon-button" value="cancel" aria-label="Close deployment confirmation">×</button></header>
+      <div class="dialog-content"><div id="deploy-warning" class="warning-box" hidden></div><p id="deploy-confirm-copy" class="dialog-copy"></p><div class="confirm-target"><span>Destination</span><strong id="confirm-target-name"></strong></div><div class="confirm-check"><input id="deploy-confirm-check" type="checkbox"><label for="deploy-confirm-check">I reviewed the operations and want to continue.</label></div><p class="form-error" id="deploy-error" role="alert" hidden></p></div>
+      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary" id="confirm-deploy" type="button" disabled>Deploy</button></footer>
+    </form>
+  </dialog>
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

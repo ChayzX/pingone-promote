@@ -1,0 +1,39 @@
+# PingOne Promote design
+
+## Intent and authorization
+Build a local Go application for promoting selected PingOne configuration between environments in the same tenant. The initial use case is finding a DaVinci flow by friendly name and promoting it as a new version into the matching destination resource, even if its name differs. The user delegated remaining design and implementation decisions on 2026-10-27 after choosing the guarded native API approach; proceed without further preference questions.
+
+## Goals and boundaries
+- Run as one executable with embedded browser UI on macOS; keep the core portable to RHEL, initially accessed locally or through an SSH tunnel.
+- Save reusable environment profiles (friendly label, environment ID, region, OAuth worker client ID, authentication environment, credential source). Offer session-only secrets, environment-variable references, and macOS Keychain storage. Never write plaintext secrets to profile/history JSON.
+- Discover all configuration resources exposed by PingOne snapshots, search names/types/IDs, select one or many, suggest destination matches and allow explicit mapping overrides. Include notification templates only when chosen; do not automatically approve any dependencies.
+- Let each selected resource map to an existing target or create new. Unselected dependencies may map to existing target resources for reuse without updating them. Missing/incompatible dependency references block native validation rather than silently adding changes.
+- Show complete native steps, source/target IDs, action, before/after structural changes, native validation errors, and selection violations before Deploy. Any mapping/selection change invalidates review.
+- Deploy only a complete, READY, freshly inspected plan whose steps are scoped to selected source resources and expected target environment. Require a review fingerprint and re-fetch full plan immediately before execute. Reject empty selection, unknown source resources, uninspectable actions/URLs, deletions, outside-selection writes, pagination failures, or changed review fingerprints. Do not execute steps individually.
+- Provide persisted promotion history/status polling and a Rollback action. Native rollback only applies to the latest promotion into a target, restores the entire promotion, and can overwrite intervening edits. Show this before initiating rollback. The native service remains authority on eligibility.
+
+Non-goals: users/runtime data/admin role assignments and other resources unsupported by Ping configuration management; cross-tenant promotion; a shared authenticated web service; arbitrary destructive delete promotion; recreating native sensitive-variable management. Existing native sensitive promotion variables are honored; if required, show errors and direct the operator to configure them in PingOne before rebuilding a plan.
+
+## Approaches
+1. Chosen: native Configuration Management APIs with explicit resource selections/exclusions and a fail-closed plan validator. This retains native resource coverage, dependency substitutions, snapshots, variables, versioning, and rollback. It depends on the early-access API being enabled. Documentation cannot prove the user's notification issue is fixed; an unapproved template step must block execution.
+2. Considered: individual resource APIs with custom ordering/mapping/backups/rollback. More direct write control but broad configuration coverage and reliable secret rollback require a separate implementation per resource type. Keep as a potential later backend, not a silent fallback.
+3. Rejected: invoking the console's default whole-environment promotion unchanged, because unrelated notification templates must not be promoted automatically.
+
+## Architecture and workflow
+Use the Go standard library and embedded static HTML/CSS/JavaScript. A localhost-only HTTP server authenticates requests with a random per-process cookie, checks Host/Origin and CSRF tokens, and rejects framing/cross-origin access. Default port 8787; optional browser opening. API hosts derive from an enumerated Ping region rather than arbitrary user URLs. Follow pagination only within the configured API origin, with cycle/page limits and no authorization forwarding on redirects.
+
+Profiles use atomic 0600 JSON writes in an OS-appropriate application configuration directory. Keychain is a macOS-only adapter; session secrets live only in process memory; environment-variable references work on macOS and Linux. OAuth client credentials use the profile's worker authentication environment, which can differ from the managed environment. Access tokens stay in memory.
+
+Inventory creates environment snapshots and polls explicit snapshot versions, then traverses embedded snapshot pages. This writes snapshot metadata but no destination configuration. Inventory records preserve original resource IDs, full resource URLs, names/types, configuration, and snapshot version identifiers. Do not confuse configuration record IDs with original resource IDs.
+
+Build draft promotion with pinned source snapshot, nonempty selectedResources, exclusions for all other discovered source resources, and mappings (including reuse). Rebuild a draft when choices change rather than rely on ambiguous PATCH exclusion semantics. Poll native readiness separately from browser requests. Discover newly encountered dependency resources as unapproved suggestions; require explicit selection or reuse mapping.
+
+Review reads every promotionSteps page. Validator binds each sourceResource to an approved inventory entry and validates action/target URL, including collection creates and nested flow-version/deployment operations. Unknown shapes fail with a useful error; do not guess permissions by matching an ID substring. Display redacted payloads/configuration and field changes; hash original plan server-side without persisting sensitive payloads. Refetch immediately before Deploy and refuse changed plans. Native execution is asynchronous; save operation identity before sending a non-idempotent request, do not retry uncertain writes, and reconcile status on refresh/restart. Server serializes local operations; PingOne provides no documented conditional execution, so concurrent external edits remain a stated integration limitation.
+
+Rollback POST creates a separate rollback promotion; poll/inspect it and explicitly execute the rollback promotion as documented. Require the user to review affected resources before execution. Never mislabel a created rollback draft as a completed rollback. Retain original/rollback IDs and statuses in history.
+
+## Verification and delivery
+Use httptest API fixtures based on official response examples, not production credentials. Cover second-page notification steps, empty selections, unknown sources, malformed/external links, mapping mismatches, plan changes, duplicate starts, rollback's two operations, profile secret omission, auth/CSRF, and error/timeout states. Exercise the UI against a local test fixture in browser automation; keep fixture server in test code only. Cross-build macOS arm64/amd64 and Linux amd64 without CGO. Deliver source, README (OAuth roles/setup, startup, sensitive variables, exclusion acceptance test, rollback limits, RHEL SSH tunnel), release build script, and zip bundles. Be explicit that no live PingOne tenant or macOS Keychain runtime was available here.
+
+## Decisions made by engineer
+Go + standard library, native early-access backend, localhost-only initial hosting, deployed source versions per Ping's native contract, no deletion promotion, credential adapters, explicit rather than automatic dependency approval, existing native variable management, and an authoritative fresh-plan check are engineering choices under the user's delegation.
