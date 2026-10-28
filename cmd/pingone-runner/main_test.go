@@ -101,6 +101,31 @@ func putJSON(t *testing.T, path string, v any) {
 	}
 }
 
+func TestVersionPrintsWithoutCIOrCredentials(t *testing.T) {
+	var out, errOut strings.Builder
+	err := runWith([]string{"--version"}, &out, &errOut, runnerDeps{
+		getenv: func(string) string { return "" },
+		gate: func() (runnerGate, error) {
+			t.Fatal("version command initialized the CI verifier")
+			return nil, nil
+		},
+	})
+	if err != nil || out.String() != "pingone-runner dev\n" {
+		t.Fatalf("version output=%q err=%v", out.String(), err)
+	}
+}
+
+func TestVersionRejectsExtraArguments(t *testing.T) {
+	var out, errOut strings.Builder
+	err := runWith([]string{"--version", "apply"}, &out, &errOut, runnerDeps{})
+	if err == nil {
+		t.Fatal("version command accepted extra runner arguments")
+	}
+	if got := out.String(); got != "" {
+		t.Fatalf("printed version despite extra arguments: %q", got)
+	}
+}
+
 func TestValidateAndDigestOffline(t *testing.T) {
 	d := t.TempDir()
 	r, a := fixture(t)

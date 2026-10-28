@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/buildinfo"
 	"pingone-promote/internal/cigate"
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/pingone"
@@ -75,6 +76,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
+	if len(args) > 0 && args[0] == "--version" {
+		if len(args) != 1 {
+			return errors.New("--version does not accept additional arguments")
+		}
+		_, err := fmt.Fprintf(stdout, "pingone-runner %s\n", buildinfo.Version)
+		return err
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|plan|apply|status|rollback-plan> [flags]\n")
 		return nil

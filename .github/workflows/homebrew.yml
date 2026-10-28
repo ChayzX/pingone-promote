@@ -1,0 +1,55 @@
+name: Homebrew lifecycle
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to exercise in the installer lifecycle"
+        type: string
+        default: v0.2.0-rc.1
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: v0.2.0-rc.1
+
+permissions:
+  contents: read
+
+jobs:
+  install-matrix:
+    name: Install and lifecycle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-15-intel
+          - ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ inputs.version || 'v0.2.0-rc.1' }}
+      RELEASE_REF: ${{ github.sha }}
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - name: Check out the exact tested revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Homebrew on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          echo /home/linuxbrew/.linuxbrew/sbin >> "$GITHUB_PATH"
+
+      - name: Run real Homebrew install, upgrade, app safety probes, and uninstall
+        shell: bash
+        run: python3 scripts/test_homebrew.py --version "$RELEASE_VERSION" --ref "$RELEASE_REF"

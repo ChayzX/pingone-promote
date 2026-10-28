@@ -1,0 +1,85 @@
+name: Prepare installation preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, including v prefix (for example v0.2.0-rc.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      version: ${{ inputs.version }}
+
+  assets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Check source and build versioned release assets
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.sha }}
+        run: |
+          go test ./...
+          go test -race ./...
+          go vet ./...
+          python3 -m unittest discover -s scripts -p test_release.py -v
+          python3 scripts/release.py release --version "$RELEASE_VERSION" --ref "$RELEASE_REF" --output dist/release
+          python3 scripts/release.py verify --directory dist/release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installation-preview
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    needs: [homebrew, assets]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installation-preview
+          path: release-assets
+      - name: Verify and create a draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.sha }}
+        run: |
+          python3 scripts/release.py verify --directory release-assets
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo 'This release version already exists; choose a new version.' >&2
+            exit 1
+          fi
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION^{}" | cut -f1)
+          if [ -z "$tag_commit" ]; then
+            tag_commit=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" | cut -f1)
+          fi
+          if [ -n "$tag_commit" ] && [ "$tag_commit" != "$RELEASE_REF" ]; then
+            echo 'This version tag points to a different source revision; choose a new version.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_VERSION" --target "$RELEASE_REF" --draft --prerelease \
+            --title "PingOne Promote $RELEASE_VERSION (preview)" \
+            --notes-file docs/release-notes.md release-assets/*

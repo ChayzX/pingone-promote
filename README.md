@@ -16,6 +16,8 @@ The app supports the configuration resource types exposed by PingOne's promotion
 
 ## Build and run
 
+Homebrew preview installation and package lifecycle instructions are in [docs/installation.md](docs/installation.md). The project tap becomes available after the reviewed preview release is published. Both tools support `--version`; reporting the version does not start the app or access credentials.
+
 Build the current platform binary:
 
 ```sh
@@ -78,7 +80,7 @@ Then open the one-time bootstrap URL using the forwarded local port. The host ca
 
 ## Build release bundles
 
-Run `scripts/build.sh` to cross-build CGO-free binaries for macOS arm64/amd64 and Linux amd64. The script honors `GO` (default `go`) and writes binaries and `.tar.gz` bundles under `dist/`. Each bundle includes its binary and this README.
+Run `scripts/build.sh` to cross-build CGO-free binaries for macOS arm64/amd64 and Linux amd64. The script honors `GO` (default `go`) and `VERSION` (default `dev`), and writes binaries, `.tar.gz` bundles and `SHA256SUMS` under `dist/`. Each bundle includes both commands, documentation and the GitLab template. See [the release process](docs/installation.md#maintainer-release-process) for versioned source exports, Homebrew formula generation and draft prereleases.
 
 ## Validation status
 

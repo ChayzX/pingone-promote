@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -29,6 +30,37 @@ func TestListenAddressCannotExposeCredentialInterface(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionHelperProcess(t *testing.T) {
+	if os.Getenv("PINGONE_VERSION_HELPER") != "1" {
+		return
+	}
+	flag.CommandLine = flag.NewFlagSet("pingone-promote", flag.ExitOnError)
+	os.Args = []string{"pingone-promote", "--version", "--listen", "invalid", "--data-dir", os.Getenv("PINGONE_VERSION_DIRECTORY")}
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// A version request must succeed before listen validation or data directory creation.
+func TestVersionPrintsAndSkipsApplicationStartup(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "app-data")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestVersionHelperProcess$")
+	cmd.Env = append(os.Environ(), "PINGONE_VERSION_HELPER=1", "PINGONE_VERSION_DIRECTORY="+dir)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("version command failed: %v, output=%q", err, output)
+	}
+	if got, want := string(output), "pingone-promote dev\n"; got != want {
+		t.Fatalf("version output=%q, want %q", got, want)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("version command created data directory: stat err=%v", err)
+	}
+}
+
 func TestDataDirectoryAllowsOnlyOneApplicationInstance(t *testing.T) {
 	dir := t.TempDir()
 	first, err := acquireLock(dir)
