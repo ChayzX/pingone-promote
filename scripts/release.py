@@ -34,7 +34,8 @@ def git(repo, *args):
 def source_archive(repo, ref, version, output):
     prefix = git(repo, "rev-parse", "--show-prefix").decode().strip().rstrip("/")
     tree = git(repo, "rev-parse", "--verify", ref + (":" + prefix if prefix else "^{tree}")).decode().strip()
-    raw = git(repo, "archive", "--format=tar", tree)
+    top = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip())
+    raw = git(top, "archive", "--format=tar", tree)
     package = f"pingone-promote-{version}"
     path = output / f"{package}-source.tar.gz"
     # Normalize Git archive metadata so exporting the same tree is byte-identical.

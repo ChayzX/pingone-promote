@@ -376,7 +376,7 @@ def main():
 
             if not formula_owned_by_tap(brew, tap_name):
                 raise RuntimeError(f"refusing to uninstall {FORMULA_NAME}; installed formula is not owned by temporary tap {tap_name}")
-            run([brew, "uninstall", "--formula", FORMULA_NAME])
+            run([brew, "uninstall", "--force", "--formula", f"{tap_name}/{FORMULA_NAME}"])
             if brew_formula_installed(brew):
                 raise RuntimeError(f"{FORMULA_NAME} remains installed after uninstall")
             installed_formula = False
@@ -391,7 +391,7 @@ def main():
                     installed_formula = False
                     install_attempted = False
                 elif formula_owned_by_tap(brew, tap_name):
-                    run([brew, "uninstall", "--formula", FORMULA_NAME])
+                    run([brew, "uninstall", "--force", "--formula", f"{tap_name}/{FORMULA_NAME}"])
                     if formula_owned_by_tap(brew, tap_name):
                         raise RuntimeError(f"{FORMULA_NAME} remains installed from temporary tap {tap_name}")
                     installed_formula = False

@@ -24,12 +24,12 @@ Supported installation tests cover macOS Apple Silicon, macOS Intel and Linux x8
 ```sh
 brew update
 brew upgrade chayzx/tap/pingone-promote
-brew uninstall pingone-promote
+brew uninstall --force pingone-promote
 ```
 
 Stop the running application before upgrading. It prints its profile/history directory at startup. The default is `~/Library/Application Support/pingone-promote` on macOS, or `$XDG_CONFIG_HOME/pingone-promote` (normally `~/.config/pingone-promote`) on Linux. `--data-dir` selects another directory.
 
-Homebrew upgrades and uninstallations preserve this external directory and macOS Keychain items. Session-only credentials disappear when the app exits. Package archives contain source, executables and documentation, never local profiles, history or credentials.
+The uninstall command removes all installed versions of this package, including older versions Homebrew may have retained. Homebrew upgrades and uninstallations preserve the external data directory and macOS Keychain items. Session-only credentials disappear when the app exits. Package archives contain source, executables and documentation, never local profiles, history or credentials.
 
 ## Downloaded archives
 

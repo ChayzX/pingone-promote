@@ -62,6 +62,18 @@ class SourceReleaseTests(unittest.TestCase):
         for name in ("pingone-promote-v0.2.0-rc.1-source.tar.gz", "SHA256SUMS", "pingone-promote.rb"):
             self.assertEqual((outputs[0] / name).read_bytes(), (outputs[1] / name).read_bytes())
 
+    def test_source_archive_from_module_subdirectory_contains_source(self):
+        module = self.repo / "tool"
+        module.mkdir()
+        self.assertTrue(module.resolve().is_relative_to(self.repo.resolve()))
+        subprocess.run(["git", "mv", "go.mod", "cmd", "README.md", "tool/"], cwd=self.repo, check=True)
+        subprocess.run(["git", "-c", "user.name=Package fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "nest module"], cwd=self.repo, check=True)
+        output = self.root / "nested-release"
+        result = self.command("source", "--repo", str(module), "--ref", "HEAD", "--version", "v0.2.0-rc.1", "--output", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(output / "pingone-promote-v0.2.0-rc.1-source.tar.gz") as archive:
+            self.assertIn("pingone-promote-v0.2.0-rc.1/go.mod", archive.getnames())
+
     def test_invalid_version_cannot_create_release(self):
         for version in ("latest", "v1.2", "v1.2.3\nanything", "v1.2.3;echo", "../v1.2.3"):
             output = self.root / "invalid-output"
