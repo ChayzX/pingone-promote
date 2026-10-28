@@ -1,12 +1,22 @@
 # Production acceptance handoff
 
-This workspace has no access to the enterprise GitLab instance, private project, own runner, PingOne tenant, test environment IDs or credentials. The GitLab template and instructions are prepared for operator review; they are not evidence of live GitLab or production compatibility. This work is on branch `feat/gitlab-production`. The published `main` at `v0.1.0` does not yet include the production policy and GitLab submission work on this branch.
+This work is on branch `feat/gitlab-production`. The original preparation workspace had no live tenant or private GitLab access. Subsequent disposable acceptance used a private GitLab project and GitLab-hosted Linux runners at the operator's request; this does not verify enterprise or self-managed runner policy. Tenant identities, credentials and raw evidence remain outside this public repository.
+
+## Acceptance status — 2026-10-27
+
+Production readiness is **not established**. Live authenticated probes could read ordinary environment, flow and application APIs, but native snapshots returned `403 ACCESS_FAILED` with detail code `LICENSE_EXCEEDED`. Both disposable sandboxes were already opted in to Configuration Management while their effective capability remained false. An independent HTTP reproduction confirmed the denial outside this tool. No successful native promotion or rollback, native mapping compatibility, deployed-version selection, or before/after deployment resource comparison has been established. An eligible disposable environment pair is required to continue the native checklist; do not replace native promotion with a different mutation API to bypass this gate.
+
+[Ping's current Configuration Management documentation](https://docs.pingidentity.com/pingone/early-access-features/ea-p1_promote.html) describes early access for sandbox environments only. Production use also requires vendor-confirmed support, independently of passing sandbox tests.
+
+Review fixes now compare current destination resources immediately before native execution, including reused unselected dependencies, and reject rollback reviews missing native target-snapshot linkage. Rollback planning verifies that the original artifact came from the matching successful `plan_promotion` job in the trusted GitLab project. Merge request validation has a separate non-secret SHA pin and runner tag. API-fixture regressions support these checks. Actual native response compatibility still requires live evidence.
+
+GitLab's actual CI linter accepted the revised example template. Keep local automated checks, hosted Linux fixture checks, and live service acceptance distinct in the evidence log. Hosted fixture success does not complete any deployment or rollback criterion.
 
 ## Evidence available in this workspace
 
 API-shaped Go fixtures and local browser fixtures can verify application behavior and request/plan handling. They do not verify live PingOne API semantics, GitLab protected environment approval behavior, runner registration, organization policies or a production deployment. The fixture-based PingOne verification recorded in [verification.md](verification.md) covers explicit selection/exclusion, digest checks, duplicate-execution blocking and separate rollback review/execution.
 
-The GitLab approval verifier and `pingone-runner` commands are now implemented on this branch. Go tests, local browser regression suites, and template/selector syntax tests have passed in this workspace. A complete independent production-readiness review is still needed. Live GitLab approval behavior and PingOne tenant behavior remain unverified here.
+The GitLab approval verifier and `pingone-runner` commands are implemented on this branch. Private disposable GitLab tests verified deployment blocking before approval, execution authorization after a distinct approver, retry rejection, merge request credential isolation, and zero/one/two request selection. These tests made no native deployment calls. Go tests, browser regression suites, and template/selector checks have passed for their recorded source manifests. A complete independent production-readiness review and native PingOne acceptance are still needed.
 
 ## Local verification commands
 
@@ -52,7 +62,7 @@ Use a local agent configured for the enterprise GitLab and test PingOne environm
 
 ## First review items for the local agent
 
-- Reproduce destination drift with an unchanged native promotion plan: the engine currently reconstructs the pinned target snapshot and rechecks native steps, but does not independently fingerprint current live target configuration immediately before apply. Determine whether PingOne invalidates such stale plans; otherwise add a fail-closed current-target comparison for affected resources. Separate GitLab resource-group jobs do not lock an entire plan/approval/apply interval. Do this before any production acceptance.
+- Verify the current-target drift gate against the live service with an unchanged native promotion plan, including secret-only changes, reused dependencies, deletes and create collisions. The engine now compares affected live target state immediately before execute; it cannot provide an atomic lock against a later console edit. Separate GitLab resource-group jobs do not lock an entire plan/approval/apply interval. Avoid concurrent target editing and establish native stale-plan behavior before production acceptance.
 - Verify exact native `resourceMapping` behavior: the engine deliberately rejects extra/changed mappings rather than guessing whether a native automatic mapping is safe. It may need a narrowly tested compatibility adapter.
 - Verify native rollback source snapshot/version/linkage fields against actual responses; the current checks are conservative and may reject a legitimate undocumented shape.
 - Verify GitLab's actual `GET /job`, protected-environment and deployment `approval_summary.rules` payloads for the installed version. Unsupported or absent approval data must block; do not replace these checks with `CI=true`, a manual job alone, or a permissive callback.

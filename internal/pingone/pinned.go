@@ -60,7 +60,7 @@ func (c *Client) InventoryVersion(ctx context.Context, env, snapshotID string) (
 		}
 		seen[s.Resource.ID] = true
 		parts := strings.Split(strings.Trim(strings.TrimPrefix(u.Path, prefix), "/"), "/")
-		if len(parts) < 2 || parts[len(parts)-1] != s.Resource.ID {
+		if len(parts) < 2 || len(parts)%2 != 0 || parts[len(parts)-1] != s.Resource.ID {
 			return inv, errors.New("pinned resource URL does not match its original identity")
 		}
 		kinds := []string{}

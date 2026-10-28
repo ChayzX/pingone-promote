@@ -148,6 +148,14 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		description := fmt.Sprintf("Promotion request `%s`\n\nSource environment: `%s` (snapshot `%s`)\nTarget environment: `%s`\nSelected resources: %d\nGitLab environment: `%s`\n\nThis merge request submits configuration for review. Actual deployment and rollback must execute through protected GitLab jobs. Review the configuration exports and final native plan before approving deployment.", req.ID, req.Source.ID, req.Source.SnapshotID, req.Target.ID, len(req.Selected), config.Environment)
 		mr, err := client.Submit(r.Context(), req.ID, map[string]string{"request.json": string(raw) + "\n"}, title, description)
 		if err != nil {
+			var preflightErr *gitlab.SubmissionPreflightError
+			if errors.As(err, &preflightErr) {
+				delete(s.submissionAttempts, req.ID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				writeJSON(w, map[string]any{"error": err.Error(), "safeToRetry": true})
+				return nil
+			}
 			return problem(502, err)
 		}
 		writeJSON(w, map[string]any{"requestId": req.ID, "url": mr.WebURL, "branch": mr.Branch, "iid": mr.IID})

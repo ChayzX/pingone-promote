@@ -26,6 +26,7 @@ const maxArtifactBytes = 16 << 20
 type runnerGate interface {
 	Origin() gitops.Origin
 	VerifyPlan(context.Context, gitops.Request) error
+	VerifyOriginalPlan(context.Context, gitops.Artifact, string) error
 	Authorize(context.Context, gitops.Artifact) error
 }
 
@@ -309,13 +310,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	case "rollback-plan":
 		fs := flagSet("rollback-plan", stderr)
 		artifactPath := fs.String("artifact", "", "forward artifact JSON file")
+		originalJobID := fs.String("original-job-id", "", "original plan_promotion job ID")
 		outPath := fs.String("out", "", "rollback artifact output path")
 		digestPath := fs.String("digest-out", "", "optional digest output path")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		if *artifactPath == "" || *outPath == "" {
-			return errors.New("rollback-plan requires --artifact and --out")
+		if *artifactPath == "" || *originalJobID == "" || *outPath == "" {
+			return errors.New("rollback-plan requires --artifact, --original-job-id and --out")
 		}
 		if samePath(*artifactPath, *outPath) || (*digestPath != "" && (samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath))) {
 			return errors.New("rollback outputs must not overwrite an input or each other")
@@ -337,6 +339,9 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if err = g.VerifyPlan(ctx, a.Request); err != nil {
+			return err
+		}
+		if err = g.VerifyOriginalPlan(ctx, a, *originalJobID); err != nil {
 			return err
 		}
 		client, err := deps.client(a.Request, deps.getenv)

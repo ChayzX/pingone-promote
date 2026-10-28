@@ -129,7 +129,7 @@ type job struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Ref    string `json:"ref"`
-	Tag    bool   `json:"tag"`
+	Tag    *bool  `json:"tag"`
 	Commit struct {
 		ID string `json:"id"`
 	} `json:"commit"`
@@ -156,7 +156,7 @@ func (v *Verifier) verify(ctx context.Context, r gitops.Request) (job, error) {
 	if _, err := v.get(ctx, "job", true, &j); err != nil {
 		return j, err
 	}
-	if strconv.FormatInt(j.ID, 10) != c.JobID || j.Status != "running" || j.Name == "" || j.Tag || j.Ref != c.Branch || j.Commit.ID != c.CommitSHA || strconv.FormatInt(j.Pipeline.ID, 10) != c.PipelineID || strconv.FormatInt(j.Pipeline.ProjectID, 10) != c.ProjectID || j.Pipeline.SHA != c.CommitSHA || j.Pipeline.Ref != c.Branch {
+	if strconv.FormatInt(j.ID, 10) != c.JobID || j.Status != "running" || j.Name == "" || j.Tag == nil || *j.Tag || j.Ref != c.Branch || j.Commit.ID != c.CommitSHA || strconv.FormatInt(j.Pipeline.ID, 10) != c.PipelineID || strconv.FormatInt(j.Pipeline.ProjectID, 10) != c.ProjectID || j.Pipeline.SHA != c.CommitSHA || j.Pipeline.Ref != c.Branch {
 		return j, errors.New("live GitLab job token does not match the running protected-branch job")
 	}
 	var project struct {
@@ -187,6 +187,36 @@ func (v *Verifier) VerifyPlan(ctx context.Context, r gitops.Request) error {
 	_, err := v.verify(ctx, r)
 	return err
 }
+
+// VerifyOriginalPlan binds a downloaded rollback source artifact to the
+// successful plan_promotion job that produced it in this private project.
+func (v *Verifier) VerifyOriginalPlan(ctx context.Context, a gitops.Artifact, jobID string) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	if a.Kind != "promotion" {
+		return errors.New("rollback source must be an original promotion artifact")
+	}
+	if !number.MatchString(jobID) {
+		return errors.New("original plan job ID must be numeric")
+	}
+	c := v.Config
+	if err := c.validate(); err != nil {
+		return err
+	}
+	if a.Origin.ServerURL != strings.TrimRight(c.BaseURL, "/") || a.Origin.ProjectID != c.ProjectID {
+		return errors.New("original plan artifact belongs to another GitLab server or project")
+	}
+	var source job
+	if _, err := v.get(ctx, "projects/"+c.ProjectID+"/jobs/"+jobID, false, &source); err != nil {
+		return err
+	}
+	if strconv.FormatInt(source.ID, 10) != jobID || source.Name != "plan_promotion" || source.Status != "success" || source.Tag == nil || *source.Tag || source.Ref != c.DefaultBranch || source.Commit.ID != a.Origin.CommitSHA || strconv.FormatInt(source.Pipeline.ID, 10) != a.Origin.PipelineID || strconv.FormatInt(source.Pipeline.ProjectID, 10) != c.ProjectID || source.Pipeline.SHA != a.Origin.CommitSHA || source.Pipeline.Ref != c.DefaultBranch {
+		return errors.New("original plan artifact does not match a successful protected-default-branch plan_promotion job")
+	}
+	return nil
+}
+
 func (v *Verifier) list(ctx context.Context, path string) ([]json.RawMessage, error) {
 	var result []json.RawMessage
 	page := "1"

@@ -1,7 +1,7 @@
 """Fixture-only browser regressions for GitLab production preview and stale response handling."""
 import asyncio, json, argparse, ipaddress
 from urllib.parse import urlparse
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 
 p = argparse.ArgumentParser()
 p.add_argument('--fixture-file', required=True)
@@ -13,14 +13,15 @@ for endpoint in ('url','native'):
     if host!='localhost' and not ipaddress.ip_address(host).is_loopback:
         raise ValueError('Browser regression requires a loopback test fixture')
 
-async def setup(page):
+async def setup(page, gitlab_state=None):
     async def session_with_production_policy(route):
         response = await route.fetch()
         data = await response.json()
         data['localTargets'] = []
         await route.fulfill(response=response, json=data)
     await page.route('**/api/session', session_with_production_policy)
-    await page.route('**/api/gitlab', lambda route: route.fulfill(json={"config":{"baseUrl":"https://gitlab.example.test","projectId":"42","tokenEnv":"GITLAB_TOKEN","environment":"production"},"configured":True,"tokenAvailable":True}))
+    state = gitlab_state or {"config":{"baseUrl":"https://gitlab.example.test","projectId":"42","tokenEnv":"GITLAB_TOKEN","environment":"production"},"configured":True,"tokenAvailable":True}
+    await page.route('**/api/gitlab', lambda route: route.fulfill(json=state))
     await page.goto(fixture['url'])
     await page.locator('#source-profile option').nth(1).wait_for(state='attached')
     await page.locator('#source-profile').select_option(fixture['source'])
@@ -76,12 +77,62 @@ async def test_stale_preview_invalidated(browser):
     assert await page.locator('#deploy-bar').is_hidden(), 'stale GitLab preview exposed a local deployment control'
     await page.close()
 
+async def test_submit_disabled_if_either_gitlab_requirement_is_missing(browser):
+    states = [
+        {"config":{"baseUrl":"https://gitlab.example.test","projectId":"42"},"configured":True,"tokenAvailable":False},
+        {"config":{"baseUrl":"https://gitlab.example.test","projectId":"42"},"configured":False,"tokenAvailable":True},
+    ]
+    for index, state in enumerate(states):
+        page = await browser.new_page()
+        await setup(page, state)
+        async def preview(route):
+            await route.fulfill(json={"gitlabRequired":True,"issues":[],"request":{"id":f"{index:032x}","selected":["f"],"mappings":{},"source":{},"target":{},"configurations":{},"fingerprints":{}}})
+        await page.route('**/api/requests/preview', preview)
+        await page.locator('#build-plan').click()
+        button = page.get_by_role('button', name='Submit to GitLab')
+        await button.wait_for()
+        await expect(button).to_be_disabled()
+        await page.close()
+
+async def test_submission_errors_respect_write_stage(browser):
+    for safe in (True, False):
+        page = await browser.new_page()
+        await setup(page)
+        calls = []
+        async def preview(route):
+            await route.fulfill(json={"gitlabRequired":True,"issues":[],"request":{"id":"fedcba9876543210fedcba9876543210","selected":["f"],"mappings":{},"source":{},"target":{},"configurations":{},"fingerprints":{}}})
+        async def submit(route):
+            calls.append(route.request.post_data)
+            await route.fulfill(status=502, json={"error":"Verification failed; no GitLab writes occurred." if safe else "GitLab submission response lost.","safeToRetry":safe})
+        await page.route('**/api/requests/preview', preview)
+        await page.route('**/api/gitlab/submit', submit)
+        await page.locator('#build-plan').click()
+        await page.get_by_role('button', name='Submit to GitLab').click()
+        await page.locator('#deploy-confirm-check').check()
+        await page.locator('#confirm-deploy').click()
+        await expect(page.locator('#deploy-error')).to_be_visible()
+        assert len(calls) == 1, 'error response caused an automatic mutation retry'
+        if safe:
+            await expect(page.locator('#deploy-error')).not_to_contain_text('Check GitLab for the request')
+            await expect(page.locator('#confirm-deploy')).to_be_enabled()
+            await page.locator('#confirm-deploy').click()
+            await expect(page.locator('#confirm-deploy')).to_be_enabled()
+            assert len(calls) == 2, 'proven pre-write failure did not allow explicit retry'
+        else:
+            await expect(page.locator('#deploy-error')).to_contain_text('Check GitLab for the request')
+            await page.locator('#deploy-confirm-check').uncheck()
+            await page.locator('#deploy-confirm-check').check()
+            await expect(page.locator('#confirm-deploy')).to_be_disabled()
+        await page.close()
+
 async def main():
     async with async_playwright() as pw:
         browser=await pw.chromium.launch(headless=True, executable_path=args.chromium, args=['--no-sandbox'])
         await test_preview_submit(browser)
         await test_stale_preview_invalidated(browser)
+        await test_submit_disabled_if_either_gitlab_requirement_is_missing(browser)
+        await test_submission_errors_respect_write_stage(browser)
         await browser.close()
-    print('PASS: GitLab production preview/submission and stale preview invalidation')
+    print('PASS: GitLab production preview/submission, stale preview invalidation, missing-prerequisite blocking, and stage-aware submission errors')
 
 asyncio.run(main())

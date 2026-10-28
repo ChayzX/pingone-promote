@@ -7,8 +7,10 @@ PingOne Promote is a local browser application for reviewing and promoting expli
 ## Requirements
 
 - Go 1.24+ to build, or a prebuilt release binary.
-- A PingOne worker OAuth client with Environment Admin authority in **both** the source and destination environments. The environments must belong to the same tenant.
+- A PingOne worker OAuth client with [Promotion Admin](https://docs.pingidentity.com/pingone/directory/p1_roles.html) explicitly assigned in **both** the source and destination environments, plus the read permissions needed for environment and resource discovery. The environments must belong to the same organization. Environment Admin alone does not establish promotion access.
 - The worker client's authentication environment may differ from the managed environment. Set each profile's Authentication environment ID accordingly.
+
+Configuration Management must be opted in and permitted by the environment's license. An opt-in checkbox alone does not prove entitlement. Inventory uses native snapshot creation; a `403` at resource loading can therefore reflect missing snapshot permissions or an unavailable capability. The tool includes safe access-denial detail codes, such as `LICENSE_EXCEEDED`, when PingOne returns them.
 
 The app supports the configuration resource types exposed by PingOne's promotion snapshots. It does not promote users, runtime data, or administrator role assignments. A DaVinci flow promotion uses the latest **deployed** source version under PingOne's native rules, not the latest saved draft.
 

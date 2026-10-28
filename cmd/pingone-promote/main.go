@@ -122,7 +122,9 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	shutdownComplete := make(chan struct{})
 	go func() {
+		defer close(shutdownComplete)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -131,5 +133,6 @@ func run() error {
 	if err = server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-shutdownComplete
 	return nil
 }

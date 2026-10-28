@@ -31,7 +31,7 @@ var ErrTargetDrift = errors.New("live target configuration changed after review;
 // same-named resource also blocks. Comparison uses full unredacted configuration
 // in memory only; nothing from the live inventory is persisted.
 func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
-	pinned, err := e.Client.InventoryVersion(ctx, a.Request.Target.ID, a.TargetSnapshotID)
+	source, pinned, err := e.inventories(ctx, a.Request, a.TargetSnapshotID)
 	if err != nil {
 		return fmt.Errorf("%w: pinned target unreadable: %v", ErrTargetDrift, err)
 	}
@@ -57,6 +57,34 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 	collections := map[string]bool{}
 	for _, tid := range a.Request.Mappings {
 		affected[tid] = true
+	}
+	// An excluded dependency may be reused by the selected resource without a
+	// native write step of its own. Its destination configuration is part of the
+	// reviewed behavior, so include the transitive reused dependency graph.
+	sourceByID := byID(source)
+	queue := append([]string(nil), a.Request.Selected...)
+	visited := map[string]bool{}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		for _, dependencyID := range sourceByID[id].Dependencies {
+			targetID := a.Request.Mappings[dependencyID]
+			if targetID == "" {
+				targetID = dependencyID
+			}
+			if _, exists := before[targetID]; exists {
+				affected[targetID] = true
+			} else if _, exists := after[targetID]; exists {
+				affected[targetID] = true
+			}
+			if _, exists := sourceByID[dependencyID]; exists {
+				queue = append(queue, dependencyID)
+			}
+		}
 	}
 	for _, st := range steps {
 		if st.Target.ID != "" {

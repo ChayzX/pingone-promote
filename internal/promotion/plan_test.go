@@ -131,6 +131,27 @@ func TestUnmappedFlowCreationAndBoundVersionChild(t *testing.T) {
 	}
 }
 
+func TestUnmappedFlowCreationRejectsTargetIDPayloadIDMismatch(t *testing.T) {
+	s, d := inventories()
+	d.Resources = nil
+	d.APIOrigin = "https://api.pingone.com"
+	root := pingone.Step{Action: "POST", URL: "https://api.pingone.com/v1/environments/dst/flows", Source: pingone.Ref{ID: "f"}, Target: pingone.Ref{ID: "target-flow"}, Payload: json.RawMessage(`{"id":"payload-flow","name":"Created"}`)}
+	child := pingone.Step{Action: "POST", URL: "https://api.pingone.com/v1/environments/dst/flows/target-flow/versions", Source: pingone.Ref{ID: "f"}, Payload: json.RawMessage(`{"graphData":{}}`)}
+	r := Inspect(s, d, []string{"f"}, nil, []pingone.Step{root, child}, false)
+	if len(r.Issues) == 0 {
+		t.Fatal("accepted flow creation whose target identity differs from its create payload")
+	}
+}
+
+func TestRollbackDeleteRejectsTargetIDURLMismatch(t *testing.T) {
+	s, d := inventories()
+	del := pingone.Step{Action: "DELETE", URL: d.Resources[0].URL, Target: pingone.Ref{ID: "another-flow"}}
+	r := Inspect(s, d, nil, nil, []pingone.Step{del}, true)
+	if len(r.Issues) == 0 {
+		t.Fatal("accepted rollback delete whose declared target differs from its URL")
+	}
+}
+
 func TestBuildRequestPinsSnapshotAndTarget(t *testing.T) {
 	s, d := inventories()
 	s.SnapshotID = ""

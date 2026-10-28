@@ -21,8 +21,16 @@ type nativeFixture struct {
 	native                    pingone.Promotion
 	execute, rollback, create int
 	mutatedSource             bool
+	targetChanged             bool
+	targetDependencyChanged   bool
+	targetCollision           bool
+	reuseDependency           bool
+	targetUnavailable         bool
+	targetDuplicate           bool
+	rollbackLinkMode          string
 	page2                     bool
 	omitTarget                bool
+	omitTargetSnapshot        bool
 	seenBody                  map[string]any
 	// liveTarget, when set, alters the target inventory served for any fresh
 	// (non-pinned) target snapshot, simulating console edits after review.
@@ -79,6 +87,11 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 				f.rollback++
 				f.native.ID = "rollback"
 				f.native.Previous.ID = "native"
+				if f.rollbackLinkMode == "missing" {
+					f.native.Previous.ID = ""
+				} else if f.rollbackLinkMode == "wrong" {
+					f.native.Previous.ID = "other"
+				}
 				f.native.Status = "READY"
 				f.steps = []pingone.Step{{Action: "DELETE", URL: f.origin + "/v1/environments/target/flows/dest", Target: pingone.Ref{ID: "dest"}}}
 			default:
@@ -90,6 +103,9 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 		if f.omitTarget {
 			p.Target.ID = ""
 		}
+		if f.omitTargetSnapshot {
+			p.TargetSnapshot.ID = ""
+		}
 		json.NewEncoder(w).Encode(p)
 		return
 	}
@@ -99,14 +115,18 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 		env = "target"
 		pin = "targetpin"
 	}
+	if strings.Contains(path, "/versions/target-current") {
+		pin = "target-current"
+	}
 	if strings.HasSuffix(path, "/embeddedSnapshots") {
 		src, dst := testInventories(f.origin)
+		currentTargetSnapshot := strings.Contains(path, "/versions/target-current/")
 		inv := src
 		if env == "target" {
 			inv = dst
 		}
 		resources := inv.Resources
-		if env == "target" && f.liveTarget != nil && strings.Contains(path, "/versions/targetlive/") {
+		if env == "target" && f.liveTarget != nil && currentTargetSnapshot {
 			resources = f.liveTarget(resources)
 		}
 		items := []any{}
@@ -114,7 +134,30 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 			if f.mutatedSource && res.ID == "flow" {
 				res.Configuration["name"] = "Changed"
 			}
-			items = append(items, map[string]any{"resource": map[string]string{"id": res.ID}, "resourceUrl": res.URL, "configuration": res.Configuration})
+			if env == "target" && currentTargetSnapshot && f.targetChanged && res.ID == "dest" {
+				res.Configuration["name"] = "Changed after planning"
+			}
+			if env == "target" && currentTargetSnapshot && f.targetDependencyChanged && res.ID == "template" {
+				res.Configuration["name"] = "Dependency changed after planning"
+			}
+			item := map[string]any{"resource": map[string]string{"id": res.ID}, "resourceUrl": res.URL, "configuration": res.Configuration}
+			if env == "source" && f.reuseDependency && res.ID == "flow" {
+				item["referencedResources"] = []string{"template"}
+			}
+			items = append(items, item)
+			if env == "target" && currentTargetSnapshot && f.targetDuplicate && res.ID == "dest" {
+				items = append(items, map[string]any{"resource": map[string]string{"id": res.ID}, "resourceUrl": res.URL, "configuration": res.Configuration})
+			}
+		}
+		if env == "target" && f.reuseDependency {
+			dependencyName := "Shared template"
+			if currentTargetSnapshot && f.targetDependencyChanged {
+				dependencyName = "Dependency changed after planning"
+			}
+			items = append(items, map[string]any{"resource": map[string]string{"id": "template"}, "resourceUrl": f.origin + "/v1/environments/target/templates/template", "configuration": map[string]any{"name": dependencyName}})
+		}
+		if env == "target" && currentTargetSnapshot && f.targetCollision {
+			items = append(items, map[string]any{"resource": map[string]string{"id": "new-flow"}, "resourceUrl": f.origin + "/v1/environments/target/flows/new-flow", "configuration": map[string]any{"name": "Flow"}})
 		}
 		json.NewEncoder(w).Encode(map[string]any{"_embedded": map[string]any{"referencedResources": items}})
 		return
@@ -124,12 +167,13 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "source pin bypass", 400)
 			return
 		}
-		if r.Method == "POST" && env == "target" && f.liveTargetFail {
-			http.Error(w, "snapshot unavailable", 503)
+		if r.Method == "POST" && env == "target" && (f.targetUnavailable || f.liveTargetFail) {
+			http.Error(w, "target snapshot unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if env == "target" && (f.liveTarget != nil || f.liveTargetFail) && (r.Method == "POST" || strings.Contains(path, "/versions/targetlive")) {
-			pin = "targetlive"
+		if r.Method == "POST" && env == "target" {
+			json.NewEncoder(w).Encode(map[string]any{"snapshotId": "target-current", "resource": map[string]string{"id": env}, "status": "COMPLETE"})
+			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{"snapshotId": pin, "resource": map[string]string{"id": env}, "status": "COMPLETE"})
 		return
@@ -181,7 +225,7 @@ func TestFullPageAndNativeIdentityBlock(t *testing.T) {
 	}
 }
 func TestApplyRequiresFreshAuthorizationDigestAndReadyPlan(t *testing.T) {
-	for _, mode := range []string{"noauth", "wrongdigest", "changedstep", "changedmapping", "changedsourcepin", "started", "denied", "ok"} {
+	for _, mode := range []string{"noauth", "wrongdigest", "changedstep", "changedmapping", "addedmapping", "missingmapping", "changedsourcepin", "started", "denied", "ok"} {
 		t.Run(mode, func(t *testing.T) {
 			f := fixture(t)
 			e := &Engine{Client: f.client}
@@ -207,6 +251,10 @@ func TestApplyRequiresFreshAuthorizationDigestAndReadyPlan(t *testing.T) {
 				f.steps[0].Payload = json.RawMessage(`{"name":"changed"}`)
 			case "changedmapping":
 				f.native.Mapping["flow"] = "other"
+			case "addedmapping":
+				f.native.Mapping["extra"] = "extra"
+			case "missingmapping":
+				delete(f.native.Mapping, "flow")
 			case "changedsourcepin":
 				f.native.SourceSnapshot.ID = "other"
 			case "started":
@@ -223,6 +271,145 @@ func TestApplyRequiresFreshAuthorizationDigestAndReadyPlan(t *testing.T) {
 		})
 	}
 }
+
+func TestRollbackPlanRequiresExplicitNativeOriginalLink(t *testing.T) {
+	for _, mode := range []string{"missing", "wrong"} {
+		t.Run(mode, func(t *testing.T) {
+			f := fixture(t)
+			e := &Engine{Client: f.client}
+			original, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.native.Status = "COMPLETED"
+			f.rollbackLinkMode = mode
+			if _, err = e.RollbackPlan(context.Background(), original, testOrigin()); err == nil || f.execute != 0 {
+				t.Fatalf("native rollback with %s original link accepted: err=%v execute=%d", mode, err, f.execute)
+			}
+		})
+	}
+}
+
+func TestApplyRejectsRollbackWhoseNativeOriginalLinkChanged(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	original, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Status = "COMPLETED"
+	rollback, err := e.RollbackPlan(context.Background(), original, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Previous.ID = "other"
+	if _, err = e.Apply(context.Background(), rollback, rollback.Review.Digest, func(context.Context, Artifact) error { return nil }); err == nil || f.execute != 0 {
+		t.Fatalf("rollback with changed native original link executed: err=%v execute=%d", err, f.execute)
+	}
+}
+
+func TestRollbackPlanBlocksMissingNativeTargetSnapshot(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	original, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Status = "COMPLETED"
+	f.omitTargetSnapshot = true
+	rollback, err := e.RollbackPlan(context.Background(), original, testOrigin())
+	if err == nil && len(rollback.Review.Issues) == 0 {
+		t.Fatal("rollback with missing native target snapshot produced an executable review")
+	}
+	if f.execute != 0 {
+		t.Fatal("rollback planning executed a native mutation")
+	}
+}
+
+func TestApplyRejectsCurrentTargetDriftBeforeExecution(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	a, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.targetChanged = true
+	authorized := false
+	_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error {
+		authorized = true
+		return nil
+	})
+	if err == nil || f.execute != 0 {
+		t.Fatalf("target drift was not blocked before execution: err=%v authorized=%v execute=%d", err, authorized, f.execute)
+	}
+}
+
+func TestApplyFailsClosedWhenCurrentTargetInventoryIsUnavailableOrAmbiguous(t *testing.T) {
+	for _, mode := range []string{"unavailable", "duplicate"} {
+		t.Run(mode, func(t *testing.T) {
+			f := fixture(t)
+			e := &Engine{Client: f.client}
+			a, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "unavailable" {
+				f.targetUnavailable = true
+			} else {
+				f.targetDuplicate = true
+			}
+			authorized := false
+			_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error {
+				authorized = true
+				return nil
+			})
+			if err == nil || f.execute != 0 {
+				t.Fatalf("unsafe target inventory mode %s passed: err=%v authorized=%v execute=%d", mode, err, authorized, f.execute)
+			}
+		})
+	}
+}
+
+func TestApplyRejectsChangedReusedUnselectedDependency(t *testing.T) {
+	f := fixture(t)
+	f.reuseDependency = true
+	e := &Engine{Client: f.client}
+	a, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.targetDependencyChanged = true
+	_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error { return nil })
+	if err == nil || f.execute != 0 {
+		t.Fatalf("changed reused dependency was not blocked: err=%v execute=%d", err, f.execute)
+	}
+}
+
+func TestApplyRejectsNewDestinationNameCollisionForCreate(t *testing.T) {
+	f := fixture(t)
+	source, target := testInventories(f.origin)
+	request, err := NewRequest(source, target, "us", "us", []string{"flow"}, map[string]string{}, "create flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.req = request
+	f.native.Mapping = map[string]string{}
+	f.steps = []pingone.Step{{Action: "POST", URL: f.origin + "/v1/environments/target/flows", Source: pingone.Ref{ID: "flow"}, Payload: json.RawMessage(`{"name":"Flow"}`)}}
+	e := &Engine{Client: f.client}
+	a, err := e.Plan(context.Background(), request, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Review.Issues) != 0 {
+		t.Fatalf("create plan unexpectedly invalid: %v", a.Review.Issues)
+	}
+	f.targetCollision = true
+	_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error { return nil })
+	if err == nil || f.execute != 0 {
+		t.Fatalf("new destination name collision was not blocked: err=%v execute=%d", err, f.execute)
+	}
+}
+
 func TestRollbackDistinctPlanAndReviewedDelete(t *testing.T) {
 	f := fixture(t)
 	e := &Engine{Client: f.client}
@@ -242,6 +429,31 @@ func TestRollbackDistinctPlanAndReviewedDelete(t *testing.T) {
 		t.Fatalf("rollback execute %v", err)
 	}
 }
+
+func TestRollbackPlanRejectsDifferentGitLabProjectBeforeNativeDraft(t *testing.T) {
+	for _, mode := range []string{"server", "project"} {
+		t.Run(mode, func(t *testing.T) {
+			f := fixture(t)
+			e := &Engine{Client: f.client}
+			original, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.native.Status = "COMPLETED"
+			current := testOrigin()
+			if mode == "server" {
+				current.ServerURL = "https://other-gitlab.example.com"
+			} else {
+				current.ProjectID = "789"
+			}
+			_, err = e.RollbackPlan(context.Background(), original, current)
+			if err == nil || f.rollback != 0 {
+				t.Fatalf("rollback crossed trusted GitLab %s: err=%v rollback drafts=%d", mode, err, f.rollback)
+			}
+		})
+	}
+}
+
 func TestArtifactOriginAndTargetSnapshotAreDigestBound(t *testing.T) {
 	for _, field := range []string{"origin", "targetsnapshot"} {
 		t.Run(field, func(t *testing.T) {

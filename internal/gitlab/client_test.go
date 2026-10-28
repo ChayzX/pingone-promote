@@ -27,6 +27,7 @@ func TestConfigValidate(t *testing.T) {
 		{BaseURL: "https://git.example/?x=1", ProjectID: "42"},
 		{BaseURL: "https://git.example/#frag", ProjectID: "42"},
 		{BaseURL: "https://git.example/a/../b", ProjectID: "42"},
+		{BaseURL: "https://git.example/gitlab%2f..%2foutside", ProjectID: "42"},
 		{BaseURL: "https://git.example", ProjectID: "group/project"},
 		{BaseURL: "https://git.example", ProjectID: "42", TokenEnv: "BAD-NAME"},
 		{BaseURL: "https://git.example", ProjectID: "42", Environment: "prod/evil"},
@@ -192,6 +193,40 @@ func TestSubmitRejectsUnsafeFileAndMRURL(t *testing.T) {
 	}
 }
 
+func TestSubmitRejectsMalformedMergeRequestResponse(t *testing.T) {
+	var serverURL string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/projects/42"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "visibility": "private", "archived": false, "default_branch": "main", "web_url": serverURL + "/gitlab/group/project"})
+		case strings.HasSuffix(r.URL.Path, "/repository/branches/main"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/branches"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/commits"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"web_url":"` + serverURL + `/gitlab/group/project"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	serverURL = srv.URL
+	c, err := NewClient(testConfig(srv.URL+"/gitlab"), "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = srv.Client()
+	if _, err = c.Submit(context.Background(), "req", map[string]string{"request.json": "{}"}, "title", "description"); err == nil {
+		t.Fatal("malformed merge request response reported success")
+	}
+}
+
 func TestConfigPersistenceIsPrivateAndMetadataOnly(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	c := testConfig("https://git.example/gitlab")
@@ -227,7 +262,7 @@ func TestConfigPersistenceIsPrivateAndMetadataOnly(t *testing.T) {
 
 func TestSafeMergeRequestURLConfinement(t *testing.T) {
 	base, _ := url.Parse("https://git.example/gitlab")
-	for _, raw := range []string{"https://evil.example/gitlab/x", "https://git.example/other/x", "https://git.example/gitlab/%2e%2e/x"} {
+	for _, raw := range []string{"https://evil.example/gitlab/x", "https://git.example/other/x", "https://git.example/gitlab/%2e%2e/x", "https://git.example/gitlab%2f..%2foutside/x"} {
 		u, _ := url.Parse(raw)
 		if sameGitLabLocation(base, u) {
 			t.Errorf("accepted %s", raw)

@@ -1,6 +1,18 @@
 # Verification and integration status
 
-The local application has been verified with documented API-shaped fixtures. It has **not** been tested against a live PingOne tenant or executed on macOS/RHEL in this workspace.
+The local application has been verified with documented API-shaped fixtures. Disposable live PingOne probes have reached ordinary resource APIs, but native promotion access is blocked because the capability is not enabled. No live native promotion or rollback is verified. The application has not been executed on macOS/RHEL in this workspace.
+
+## Acceptance follow-up — 2026-10-27
+
+The revised template passed the private project's GitLab CI lint without errors or warnings. An isolated GitLab-hosted Linux job passed the Go suite, race detector, vet, JavaScript syntax check, ten selector regressions and Linux/macOS cross-builds for its captured source manifest. Later source changes require another manifest-bound run before completion. Windows full-suite failures concern Unix file-lock and permission semantics; they are not a successful Windows compatibility test.
+
+Additional regressions cover changed live destination configuration and reused dependencies, create collisions, unavailable/ambiguous inventory, exact native mapping changes, original rollback job provenance, and missing or changed native rollback linkage. Red/green outputs and live job traces are retained privately with the source state they tested.
+
+Native snapshot probes returned `403 ACCESS_FAILED` with detail code `LICENSE_EXCEEDED`, despite Configuration Management already being opted in. An independent HTTP reproduction confirmed the denial. Successful probe-job status means diagnostics completed; it does not mean deployment succeeded. Live GitLab approval blocking, separate approval, retry rejection and merge request isolation were tested independently without native writes. Native resource/version before-and-after evidence and separately approved native rollback remain outstanding. See [HANDOFF.md](HANDOFF.md) for the acceptance gate and vendor sandbox-only support limitation.
+
+## Offline QE follow-up
+
+Additional regression tests cover non-object JSON request bodies, missing GitLab job metadata, encoded GitLab path traversal, incomplete merge request responses, mismatched native resource and step identities, credential reflection in API error codes, and browser review invalidation while a request is pending. These are fixture tests; they do not establish live service compatibility. Private evidence retains the failing reproductions and subsequent verification results, bound to the tested source manifest.
 
 ## Automated checks
 

@@ -3,12 +3,14 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
 	"strings"
@@ -17,12 +19,17 @@ import (
 )
 
 type nativeFixture struct {
-	mu              sync.Mutex
-	url             string
-	hidden, changed bool
-	executed        []string
-	statuses        map[string]string
-	created         map[string]any
+	mu                    sync.Mutex
+	url                   string
+	hidden, changed       bool
+	omitPromotionID       bool
+	failExecuteAfterWrite bool
+	afterSteps            func()
+	afterStepsCalls       int
+	executed              []string
+	rollbackRequests      int
+	statuses              map[string]string
+	created               map[string]any
 }
 
 func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +74,10 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == "/v1/environments/src/promotions" && r.Method == "POST" {
 		json.NewDecoder(r.Body).Decode(&f.created)
+		if f.omitPromotionID {
+			write(map[string]any{})
+			return
+		}
 		f.statuses["p1"] = "READY"
 		write(f.metadata("p1"))
 		return
@@ -94,6 +105,12 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		write(out)
+		if f.afterSteps != nil {
+			after := f.afterSteps
+			f.afterSteps = nil
+			f.afterStepsCalls++
+			after()
+		}
 		return
 	}
 	if strings.Contains(p, "/promotions/") {
@@ -102,10 +119,15 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case pingone.ExecuteType:
 				f.executed = append(f.executed, id)
 				f.statuses[id] = "COMPLETED"
+				if f.failExecuteAfterWrite {
+					http.Error(w, "fixture response lost after native write", http.StatusBadGateway)
+					return
+				}
 				if id == "rb1" {
 					f.statuses["p1"] = "ROLLED_BACK"
 				}
 			case pingone.RollbackType:
+				f.rollbackRequests++
 				id = "rb1"
 				f.statuses[id] = "READY"
 			default:
@@ -176,6 +198,25 @@ func setup(t *testing.T) *harness {
 	h.csrf = session.CSRF
 	return h
 }
+
+func executedIDs(f *nativeFixture) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.executed...)
+}
+
+func rollbackRequestCount(f *nativeFixture) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rollbackRequests
+}
+
+func stepsHookCount(f *nativeFixture) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.afterStepsCalls
+}
+
 func (h *harness) call(method, path string, body, out any, status int) {
 	h.t.Helper()
 	raw, _ := json.Marshal(body)
@@ -223,11 +264,309 @@ func TestWorkflowSelectionAndDuplicateDeployment(t *testing.T) {
 	if deployed.Status != "COMPLETED" || len(deployed.Review.Issues) > 0 {
 		t.Fatalf("successful deployment reported as issue: %+v", deployed)
 	}
-	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, nil, 409)
+	var duplicate struct {
+		MutationStarted *bool `json:"mutationStarted"`
+		SafeToRetry     *bool `json:"safeToRetry"`
+	}
+	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, &duplicate, 409)
+	if duplicate.MutationStarted == nil || *duplicate.MutationStarted || duplicate.SafeToRetry != nil && *duplicate.SafeToRetry {
+		t.Fatalf("duplicate deploy was incorrectly classified as a safe retry: %+v", duplicate)
+	}
 	if len(h.f.executed) != 1 {
 		t.Fatal("execute was replayed")
 	}
 }
+
+func TestDeployPreflightFailuresAreSafeAndRetryable(t *testing.T) {
+	t.Run("refresh storage failure", func(t *testing.T) {
+		h := setup(t)
+		v := h.plan()
+		s := h.server.Config.Handler.(*Server)
+		recordsPath := filepath.Join(s.store.Directory(), "records.json")
+		backupPath := filepath.Join(s.store.Directory(), "records.saved-for-test")
+		if err := os.Rename(recordsPath, backupPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(recordsPath, 0700); err != nil {
+			_ = os.Rename(backupPath, recordsPath)
+			t.Fatal(err)
+		}
+		restored := false
+		restore := func() {
+			if restored {
+				return
+			}
+			if _, err := os.Stat(backupPath); err != nil {
+				return
+			}
+			if info, err := os.Stat(recordsPath); err == nil && info.IsDir() {
+				_ = os.Remove(recordsPath)
+			}
+			if err := os.Rename(backupPath, recordsPath); err == nil {
+				restored = true
+			}
+		}
+		t.Cleanup(restore)
+
+		var failure struct {
+			Error           string `json:"error"`
+			MutationStarted *bool  `json:"mutationStarted"`
+			SafeToRetry     bool   `json:"safeToRetry"`
+		}
+		path := "/api/plans/" + v.ID + "/deploy"
+		body := map[string]any{"digest": v.Review.Digest, "confirm": true}
+		h.call("POST", path, body, &failure, http.StatusInternalServerError)
+		if !failure.SafeToRetry || failure.MutationStarted == nil || *failure.MutationStarted || strings.Contains(failure.Error, s.store.Directory()) {
+			t.Fatalf("refresh storage failure was not safely and privately classified: %+v", failure)
+		}
+		if got := len(executedIDs(h.f)); got != 0 {
+			t.Fatalf("refresh storage failure issued %d native execution writes", got)
+		}
+		restore()
+		var deployed PlanView
+		h.call("POST", path, body, &deployed, http.StatusOK)
+		if deployed.Status != "COMPLETED" || len(executedIDs(h.f)) != 1 {
+			t.Fatalf("retry after refresh storage recovery did not execute once: status=%q executed=%v", deployed.Status, executedIDs(h.f))
+		}
+	})
+
+	t.Run("client setup", func(t *testing.T) {
+		h := setup(t)
+		v := h.plan()
+		s := h.server.Config.Handler.(*Server)
+		originalFactory := s.clientFactory
+		s.mu.Lock()
+		delete(s.clients, h.source.ID)
+		s.clientFactory = func(p pingone.Profile, secret string) (*pingone.Client, error) {
+			return nil, errors.New("fixture client setup failed")
+		}
+		s.mu.Unlock()
+
+		var failure struct {
+			Error           string `json:"error"`
+			MutationStarted *bool  `json:"mutationStarted"`
+			SafeToRetry     bool   `json:"safeToRetry"`
+		}
+		path := "/api/plans/" + v.ID + "/deploy"
+		body := map[string]any{"digest": v.Review.Digest, "confirm": true}
+		h.call("POST", path, body, &failure, http.StatusBadGateway)
+		if failure.MutationStarted == nil || *failure.MutationStarted || !failure.SafeToRetry || !strings.Contains(failure.Error, "fixture client setup failed") {
+			t.Fatalf("client setup failure was not identified as a no-write preflight error: %+v", failure)
+		}
+		if got := len(executedIDs(h.f)); got != 0 {
+			t.Fatalf("client setup failure issued %d native execution writes", got)
+		}
+		s.mu.Lock()
+		intent := s.plans[v.ID].Record.Intent
+		s.clientFactory = originalFactory
+		s.mu.Unlock()
+		if intent != "" {
+			t.Fatalf("client setup failure locked the in-memory plan with intent %q", intent)
+		}
+
+		var deployed PlanView
+		h.call("POST", path, body, &deployed, http.StatusOK)
+		if deployed.Status != "COMPLETED" || len(executedIDs(h.f)) != 1 {
+			t.Fatalf("retry after client setup recovery did not execute once: status=%q executed=%v", deployed.Status, executedIDs(h.f))
+		}
+	})
+
+	t.Run("attempt marker persistence", func(t *testing.T) {
+		h := setup(t)
+		v := h.plan()
+		s := h.server.Config.Handler.(*Server)
+		recordsPath := filepath.Join(s.store.Directory(), "records.json")
+		backupPath := filepath.Join(s.store.Directory(), "records.saved-for-test")
+		restored := false
+		restore := func() {
+			if restored {
+				return
+			}
+			if _, err := os.Stat(backupPath); err != nil {
+				return
+			}
+			if info, err := os.Stat(recordsPath); err == nil && info.IsDir() {
+				_ = os.Remove(recordsPath)
+			}
+			if err := os.Rename(backupPath, recordsPath); err == nil {
+				restored = true
+			}
+		}
+		t.Cleanup(restore)
+		h.f.mu.Lock()
+		h.f.afterSteps = func() {
+			if err := os.Rename(recordsPath, backupPath); err == nil {
+				_ = os.Mkdir(recordsPath, 0700)
+			}
+		}
+		h.f.mu.Unlock()
+
+		var failure struct {
+			Error           string `json:"error"`
+			MutationStarted *bool  `json:"mutationStarted"`
+			SafeToRetry     bool   `json:"safeToRetry"`
+		}
+		path := "/api/plans/" + v.ID + "/deploy"
+		body := map[string]any{"digest": v.Review.Digest, "confirm": true}
+		h.call("POST", path, body, &failure, http.StatusInternalServerError)
+		if !failure.SafeToRetry || failure.MutationStarted == nil || *failure.MutationStarted || strings.Contains(failure.Error, s.store.Directory()) {
+			t.Fatalf("marker persistence failure did not report safe retry: %+v", failure)
+		}
+		if stepsHookCount(h.f) != 1 {
+			t.Fatalf("expected exactly one post-refresh storage fault injection, got %d", stepsHookCount(h.f))
+		}
+		if info, err := os.Stat(recordsPath); err != nil || !info.IsDir() {
+			t.Fatalf("fixture did not fail storage after the read-only refresh completed: info=%v err=%v", info, err)
+		}
+		if got := len(executedIDs(h.f)); got != 0 {
+			t.Fatalf("marker persistence failure issued %d native execution writes", got)
+		}
+		s.mu.Lock()
+		intent := s.plans[v.ID].Record.Intent
+		s.mu.Unlock()
+		if intent != "" {
+			t.Fatalf("marker persistence failure locked the in-memory plan with intent %q", intent)
+		}
+
+		restore()
+		var deployed PlanView
+		h.call("POST", path, body, &deployed, http.StatusOK)
+		if deployed.Status != "COMPLETED" || len(executedIDs(h.f)) != 1 {
+			t.Fatalf("retry after storage recovery did not execute once: status=%q executed=%v", deployed.Status, executedIDs(h.f))
+		}
+	})
+
+	t.Run("rollback marker persistence", func(t *testing.T) {
+		h := setup(t)
+		v := h.plan()
+		h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, nil, http.StatusOK)
+		s := h.server.Config.Handler.(*Server)
+		recordsPath := filepath.Join(s.store.Directory(), "records.json")
+		backupPath := filepath.Join(s.store.Directory(), "records.saved-for-test")
+		restored := false
+		restore := func() {
+			if restored {
+				return
+			}
+			if _, err := os.Stat(backupPath); err != nil {
+				return
+			}
+			if info, err := os.Stat(recordsPath); err == nil && info.IsDir() {
+				_ = os.Remove(recordsPath)
+			}
+			if err := os.Rename(backupPath, recordsPath); err == nil {
+				restored = true
+			}
+		}
+		t.Cleanup(restore)
+		h.f.mu.Lock()
+		h.f.afterSteps = func() {
+			if err := os.Rename(recordsPath, backupPath); err == nil {
+				_ = os.Mkdir(recordsPath, 0700)
+			}
+		}
+		h.f.mu.Unlock()
+
+		var failure struct {
+			MutationStarted *bool  `json:"mutationStarted"`
+			SafeToRetry     bool   `json:"safeToRetry"`
+			Error           string `json:"error"`
+		}
+		path := "/api/plans/" + v.ID + "/rollback"
+		body := map[string]bool{"confirm": true}
+		h.call("POST", path, body, &failure, http.StatusInternalServerError)
+		if failure.MutationStarted == nil || *failure.MutationStarted || !failure.SafeToRetry {
+			t.Fatalf("rollback marker persistence failure did not report safe retry: %+v", failure)
+		}
+		if stepsHookCount(h.f) != 1 {
+			t.Fatalf("expected exactly one post-refresh storage fault injection, got %d", stepsHookCount(h.f))
+		}
+		if info, err := os.Stat(recordsPath); err != nil || !info.IsDir() {
+			t.Fatalf("fixture did not fail rollback marker storage after refresh: info=%v err=%v", info, err)
+		}
+		if rollbackRequestCount(h.f) != 0 {
+			t.Fatalf("rollback marker persistence failure sent %d native rollback writes", rollbackRequestCount(h.f))
+		}
+		s.mu.Lock()
+		intent := s.plans[v.ID].Record.Intent
+		s.mu.Unlock()
+		if intent != "execute_sent" {
+			t.Fatalf("rollback marker persistence failure changed prior intent: got %q", intent)
+		}
+
+		restore()
+		var rollback PlanView
+		h.call("POST", path, body, &rollback, http.StatusOK)
+		if rollback.Kind != "rollback" || rollbackRequestCount(h.f) != 1 {
+			t.Fatalf("retry after storage recovery did not create exactly one rollback draft: kind=%q requests=%d", rollback.Kind, rollbackRequestCount(h.f))
+		}
+	})
+}
+
+func TestDeployWriteFailureRemainsUncertainAndCannotReplay(t *testing.T) {
+	h := setup(t)
+	v := h.plan()
+	h.f.mu.Lock()
+	h.f.failExecuteAfterWrite = true
+	h.f.mu.Unlock()
+	path := "/api/plans/" + v.ID + "/deploy"
+	body := map[string]any{"digest": v.Review.Digest, "confirm": true}
+	var failure struct {
+		Error           string `json:"error"`
+		MutationStarted *bool  `json:"mutationStarted"`
+		SafeToRetry     *bool  `json:"safeToRetry"`
+	}
+	h.call("POST", path, body, &failure, http.StatusBadGateway)
+	if failure.MutationStarted != nil || failure.SafeToRetry != nil {
+		t.Fatalf("post-write failure was incorrectly marked no-write/safe: %+v", failure)
+	}
+	if got := len(executedIDs(h.f)); got != 1 {
+		t.Fatalf("fixture should accept one execution before losing the response, got %d", got)
+	}
+	var records []store.Record
+	h.call("GET", "/api/history", nil, &records, http.StatusOK)
+	if len(records) != 1 || records[0].Intent != "execute_requested" {
+		t.Fatalf("post-write intent was not retained as uncertain: %+v", records)
+	}
+	var blocked struct {
+		MutationStarted *bool `json:"mutationStarted"`
+		SafeToRetry     *bool `json:"safeToRetry"`
+	}
+	h.call("POST", path, body, &blocked, http.StatusConflict)
+	if blocked.MutationStarted == nil || *blocked.MutationStarted || blocked.SafeToRetry != nil && *blocked.SafeToRetry {
+		t.Fatalf("uncertain prior execution was incorrectly classified retryable: %+v", blocked)
+	}
+	if got := len(executedIDs(h.f)); got != 1 {
+		t.Fatalf("ambiguous execution was replayed %d times", got)
+	}
+}
+
+func TestCreatePlanMissingNativeIDIsMarkedUncertain(t *testing.T) {
+	h := setup(t)
+	h.f.omitPromotionID = true
+	var source, target struct {
+		ID string `json:"id"`
+	}
+	h.call("POST", "/api/inventory", map[string]string{"profileId": h.source.ID}, &source, 200)
+	h.call("POST", "/api/inventory", map[string]string{"profileId": h.target.ID}, &target, 200)
+	var failure map[string]string
+	h.call("POST", "/api/plans", map[string]any{
+		"sourceInventoryId": source.ID,
+		"targetInventoryId": target.ID,
+		"selected":          []string{"f"},
+		"mappings":          map[string]string{"f": "g", "c": "d"},
+		"description":       "release",
+	}, &failure, 502)
+	if !strings.Contains(failure["error"], "reconcile") {
+		t.Fatalf("missing identity error lacks reconciliation guidance: %+v", failure)
+	}
+	var records []store.Record
+	h.call("GET", "/api/history", nil, &records, 200)
+	if len(records) != 1 || records[0].Status != "DRAFT_CREATION_UNCERTAIN" || records[0].Intent != "create_uncertain" {
+		t.Fatalf("missing native identity was not persisted as uncertain: %+v", records)
+	}
+}
+
 func TestUnselectedTemplateOnLaterPageNeverExecutes(t *testing.T) {
 	h := setup(t)
 	h.f.hidden = true
@@ -246,7 +585,14 @@ func TestChangedNativePlanRequiresNewReview(t *testing.T) {
 	h.f.mu.Lock()
 	h.f.changed = true
 	h.f.mu.Unlock()
-	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, nil, 409)
+	var failure struct {
+		MutationStarted *bool `json:"mutationStarted"`
+		SafeToRetry     *bool `json:"safeToRetry"`
+	}
+	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, &failure, 409)
+	if failure.MutationStarted == nil || *failure.MutationStarted || failure.SafeToRetry != nil && *failure.SafeToRetry {
+		t.Fatalf("stale review was incorrectly classified as an attempted safe retry: %+v", failure)
+	}
 	if len(h.f.executed) != 0 {
 		t.Fatal("changed plan executed")
 	}
@@ -290,6 +636,54 @@ func TestLocalSessionAndCSRFRequired(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 401 {
 		t.Fatalf("missing cookie accepted: %d", res.StatusCode)
+	}
+}
+
+func TestDecodeBodyRejectsValidJSONThatIsNotAnObject(t *testing.T) {
+	h := setup(t)
+	var result map[string]string
+	// A null body decodes successfully into a Go struct unless the HTTP boundary
+	// enforces its documented single-object request contract.
+	h.call("POST", "/api/inventory", json.RawMessage("null"), &result, 400)
+	if !strings.Contains(result["error"], "JSON object") {
+		t.Fatalf("non-object JSON was not rejected as an invalid request shape: %+v", result)
+	}
+}
+
+func TestDecodeBodyRequiresExactJSONMediaType(t *testing.T) {
+	h := setup(t)
+	body, err := json.Marshal(map[string]string{"profileId": h.source.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(contentType string) *http.Response {
+		h.t.Helper()
+		req, err := http.NewRequest("POST", h.server.URL+"/api/inventory", bytes.NewReader(body))
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-CSRF-Token", h.csrf)
+		req.Header.Set("Origin", h.server.URL)
+		res, err := h.http.Do(req)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		return res
+	}
+	for _, contentType := range []string{"application/jsonp", "application/jsonjunk"} {
+		res := post(contentType)
+		data, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "request must use application/json") {
+			t.Fatalf("lookalike media type %q was accepted: HTTP %d %s", contentType, res.StatusCode, data)
+		}
+	}
+	res := post("application/json; charset=UTF-8")
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(res.Body)
+		t.Fatalf("valid JSON charset parameter was rejected: HTTP %d %s", res.StatusCode, data)
 	}
 }
 

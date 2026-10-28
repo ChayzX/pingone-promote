@@ -285,6 +285,9 @@ func nativeIssues(a Artifact, p pingone.Promotion) []string {
 	if p.TargetSnapshot.ID != "" && p.TargetSnapshot.ID != a.TargetSnapshotID {
 		issues = append(issues, "native target snapshot differs from the reviewed target")
 	}
+	if a.Kind == "rollback" && p.TargetSnapshot.ID == "" {
+		issues = append(issues, "native rollback omitted its target snapshot; reconcile its snapshot linkage before execution")
+	}
 	if !sameMappings(p.Mapping, a.Request.Mappings) {
 		issues = append(issues, "native resource mappings differ from the approved request")
 	}
@@ -307,6 +310,16 @@ func sameMappings(a, b map[string]string) bool {
 	}
 	return true
 }
+
+func sameGitLabProject(a, b Origin) bool {
+	ua, errA := url.Parse(a.ServerURL)
+	ub, errB := url.Parse(b.ServerURL)
+	if errA != nil || errB != nil || a.ProjectID != b.ProjectID {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host) && strings.TrimSuffix(ua.Path, "/") == strings.TrimSuffix(ub.Path, "/")
+}
+
 func nativeErrors(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
@@ -368,6 +381,9 @@ func (e *Engine) RollbackPlan(ctx context.Context, original Artifact, origin Ori
 	}
 	if err := origin.Validate(); err != nil {
 		return a, err
+	}
+	if !sameGitLabProject(original.Origin, origin) {
+		return a, errors.New("rollback must use the original trusted GitLab project")
 	}
 	if original.Kind != "promotion" {
 		return a, errors.New("only a forward promotion may produce a rollback plan")

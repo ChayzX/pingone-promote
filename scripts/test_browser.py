@@ -19,6 +19,7 @@ with sync_playwright() as p:
  page=b.new_page(viewport={'width':1440,'height':1000},reduced_motion='reduce')
  errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
  page.goto(info['url']);page.locator('#source-profile option:nth-child(2)').wait_for(state='attached')
+ assert page.evaluate('getComputedStyle(document.documentElement).colorScheme') == 'dark', 'operations console must use the requested dark color scheme'
  page.locator('#source-profile').select_option(info['source']);page.locator('#target-profile').select_option(info['target'])
  page.get_by_role('button',name='Load resources',exact=True).click()
  expect(page.locator('#resource-rows tr')).to_have_count(3)

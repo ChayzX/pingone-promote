@@ -1,6 +1,6 @@
 # Copy into the private promotion project and configure its protected settings.
-# This file is a template: PROMOTION_TOOL_REF must be set to a reviewed full
-# commit SHA before the first pipeline can run.
+# This file is a template: set both PROMOTION_TOOL_REF (protected jobs) and
+# PROMOTION_VALIDATION_TOOL_REF (MR-safe validation) to reviewed full SHAs.
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -16,6 +16,8 @@ variables:
   PROMOTION_ENVIRONMENT: "production"
   PROMOTION_RUNNER_TAG: "blue"
   PROMOTION_GO_IMAGE: "golang:1.27"
+  PROMOTION_VALIDATION_TOOL_REF: "REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA"
+  PROMOTION_VALIDATION_RUNNER_TAG: "untrusted-validation"
   GIT_DEPTH: "0"
   GIT_STRATEGY: fetch
 
@@ -35,9 +37,24 @@ variables:
     - go build -o ../pingone-runner ./cmd/pingone-runner
     - cd ..
 
+.validation_job:
+  tags:
+    - $PROMOTION_VALIDATION_RUNNER_TAG
+  retry: 0
+  interruptible: false
+  before_script:
+    - |
+      [[ "${PROMOTION_VALIDATION_TOOL_REF:-}" =~ ^[0-9a-f]{40}$ ]] || { echo "Set PROMOTION_VALIDATION_TOOL_REF to a reviewed lowercase 40-character commit SHA" >&2; exit 1; }
+    - git clone --no-checkout https://github.com/ChayzX/pingone-promote.git .promotion-tool
+    - git -C .promotion-tool checkout --detach "$PROMOTION_VALIDATION_TOOL_REF"
+    - test "$(git -C .promotion-tool rev-parse HEAD)" = "$PROMOTION_VALIDATION_TOOL_REF"
+    - cd .promotion-tool
+    - go build -o ../pingone-runner ./cmd/pingone-runner
+    - cd ..
+
 validate_request:
   stage: validate
-  extends: .runner_job
+  extends: .validation_job
   image: $PROMOTION_GO_IMAGE
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -113,7 +130,7 @@ rollback_plan:
       test -n "${CI_JOB_TOKEN:-}" || { echo "CI_JOB_TOKEN is required to retrieve the original plan" >&2; exit 1; }
       status="$(curl --silent --show-error --output original-plan.json --write-out '%{http_code}' --header "JOB-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/$ORIGINAL_PLAN_JOB_ID/artifacts/plan.json")" || { echo "Could not retrieve the original plan artifact" >&2; exit 1; }
       test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
-    - ./pingone-runner rollback-plan --artifact original-plan.json --out rollback.json --digest-out rollback.sha256
+      ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256
   artifacts:
     access: developer
     expire_in: 2 days

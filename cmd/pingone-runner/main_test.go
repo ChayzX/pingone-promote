@@ -17,17 +17,18 @@ import (
 )
 
 type fakeGate struct {
-	verifyErr, authErr error
-	verified           int
-	origin             gitops.Origin
+	verifyErr, authErr, originalVerifyErr error
+	verified, originalVerified            int
+	origin                                gitops.Origin
 }
 
 type fakeEngine struct {
-	artifact    gitops.Artifact
-	initial     pingone.Promotion
-	statuses    []pingone.Promotion
-	applyCalls  int
-	statusCalls int
+	artifact      gitops.Artifact
+	initial       pingone.Promotion
+	statuses      []pingone.Promotion
+	applyCalls    int
+	statusCalls   int
+	rollbackCalls int
 }
 
 func (e *fakeEngine) Plan(context.Context, gitops.Request, gitops.Origin) (gitops.Artifact, error) {
@@ -50,6 +51,7 @@ func (e *fakeEngine) Status(context.Context, gitops.Artifact) (pingone.Promotion
 	return p, nil
 }
 func (e *fakeEngine) RollbackPlan(context.Context, gitops.Artifact, gitops.Origin) (gitops.Artifact, error) {
+	e.rollbackCalls++
 	return e.artifact, nil
 }
 
@@ -57,6 +59,16 @@ func (g *fakeGate) Origin() gitops.Origin { return g.origin }
 func (g *fakeGate) VerifyPlan(context.Context, gitops.Request) error {
 	g.verified++
 	return g.verifyErr
+}
+func (g *fakeGate) VerifyOriginalPlan(_ context.Context, a gitops.Artifact, jobID string) error {
+	g.originalVerified++
+	if g.originalVerifyErr != nil {
+		return g.originalVerifyErr
+	}
+	if jobID == "" || a.Origin.ServerURL != g.origin.ServerURL || a.Origin.ProjectID != g.origin.ProjectID {
+		return errors.New("source artifact origin is not bound to the trusted project")
+	}
+	return nil
 }
 func (g *fakeGate) Authorize(context.Context, gitops.Artifact) error { return g.authErr }
 
@@ -115,7 +127,7 @@ func TestStrictArtifactAndFlags(t *testing.T) {
 	if _, err := readArtifact(p); err == nil {
 		t.Fatal("unknown artifact field accepted")
 	}
-	for _, args := range [][]string{{"validate"}, {"digest", "--artifact", p, "trailing"}, {"apply", "--artifact", p, "--out", filepath.Join(d, "result"), "--approved-digest", "bad"}} {
+	for _, args := range [][]string{{"validate"}, {"digest", "--artifact", p, "trailing"}, {"apply", "--artifact", p, "--out", filepath.Join(d, "result"), "--approved-digest", "bad"}, {"rollback-plan", "--artifact", p, "--out", filepath.Join(d, "rollback")}} {
 		var out, errOut strings.Builder
 		if err := runWith(args, &out, &errOut, runnerDeps{}); err == nil {
 			t.Fatalf("accepted args %v", args)
@@ -132,6 +144,25 @@ func TestPlanGateRunsBeforeNativeClient(t *testing.T) {
 	err := runWith([]string{"plan", "--request", rp, "--out", filepath.Join(d, "artifact.json")}, &out, &errOut, deps(g))
 	if err == nil || g.verified != 1 {
 		t.Fatalf("gate not enforced: %v, calls=%d", err, g.verified)
+	}
+}
+
+// A rollback artifact from another project must not reach native rollback draft creation.
+func TestRollbackPlanRejectsForeignArtifactOriginBeforeNativeDraft(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	a.Origin.ProjectID = "11"
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "rollback.json")
+	putJSON(t, ap, a)
+	g := &fakeGate{origin: gitops.Origin{ServerURL: "https://gitlab.example", ProjectID: "10", PipelineID: "30", CommitSHA: strings.Repeat("d", 40)}}
+	e := &fakeEngine{}
+	dd := deps(g)
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	var out, errOut strings.Builder
+	err := runWith([]string{"rollback-plan", "--artifact", ap, "--original-job-id", "41", "--out", outp}, &out, &errOut, dd)
+	if err == nil || e.rollbackCalls != 0 || g.originalVerified != 1 {
+		t.Fatalf("foreign artifact reached native rollback draft: err=%v rollback calls=%d source verifications=%d", err, e.rollbackCalls, g.originalVerified)
 	}
 }
 

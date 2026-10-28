@@ -125,3 +125,71 @@ func TestLiveGateRequiresMatchingProtectedApprovedDeployment(t *testing.T) {
 		})
 	}
 }
+
+// A rollback artifact from a non-plan job or a different source revision must
+// not be accepted just because a caller supplied an artifact download URL.
+func TestVerifyOriginalPlanRequiresBoundSuccessfulDefaultBranchPlanJob(t *testing.T) {
+	for _, scenario := range []string{"valid", "wrong job name", "failed source job", "wrong source pipeline", "wrong source project", "wrong source commit", "wrong source ref", "tag ref", "missing tag metadata", "foreign artifact project", "foreign artifact server", "wrong job id"} {
+		t.Run(scenario, func(t *testing.T) {
+			sha := strings.Repeat("a", 40)
+			var ts *httptest.Server
+			ts = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasPrefix(r.URL.Path, "/api/v4/projects/7/jobs/") {
+					t.Errorf("unexpected GitLab API request %s", r.URL)
+					http.NotFound(w, r)
+					return
+				}
+				if r.Header.Get("PRIVATE-TOKEN") != "read-token" {
+					t.Errorf("source job lookup did not use the read token")
+				}
+				name, status, ref, pipelineRef, tag, pipelineID, pipelineProjectID, commit := "plan_promotion", "success", "main", "main", false, 9, 7, sha
+				switch scenario {
+				case "wrong job name":
+					name = "apply_promotion"
+				case "failed source job":
+					status = "failed"
+				case "wrong source pipeline":
+					pipelineID = 10
+				case "wrong source project":
+					pipelineProjectID = 8
+				case "wrong source commit":
+					commit = strings.Repeat("b", 40)
+				case "wrong source ref":
+					ref, pipelineRef = "feature/test", "feature/test"
+				case "tag ref":
+					tag = true
+				}
+				payload := map[string]any{
+					"id": 41, "name": name, "status": status, "ref": ref, "tag": tag,
+					"commit":   map[string]string{"id": commit},
+					"pipeline": map[string]any{"id": pipelineID, "project_id": pipelineProjectID, "sha": sha, "ref": pipelineRef},
+				}
+				if scenario == "missing tag metadata" {
+					delete(payload, "tag")
+				}
+				json.NewEncoder(w).Encode(payload)
+			}))
+			defer ts.Close()
+			c := Config{BaseURL: ts.URL, ExpectedURL: ts.URL, ProjectID: "7", ExpectedProjectID: "7", PipelineID: "12", JobID: "51", CommitSHA: strings.Repeat("c", 40), Branch: "main", DefaultBranch: "main", Environment: "production", TargetEnvironmentID: "prod", TargetRegion: "us", JobToken: "job-token", ReadToken: "read-token", ProtectedRef: true, PipelineSource: "web"}
+			v := Verifier{Config: c, HTTP: ts.Client()}
+			a := gitops.Artifact{Version: 1, Kind: "promotion", NativeID: "native", CreatedAt: "2026-01-01T00:00:00Z", Request: fixtureRequest(t), Origin: gitops.Origin{ServerURL: ts.URL, ProjectID: "7", PipelineID: "9", CommitSHA: sha}, TargetSnapshotID: "target", Review: promotion.Review{Digest: strings.Repeat("f", 64)}}
+			jobID := "41"
+			if scenario == "wrong job id" {
+				jobID = "42"
+			}
+			if scenario == "foreign artifact project" {
+				a.Origin.ProjectID = "8"
+			}
+			if scenario == "foreign artifact server" {
+				a.Origin.ServerURL = "https://other-gitlab.example"
+			}
+			err := v.VerifyOriginalPlan(context.Background(), a, jobID)
+			if scenario == "valid" && err != nil {
+				t.Fatalf("valid original plan rejected: %v", err)
+			}
+			if scenario != "valid" && err == nil {
+				t.Fatal("unbound original plan was accepted")
+			}
+		})
+	}
+}

@@ -60,3 +60,25 @@ func TestInventoryVersionRejectsIdentityAndIncomplete(t *testing.T) {
 		})
 	}
 }
+
+func TestInventoryVersionRejectsOddResourcePathIdentity(t *testing.T) {
+	var s *httptest.Server
+	s = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/environments/source":
+			fmt.Fprint(w, `{"id":"source","organization":{"id":"org"}}`)
+		case "/v1/environments/source/snapshots/source/versions/pin":
+			fmt.Fprint(w, `{"snapshotId":"pin","resource":{"id":"source"},"status":"COMPLETE"}`)
+		case "/v1/environments/source/snapshots/source/versions/pin/embeddedSnapshots":
+			fmt.Fprintf(w, `{"_embedded":{"referencedResources":[{"resource":{"id":"versions"},"resourceUrl":%q,"configuration":{"name":"Malformed"}}]}}`, s.URL+"/v1/environments/source/flows/flow/versions")
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+	c := &Client{BaseURL: s.URL, HTTP: s.Client(), AccessToken: "test"}
+	if _, err := c.InventoryVersion(context.Background(), "source", "pin"); err == nil {
+		t.Fatal("accepted an odd-length resource path whose last segment is a path type")
+	}
+}

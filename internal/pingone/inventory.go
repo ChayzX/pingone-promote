@@ -30,6 +30,7 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 	if snap.SnapshotID == "" || snap.Resource.ID != env {
 		return inv, errors.New("snapshot response omitted pinned environment/version identity")
 	}
+	pinnedSnapshotID := snap.SnapshotID
 	snapshotPath := EnvPath(env) + "/snapshots/" + url.PathEscape(env) + "/versions/" + url.PathEscape(snap.SnapshotID)
 	for attempts := 0; snap.Status != "COMPLETE"; attempts++ {
 		if snap.Status == "ERROR" {
@@ -45,11 +46,19 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 			case <-time.After(time.Second):
 			}
 		}
-		if err := c.Do(ctx, "GET", snapshotPath, "", nil, &snap); err != nil {
+		var polled Snapshot
+		if err := c.Do(ctx, "GET", snapshotPath, "", nil, &polled); err != nil {
 			return inv, err
 		}
+		if polled.SnapshotID != pinnedSnapshotID || polled.Resource.ID != env {
+			return inv, errors.New("snapshot polling changed or omitted pinned environment/version identity")
+		}
+		snap = polled
 	}
-	inv.SnapshotID = snap.SnapshotID
+	if snap.Status != "COMPLETE" || snap.SnapshotID != pinnedSnapshotID || snap.Resource.ID != env {
+		return inv, errors.New("completed snapshot identity did not match the requested environment/version")
+	}
+	inv.SnapshotID = pinnedSnapshotID
 	raw, err := c.Pages(ctx, snapshotPath+"/embeddedSnapshots", "referencedResources")
 	if err != nil {
 		return inv, err
@@ -74,6 +83,10 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		if !strings.HasPrefix(u.Path, prefix) || s.Resource.ID == "" || u.RawQuery != "" {
 			return inv, errors.New("inventory has an invalid resource identity")
 		}
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(u.Path, prefix), "/"), "/")
+		if len(parts) < 2 || len(parts)%2 != 0 || parts[len(parts)-1] != s.Resource.ID {
+			return inv, errors.New("inventory resource URL does not match its original identity")
+		}
 		if seen[s.Resource.ID] {
 			return inv, fmt.Errorf("ambiguous resource ID %s; this API response needs an explicit adapter", s.Resource.ID)
 		}
@@ -85,8 +98,6 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		if name == "" {
 			name = s.Resource.ID
 		}
-		relative := strings.TrimPrefix(u.Path, prefix)
-		parts := strings.Split(strings.Trim(relative, "/"), "/")
 		typ := parts[0]
 		if len(parts) > 2 {
 			var kinds []string

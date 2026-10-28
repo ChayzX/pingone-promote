@@ -56,6 +56,23 @@ type Store struct {
 	session map[string]string
 }
 
+// PersistenceError marks a local storage or stored-data error for API callers.
+// Its original cause remains available through Unwrap for local diagnostics.
+type PersistenceError struct{ err error }
+
+func (e *PersistenceError) Error() string { return e.err.Error() }
+func (e *PersistenceError) Unwrap() error { return e.err }
+
+func persistenceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PersistenceError{err: err}
+}
+
+// ErrRecordNotFound identifies an absent record without masking store read failures.
+var ErrRecordNotFound = errors.New("record not found")
+
 // Open opens or creates a private store directory and rejects malformed
 // existing data files instead of silently replacing them.
 func Open(dir string) (*Store, error) {
@@ -83,10 +100,13 @@ func (s *Store) path(name string) string { return filepath.Join(s.dir, name) }
 func (s *Store) read(name string) ([]byte, error) {
 	b, err := os.ReadFile(s.path(name))
 	if err != nil {
-		return nil, err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return nil, persistenceError(err)
 	}
 	if err := os.Chmod(s.path(name), 0600); err != nil {
-		return nil, fmt.Errorf("secure %s: %w", name, err)
+		return nil, persistenceError(fmt.Errorf("secure %s: %w", name, err))
 	}
 	return b, nil
 }
@@ -95,11 +115,11 @@ func decode(name string, b []byte, out any) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		return fmt.Errorf("decode %s: %w", name, err)
+		return persistenceError(fmt.Errorf("decode %s: %w", name, err))
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("decode %s: trailing JSON data", name)
+		return persistenceError(fmt.Errorf("decode %s: trailing JSON data", name))
 	}
 	return nil
 }
@@ -107,32 +127,32 @@ func decode(name string, b []byte, out any) error {
 func (s *Store) write(name string, value any) error {
 	b, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", name, err)
+		return persistenceError(fmt.Errorf("encode %s: %w", name, err))
 	}
 	b = append(b, '\n')
 	f, err := os.CreateTemp(s.dir, ".store-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temporary %s: %w", name, err)
+		return persistenceError(fmt.Errorf("create temporary %s: %w", name, err))
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
 	if err := f.Chmod(0600); err != nil {
 		f.Close()
-		return fmt.Errorf("secure temporary %s: %w", name, err)
+		return persistenceError(fmt.Errorf("secure temporary %s: %w", name, err))
 	}
 	if _, err := f.Write(b); err != nil {
 		f.Close()
-		return fmt.Errorf("write %s: %w", name, err)
+		return persistenceError(fmt.Errorf("write %s: %w", name, err))
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
-		return fmt.Errorf("sync %s: %w", name, err)
+		return persistenceError(fmt.Errorf("sync %s: %w", name, err))
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", name, err)
+		return persistenceError(fmt.Errorf("close %s: %w", name, err))
 	}
 	if err := os.Rename(tmp, s.path(name)); err != nil {
-		return fmt.Errorf("replace %s: %w", name, err)
+		return persistenceError(fmt.Errorf("replace %s: %w", name, err))
 	}
 	if d, err := os.Open(s.dir); err == nil {
 		_ = d.Sync()
@@ -359,7 +379,7 @@ func (s *Store) GetRecord(id string) (Record, error) {
 			return r, nil
 		}
 	}
-	return Record{}, fmt.Errorf("record %q not found", id)
+	return Record{}, fmt.Errorf("record %q: %w", id, ErrRecordNotFound)
 }
 
 // Directory is the private application-data directory used by additional

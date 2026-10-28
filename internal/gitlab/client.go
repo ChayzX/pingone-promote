@@ -35,6 +35,18 @@ type MergeRequest struct {
 	Branch string `json:"-"`
 }
 
+// SubmissionPreflightError means Submit failed before it attempted any write.
+// Callers may offer an explicit retry after the preflight problem is corrected.
+type SubmissionPreflightError struct {
+	Err error
+}
+
+func (e *SubmissionPreflightError) Error() string {
+	return "GitLab submission preflight failed; no GitLab writes occurred: " + e.Err.Error()
+}
+
+func (e *SubmissionPreflightError) Unwrap() error { return e.Err }
+
 func NewClient(config Config, token string) (*Client, error) {
 	config = config.withDefaults()
 	if err := config.Validate(); err != nil {
@@ -180,7 +192,7 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	}
 	project, err := c.VerifyProject(ctx)
 	if err != nil {
-		return MergeRequest{}, err
+		return MergeRequest{}, &SubmissionPreflightError{Err: err}
 	}
 	branch := "promotion/" + id
 	if err = c.Do(ctx, http.MethodPost, "projects/"+c.Config.ProjectID+"/repository/branches", map[string]string{"branch": branch, "ref": project.DefaultBranch}, nil); err != nil {
@@ -204,6 +216,9 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	if err = c.Do(ctx, http.MethodPost, "projects/"+c.Config.ProjectID+"/merge_requests", payload, &mr); err != nil {
 		return MergeRequest{}, fmt.Errorf("create merge request for branch %q: %w", branch, err)
 	}
+	if mr.ID < 1 || mr.IID < 1 {
+		return MergeRequest{}, errors.New("GitLab returned an incomplete merge request identity")
+	}
 	base, _ := parseBase(c.Config.BaseURL)
 	link, e := url.Parse(mr.WebURL)
 	if e != nil || !sameGitLabLocation(base, link) {
@@ -220,9 +235,8 @@ func sameGitLabLocation(base, u *url.URL) bool {
 		return false
 	}
 	bp := strings.TrimRight(base.Path, "/")
-	for _, part := range strings.Split(u.EscapedPath(), "/") {
-		decoded, err := url.PathUnescape(part)
-		if err != nil || decoded == "." || decoded == ".." {
+	for _, part := range strings.Split(u.Path, "/") {
+		if part == "." || part == ".." {
 			return false
 		}
 	}

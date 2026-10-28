@@ -139,6 +139,10 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 			rev.Issue = "target URL is outside destination environment"
 			add(fmt.Sprintf("step %d: target URL is outside destination environment", i))
 		}
+		if rollback && act == "DELETE" && st.Target.ID != "" && !rollbackTargetMatches(u, st.Target.ID, dst) {
+			rev.Issue = "rollback target does not match its resource URL"
+			add(fmt.Sprintf("step %d: rollback target does not match its resource URL", i))
+		}
 		var before map[string]any
 		if tr, ok := dst[st.Target.ID]; ok {
 			before = tr.Configuration
@@ -173,8 +177,14 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 					rev.Issue = "unmapped operation is not a valid collection create"
 					add(fmt.Sprintf("step %d: unmapped operation is not a valid collection create", i))
 				}
-			} else if id := createdRootID(st, payload); id != "" {
-				created[st.Source.ID] = id
+			} else {
+				payloadID, _ := payloadObject["id"].(string)
+				if st.Target.ID != "" && payloadID != "" && st.Target.ID != payloadID {
+					rev.Issue = "created target identity differs from its payload"
+					add(fmt.Sprintf("step %d: created target identity differs from its payload", i))
+				} else if id := createdRootID(st, payload); id != "" {
+					created[st.Source.ID] = id
+				}
 			}
 		}
 		r.Steps = append(r.Steps, rev)
@@ -190,6 +200,27 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 	h := sha256.Sum256(canonical)
 	r.Digest = hex.EncodeToString(h[:])
 	return r
+}
+
+func rollbackTargetMatches(u *url.URL, targetID string, dst map[string]pingone.Resource) bool {
+	if target, ok := dst[targetID]; ok {
+		ru, err := url.Parse(target.URL)
+		if err != nil || !strings.EqualFold(ru.Scheme, u.Scheme) || !strings.EqualFold(ru.Host, u.Host) {
+			return false
+		}
+		root := strings.TrimRight(ru.Path, "/")
+		return u.Path == root || strings.HasPrefix(u.Path, root+"/")
+	}
+	parts, ok := pathFor(u.String())
+	if !ok {
+		return false
+	}
+	for i := 4; i < len(parts); i += 2 {
+		if parts[i] == targetID {
+			return true
+		}
+	}
+	return false
 }
 
 func resourceIndex(inv pingone.Inventory) map[string]pingone.Resource {

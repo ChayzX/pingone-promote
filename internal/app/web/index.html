@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark">
   <title>PingOne Promote</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
@@ -11,9 +11,9 @@
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="brand" href="#top" aria-label="PingOne Promote home"><span class="brand-mark" aria-hidden="true">P</span><span>PingOne <strong>Promote</strong></span></a>
+      <a class="brand" href="#top" aria-label="PingOne Promote home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4"/></svg></span><span>PingOne <strong>Promote</strong></span></a>
       <div class="topbar-actions">
-        <span class="local-status"><span class="status-dot" aria-hidden="true"></span>Local app</span>
+        <span class="local-status">Local workspace</span>
         <button class="button button-quiet" id="profiles-open" type="button">Environment profiles</button>
         <button class="button button-quiet" id="gitlab-open" type="button">GitLab settings</button>
       </div>
@@ -23,27 +23,29 @@
   <main id="top" class="page-shell">
     <section class="page-heading" aria-labelledby="page-title">
       <div>
-        <p class="eyebrow">Configuration promotion</p>
-        <h1 id="page-title">Promote between environments</h1>
-        <p class="lede">Choose resources, match destination records, then review the complete plan before submitting it for approval.</p>
+        <p class="workspace-label">Workspace / Promotions</p>
+        <h1 id="page-title">Configuration promotion</h1>
+        <p class="lede">Select resources, map the destination, and review the changes.</p>
       </div>
-      <div class="scope-note"><span class="scope-icon" aria-hidden="true">i</span><span>Only configuration resources supported by PingOne promotion are available here.</span></div>
+      <div class="scope-note"><span>Native Configuration Management<br>Configuration resources only</span></div>
     </section>
 
+    <div class="promotion-workspace">
     <section class="panel environment-panel" aria-labelledby="environment-title">
       <div class="section-heading">
         <div><p class="eyebrow">Step 1</p><h2 id="environment-title">Choose environments</h2></div>
-        <span class="section-help">Source and destination can use different names for the same resource.</span>
+        <span class="section-help">Resource names can differ between environments.</span>
       </div>
       <div class="environment-grid">
         <div class="environment-card">
-          <div class="environment-label"><span class="environment-symbol source-symbol" aria-hidden="true">↑</span><div><h3>Source</h3><p>Read configuration from</p></div></div>
+          <div class="environment-label"><div><h3>Source</h3><p>Read configuration from</p></div></div>
           <label class="sr-only" for="source-profile">Source environment profile</label>
           <select id="source-profile" class="control profile-select"><option value="">Choose a saved profile</option></select>
           <p class="environment-meta" id="source-meta">No source profile selected</p>
         </div>
+        <div class="transfer-direction" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></div>
         <div class="environment-card">
-          <div class="environment-label"><span class="environment-symbol target-symbol" aria-hidden="true">↓</span><div><h3>Destination</h3><p>Review changes for</p></div></div>
+          <div class="environment-label"><div><h3>Destination</h3><p>Review changes for</p></div></div>
           <label class="sr-only" for="target-profile">Destination environment profile</label>
           <select id="target-profile" class="control profile-select"><option value="">Choose a saved profile</option></select>
           <p class="environment-meta" id="target-meta">No destination profile selected</p>
@@ -58,7 +60,7 @@
         <button class="button button-primary" id="load-resources" type="button" disabled>Load resources</button>
       </div>
       <div class="resource-toolbar">
-        <label class="search-field"><span class="sr-only">Search resources by name, type, or ID</span><span class="search-icon" aria-hidden="true">⌕</span><input class="control" id="resource-search" type="search" placeholder="Search name, type, or ID" autocomplete="off" disabled></label>
+        <label class="search-field"><span class="sr-only">Search resources by name, type, or ID</span><svg class="search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input class="control" id="resource-search" type="search" placeholder="Search name, type, or ID" autocomplete="off" disabled></label>
         <label class="type-filter"><span class="sr-only">Filter by resource type</span><select id="type-filter" class="control" disabled><option value="">All types</option></select></label>
         <span class="selection-count" id="selection-count" aria-live="polite">0 selected</span>
       </div>
@@ -91,16 +93,18 @@
         <button class="button button-primary" id="deploy-button" type="button" disabled>Deploy</button>
       </div>
     </section>
+    </div>
 
     <section class="panel history-panel" aria-labelledby="history-title">
       <div class="section-heading history-heading">
-        <div><p class="eyebrow">Activity</p><h2 id="history-title">Promotion history</h2><p class="section-help">Review saved operations and inspect rollback eligibility with PingOne.</p></div>
+        <div><p class="eyebrow">Activity</p><h2 id="history-title">Promotion history</h2><p class="section-help">Saved operations and native rollback eligibility.</p></div>
         <button class="button button-quiet" id="refresh-history" type="button">Refresh history</button>
       </div>
       <div id="history-state" class="state-box state-empty"><span class="state-icon" aria-hidden="true">◷</span><div><h3>Loading history</h3><p>Fetching saved promotion records.</p></div></div>
-      <div class="table-wrap history-table-wrap" id="history-table-wrap" hidden>
+      <div class="table-wrap history-table-wrap" id="history-table-wrap" role="region" aria-label="Scrollable promotion history" tabindex="0" hidden>
         <table class="history-table"><thead><tr><th scope="col">Promotion</th><th scope="col">Source</th><th scope="col">Destination</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody id="history-rows"></tbody></table>
       </div>
+      <p class="history-scroll-hint section-help">Scroll horizontally to view all activity columns.</p>
       <div class="history-cards" id="history-cards" hidden></div>
     </section>
 
@@ -109,7 +113,7 @@
 
   <dialog class="dialog profile-dialog" id="profiles-dialog" aria-labelledby="profiles-dialog-title">
     <form method="dialog" class="dialog-shell" id="profiles-form">
-      <header class="dialog-header"><div><p class="eyebrow">Saved environments</p><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" value="cancel" aria-label="Close environment profiles">×</button></header>
+      <header class="dialog-header"><div><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Close environment profiles">×</button></header>
       <div class="dialog-content">
         <div id="profile-list-state" class="inline-state"></div><div id="profile-list" class="profile-list"></div>
         <details class="profile-editor" id="profile-editor" open>
@@ -135,7 +139,7 @@
 
   <dialog class="dialog profile-dialog" id="gitlab-dialog" aria-labelledby="gitlab-dialog-title">
     <form method="dialog" class="dialog-shell" id="gitlab-form">
-      <header class="dialog-header"><div><p class="eyebrow">Private project</p><h2 id="gitlab-dialog-title">GitLab settings</h2></div><button class="icon-button" value="cancel" aria-label="Close GitLab settings">×</button></header>
+      <header class="dialog-header"><div><h2 id="gitlab-dialog-title">GitLab settings</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Close GitLab settings">×</button></header>
       <div class="dialog-content">
         <p class="section-help">Production requests are reviewed and deployed through your private GitLab project and protected runner. Store production write credentials only in protected CI variables. Local credentials should have read and snapshot permissions.</p>
         <fieldset class="form-grid"><legend class="sr-only">GitLab project connection</legend>
@@ -148,7 +152,7 @@
         <p id="gitlab-config-state" class="inline-state" aria-live="polite"></p>
         <p class="form-error" id="gitlab-error" role="alert" hidden></p>
       </div>
-      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Close</button><button class="button button-primary" id="gitlab-save" type="button">Save and verify</button></footer>
+      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel" formnovalidate>Close</button><button class="button button-primary" id="gitlab-save" type="button">Save and verify</button></footer>
     </form>
   </dialog>
 
