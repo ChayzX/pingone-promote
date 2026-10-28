@@ -63,11 +63,13 @@ plan_promotion:
   script:
     - source ./examples/gitlab/select-request.sh
     - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
+    # Independent re-check of the reviewed plan + a readable summary for approvers.
+    - ./pingone-runner plan-check --artifact plan.json --digest-file plan.sha256 --summary-out plan-review.md ${PROMOTION_FORBID_TYPES:+--forbid-type "$PROMOTION_FORBID_TYPES"}
   artifacts:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [plan.json, plan.sha256, selected-request.txt]
+    paths: [plan.json, plan.sha256, plan-review.md, selected-request.txt]
 
 apply_promotion:
   stage: deploy
@@ -114,11 +116,12 @@ rollback_plan:
       status="$(curl --silent --show-error --output original-plan.json --write-out '%{http_code}' --header "JOB-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/$ORIGINAL_PLAN_JOB_ID/artifacts/plan.json")" || { echo "Could not retrieve the original plan artifact" >&2; exit 1; }
       test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
     - ./pingone-runner rollback-plan --artifact original-plan.json --out rollback.json --digest-out rollback.sha256
+    - ./pingone-runner plan-check --artifact rollback.json --digest-file rollback.sha256 --summary-out rollback-review.md
   artifacts:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [rollback.json, rollback.sha256, original-plan.json]
+    paths: [rollback.json, rollback.sha256, rollback-review.md, original-plan.json]
 
 apply_rollback:
   stage: rollback_apply
@@ -145,3 +148,48 @@ apply_rollback:
     expire_in: 90 days
     when: always
     paths: [rollback.json, rollback.sha256, rollback-result.json, rollback.json.execute-intent]
+
+# Read-only audit of GitLab settings, CI/CD variables and PingOne capability.
+# Start a manual pipeline on the default branch with PROMOTION_MODE=preflight.
+# Optional PREFLIGHT_SOURCE_ENVIRONMENT_ID also probes the source environment.
+preflight:
+  stage: validate
+  extends: .runner_job
+  image: $PROMOTION_GO_IMAGE
+  environment:
+    name: $PROMOTION_ENVIRONMENT
+    action: prepare
+  rules:
+    - if: '$PROMOTION_MODE == "preflight" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - ./pingone-runner preflight --report preflight.md ${PREFLIGHT_SOURCE_ENVIRONMENT_ID:+--source "$PREFLIGHT_SOURCE_ENVIRONMENT_ID"}
+  artifacts:
+    access: developer
+    expire_in: 30 days
+    when: always
+    paths: [preflight.md]
+
+# Keyed before/after fingerprints of every resource in one environment (no
+# configuration values). Start a manual pipeline with PROMOTION_MODE=evidence,
+# EVIDENCE_ENVIRONMENT_ID and EVIDENCE_LABEL (for example "before-hp4").
+# Compare two downloads with: pingone-runner evidence compare --before … --after …
+capture_evidence:
+  stage: validate
+  extends: .runner_job
+  image: $PROMOTION_GO_IMAGE
+  environment:
+    name: $PROMOTION_ENVIRONMENT
+    action: prepare
+  rules:
+    - if: '$PROMOTION_MODE == "evidence" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - |
+      case "${EVIDENCE_ENVIRONMENT_ID:-}" in (''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_ENVIRONMENT_ID to a PingOne environment ID" >&2; exit 1;; esac
+      case "${EVIDENCE_LABEL:-}" in (''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_LABEL to letters, digits, - or _" >&2; exit 1;; esac
+    - mkdir -p evidence
+    - ./pingone-runner evidence capture --env "$EVIDENCE_ENVIRONMENT_ID" --out "evidence/$EVIDENCE_LABEL.json"
+  artifacts:
+    access: developer
+    expire_in: 90 days
+    when: always
+    paths: [evidence/]

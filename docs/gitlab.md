@@ -53,3 +53,22 @@ Rollback is a separate manual web pipeline on the protected default branch. Star
 Keep TLS verification enabled. If your enterprise GitLab uses a private CA, install that CA in the runner image or host trust store; do not disable certificate checks. Make sure runners can reach the GitLab API, your approved source mirror and PingOne endpoints. A missing approval API, unsupported GitLab tier, mismatched trusted project or target, unprotected branch/environment, incomplete plan, or unavailable native API must block execution.
 
 Before production, complete the live acceptance steps in [HANDOFF.md](HANDOFF.md). Template and fixture success alone do not establish compatibility with your GitLab version, project settings, runner tags, PingOne tenant or approval API responses.
+
+## 6. Automated acceptance checks
+
+Three `pingone-runner` commands automate the repeatable parts of the live acceptance checklist. None of them changes configuration; `evidence capture` and `preflight` only read, apart from the native snapshot that capture creates (planning creates one too). They never start pipelines or approve deployments: those remain human steps, and API- or GraphQL-started pipelines are rejected by the workflow rules.
+
+| Command | Where it runs | What it checks |
+| --- | --- | --- |
+| `preflight` | Manual pipeline with `PROMOTION_MODE=preflight` (job `preflight`) | Required CI/CD variables present, plus near-miss spellings (for example `PINGONE_CLIENT_SECRE`); private active project; protected default branch; minimum role for pipeline variables; pipeline-triggerer self-approval; protected environment with at least one approval; job-token identity; for each PingOne environment, identity, Configuration Management opt-in and whether the promotions API answers. It reports "feature not active (license/entitlement)" separately from "worker lacks a role", because PingOne returns HTTP 403 for both. Set `PREFLIGHT_SOURCE_ENVIRONMENT_ID` to probe the source too. |
+| `plan-check` | Automatically in `plan_promotion` and `rollback_plan` | Digest file matches the review digest; no review issues; every step stays inside the target environment; every promotion step comes from a selected source resource; optional forbidden resource types (`PROMOTION_FORBID_TYPES`, comma-separated URL path segments such as `templates`); rollback linkage; no known secret value (worker secret, read token, job token, evidence key) appears in the artifact. Writes `plan-review.md` / `rollback-review.md` for approvers. Locally you can add `--expect-selected id1,id2`. |
+| `evidence capture` / `evidence compare` | Capture: manual pipeline with `PROMOTION_MODE=evidence`, `EVIDENCE_ENVIRONMENT_ID`, `EVIDENCE_LABEL`. Compare: anywhere, on two downloaded captures | Capture stores an HMAC-SHA256 fingerprint of every resource, keyed by `EVIDENCE_HMAC_KEY` or the worker secret, and never stores configuration values. Compare fails on any change, removal or addition that was not declared with `--expect-changed` or `--allow-added-type`, and on captures made with different keys or environments. |
+
+Example before/after check for one promotion, run on your workstation after downloading both evidence artifacts:
+
+```sh
+./pingone-runner evidence compare --before before-hp4.json --after after-hp4.json \
+  --expect-changed <target-flow-id> --report hp4-evidence.md
+```
+
+Keep evidence files and reports in the private project or your private evidence log; they contain environment and resource identifiers.

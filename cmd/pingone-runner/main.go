@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/checks"
 	"pingone-promote/internal/cigate"
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/pingone"
@@ -43,6 +44,10 @@ type runnerDeps struct {
 	engine       func(*pingone.Client) runnerEngine
 	pollInterval time.Duration
 	pollTimeout  time.Duration
+	// Acceptance-check hooks (checks.go).
+	environ         func() []string
+	gitlabPreflight func(context.Context) checks.Report
+	targetClient    func(func(string) string) (*pingone.Client, error)
 }
 
 func defaultDeps(getenv func(string) string) runnerDeps {
@@ -55,10 +60,13 @@ func defaultDeps(getenv func(string) string) runnerDeps {
 			}
 			return &cigate.Verifier{Config: cfg}, nil
 		},
-		client:       makePingOneClient,
-		engine:       func(c *pingone.Client) runnerEngine { return &gitops.Engine{Client: c} },
-		pollInterval: time.Second,
-		pollTimeout:  10 * time.Minute,
+		client:          makePingOneClient,
+		engine:          func(c *pingone.Client) runnerEngine { return &gitops.Engine{Client: c} },
+		pollInterval:    time.Second,
+		pollTimeout:     10 * time.Minute,
+		environ:         os.Environ,
+		gitlabPreflight: defaultGitLabPreflight(getenv),
+		targetClient:    targetClient,
 	}
 }
 
@@ -75,7 +83,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|plan|apply|status|rollback-plan> [flags]\n")
+		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|plan|apply|status|rollback-plan|preflight|plan-check|evidence> [flags]\n")
 		return nil
 	}
 	if deps.getenv == nil {
@@ -98,7 +106,25 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	if deps.pollTimeout <= 0 {
 		deps.pollTimeout = 10 * time.Minute
 	}
+	if deps.environ == nil {
+		deps.environ = func() []string { return nil }
+	}
+	if deps.gitlabPreflight == nil {
+		deps.gitlabPreflight = func(context.Context) checks.Report {
+			r := checks.Report{Title: "GitLab preflight"}
+			r.Fail("job context", "runner CI verifier is unavailable")
+			return r
+		}
+	}
+	if deps.targetClient == nil {
+		deps.targetClient = func(func(string) string) (*pingone.Client, error) {
+			return nil, errors.New("PingOne client factory is unavailable")
+		}
+	}
 	ctx := context.Background()
+	if handled, err := runChecks(ctx, args, stdout, stderr, deps); handled {
+		return err
+	}
 	switch args[0] {
 	case "validate":
 		fs := flagSet("validate", stderr)
