@@ -44,7 +44,14 @@ validate_request:
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
   script:
     - source ./examples/gitlab/select-request.sh
-    - ./pingone-runner validate --request "$PROMOTION_REQUEST_FILE"
+    # A DaVinci front-door intent is validated as an intent; the full request
+    # is built later, inside the protected plan job.
+    - |
+      if [[ -n "${PROMOTION_INTENT_FILE:-}" ]]; then
+        ./pingone-runner validate --intent "$PROMOTION_INTENT_FILE"
+      else
+        ./pingone-runner validate --request "$PROMOTION_REQUEST_FILE"
+      fi
   artifacts:
     access: developer
     expire_in: 1 day
@@ -62,6 +69,12 @@ plan_promotion:
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web") && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - source ./examples/gitlab/select-request.sh
+    # For a merged intent, build the redacted, fingerprinted request from fresh
+    # snapshots here, after the runner proves this is the protected job.
+    - |
+      if [[ -n "${PROMOTION_INTENT_FILE:-}" ]]; then
+        ./pingone-runner build-request --intent "$PROMOTION_INTENT_FILE" --out "$PROMOTION_REQUEST_FILE"
+      fi
     - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
     # Independent re-check of the reviewed plan + a readable summary for approvers.
     - ./pingone-runner plan-check --artifact plan.json --digest-file plan.sha256 --summary-out plan-review.md ${PROMOTION_FORBID_TYPES:+--forbid-type "$PROMOTION_FORBID_TYPES"}
@@ -69,7 +82,7 @@ plan_promotion:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [plan.json, plan.sha256, plan-review.md, selected-request.txt]
+    paths: [plan.json, plan.sha256, plan-review.md, selected-request.txt, built-request.json]
 
 apply_promotion:
   stage: deploy

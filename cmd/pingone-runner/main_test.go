@@ -19,6 +19,8 @@ import (
 type fakeGate struct {
 	verifyErr, authErr error
 	verified           int
+	targetErr          error
+	targetChecked      int
 	origin             gitops.Origin
 }
 
@@ -59,6 +61,10 @@ func (g *fakeGate) VerifyPlan(context.Context, gitops.Request) error {
 	return g.verifyErr
 }
 func (g *fakeGate) Authorize(context.Context, gitops.Artifact) error { return g.authErr }
+func (g *fakeGate) VerifyTarget(context.Context, string, string) error {
+	g.targetChecked++
+	return g.targetErr
+}
 
 func fixture(t *testing.T) (gitops.Request, gitops.Artifact) {
 	t.Helper()

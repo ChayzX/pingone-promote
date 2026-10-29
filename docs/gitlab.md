@@ -44,6 +44,15 @@ For a manually started web pipeline, `PROMOTION_REQUEST_FILE` may select one exp
 
 Artifacts contain redacted review data and metadata, not worker secrets or raw native write payloads. Keep project membership narrow; the configured developer artifact access permits project developers to read them. The apply artifact is retained for 90 days for audit. Do not include public or sensitive company data in requests. Secret redaction reduces exposure but does not guarantee removal of every possible secret-like value.
 
+### Intents from the DaVinci front door
+
+A DaVinci front-door flow can submit an intent instead of a full request: a merge request that adds exactly one `intents/<intent-id>/intent.json`. An intent names the signed-in PingOne requester, the source and target environments, the selected resource IDs, any mappings and a description. It carries no configuration.
+
+- **Merge request pipelines** run `pingone-runner validate --intent`. That check is strict: it rejects unknown, duplicate or case-variant keys, and an ID that doesn't match its `intents/<id>/` folder.
+- **After merge**, the protected `plan_promotion` job runs `pingone-runner build-request`. It first proves it is the live protected job for the protected target, then takes fresh snapshots and writes `built-request.json` with the same redaction and fingerprints as a locally built request, reusing the intent's ID. Planning, approval and apply then proceed exactly as above.
+- **Review:** reviewers approve the intent in the merge request, and the full redacted configuration in `plan-review.md` at deployment approval.
+- **Selection:** a change that adds an intent and a request together, or two intents, is refused. Manual web pipelines accept only explicit request paths, never intents.
+
 ## 4. Create and approve a rollback
 
 Rollback is a separate manual web pipeline on the protected default branch. Start it with `PROMOTION_MODE=rollback` and set `ORIGINAL_PLAN_JOB_ID` to the numeric job ID of the original `plan_promotion` job. The rollback planning job downloads that plan and creates a separate native rollback draft. Review its full scope and digest; then approve and run the separate protected `apply_rollback` deployment job. No rollback executes automatically. Git revert is not a native PingOne rollback. PingOne may require rollback of the latest promotion, and later manual changes can be overwritten; verify the live native constraints before use.

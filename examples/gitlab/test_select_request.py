@@ -34,6 +34,12 @@ class SelectorRepo:
         path.write_text('{"fixture":true}\n')
         self.git("add", str(path.relative_to(self.root)))
 
+    def add_intent(self, intent_id: str) -> None:
+        path = self.root / "intents" / intent_id / "intent.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"fixture":true}\n')
+        self.git("add", str(path.relative_to(self.root)))
+
     def commit(self) -> str:
         self.git("commit", "-qm", "request")
         return self.git("rev-parse", "HEAD").stdout.strip()
@@ -45,9 +51,13 @@ class SelectorRepo:
         env["CI_MERGE_REQUEST_DIFF_BASE_SHA"] = base
         env["PROMOTION_REQUEST_FILE"] = explicit
         return subprocess.run(
-            ["bash", "-c", 'source "$1" && printf "%s\\n" "$PROMOTION_REQUEST_FILE"', "selector-test", str(SCRIPT)],
+            ["bash", "-c", 'source "$1" && printf "%s\\n%s\\n" "$PROMOTION_REQUEST_FILE" "$PROMOTION_INTENT_FILE"', "selector-test", str(SCRIPT)],
             cwd=self.root, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+
+
+def first_line(result):
+    return result.stdout.splitlines()[0] if result.stdout else ""
 
 
 class SelectRequestTests(unittest.TestCase):
@@ -63,21 +73,21 @@ class SelectRequestTests(unittest.TestCase):
         commit = self.repo.commit()
         result = self.repo.run_selector(source="merge_request_event", commit=commit, base=self.repo.base)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"requests/{ID_A}/request.json")
+        self.assertEqual(first_line(result), f"requests/{ID_A}/request.json")
 
     def test_push_selects_single_added_request(self):
         self.repo.add_request(ID_A)
         commit = self.repo.commit()
         result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"requests/{ID_A}/request.json")
+        self.assertEqual(first_line(result), f"requests/{ID_A}/request.json")
 
     def test_manual_web_pipeline_accepts_explicit_safe_path(self):
         self.repo.add_request(ID_A)
         commit = self.repo.commit()
         result = self.repo.run_selector(source="web", commit=commit, explicit=f"requests/{ID_A}/request.json")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"requests/{ID_A}/request.json")
+        self.assertEqual(first_line(result), f"requests/{ID_A}/request.json")
 
     def test_zero_added_requests_fails(self):
         commit = self.repo.git("rev-parse", "HEAD").stdout.strip()
@@ -132,6 +142,85 @@ class SelectRequestTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exact prior commit", result.stderr)
 
+
+
+    # DaVinci front-door intents (intents/<id>/intent.json)
+    def test_push_selects_single_added_intent(self):
+        self.repo.add_intent(ID_A)
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["built-request.json", f"intents/{ID_A}/intent.json"])
+
+    def test_merge_request_selects_single_added_intent(self):
+        self.repo.add_intent(ID_A)
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="merge_request_event", commit=commit, base=self.repo.base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[1], f"intents/{ID_A}/intent.json")
+
+    def test_request_selection_clears_inherited_intent(self):
+        self.repo.add_request(ID_A)
+        commit = self.repo.commit()
+        env_intent = f"intents/{ID_B}/intent.json"
+        os.environ["PROMOTION_INTENT_FILE"] = env_intent
+        try:
+            result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        finally:
+            del os.environ["PROMOTION_INTENT_FILE"]
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [f"requests/{ID_A}/request.json", ""])
+
+    def test_intent_and_request_together_fail(self):
+        self.repo.add_intent(ID_A)
+        self.repo.add_request(ID_B)
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("found 2", result.stderr)
+
+    def test_two_intents_fail(self):
+        self.repo.add_intent(ID_A)
+        self.repo.add_intent(ID_B)
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("found 2", result.stderr)
+
+    def test_manual_web_intent_path_is_rejected(self):
+        self.repo.add_intent(ID_A)
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="web", commit=commit, explicit=f"intents/{ID_A}/intent.json")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Request path must be", result.stderr)
+
+    def test_symlinked_intent_file_fails(self):
+        directory = self.repo.root / "intents" / ID_A
+        directory.mkdir(parents=True)
+        (directory / "intent.json").symlink_to(self.repo.root / "README.md")
+        self.repo.git("add", f"intents/{ID_A}/intent.json")
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("regular file", result.stderr)
+
+    def test_intent_refuses_existing_built_request(self):
+        self.repo.add_intent(ID_A)
+        commit = self.repo.commit()
+        (self.repo.root / "built-request.json").write_text("{}\n")
+        result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already exists", result.stderr)
+
+    def test_misnamed_intent_path_fails(self):
+        path = self.repo.root / "intents" / "not-hex" / "intent.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}\n")
+        self.repo.git("add", "intents/not-hex/intent.json")
+        commit = self.repo.commit()
+        result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Request path must be", result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

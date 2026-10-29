@@ -125,3 +125,48 @@ func TestLiveGateRequiresMatchingProtectedApprovedDeployment(t *testing.T) {
 		})
 	}
 }
+
+// build-request calls VerifyTarget before any snapshot: it must apply the same
+// protected-target and live job checks that VerifyPlan applies to a request.
+func TestVerifyTargetChecksTargetPolicyAndLiveJob(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	for _, scenario := range []string{"valid", "wrong target", "wrong region", "wrong job", "unprotected branch"} {
+		t.Run(scenario, func(t *testing.T) {
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				send := func(v any) { json.NewEncoder(w).Encode(v) }
+				switch r.URL.Path {
+				case "/api/v4/job":
+					id := 11
+					if scenario == "wrong job" {
+						id = 12
+					}
+					send(map[string]any{"id": id, "status": "running", "name": "plan_promotion", "ref": "main", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}})
+				case "/api/v4/projects/7":
+					send(map[string]any{"id": 7, "visibility": "private", "default_branch": "main"})
+				case "/api/v4/projects/7/repository/branches/main":
+					send(map[string]any{"name": "main", "protected": scenario != "unprotected branch"})
+				default:
+					t.Errorf("unexpected API %s", r.URL)
+					http.NotFound(w, r)
+				}
+			}))
+			defer ts.Close()
+			c := Config{BaseURL: ts.URL, ExpectedURL: ts.URL, ProjectID: "7", ExpectedProjectID: "7", PipelineID: "9", JobID: "11", CommitSHA: sha, Branch: "main", DefaultBranch: "main", Environment: "production", TargetEnvironmentID: "prod", TargetRegion: "us", JobToken: "job-token", ReadToken: "read-token", ProtectedRef: true, PipelineSource: "push"}
+			v := Verifier{Config: c, HTTP: ts.Client()}
+			target, region := "prod", "us"
+			switch scenario {
+			case "wrong target":
+				target = "other"
+			case "wrong region":
+				region = "eu"
+			}
+			err := v.VerifyTarget(context.Background(), target, region)
+			if scenario == "valid" && err != nil {
+				t.Fatal(err)
+			}
+			if scenario != "valid" && err == nil {
+				t.Fatal("unverified context accepted")
+			}
+		})
+	}
+}

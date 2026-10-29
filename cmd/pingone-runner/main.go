@@ -27,6 +27,7 @@ const maxArtifactBytes = 16 << 20
 type runnerGate interface {
 	Origin() gitops.Origin
 	VerifyPlan(context.Context, gitops.Request) error
+	VerifyTarget(ctx context.Context, targetID, targetRegion string) error
 	Authorize(context.Context, gitops.Artifact) error
 }
 
@@ -48,6 +49,8 @@ type runnerDeps struct {
 	environ         func() []string
 	gitlabPreflight func(context.Context) checks.Report
 	targetClient    func(func(string) string) (*pingone.Client, error)
+	// inventory takes a fresh snapshot inventory (build-request).
+	inventory func(context.Context, *pingone.Client, string) (pingone.Inventory, error)
 }
 
 func defaultDeps(getenv func(string) string) runnerDeps {
@@ -67,6 +70,9 @@ func defaultDeps(getenv func(string) string) runnerDeps {
 		environ:         os.Environ,
 		gitlabPreflight: defaultGitLabPreflight(getenv),
 		targetClient:    targetClient,
+		inventory: func(ctx context.Context, c *pingone.Client, env string) (pingone.Inventory, error) {
+			return c.Inventory(ctx, env)
+		},
 	}
 }
 
@@ -83,7 +89,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|plan|apply|status|rollback-plan|preflight|plan-check|evidence> [flags]\n")
+		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|build-request|digest|plan|apply|status|rollback-plan|preflight|plan-check|evidence> [flags]\n")
 		return nil
 	}
 	if deps.getenv == nil {
@@ -121,6 +127,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return nil, errors.New("PingOne client factory is unavailable")
 		}
 	}
+	if deps.inventory == nil {
+		deps.inventory = func(context.Context, *pingone.Client, string) (pingone.Inventory, error) {
+			return pingone.Inventory{}, errors.New("PingOne inventory is unavailable")
+		}
+	}
 	ctx := context.Background()
 	if handled, err := runChecks(ctx, args, stdout, stderr, deps); handled {
 		return err
@@ -129,16 +140,79 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	case "validate":
 		fs := flagSet("validate", stderr)
 		requestPath := fs.String("request", "", "request JSON file")
+		intentPath := fs.String("intent", "", "intent JSON file (intents/<id>/intent.json)")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		if *requestPath == "" {
-			return errors.New("validate requires --request")
+		if (*requestPath == "") == (*intentPath == "") {
+			return errors.New("validate requires exactly one of --request or --intent")
 		}
-		if _, err := readRequest(*requestPath); err != nil {
+		var err error
+		if *intentPath != "" {
+			_, err = readIntent(*intentPath)
+		} else {
+			_, err = readRequest(*requestPath)
+		}
+		if err != nil {
 			return err
 		}
-		_, err := io.WriteString(stdout, "valid\n")
+		_, err = io.WriteString(stdout, "valid\n")
+		return err
+	case "build-request":
+		fs := flagSet("build-request", stderr)
+		intentPath := fs.String("intent", "", "reviewed intent file (intents/<id>/intent.json)")
+		outPath := fs.String("out", "", "request output path")
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		if *intentPath == "" || *outPath == "" {
+			return errors.New("build-request requires --intent and --out")
+		}
+		if samePath(*intentPath, *outPath) {
+			return errors.New("build-request output must not overwrite the intent")
+		}
+		if err := requireAbsent(*outPath); err != nil {
+			return err
+		}
+		in, err := readIntent(*intentPath)
+		if err != nil {
+			return err
+		}
+		g, err := deps.gate()
+		if err != nil {
+			return err
+		}
+		// Prove the protected job context before any snapshot is taken.
+		if err = g.VerifyTarget(ctx, in.Target.ID, in.Target.Region); err != nil {
+			return err
+		}
+		client, err := deps.client(gitops.Request{Source: gitops.Environment{ID: in.Source.ID, Region: in.Source.Region}}, deps.getenv)
+		if err != nil {
+			return err
+		}
+		source, err := deps.inventory(ctx, client, in.Source.ID)
+		if err != nil {
+			return err
+		}
+		target, err := deps.inventory(ctx, client, in.Target.ID)
+		if err != nil {
+			return err
+		}
+		r, err := gitops.RequestFromIntent(in, source, target)
+		if err != nil {
+			return err
+		}
+		if err = g.VerifyPlan(ctx, r); err != nil {
+			return err
+		}
+		raw, err := gitops.Encode(r)
+		if err != nil {
+			return err
+		}
+		if err = writePrivateBytes(*outPath, raw); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "built request %s for %s from %d selected resource(s)\n", r.ID, in.RequestedBy.Username, len(r.Selected))
 		return err
 	case "digest":
 		fs := flagSet("digest", stderr)
@@ -474,6 +548,24 @@ func readRequest(path string) (gitops.Request, error) {
 	}
 	defer f.Close()
 	return gitops.Decode(f)
+}
+
+// readIntent decodes an intent and binds it to its reviewed location: the file
+// must be named intent.json inside a directory named after the intent's ID.
+func readIntent(path string) (gitops.Intent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return gitops.Intent{}, fmt.Errorf("could not open intent: %w", err)
+	}
+	defer f.Close()
+	in, err := gitops.DecodeIntent(f)
+	if err != nil {
+		return in, err
+	}
+	if filepath.Base(path) != "intent.json" || filepath.Base(filepath.Dir(path)) != in.ID {
+		return in, errors.New("intent ID must match its intents/<id>/intent.json location")
+	}
+	return in, nil
 }
 func readArtifact(path string) (gitops.Artifact, error) {
 	b, err := readSmallFile(path, maxArtifactBytes)

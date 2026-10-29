@@ -142,15 +142,27 @@ type job struct {
 }
 
 func (v *Verifier) verify(ctx context.Context, r gitops.Request) (job, error) {
+	if err := gitops.Validate(r); err != nil {
+		return job{}, err
+	}
+	return v.verifyTarget(ctx, r.Target.ID, r.Target.Region)
+}
+
+// VerifyTarget proves the runner is the live protected default-branch job for
+// the protected target, before any request exists. build-request calls it so
+// no snapshot is taken outside an approved production job context.
+func (v *Verifier) VerifyTarget(ctx context.Context, targetID, targetRegion string) error {
+	_, err := v.verifyTarget(ctx, targetID, targetRegion)
+	return err
+}
+
+func (v *Verifier) verifyTarget(ctx context.Context, targetID, targetRegion string) (job, error) {
 	var j job
 	if err := v.Config.validate(); err != nil {
 		return j, err
 	}
-	if err := gitops.Validate(r); err != nil {
-		return j, err
-	}
 	c := v.Config
-	if r.Target.ID != c.TargetEnvironmentID || r.Target.Region != c.TargetRegion {
+	if targetID != c.TargetEnvironmentID || targetRegion != c.TargetRegion {
 		return j, errors.New("request destination differs from protected runner target policy")
 	}
 	if _, err := v.get(ctx, "job", true, &j); err != nil {
