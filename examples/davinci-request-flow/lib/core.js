@@ -260,6 +260,26 @@ function index(inv) {
   return m;
 }
 
+// ---------- mapping suggestions (internal/app/workflow.go suggestMappings) --
+// Saved PingOne promotion mappings first (same type, each destination used
+// once), then a unique same-type match by trimmed, case-insensitive name.
+function suggestMappings(source, target, native) {
+  const dst = index(target);
+  const nat = isObject(native) ? native : {};
+  const out = {};
+  const used = {};
+  for (const r of source.resources) {
+    const d = Object.prototype.hasOwnProperty.call(nat, r.id) ? dst[nat[r.id]] : undefined;
+    if (d && d.type === r.type && !used[d.id]) { out[r.id] = d.id; used[d.id] = true; }
+  }
+  for (const r of source.resources) {
+    if (out[r.id]) { continue; }
+    const matches = target.resources.filter((d) => r.type === d.type && eqFold(String(r.name).trim(), String(d.name).trim())).map((d) => d.id);
+    if (matches.length === 1 && !used[matches[0]]) { out[r.id] = matches[0]; used[matches[0]] = true; }
+  }
+  return out;
+}
+
 // ---------- request body (promotion.BuildRequest) --------------------------
 
 function buildRequest(source, target, selected, mappings, description) {
@@ -725,5 +745,5 @@ function escapeHtml(s) {
 const core = {
   rfc3339Nano, gitlabConfig, sameGitLabLocation, gitlabStatus, checkProject, checkDefaultBranch, submitBodies, checkMergeRequest,
   SAFE_ID, apiURL, encodeRequest, goJSON, goFingerprint, newRequest, validateRequest, truncateUtf8, utf8Compare, HEX_ID, canonical, parseBody, sha256, fingerprint, parseURL, redact, inventoryFromSnapshots, nextPageURL,
-  pagesComplete, buildRequest, escapeHtml, randomHexId, sensitivePaths, variableName, variablesReport
+  pagesComplete, buildRequest, suggestMappings, escapeHtml, randomHexId, sensitivePaths, variableName, variablesReport
 };

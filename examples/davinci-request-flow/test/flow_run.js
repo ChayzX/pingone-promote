@@ -274,6 +274,9 @@ function world(overrides) {
       if (page + 1 < all.length) { body._links = { next: { href: '?page=' + (page + 1) } }; }
       return json(200, body);
     }
+    if ((m = /^\/v1\/environments\/([\w-]+)\/promotionMappings\/([\w-]+)$/.exec(p)) && method === 'GET') {
+      return st.nativeMaps ? json(200, { resourceMappings: st.nativeMaps }) : json(404, { code: 'NOT_FOUND' });
+    }
     if (/\/promotions/.test(p)) { throw new Error('the Request flow must never call the promotions API'); }
     return json(404, { code: 'NOT_FOUND' });
   }
@@ -607,6 +610,22 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const r = await runFlow(world(), form('a1'));
     ok(r.pages.length > 5 && r.pages.every((pg) => pg.css.indexOf('.pp-card') >= 0 && !/<(style|script)\b/i.test(pg.html)),
       'every screen carries its styles in the CSS field, none inline in the HTML');
+  }
+  // Destination mapping suggestions reach the picker as the local app makes them: saved PingOne mappings, then names.
+  {
+    const w = world(); w.nativeMaps = { a1: 'ta1' };
+    const r = await runFlow(w, form('a1'));
+    const pick = r.pages.find((pg) => pg.title === 'Choose resources').html;
+    const data = JSON.parse(pick.match(/<textarea id="ppData" hidden>([\s\S]*?)<\/textarea>/)[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&amp;/g, '&'));
+    ok(w.log.some((l) => l.indexOf('/v1/environments/' + SRC + '/promotionMappings/' + TGT) > 0), 'saved promotion mappings read for the chosen pair');
+    ok(data.suggestions.a1 === 'ta1' && data.suggestions.f1 === 'tf1' && data.warnings.length === 0 && data.source.length === 4 && data.target.length === 2,
+      'picker data: every source and target resource, saved mapping first, then the name match: ' + JSON.stringify(data.suggestions));
+    ok(JSON.stringify(data).indexOf('s3cr3t') < 0, 'picker data carries no configuration');
+  }
+  {
+    const w = world();
+    const r = await runFlow(w, form('a1'));
+    ok(r.title === 'Merge request opened', 'saved mappings unreadable (404): a warning, the request still goes through');
   }
   // Partial failures stop at the failed step.
   {

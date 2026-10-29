@@ -15,6 +15,7 @@ node test/unit.js
 python3 -I gen_flows.py "$work/out" values.example.json >/dev/null
 python3 -I check_flows.py "$work/out"/*.json
 node test/shipped_code.js "$work/out"/*.json
+node test/picker_ui.js "$work/out/pingone-promote-request.flow.json"
 # The same checks with sign-in on (off is the proof-of-concept default).
 python3 -c 'import json,sys; v=json.load(open("values.example.json")); v["requireSignIn"]=True; json.dump(v,open(sys.argv[1],"w"))' "$work/signin.json"
 python3 -I gen_flows.py "$work/signin" "$work/signin.json" >/dev/null
@@ -40,11 +41,13 @@ git clone -q "$GO_TOOL" "$go" && git -C "$go" checkout -q 537dbf4
 cp test/testdata/go/xcheck_drift.go "$go/internal/gitops/"
 cp test/testdata/go/xinv_export.go "$go/internal/pingone/"
 cp test/testdata/go/xgitlab_export.go "$go/internal/gitlab/"
-mkdir -p "$go/cmd/xcheck" "$go/cmd/xinv" "$go/cmd/xreq"
+cp test/testdata/go/xmap_export.go "$go/internal/app/"
+mkdir -p "$go/cmd/xcheck" "$go/cmd/xinv" "$go/cmd/xreq" "$go/cmd/xmap"
 cp test/testdata/go/xcheck_main.go "$go/cmd/xcheck/main.go"
 cp test/testdata/go/xinv_main.go "$go/cmd/xinv/main.go"
 cp test/testdata/go/xreq_main.go "$go/cmd/xreq/main.go"
-(cd "$go" && for c in xcheck xinv xreq pingone-runner; do go build -o "$work/$c" "./cmd/$c"; done)
+cp test/testdata/go/xmap_main.go "$go/cmd/xmap/main.go"
+(cd "$go" && for c in xcheck xinv xreq xmap pingone-runner; do go build -o "$work/$c" "./cmd/$c"; done)
 
 # BuildRequest rules and Redact
 python3 -I test/fixtures.py > "$work/f.json" && "$work/xcheck" < "$work/f.json" > "$work/g.json"
@@ -58,6 +61,9 @@ python3 -I test/req_fixtures.py > "$work/r.json" && node test/xreq.js "$work/r.j
 # GitLab settings validation and returned-URL checks
 python3 -I test/gitlab_fixtures.py > "$work/gl.json" && node test/xgitlab.js "$work/gl.json" "$work/glj.json"
 "$work/xreq" "$work/gl.json" "$work/glj.json" gitlab
+# Destination-mapping suggestions against the local app's suggestMappings
+python3 -I test/map_fixtures.py > "$work/m.json" && "$work/xmap" < "$work/m.json" > "$work/mg.json"
+node test/xmap.js "$work/m.json" "$work/mg.json"
 # What the flow committed, through the pipeline's selector and validator
 bash test/pipeline_sim.sh "$work/pingone-runner" "$go/examples/gitlab/select-request.sh" "$work/saved"
 # One promotion project: the generated pipeline is current and routes each request to one environment

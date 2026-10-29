@@ -555,21 +555,55 @@ cursor:pointer;font:inherit;color:inherit}
 .pp-spin{width:26px;height:26px;border:3px solid var(--pp-line);border-top-color:var(--pp-accent);border-radius:50%;animation:pp-spin .8s linear infinite;flex:none}
 @keyframes pp-spin{to{transform:rotate(360deg)}}
 .pp a{color:var(--pp-accent);font-weight:600;word-break:break-all}
-.pp-foot{max-width:960px;margin:0 auto 28px;padding:0 20px;color:var(--pp-muted);font-size:12px}
+.pp-foot{margin:14px 2px 28px;color:var(--pp-muted);font-size:12px}
+.pp-wide{max-width:1240px}
+.pp [hidden]{display:none!important}
+.pp-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.pp-hint{font-weight:400;color:var(--pp-muted);margin-left:6px}
+.pp-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0 0 12px}
+.pp-toolbar label{margin:0}
+.pp-search{flex:1 1 320px}
+.pp-toolbar input[type=search],.pp-toolbar select,.pp select.pp-map{border:1px solid #b9c2cd;border-radius:4px;padding:8px 10px;font:13px "Segoe UI",system-ui,sans-serif;
+color:var(--pp-ink);background:#fff}
+.pp-toolbar input[type=search]{width:100%}
+.pp-count{margin-left:auto;font-weight:600;color:var(--pp-accent-dark);background:var(--pp-soft);border-radius:999px;padding:4px 12px;font-size:12px}
+.pp-tablewrap{border:1px solid var(--pp-line);border-radius:4px;overflow:auto;max-height:560px}
+.pp-table{width:100%;border-collapse:collapse;font-size:13px}
+.pp-table th{position:sticky;top:0;background:#f6f8fa;text-align:left;font-weight:600;color:var(--pp-muted);font-size:12px;
+text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;border-bottom:1px solid var(--pp-line);z-index:1}
+.pp-table td{padding:10px 12px;border-bottom:1px solid #edf0f3;vertical-align:top}
+.pp-table tr.pp-on td{background:#f3f8ff}
+.pp-table tr:hover td{background:#f8fafc}
+.pp-check{width:36px}
+.pp-check input{width:16px;height:16px;margin-top:2px}
+.pp-rname{display:block;font-weight:600}
+.pp-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.pp-rid{display:block;color:var(--pp-muted)}
+.pp-type{display:inline-block;background:#eef1f5;border-radius:3px;padding:2px 8px;font-size:12px;white-space:nowrap}
+.pp-deps{min-width:170px}
+.pp-deplist{margin:6px 0 0;padding-left:16px;color:var(--pp-muted)}
+.pp-depactions{list-style:none;margin:6px 0 0 -16px}
+.pp select.pp-map{width:100%;min-width:240px}
+.pp-mapnote{margin:4px 0 0;color:var(--pp-muted);font-size:12px}
+.pp-empty{text-align:center;color:var(--pp-muted);padding:28px 12px}
+.pp-tablefoot{display:flex;justify-content:space-between;align-items:center;margin:8px 0 6px;color:var(--pp-muted);font-size:12px}
+.pp-link{appearance:none;background:none;border:0;padding:0;color:var(--pp-accent);font:600 13px "Segoe UI",system-ui,sans-serif;cursor:pointer}
+.pp-link:disabled{color:#9aa5b1;cursor:not-allowed}
+.pp-btn:disabled{background:#9db8d6;border-color:#9db8d6;cursor:not-allowed}
 """
 POC_TAG = '<span class="pp-tag">Proof of concept</span>'
 
 
-def shell(step, body, kind="page"):
+def shell(step, body, kind="page", wide=False):
     """Product bar, step tracker and card; step is an index into STEPS, or None. Styles come from the node's CSS field."""
     steps = ""
     if step is not None:
         steps = '<ol class="pp-steps">' + "".join(
             f'<li class="{"now" if i == step else "done" if i < step else ""}"><span>{i + 1}</span>{name}</li>' for i, name in enumerate(STEPS)) + "</ol>"
     return (f'<div class="pp" data-pp-kind="{kind}"><div class="pp-bar"><div class="pp-brand"><i class="pp-mark"></i>PingOne Promote'
-            f'<small>Configuration promotion request</small></div>{POC_TAG}</div><div class="pp-main"><div class="pp-card">{steps}'
-            f'<div class="pp-body">{body}</div></div></div><div class="pp-foot">Requests open a GitLab merge request. Deployment and '
-            f'rollback happen only in the protected GitLab pipeline.</div></div>')
+            f'<small>Configuration promotion request</small></div>{POC_TAG}</div><div class="pp-main{" pp-wide" if wide else ""}"><div class="pp-card">{steps}'
+            f'<div class="pp-body">{body}</div></div><div class="pp-foot">Requests open a GitLab merge request. Deployment and '
+            f'rollback happen only in the protected GitLab pipeline.</div></div></div>')
 
 
 def button(form_id, value, label, ghost=False, extra=""):
@@ -634,6 +668,164 @@ ENV_SCRIPT = """// Hide empty environment slots, and the chosen source on the ta
     var id = (b.getAttribute('data-pp-id') || '').trim();
     if (!t || !id || (hide && t === hide)) { b.style.display = 'none'; }
   });
+})();
+"""
+
+
+def picker_html(signin):
+    """The resource picker, as the local app's Step 2: every source resource with its type, dependencies and a
+    destination mapping; search, type filter, selection count. The Script field (PICKER_SCRIPT) builds the table
+    from the picker data and keeps the hidden selectedRaw/mappingsRaw fields in step. Without it, the plain
+    lists and text boxes below still work."""
+    who = ("Signed in as <strong>{{global.parameters.usernameText}}</strong>. " if signin else
+           "Sign-in is off for this proof of concept, so anyone who can launch the flow can open a request. ")
+    table = ('<div class="pp-toolbar" id="ppToolbar" hidden><label class="pp-search"><span class="pp-sr">Search resources by name, type, or ID</span>'
+             '<input type="search" id="ppSearch" placeholder="Search name, type, or ID" autocomplete="off"></label>'
+             '<label><span class="pp-sr">Filter by resource type</span><select id="ppType"><option value="">All types</option></select></label>'
+             '<span class="pp-count" id="ppCount">0 selected</span></div>'
+             '<div class="pp-note bad" id="ppWarn" hidden></div>'
+             '<div class="pp-tablewrap" id="ppTableWrap" hidden><table class="pp-table"><thead><tr><th class="pp-check"><span class="pp-sr">Select</span></th>'
+             '<th>Source resource</th><th>Type</th><th>Dependencies</th><th>Destination mapping</th></tr></thead><tbody id="ppRows"></tbody></table></div>'
+             '<div class="pp-tablefoot" id="ppFoot" hidden><span id="ppTotal"></span><button type="button" class="pp-link" id="ppClear">Clear selection</button></div>'
+             '<textarea id="ppData" hidden>{{global.parameters.pickerData}}</textarea>')
+    manual = ('<div id="ppManual" class="pp-grid"><div><h2>Source resources (type, ID, name)</h2><pre>{{global.parameters.sourceListText}}</pre></div>'
+              '<div><h2>Target resources (for mappings)</h2><pre>{{global.parameters.targetListText}}</pre></div></div>'
+              '<div id="ppManualFields">' +
+              textarea("selectedRaw", "Resource IDs to promote (one per line or comma-separated)", 4) +
+              textarea("mappingsRaw", "Optional mappings, one <code>sourceId=targetId</code> per line", 2) + '</div>')
+    body = (f'<h1>Choose resources</h1><p class="pp-lead">{who}Selecting a resource approves it for update. Dependencies stay unselected '
+            'until you choose them. Nothing changes in PingOne until the GitLab pipeline deploys the request.</p>' + route_html("global.parameters") +
+            table + '<form id="selectForm" data-id="selectForm">' + manual +
+            textarea("description", "Why is this change needed? <span class=\"pp-hint\">Becomes the merge request title</span>", 2) +
+            '<div class="pp-actions">' + button("selectForm", "BUILD", "Build request") + '</div></form>')
+    return shell(2, body, wide=True)
+
+
+PICKER_SCRIPT = r"""// pp-picker: the resource table of the local app's Step 2, filling the hidden selectedRaw and mappingsRaw fields.
+(function () {
+  var tries = 0;
+  function start() {
+    var dataEl = document.getElementById('ppData');
+    if (!dataEl) { if (tries++ < 100) { setTimeout(start, 50); } return; }
+    if (dataEl.getAttribute('data-pp-ready')) { return; }
+    var data;
+    try { data = JSON.parse(dataEl.value); } catch (e) { return; }
+    dataEl.setAttribute('data-pp-ready', '1');
+    var $ = function (id) { return document.getElementById(id); };
+    var el = function (tag, cls, text) { var n = document.createElement(tag); if (cls) { n.className = cls; } if (text !== undefined) { n.textContent = text; } return n; };
+    var source = Array.isArray(data.source) ? data.source : [];
+    var target = Array.isArray(data.target) ? data.target : [];
+    var byId = {}; source.forEach(function (r) { byId[String(r.id)] = r; });
+    var selected = {}; var mappings = {}; var expanded = {};
+    var suggestions = data.suggestions || {};
+    var search = $('ppSearch'), type = $('ppType'), rows = $('ppRows'), selField = $('selectedRaw'), mapField = $('mappingsRaw');
+    var build = document.querySelector('[data-skbuttonvalue="BUILD"]');
+    function name(r) { return String(r.name || r.id); }
+    function sync() {
+      var ids = Object.keys(selected).filter(function (k) { return selected[k]; });
+      selField.value = ids.join('\n');
+      var lines = [];
+      source.forEach(function (r) {
+        var id = String(r.id);
+        var m = Object.prototype.hasOwnProperty.call(mappings, id) ? mappings[id] : (suggestions[id] || '');
+        if (m) { lines.push(id + '=' + m); }
+      });
+      mapField.value = lines.join('\n');
+      $('ppCount').textContent = ids.length + ' selected';
+      if (build) { build.disabled = ids.length === 0; }
+    }
+    function visible() {
+      var q = search.value.trim().toLocaleLowerCase();
+      return source.filter(function (r) {
+        var hay = (name(r) + ' ' + r.type + ' ' + r.id).toLocaleLowerCase();
+        return (!type.value || r.type === type.value) && (!q || hay.indexOf(q) >= 0);
+      });
+    }
+    function depCell(r) {
+      var td = el('td', 'pp-deps');
+      var deps = Array.isArray(r.dependencies) ? r.dependencies : [];
+      if (!deps.length) { td.textContent = 'None listed'; return td; }
+      var id = String(r.id);
+      var toggle = el('button', 'pp-link', expanded[id] ? 'Hide dependencies' : 'Show ' + deps.length + (deps.length === 1 ? ' dependency' : ' dependencies'));
+      toggle.type = 'button';
+      toggle.addEventListener('click', function () { expanded[id] = !expanded[id]; render(); });
+      td.appendChild(toggle);
+      if (expanded[id]) {
+        var list = el('ul', 'pp-deplist');
+        var unresolved = false;
+        deps.forEach(function (d) {
+          var item = byId[String(d)];
+          if (!item) { unresolved = true; }
+          var li = el('li');
+          li.appendChild(el('span', '', item ? name(item) : String(d)));
+          li.appendChild(document.createTextNode(' · '));
+          li.appendChild(el('span', 'pp-mono', String(d)));
+          list.appendChild(li);
+        });
+        var pick = el('button', 'pp-link', 'Select listed dependencies');
+        pick.type = 'button';
+        pick.disabled = unresolved;
+        if (unresolved) { pick.title = 'Some dependencies are not present in the loaded inventory.'; }
+        pick.addEventListener('click', function () { deps.forEach(function (d) { if (byId[String(d)]) { selected[String(d)] = true; } }); render(); });
+        var actions = el('li', 'pp-depactions'); actions.appendChild(pick); list.appendChild(actions);
+        td.appendChild(list);
+      }
+      return td;
+    }
+    function mapCell(r) {
+      var id = String(r.id);
+      var td = el('td');
+      var opts = target.filter(function (t) { return t.type === r.type; });
+      var sel = el('select', 'pp-map');
+      sel.setAttribute('aria-label', 'Destination mapping for ' + name(r));
+      var auto = el('option', '', 'Automatic / create if unmatched'); auto.value = ''; sel.appendChild(auto);
+      opts.forEach(function (t) { var o = el('option', '', name(t) + ' · ' + t.id); o.value = String(t.id); sel.appendChild(o); });
+      var mapped = Object.prototype.hasOwnProperty.call(mappings, id) ? mappings[id] : (suggestions[id] || '');
+      sel.value = opts.some(function (t) { return String(t.id) === String(mapped); }) ? String(mapped) : '';
+      sel.addEventListener('change', function () { mappings[id] = sel.value; sync(); });
+      td.appendChild(sel);
+      td.appendChild(el('p', 'pp-mapnote', opts.length ? opts.length + ' compatible destination ' + (opts.length === 1 ? 'resource' : 'resources') +
+        ' · unselected resources can still be reused.' : 'No loaded destination match of this type. Automatic mapping may create a new resource.'));
+      return td;
+    }
+    function render() {
+      while (rows.firstChild) { rows.removeChild(rows.firstChild); }
+      var shown = visible();
+      shown.forEach(function (r) {
+        var id = String(r.id);
+        var tr = el('tr', selected[id] ? 'pp-on' : '');
+        var c = el('td', 'pp-check'); var box = el('input'); box.type = 'checkbox'; box.checked = !!selected[id];
+        box.setAttribute('aria-label', 'Select ' + name(r) + ' for promotion');
+        box.addEventListener('change', function () { selected[id] = box.checked; render(); });
+        c.appendChild(box);
+        var s = el('td'); s.appendChild(el('span', 'pp-rname', name(r))); s.appendChild(el('span', 'pp-mono pp-rid', id));
+        var ty = el('td'); ty.appendChild(el('span', 'pp-type', r.type));
+        tr.appendChild(c); tr.appendChild(s); tr.appendChild(ty); tr.appendChild(depCell(r)); tr.appendChild(mapCell(r));
+        rows.appendChild(tr);
+      });
+      if (!shown.length) {
+        var tr = el('tr'); var td = el('td', 'pp-empty', source.length ? 'No matching resources. Change the search or type filter.' :
+          'No supported configuration resources were found in the source environment.');
+        td.colSpan = 5; tr.appendChild(td); rows.appendChild(tr);
+      }
+      $('ppTotal').textContent = shown.length + ' of ' + source.length + ' resources';
+      sync();
+    }
+    var types = []; source.forEach(function (r) { if (types.indexOf(r.type) < 0) { types.push(r.type); } });
+    types.sort(function (a, b) { return a.localeCompare(b); }).forEach(function (t) { var o = el('option', '', t); o.value = t; type.appendChild(o); });
+    var warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    if (warnings.length) {
+      var box = $('ppWarn'); box.hidden = false; box.appendChild(el('strong', '', 'Mapping suggestions need attention'));
+      var ul = el('ul'); warnings.forEach(function (w) { ul.appendChild(el('li', '', String(w))); }); box.appendChild(ul);
+    }
+    search.addEventListener('input', render);
+    type.addEventListener('change', render);
+    $('ppClear').addEventListener('click', function () { selected = {}; render(); });
+    $('ppToolbar').hidden = false; $('ppTableWrap').hidden = false; $('ppFoot').hidden = false;
+    $('ppManual').hidden = true; $('ppManualFields').hidden = true;
+    render();
+  }
+  start();
 })();
 """
 
@@ -741,7 +933,7 @@ REQ_INPUTS = [("apiOrigin", "string"), ("accessToken", "string"),
               ("sourceEnvironmentId", "string"), ("targetEnvironmentId", "string"),
               ("sourceEnvName", "string"), ("targetEnvName", "string"),
               ("sourceInventory", "object"), ("targetInventory", "object"),
-              ("sourceListText", "string"), ("targetListText", "string"),
+              ("sourceListText", "string"), ("targetListText", "string"), ("pickerData", "string"),
               ("sourceRegion", "string"), ("targetRegion", "string"),
               ("gitlabUrl", "string"), ("gitlabProjectId", "string"), ("gitlabEnvironment", "string"),
               ("userId", "string"), ("usernameText", "string")]
@@ -754,20 +946,8 @@ def build_request_subflow(signin):
              "Go app does, checks promotion variables and shows the review. Returns only when the requester submits.",
              letter="c", inputs=REQ_INPUTS)
     src, tgt = P("sourceEnvironmentId"), P("targetEnvironmentId")
-    select = f.page("Choose resources", page_html(
-        "Request a PingOne promotion",
-        ("Signed in as <strong>{{global.parameters.usernameText}}</strong>. " if signin else
-         "Sign-in is off for this proof of concept, so anyone who can launch the flow can open a request. ") +
-        "Pick the source resources to promote. This opens a GitLab merge request; nothing changes in PingOne until the "
-        "pipeline deploys it.",
-        [("Source resources (type, ID, name)", "{{global.parameters.sourceListText}}"),
-         ("Target resources (for mappings)", "{{global.parameters.targetListText}}")],
-        "selectForm",
-        textarea("selectedRaw", "Resource IDs to promote (one per line or comma-separated)", 4) +
-        textarea("mappingsRaw", "Optional mappings, one <code>sourceId=targetId</code> per line", 2) +
-        textarea("description", "Why is this change needed? (becomes the merge request title)", 3),
-        [("BUILD", "Build request", "btn-primary")], step=2, route="global.parameters", grid=True),
-        ["selectedRaw", "mappingsRaw", "description", "buttonValue"])
+    select = f.page("Choose resources", picker_html(signin), ["selectedRaw", "mappingsRaw", "description", "buttonValue"],
+                    script=PICKER_SCRIPT)
     build = f.fn("Build request.json", "build_request", gitlab_cfg(f) + [
         ("selectedRaw", "string", f.out(select, "selectedRaw")), ("mappingsRaw", "string", f.out(select, "mappingsRaw")),
         ("description", "string", f.out(select, "description")),
@@ -943,15 +1123,22 @@ def build_flows(signin):
         "apiOrigin": f.fv("apiOrigin"), "accessToken": token, "environmentId": f.fv("targetEnvironmentId"),
         "environmentLabel": f.fv("targetEnvName")})
     f.link(c_src, c_tgt)
+    # As the local app does: read PingOne's saved promotion mappings for this pair (a failure is only a warning).
+    saved_maps = f.rest("Saved promotion mappings", "GET", [f.fv("apiOrigin"), "/v1/environments/", f.fv("sourceEnvironmentId"),
+                                                            "/promotionMappings/", f.fv("targetEnvironmentId")], f.bearer())
+    f.link(c_tgt, saved_maps)
     inv = f.fn("Live inventories", "inventories", [
+        ("mappingsStatus", "number", f.out(saved_maps, "rawResponse.statusCode")),
+        ("mappingsBody", "object", f.out(saved_maps, "rawResponse.body")),
         ("apiOrigin", "string", f.fv("apiOrigin")), ("pinned", "string", "false"),
         ("sourceEnvironmentId", "string", f.fv("sourceEnvironmentId")), ("targetEnvironmentId", "string", f.fv("targetEnvironmentId")),
         ("sourceEnvBody", "object", f.out(c_src, "envBody")), ("sourceSnapshotBody", "object", f.out(c_src, "snapshotBody")),
         ("sourcePages", "object", f.out(c_src, "pages")), ("sourceSnapshotId", "string", f.out(c_src, "snapshotId")),
         ("targetEnvBody", "object", f.out(c_tgt, "envBody")), ("targetSnapshotBody", "object", f.out(c_tgt, "snapshotBody")),
         ("targetPages", "object", f.out(c_tgt, "pages")), ("targetSnapshotId", "string", f.out(c_tgt, "snapshotId"))],
-        {"state": "string", "error": "string", "source": "object", "target": "object", "sourceListText": "string", "targetListText": "string"})
-    f.link(c_tgt, inv)
+        {"state": "string", "error": "string", "source": "object", "target": "object", "sourceListText": "string", "targetListText": "string",
+         "pickerDataText": "string"})
+    f.link(saved_maps, inv)
     inv_ok = f.equals("Live inventories ok?", f.out(inv, "state"), "ok")
     f.link(inv, inv_ok)
     c_req = f.conductor("3 Choose resources and review", req, {
@@ -960,6 +1147,7 @@ def build_flows(signin):
         "sourceEnvName": f.fv("sourceEnvName"), "targetEnvName": f.fv("targetEnvName"),
         "sourceInventory": f.out(inv, "source"), "targetInventory": f.out(inv, "target"),
         "sourceListText": f.out(inv, "sourceListText"), "targetListText": f.out(inv, "targetListText"),
+        "pickerData": f.out(inv, "pickerDataText"),
         "sourceRegion": f.fv("sourceRegion"), "targetRegion": f.fv("targetRegion"),
         "gitlabUrl": f.fv("gitlabUrl"), "gitlabProjectId": f.fv("gitlabProjectId"), "gitlabEnvironment": f.fv("targetGitlabEnvironment"),
         "userId": who("userId"), "usernameText": who("usernameText")})

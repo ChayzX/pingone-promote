@@ -29,12 +29,13 @@ If you imported a previous file, this is what's different:
 1. **Re-import** the new file (and delete the old flow). Importing resets flow variables to placeholders, so set the flow variables in the checklist again. The two **company** secrets carry over; don't touch them.
 2. **`sourceEnvironmentId` and `targetEnvironmentId` are no longer settings.** The requester picks them at run time from the `envN…` slots. Put your environments in `env1Name`/`env1Id` … `env4Name`/`env4Id` instead.
 3. **One GitLab project.** `env1GitlabProjectId` … `env4GitlabProjectId` are gone; every request goes to `gitlabProjectId`. New and optional: `env1GitlabEnvironment` … `env4GitlabEnvironment`, the GitLab environment in that project that deploys to each target.
-4. **Debug logging is on** (flow settings, log level Debug), so Analytics shows every step's inputs and outputs. Debug logs can include tokens and configuration, so set it back to Info after the proof of concept.
+4. **Debug logging:** the file asks for Debug on every flow, but DaVinci may keep its default (Error) on import. Check **Flow → Settings → Logging** on all five flows and set **Debug** for the proof of concept. Debug logs include node inputs and outputs (tokens among them), so set it back to Info afterwards.
 5. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page. Each screen's styles are in its node's **CSS** field and the auto-continue in its **Script** field, as in Ping's own flows (DaVinci ignores `<style>`/`<script>` inside the HTML).
-6. **The flow is now a main flow plus four subflows** in one import file. Delete the old single flow, import, point the Flow Conductor nodes at your Flow Conductor connection, and deploy all five. Set the flow variables on the **main** flow only; the subflows get their values from it.
-7. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
-8. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
-9. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
+6. **Resource picker like the local app:** search, type filter, dependencies and destination-mapping dropdowns with suggestions. The main flow also reads PingOne's saved promotion mappings for the chosen pair, so the worker app needs read access to promotion mappings in the source environment (a failure only shows a warning).
+7. **The flow is now a main flow plus four subflows** in one import file. Delete the old single flow, import, point the Flow Conductor nodes at your Flow Conductor connection, and deploy all five. Set the flow variables on the **main** flow only; the subflows get their values from it.
+8. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
+9. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
+10. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
 
 ## 1. Before importing
 
