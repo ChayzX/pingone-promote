@@ -19,7 +19,7 @@ The flow never calls the PingOne promotions API, so it cannot deploy or roll bac
 
 **Proof of concept: sign-in is off.** The flow starts straight at the resource picker. The admin SSO, the DaVinci Admin check and the requester line in the MR are built and tested but switched off. Turn them on with `"requireSignIn": true` in `values.json`, or `enable_signin = true` plus `gen_flows.py --terraform . --signin`; see the [runbook](RUNBOOK.md#turning-sign-in-back-on). Until then, anyone who can launch the flow can open a merge request. GitLab's MR and deployment approvals still gate every change.
 
-**Status: first live import done; the REST node shape and variable handling were corrected from it.** The rest is tested offline, and the Terraform passes `terraform validate` against the real pingone provider. See [What still needs a live check](#what-still-needs-a-live-check).
+**Status: first live import done; the REST node body fields were corrected from it.** The rest is tested offline, and the Terraform passes `terraform validate` against the real pingone provider. See [What still needs a live check](#what-still-needs-a-live-check).
 
 ## What the admin sees
 
@@ -92,7 +92,7 @@ For the full setup, follow **[RUNBOOK.md](RUNBOOK.md)**. It covers prerequisites
 
 These were written from documentation and real export samples, not captured from a tenant. Check them on first import:
 
-1. **REST node fields: confirmed on a live import.** DaVinci saves `url`, `httpMethod`, `headers`, and the body as `httpBody` = `raw` plus a plain-text `raw` value; `check_flows.py` enforces that shape. The same import showed DaVinci drops flow variables that no save node writes, so a **Settings** node now writes them all at the start.
+1. **REST node fields: confirmed on a live import.** DaVinci saves `url`, `httpMethod`, `headers`, and the body as `httpBody` = `raw` plus a plain-text `raw` value; `check_flows.py` enforces that shape.
 2. **Redirects.** The Go client refuses GitLab redirects. Check whether the DaVinci HTTP connector follows them. If it does, GitLab must not redirect API calls.
 3. **Sign-on output (sign-in on only).** The sign-on capability is exported as `loginFirstFactor`. Its `accessToken` output is confirmed by Ping's connector docs.
 4. **Loops.** Snapshot polling and pagination route back to an earlier REST node. DaVinci must allow this cycle.

@@ -347,7 +347,9 @@ class Flow:
     # --- export -------------------------------------------------------------
     def export(self):
         variables = []
-        for name, (vtype, value) in sorted({**{k: ("string", v) for k, v in SETTINGS.items()}, **self.vars}.items()):
+        signin_only = set() if SIGNIN else {"adminEnvironmentId", "organizationId", "davinciAdminRoleId"}
+        settings = {k: ("string", v) for k, v in SETTINGS.items() if k not in signin_only}
+        for name, (vtype, value) in sorted({**settings, **self.vars}.items()):
             variables.append({"context": "flow", "fields": {"type": vtype, "displayName": name, "value": value, "mutable": True,
                                                             "min": 0, "max": 2000},
                               "flowId": self.flow_id, "type": "property", "visibility": "private",
@@ -404,9 +406,6 @@ def build_request_flow(signin):
     f = Flow("PingOne Promote - Request", "f0d00a7e00000000000000000000aa01",
              "A DaVinci Admin selects resources from live snapshots; the flow builds request.json exactly as the Go app does and "
              "opens a GitLab merge request. Deployment and rollback happen only in the protected GitLab pipeline.")
-    # DaVinci keeps only flow variables that a save node writes (seen on a live
-    # import), so one Settings node at the start sets them all. Edit it there.
-    settings = f.save("Settings", [(k, "string", SETTINGS[k]) for k in VALUE_KEYS])
     if signin:
         start, allow, denied = f.sign_in()
         who = lambda field: ("node", f"local.AUTHZ.payload.output.{field}", field)
@@ -554,7 +553,6 @@ def build_request_flow(signin):
     f.link(inv_live_ok, select, false_target=f.fail("Could not read the environments", inv_live))
     live_tgt = f.live_snapshot("liveTgt", None, TGT, inv_live)
     live_src = f.live_snapshot("liveSrc", None, SRC, live_tgt)
-    f.link(settings, start)
     if signin:
         f.link(allow, live_src, false_target=denied)
     else:

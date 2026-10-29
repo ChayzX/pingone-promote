@@ -32,8 +32,12 @@ function get(obj, dotted) {
 }
 
 function makeRun(settings, secrets, form, stringMode) {
-  // Like a live import: flow variables start empty and only save nodes set them.
+  // Flow variables come from the import; the settings stand in for the values the admin sets in DaVinci.
   const flowVars = {};
+  for (const v of FLOW.variables) {
+    if (v.context === 'flow') { flowVars[v.fields.displayName] = v.fields.value; }
+  }
+  Object.assign(flowVars, settings);
   const outputs = {};
   const lookup = (ref) => {
     let m;
@@ -103,11 +107,6 @@ async function runFlow(world, form, opts) {
           if (item.type === 'object' && typeof v === 'string') { v = JSON.parse(v); }
           if (item.type === 'number') { v = Number(v); }
           r.flowVars[item.name] = v;
-        }
-        if (title === 'Settings') {
-          // The admin edits the Settings node; the test world's settings stand in for that edit.
-          for (const k of Object.keys(world.settings)) { assert.ok(k in r.flowVars, 'Settings node sets ' + k); }
-          Object.assign(r.flowVars, world.settings);
         }
         r.outputs[id] = {};
         break;

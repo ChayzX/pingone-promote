@@ -77,9 +77,10 @@ for path in sys.argv[1:]:
             for item in n["properties"]["saveFlowVariables"]["value"]:
                 written_by[item["name"]].add(i)
     declared_company = {v["name"].split("##SK##")[0] for v in f["variables"] if v["context"] == "company"}
-    # Every flow variable must be written by a save node before it is read:
-    # DaVinci drops flow variables that no save node writes on import.
-    preset = set()
+    # Settings come with the import as flow variables the admin edits in DaVinci.
+    preset = {"apiOrigin", "authOrigin", "adminEnvironmentId", "hostEnvironmentId", "sourceEnvironmentId", "targetEnvironmentId",
+              "organizationId", "davinciAdminRoleId", "sourceRegion", "targetRegion", "gitlabUrl", "gitlabProjectId",
+              "gitlabEnvironment"}
     for i, n in nodes.items():
         blob = json.dumps(n.get("properties", {}))
         anc = ancestors(i)
