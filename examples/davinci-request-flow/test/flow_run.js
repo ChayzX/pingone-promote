@@ -172,7 +172,7 @@ async function runGraph(flow, r, world, form, opts, st) {
       case 'customHTMLTemplate': {
         const html = r.template(p.customHTML.value);
         st.calls = 0;
-        st.pages.push({ title, html, flow: flow.name });
+        st.pages.push({ title, html, flow: flow.name, script: (p.customScript && p.customScript.value) || '', css: (p.customCSS && p.customCSS.value) || '' });
         // Final screens (styled error or notice) end the run like DaVinci's error and message nodes did.
         const kind = /data-pp-kind="(error|message)"/.exec(html);
         if (kind) {
@@ -181,7 +181,8 @@ async function runGraph(flow, r, world, form, opts, st) {
         }
         const fields = p.formFieldsList.value.map((f) => f.propertyName);
         // Self-continuing "working" pages submit themselves in the browser.
-        const answer = html.indexOf('<!-- pp-auto-continue -->') >= 0 ? { buttonValue: 'CONTINUE' } : form[title];
+        const script = (p.customScript && p.customScript.value) || '';
+        const answer = script.indexOf('pp-auto-continue') >= 0 ? { buttonValue: 'CONTINUE' } : form[title];
         if (fields.length === 0 || answer === undefined) { return { end: 'page', title, html }; }
         r.outputs[id] = {};
         for (const f of fields) { r.outputs[id][f] = answer[f] === undefined ? '' : answer[f]; }
@@ -444,7 +445,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const r = await runFlow(w, form('b7'));
     ok(r.title === 'Merge request opened', 'big environment and slow snapshot still complete: ' + (r.text || ''));
     ok(r.run.maxCalls <= 8, 'no browser request makes more than 8 REST calls (max ' + r.run.maxCalls + ')');
-    ok(r.pages.filter((pg) => pg.html.indexOf('pp-auto-continue') >= 0).length >= 40, 'snapshot polls and page reads hand back to the browser');
+    ok(r.pages.filter((pg) => pg.script.indexOf('pp-auto-continue') >= 0).length >= 40, 'snapshot polls and page reads hand back to the browser');
     const many = Array.from({ length: 30 }, (_, i) => 'b' + i).join(' ');
     const w2 = world({ bigEnv: 60 });
     const r2 = await runFlow(w2, form(many));
@@ -473,8 +474,8 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const pick = r.pages.find((pg) => pg.title === 'Choose source environment').html;
     ok(pick.indexOf('<b>Dev</b>') > 0 && pick.indexOf('<b>Prod</b>') > 0 && (pick.match(/data-pp-env="1"/g) || []).length === 4, 'source page offers one button per slot, labelled by name');
     const tpage = r.pages.find((pg) => pg.title === 'Choose target environment').html;
-    ok(tpage.indexOf('Promote from <strong>Dev</strong>') > 0 && tpage.indexOf('var hide = "Dev"') > 0, 'target page names the source and hides it');
-    ok(r.pages.find((pg) => pg.title === 'Choose resources').html.indexOf('<span class="pp-chip">Dev</span>&rarr;<span class="pp-chip">Prod</span>') > 0, 'resource page shows the chosen pair');
+    ok(tpage.indexOf('Promote from <strong>Dev</strong>') > 0 && tpage.indexOf('data-pp-hide="Dev"') > 0, 'target page names the source and hides it');
+    ok(r.pages.find((pg) => pg.title === 'Choose resources').html.indexOf('<b>From</b><span class="pp-chip">Dev</span>&rarr;<b>To</b><span class="pp-chip">Prod</span>') > 0, 'resource page shows the chosen pair');
     ok(JSON.parse(w.gitlab.commits[0].actions[0].content).source.id === SRC, 'request uses the chosen source');
   }
   {
@@ -501,6 +502,14 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   await noGitLab('promotion project missing', world({ settings: { gitlabProjectId: '' } }), form('a2'), 'gitlabProjectId must be the numeric ID');
   await noGitLab('same environment twice', world(), form('a2', '', 'x', 'SUBMIT', ['ENV1', 'ENV1']), 'must be different');
   await noGitLab('empty slot chosen', world(), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not configured');
+  {
+    // Only two environments: slots 3 and 4 keep a name but have no ID. That is a valid setup.
+    const w = world({ settings: { env3Name: 'Env 3', env3Id: '', env4Name: 'Env 4', env4Id: '' } });
+    const r = await runFlow(w, form('a2'));
+    ok(r.title === 'Merge request opened', 'unused slots with a leftover name pass the settings check: ' + (r.text || r.title));
+    const pick = r.pages.find((pg) => pg.title === 'Choose source environment').html;
+    ok(pick.indexOf('data-pp-id=""') > 0, 'an unused slot is marked for hiding');
+  }
   await noGitLab('unsafe ID in a slot', world({ settings: { env3Name: 'Bad', env3Id: '../x' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'env3Id must be an environment ID');
   // The settings check runs first and names placeholder or malformed variables.
   for (const [what, settings, msg] of [
@@ -593,6 +602,11 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const w = world();
     const r = await runFlow(w, form('a1', '', 'x', 'CANCEL'));
     ok(r.end === 'message' && r.subflows.indexOf('PingOne Promote - 4 Submit to GitLab') < 0, 'cancel ends in the review subflow; submit never runs');
+  }
+  {
+    const r = await runFlow(world(), form('a1'));
+    ok(r.pages.length > 5 && r.pages.every((pg) => pg.css.indexOf('.pp-card') >= 0 && !/<(style|script)\b/i.test(pg.html)),
+      'every screen carries its styles in the CSS field, none inline in the HTML');
   }
   // Partial failures stop at the failed step.
   {

@@ -13,7 +13,7 @@ After importing, these are the only values the flow needs. Everything else is in
 | Flow variable | `hostEnvironmentId` | Yes | Environment where the **worker app** lives (its token URL) | `9f1c…` |
 | Flow variable | `env1Name`, `env1Id` | Yes | First environment: button label and environment ID | `Dev`, `2b7e…` |
 | Flow variable | `env2Name`, `env2Id` | Yes | Second environment | `Prod`, `c41a…` |
-| Flow variable | `env3Name`/`env3Id`, `env4Name`/`env4Id` | No | Third and fourth; leave empty to hide the button | `Test`, `Stage` |
+| Flow variable | `env3Name`/`env3Id`, `env4Name`/`env4Id` | No | Third and fourth. A slot with an empty ID is unused and its button is hidden, whatever its name | `Test`, `Stage` |
 | Flow variable | `gitlabProjectId` | Yes | Numeric ID of the one promotion project | `12345678` |
 | Flow variable | `env1GitlabEnvironment` … `env4GitlabEnvironment` | No | GitLab environment that deploys **to** that environment; empty = `gitlabEnvironment` | `dev`, `test` |
 | Flow variable | `gitlabUrl`, `gitlabEnvironment` | Preset | `https://gitlab.com`, `production` | |
@@ -30,7 +30,7 @@ If you imported a previous file, this is what's different:
 2. **`sourceEnvironmentId` and `targetEnvironmentId` are no longer settings.** The requester picks them at run time from the `envN…` slots. Put your environments in `env1Name`/`env1Id` … `env4Name`/`env4Id` instead.
 3. **One GitLab project.** `env1GitlabProjectId` … `env4GitlabProjectId` are gone; every request goes to `gitlabProjectId`. New and optional: `env1GitlabEnvironment` … `env4GitlabEnvironment`, the GitLab environment in that project that deploys to each target.
 4. **Debug logging is on** (flow settings, log level Debug), so Analytics shows every step's inputs and outputs. Debug logs can include tokens and configuration, so set it back to Info after the proof of concept.
-5. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page.
+5. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page. Each screen's styles are in its node's **CSS** field and the auto-continue in its **Script** field, as in Ping's own flows (DaVinci ignores `<style>`/`<script>` inside the HTML).
 6. **The flow is now a main flow plus four subflows** in one import file. Delete the old single flow, import, point the Flow Conductor nodes at your Flow Conductor connection, and deploy all five. Set the flow variables on the **main** flow only; the subflows get their values from it.
 7. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
 8. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.

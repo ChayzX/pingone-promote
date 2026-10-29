@@ -115,6 +115,10 @@ for path in sys.argv[1:]:
               queue.extend(succ[i])
       if seen != set(nodes):
           problems.append(f"unreachable nodes: {sorted(set(nodes) - seen)[:5]}")
+      # DaVinci ignores <style>/<script> inside Custom HTML: they belong in the node's CSS and Script fields.
+      for i, n in nodes.items():
+          if n.get("capabilityName") == "customHTMLTemplate" and re.search(r"<(style|script)\b", n["properties"]["customHTML"]["value"], re.I):
+              problems.append(f"{i} ({n['properties']['nodeTitle']['value']}) has <style>/<script> in its HTML; use customCSS/customScript")
       # A failed REST call must lead somewhere: otherwise DaVinci shows its generic error page.
       for i, n in nodes.items():
           if n.get("capabilityName") == "makeRestApiCall":

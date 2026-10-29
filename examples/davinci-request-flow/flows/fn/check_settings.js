@@ -22,7 +22,8 @@ let configured = 0;
 for (const [n, name, id, gitlabEnv] of slots) {
   const nm = String(name || '').trim();
   const ident = String(id || '').trim();
-  if (!nm && !ident) { continue; }
+  // A slot without an ID is unused (its button is hidden), whatever its name says.
+  if (!ident) { continue; }
   configured++;
   if (!nm) { problems.push('env' + n + 'Name is empty but env' + n + 'Id is set'); }
   if (!UUID.test(ident)) { problems.push('env' + n + 'Id must be an environment ID; it is "' + ident.slice(0, 60) + '"'); }

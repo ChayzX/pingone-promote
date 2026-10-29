@@ -272,27 +272,23 @@ class Flow:
     def message(self, title, parts):
         return self.page(title, notice_html(title, plain(*parts), "message"), [])
 
-    def page(self, title, html, fields):
-        return self.node("http", "customHTMLTemplate", {
+    def page(self, title, html, fields, script=""):
+        """A screen. Styles go in the node's CSS field and code in its Script field, as in Ping's
+        own flows: DaVinci does not apply <style>/<script> written inside the HTML."""
+        props = {
             "customHTML": {"value": html},
+            "customCSS": {"value": CSS},
             "formFieldsList": {"value": [{"preferredControlType": "textField", "preferredDataType": "string", "propertyName": f,
                                           "displayName": f, "hashedVisibility": False} for f in fields]},
-            "validationRules": {"value": []}}, title)
+            "validationRules": {"value": []}}
+        if script:
+            props["customScript"] = {"value": script}
+        return self.node("http", "customHTMLTemplate", props, title)
 
     def wait_page(self, title, text, step=None):
         """A short "working" page that submits itself after 2 s (Continue is the fallback).
         Long work is split across requests this way, so none hits the browser's timeout."""
-        html = (wait_html(title, text, step) +
-                # Exactly one submit per rendered page: DaVinci may run an inline script more than
-                # once, and a second submit of a step that already moved on ends on its generic error.
-                # The button is marked when clicked; a manual click marks it too.
-                "<!-- pp-auto-continue --><script>(function () { function go() { var b = document.querySelector("
-                "'[data-skbuttonvalue=\"CONTINUE\"]'); if (!b || b.getAttribute('data-pp-sent')) { return; } "
-                "b.setAttribute('data-pp-sent', '1'); b.click(); } "
-                "document.addEventListener('click', function (e) { var t = e.target && e.target.closest && "
-                "e.target.closest('[data-skbuttonvalue=\"CONTINUE\"]'); if (t && e.isTrusted) { t.setAttribute('data-pp-sent', '1'); } }, true); "
-                "setTimeout(go, 2000); })();</script>")
-        return self.page(title, html, ["buttonValue"])
+        return self.page(title, wait_html(title, text, step), ["buttonValue"], script=AUTO_CONTINUE)
 
     # --- composite blocks -----------------------------------------------------
     def bearer(self):
@@ -507,58 +503,73 @@ def label(prefix):
 # Every page carries its own small stylesheet (scoped to .pp) so it renders the
 # same in any DaVinci application, with or without the host page's CSS.
 STEPS = ["Source", "Target", "Resources", "Review", "Submitted"]
-CSS = """<style>
-.pp{--pp-bg:#f4f6f9;--pp-card:#fff;--pp-ink:#1b2430;--pp-muted:#5b6675;--pp-line:#dde2e9;--pp-accent:#1f5fbf;--pp-accent-ink:#fff;
---pp-soft:#eaf1fb;--pp-code:#0f1720;--pp-code-ink:#d7e1ec;--pp-bad:#b42318;--pp-bad-soft:#fdecea;--pp-ok:#1a7f4b;--pp-ok-soft:#e7f6ee;
-font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--pp-ink);background:var(--pp-bg);min-height:100vh;padding:32px 16px;box-sizing:border-box}
+CSS = """
+.pp{--pp-bg:#eef1f5;--pp-card:#fff;--pp-ink:#1a2433;--pp-muted:#5a6573;--pp-line:#d8dde4;--pp-bar:#0f2744;--pp-accent:#0b5cad;
+--pp-accent-dark:#084a8c;--pp-soft:#e8f0fa;--pp-code:#f6f8fa;--pp-code-line:#e1e5ea;--pp-bad:#a4161a;--pp-bad-soft:#fdf1f1;
+--pp-ok:#16683f;--pp-ok-soft:#eef8f2;
+font:14px/1.55 "Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--pp-ink);
+background:var(--pp-bg);min-height:100vh;box-sizing:border-box;text-align:left}
 .pp *{box-sizing:border-box}
-.pp-card{max-width:920px;margin:0 auto;background:var(--pp-card);border:1px solid var(--pp-line);border-radius:12px;box-shadow:0 1px 2px rgba(16,24,40,.06);overflow:hidden}
-.pp-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;border-bottom:1px solid var(--pp-line)}
-.pp-brand{font-weight:650;letter-spacing:.2px}.pp-brand span{color:var(--pp-accent)}
-.pp-tag{font-size:12px;font-weight:600;color:#8a5a00;background:#fff4dc;border:1px solid #f3dca6;border-radius:999px;padding:2px 10px}
-.pp-steps{display:flex;gap:4px;padding:14px 24px 0;margin:0;list-style:none;flex-wrap:wrap}
-.pp-steps li{flex:1 1 0;min-width:90px;font-size:12px;font-weight:600;color:var(--pp-muted);padding-top:8px;border-top:3px solid var(--pp-line)}
-.pp-steps li.done{color:var(--pp-ink);border-color:#8fb0e3}.pp-steps li.now{color:var(--pp-accent);border-color:var(--pp-accent)}
-.pp-body{padding:20px 24px 26px}
-.pp h1{font-size:22px;line-height:1.3;margin:4px 0 6px}
+.pp-bar{background:var(--pp-bar);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 28px;height:56px}
+.pp-brand{font-size:15px;font-weight:600;letter-spacing:.2px;display:flex;align-items:center;gap:10px}
+.pp-mark{width:22px;height:22px;border-radius:4px;background:linear-gradient(135deg,#3d8bfd,#0b5cad);display:inline-block}
+.pp-brand small{font-weight:400;color:#b7c4d6;font-size:13px;border-left:1px solid #3a5272;padding-left:10px}
+.pp-tag{font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#ffd58a;border:1px solid #8a6a2e;border-radius:3px;padding:2px 8px}
+.pp-main{max-width:960px;margin:28px auto;padding:0 20px}
+.pp-card{background:var(--pp-card);border:1px solid var(--pp-line);border-radius:6px;box-shadow:0 1px 3px rgba(15,39,68,.08)}
+.pp-steps{display:flex;margin:0;padding:18px 28px;list-style:none;border-bottom:1px solid var(--pp-line);gap:0;flex-wrap:wrap}
+.pp-steps li{flex:1 1 0;min-width:100px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--pp-muted);position:relative}
+.pp-steps li span{width:24px;height:24px;border-radius:50%;border:2px solid #b9c2cd;display:inline-flex;align-items:center;justify-content:center;
+font-size:12px;font-weight:600;background:#fff;flex:none}
+.pp-steps li.done{color:var(--pp-ink)}.pp-steps li.done span{background:var(--pp-accent);border-color:var(--pp-accent);color:#fff}
+.pp-steps li.now{color:var(--pp-accent);font-weight:600}.pp-steps li.now span{border-color:var(--pp-accent);color:var(--pp-accent)}
+.pp-body{padding:24px 28px 28px}
+.pp h1{font-size:20px;font-weight:600;line-height:1.3;margin:0 0 6px}
 .pp-lead{color:var(--pp-muted);margin:0 0 18px}
-.pp-route{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 18px}
-.pp-chip{display:inline-block;background:var(--pp-soft);color:var(--pp-accent);border-radius:999px;padding:3px 12px;font-weight:600;font-size:13px}
-.pp h2{font-size:14px;font-weight:650;color:var(--pp-muted);margin:20px 0 8px}
-.pp pre{background:var(--pp-code);color:var(--pp-code-ink);border-radius:8px;padding:12px 14px;margin:0;max-height:300px;overflow:auto;
-font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
-.pp-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media (max-width:720px){.pp-grid{grid-template-columns:1fr}}
-.pp label{display:block;font-weight:600;margin:16px 0 6px}
-.pp textarea,.pp input[type=text]{width:100%;border:1px solid #c5cdd8;border-radius:8px;padding:9px 11px;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;color:var(--pp-ink);background:#fff}
-.pp textarea:focus,.pp input:focus{outline:2px solid #9cc0f5;border-color:var(--pp-accent)}
-.pp code{background:var(--pp-soft);border-radius:4px;padding:0 4px;font-size:.92em}
-.pp-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
-.pp-btn{appearance:none;border:1px solid var(--pp-accent);background:var(--pp-accent);color:var(--pp-accent-ink);border-radius:8px;padding:10px 18px;font:600 14px system-ui,sans-serif;cursor:pointer}
-.pp-btn:hover{filter:brightness(1.08)}.pp-btn.ghost{background:#fff;color:var(--pp-ink);border-color:#c5cdd8}
-.pp-envs{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
-.pp-env{appearance:none;text-align:left;background:#fff;border:1px solid var(--pp-line);border-radius:10px;padding:16px;cursor:pointer;font:inherit;color:inherit;
-transition:border-color .15s,box-shadow .15s}
-.pp-env:hover,.pp-env:focus{border-color:var(--pp-accent);box-shadow:0 0 0 3px #d6e5fb;outline:none}
-.pp-env b{display:block;font-size:16px}.pp-env small{color:var(--pp-muted)}
-.pp-note{border-radius:8px;padding:12px 14px;margin:0 0 16px;background:var(--pp-soft)}
-.pp-note.bad{background:var(--pp-bad-soft);color:var(--pp-bad);border:1px solid #f5c2bc}
-.pp-note.ok{background:var(--pp-ok-soft);color:var(--pp-ok);border:1px solid #bfe3cf}
-.pp-wait{display:flex;align-items:center;gap:14px;margin:8px 0 4px}
-.pp-spin{width:28px;height:28px;border:3px solid var(--pp-line);border-top-color:var(--pp-accent);border-radius:50%;animation:pp-spin .8s linear infinite;flex:none}
+.pp-route{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 20px;padding:10px 14px;background:var(--pp-soft);border-radius:4px;font-size:13px}
+.pp-route b{font-weight:600;color:var(--pp-muted);text-transform:uppercase;font-size:11px;letter-spacing:.5px}
+.pp-chip{font-weight:600;color:var(--pp-accent-dark)}
+.pp h2{font-size:13px;font-weight:600;color:var(--pp-ink);margin:22px 0 8px}
+.pp pre{background:var(--pp-code);color:#24303f;border:1px solid var(--pp-code-line);border-radius:4px;padding:12px 14px;margin:0;max-height:300px;
+overflow:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
+.pp-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}@media (max-width:760px){.pp-grid{grid-template-columns:1fr}}
+.pp label{display:block;font-weight:600;font-size:13px;margin:18px 0 6px}
+.pp textarea,.pp input[type=text]{width:100%;border:1px solid #b9c2cd;border-radius:4px;padding:8px 10px;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;
+color:var(--pp-ink);background:#fff}
+.pp textarea:focus,.pp input:focus{outline:none;border-color:var(--pp-accent);box-shadow:0 0 0 3px rgba(11,92,173,.18)}
+.pp code{background:var(--pp-soft);border-radius:3px;padding:0 4px;font-size:.92em}
+.pp-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px;padding-top:18px;border-top:1px solid var(--pp-line)}
+.pp-btn{appearance:none;border:1px solid var(--pp-accent);background:var(--pp-accent);color:#fff;border-radius:4px;padding:9px 20px;
+font:600 14px "Segoe UI",system-ui,sans-serif;cursor:pointer}
+.pp-btn:hover{background:var(--pp-accent-dark)}.pp-btn.ghost{background:#fff;color:var(--pp-ink);border-color:#b9c2cd}.pp-btn.ghost:hover{background:#f3f5f8}
+.pp-envs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.pp-env{appearance:none;text-align:left;background:#fff;border:1px solid var(--pp-line);border-left:4px solid #b9c2cd;border-radius:4px;padding:14px 16px;
+cursor:pointer;font:inherit;color:inherit}
+.pp-env:hover,.pp-env:focus{border-color:var(--pp-accent);border-left-color:var(--pp-accent);background:#f8fbff;outline:none}
+.pp-env b{display:block;font-size:15px;font-weight:600}.pp-env small{color:var(--pp-muted)}
+.pp-env:has(b:empty),.pp-env[data-pp-id=""]{display:none}
+.pp-note{border-radius:4px;padding:12px 14px;margin:0 0 16px;background:var(--pp-soft);border-left:4px solid var(--pp-accent)}
+.pp-note.bad{background:var(--pp-bad-soft);color:var(--pp-bad);border-left-color:var(--pp-bad)}
+.pp-note.ok{background:var(--pp-ok-soft);color:var(--pp-ok);border-left-color:var(--pp-ok)}
+.pp-wait{display:flex;align-items:center;gap:14px;margin:6px 0 2px}
+.pp-spin{width:26px;height:26px;border:3px solid var(--pp-line);border-top-color:var(--pp-accent);border-radius:50%;animation:pp-spin .8s linear infinite;flex:none}
 @keyframes pp-spin{to{transform:rotate(360deg)}}
 .pp a{color:var(--pp-accent);font-weight:600;word-break:break-all}
-</style>"""
+.pp-foot{max-width:960px;margin:0 auto 28px;padding:0 20px;color:var(--pp-muted);font-size:12px}
+"""
 POC_TAG = '<span class="pp-tag">Proof of concept</span>'
 
 
 def shell(step, body, kind="page"):
-    """Card with brand bar and step tracker; step is an index into STEPS, or None."""
+    """Product bar, step tracker and card; step is an index into STEPS, or None. Styles come from the node's CSS field."""
     steps = ""
     if step is not None:
         steps = '<ol class="pp-steps">' + "".join(
-            f'<li class="{"now" if i == step else "done" if i < step else ""}">{i + 1}. {name}</li>' for i, name in enumerate(STEPS)) + "</ol>"
-    return (CSS + f'<div class="pp" data-pp-kind="{kind}"><div class="pp-card"><div class="pp-top"><div class="pp-brand">PingOne <span>Promote</span></div>'
-            f'{POC_TAG}</div>{steps}<div class="pp-body">{body}</div></div></div>')
+            f'<li class="{"now" if i == step else "done" if i < step else ""}"><span>{i + 1}</span>{name}</li>' for i, name in enumerate(STEPS)) + "</ol>"
+    return (f'<div class="pp" data-pp-kind="{kind}"><div class="pp-bar"><div class="pp-brand"><i class="pp-mark"></i>PingOne Promote'
+            f'<small>Configuration promotion request</small></div>{POC_TAG}</div><div class="pp-main"><div class="pp-card">{steps}'
+            f'<div class="pp-body">{body}</div></div></div><div class="pp-foot">Requests open a GitLab merge request. Deployment and '
+            f'rollback happen only in the protected GitLab pipeline.</div></div>')
 
 
 def button(form_id, value, label, ghost=False, extra=""):
@@ -567,8 +578,8 @@ def button(form_id, value, label, ghost=False, extra=""):
 
 
 def route_html(scope="global.flow.variables"):
-    return (f'<div class="pp-route"><span class="pp-chip">{{{{{scope}.sourceEnvName}}}}</span>&rarr;'
-            f'<span class="pp-chip">{{{{{scope}.targetEnvName}}}}</span></div>')
+    return (f'<div class="pp-route"><b>From</b><span class="pp-chip">{{{{{scope}.sourceEnvName}}}}</span>&rarr;'
+            f'<b>To</b><span class="pp-chip">{{{{{scope}.targetEnvName}}}}</span></div>')
 
 
 def page_html(title, intro, pre_blocks, form_id, fields_html, buttons, step=None, route=False, grid=False, note=""):
@@ -586,12 +597,45 @@ def env_page(title, intro, hide_name, step, scope="global.flow.variables"):
     """One tile per configured environment (ENV1..ENV4). Empty slots, and the
     already-chosen source on the target page, are hidden in the browser and
     refused again by resolve_env."""
+    # data-pp-id lets the CSS hide a slot without an environment ID, even if the Script field doesn't run.
     tiles = "".join(button("envForm", f"ENV{i}", f'<b>{{{{{scope}.env{i}Name}}}}</b><small>Environment {i}</small>',
-                           extra=' data-pp-env="1"').replace('class="pp-btn"', 'class="pp-env"') for i in range(1, 5))
-    script = ("<script>(function () { var hide = " + json.dumps(hide_name) + "; document.querySelectorAll('[data-pp-env]')"
-              ".forEach(function (b) { var n = b.querySelector('b'); var t = n ? n.textContent.trim() : '';"
-              " if (!t || t === hide) { b.style.display = 'none'; } }); })();</script>")
-    return shell(step, f'<h1>{title}</h1><p class="pp-lead">{intro}</p><form id="envForm" data-id="envForm"><div class="pp-envs">{tiles}</div></form>') + script
+                           extra=f' data-pp-env="1" data-pp-id="{{{{{scope}.env{i}Id}}}}"').replace('class="pp-btn"', 'class="pp-env"')
+                    for i in range(1, 5))
+    # The Script field (ENV_SCRIPT) hides empty slots and the source named in data-pp-hide.
+    return shell(step, f'<h1>{title}</h1><p class="pp-lead">{intro}</p><form id="envForm" data-id="envForm" data-pp-hide="{hide_name}">'
+                       f'<div class="pp-envs">{tiles}</div></form>')
+
+
+# Script fields (plain JavaScript, as Ping's flows store them).
+# Exactly one submit per rendered page: a second submit of a step that has
+# already moved on ends on DaVinci's generic error. A manual click counts too.
+AUTO_CONTINUE = """// pp-auto-continue: submit this working page once, after 2 seconds.
+(function () {
+  function button() { return document.querySelector('[data-skbuttonvalue="CONTINUE"]'); }
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest && e.target.closest('[data-skbuttonvalue="CONTINUE"]');
+    if (t && e.isTrusted) { t.setAttribute('data-pp-sent', '1'); }
+  }, true);
+  setTimeout(function () {
+    var b = button();
+    if (!b || b.getAttribute('data-pp-sent')) { return; }
+    b.setAttribute('data-pp-sent', '1');
+    b.click();
+  }, 2000);
+})();
+"""
+ENV_SCRIPT = """// Hide empty environment slots, and the chosen source on the target page.
+(function () {
+  var form = document.getElementById('envForm');
+  var hide = form ? (form.getAttribute('data-pp-hide') || '').trim() : '';
+  document.querySelectorAll('[data-pp-env]').forEach(function (b) {
+    var n = b.querySelector('b');
+    var t = n ? n.textContent.trim() : '';
+    var id = (b.getAttribute('data-pp-id') || '').trim();
+    if (!t || !id || (hide && t === hide)) { b.style.display = 'none'; }
+  });
+})();
+"""
 
 
 def wait_html(title, text, step):
@@ -648,7 +692,7 @@ def build_envs_flow():
                "gitlabEnvironment": "string"}
     src_page = f.page("Choose source environment", env_page(
         "Choose the source environment", "Which environment has the configuration you want to promote?", "", 0,
-        scope="global.parameters"), ["buttonValue"])
+        scope="global.parameters"), ["buttonValue"], script=ENV_SCRIPT)
     src_res = f.fn("Source environment chosen", "resolve_env", [
         ("choice", "string", f.out(src_page, "buttonValue")), ("excludeId", "string", "")] + env_inputs, outputs)
     f.link(src_page, src_res)
@@ -659,7 +703,7 @@ def build_envs_flow():
     f.link(src_ok, src_save, false_target=f.fail("Invalid source environment", src_res))
     tgt_page = f.page("Choose target environment", env_page(
         "Choose the target environment", "Promote from <strong>{{global.flow.variables.sourceEnvName}}</strong> to:",
-        "{{global.flow.variables.sourceEnvName}}", 1, scope="global.parameters"), ["buttonValue"])
+        "{{global.flow.variables.sourceEnvName}}", 1, scope="global.parameters"), ["buttonValue"], script=ENV_SCRIPT)
     f.link(src_save, tgt_page)
     tgt_res = f.fn("Target environment chosen", "resolve_env", [
         ("choice", "string", f.out(tgt_page, "buttonValue")), ("excludeId", "string", f.fv("sourceEnvironmentId"))] + env_inputs, outputs)
