@@ -214,7 +214,7 @@ func TestFlowLifecycleExposesAllowedContentAndBindsItToRawDigest(t *testing.T) {
 	}
 }
 
-func TestInspectAllowsMatchingFlowVersionSourceReferenceNames(t *testing.T) {
+func TestInspectTreatsFlowVersionSourceNamesAsDigestBoundDisplayMetadata(t *testing.T) {
 	source, target, selected, baseSteps := flowVersionLifecycleFixture()
 	base := Inspect(source, target, selected, nil, baseSteps, false)
 	if len(base.Issues) != 0 {
@@ -231,14 +231,14 @@ func TestInspectAllowsMatchingFlowVersionSourceReferenceNames(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			steps := append([]pingone.Step(nil), baseSteps...)
 			if tc.root {
-				steps[0].Source.Name = source.Resources[0].Name
+				steps[0].Source.Name = "Native root display label"
 			}
 			if tc.ver {
-				steps[2].Source.Name = source.Resources[1].Name
+				steps[2].Source.Name = "Native version display label"
 			}
 			review := Inspect(source, target, selected, nil, steps, false)
 			if len(review.Issues) != 0 {
-				t.Fatalf("matching pinned source resource names rejected: %v", review.Issues)
+				t.Fatalf("nonempty source display metadata rejected: %v", review.Issues)
 			}
 			if review.Digest == base.Digest {
 				t.Fatal("sourceRef.Name was omitted from the canonical raw-step digest")
@@ -253,12 +253,6 @@ func TestInspectProvidesDistinctSafeFlowLifecycleReasons(t *testing.T) {
 		want   string
 		mutate func(*pingone.Inventory, *pingone.Inventory, *[]pingone.Step)
 	}{
-		{name: "source ref mismatched name metadata", want: "root-step-source-ref-name-mismatch", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
-			(*steps)[0].Source.Name = "Other Flow"
-		}},
-		{name: "version ref mismatched name metadata", want: "version-step-source-ref-name-mismatch", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
-			(*steps)[2].Source.Name = "Another version"
-		}},
 		{name: "root destination URL", want: "root-step-target-url", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
 			(*steps)[0].URL = strings.Replace((*steps)[0].URL, "/flows", "/templates", 1)
 		}},
@@ -334,6 +328,14 @@ func TestInspectRejectsInvalidSelectedFlowVersionCreateLifecycle(t *testing.T) {
 		}},
 		{"wrong root owner", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
 			(*steps)[0].Source.ID = "flow-b"
+		}},
+		{"root source ID mismatch despite matching display name", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Source.ID = "flow-b"
+			(*steps)[0].Source.Name = "Flow A"
+		}},
+		{"version source ID mismatch despite matching display name", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Source.ID = "flowId:flow-a-version:2"
+			(*steps)[2].Source.Name = "Flow A version 1"
 		}},
 		{"source root version mismatch", func(s *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, _ *[]pingone.Step) {
 			s.Resources[0].Configuration["currentVersion"] = 2
