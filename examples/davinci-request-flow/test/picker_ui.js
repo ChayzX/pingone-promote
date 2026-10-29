@@ -79,6 +79,23 @@ const ok = (cond, msg) => { assert.ok(cond, msg); n++; };
   // The values DaVinci submits are what build_request parses.
   f = await fields();
   ok(f.sel === 'a2', 'submitted selection is the resource IDs');
+  // Environment buttons: blank-looking slots and the chosen source are hidden.
+  const nodes = (data.flows || [data]).flatMap((fl) => fl.graphData.elements.nodes).map((d) => d.data);
+  const envNode = nodes.find((d) => d.properties && d.properties.nodeTitle && d.properties.nodeTitle.value === 'Choose target environment').properties;
+  const envVals = { env1Name: 'Dev', env1Id: '11111111-1111-4111-8111-111111111111', env2Name: 'Prod', env2Id: '22222222-2222-4222-8222-222222222222',
+    env3Name: 'Env 3', env3Id: 'null', env4Name: 'Env 4', env4Id: '{{global.flow.variables.env4Id}}', sourceEnvName: 'Dev' };
+  const envHtml = envNode.customHTML.value.replace(/\{\{([^}]+)\}\}/g, (m, ref) => { const k = ref.split('.').pop(); return envVals[k] !== undefined ? envVals[k] : ''; });
+  await page.setContent('<!doctype html><html><head><style>' + envNode.customCSS.value + '</style></head><body>' + envHtml + '</body></html>');
+  await page.evaluate((s) => (0, eval)(s), envNode.customScript.value);
+  await page.waitForTimeout(100);
+  const shown = await page.evaluate(() => [...document.querySelectorAll('[data-pp-env]')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.querySelector('b').textContent));
+  ok(JSON.stringify(shown) === '["Prod"]', 'target page shows only configured slots other than the source: ' + JSON.stringify(shown));
+  // Working page: the fallback Continue button is hidden while the page continues by itself.
+  const waitNode = nodes.find((d) => d.properties && d.properties.nodeTitle && d.properties.nodeTitle.value === 'Snapshot: preparing').properties;
+  await page.setContent('<!doctype html><html><head><style>' + waitNode.customCSS.value + '</style></head><body>' + waitNode.customHTML.value + '</body></html>');
+  ok(await page.evaluate(() => getComputedStyle(document.querySelector('.pp-fallback')).visibility === 'hidden'), 'working page shows no Continue button at first');
+  await page.waitForTimeout(10300);
+  ok(await page.evaluate(() => getComputedStyle(document.querySelector('.pp-fallback')).visibility === 'visible'), 'the fallback Continue button appears after 10 seconds');
   await browser.close();
   console.log('picker ui: ' + n + ' checks passed');
 })().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

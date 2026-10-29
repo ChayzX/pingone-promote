@@ -20,14 +20,14 @@ const slots = [
 ];
 let configured = 0;
 for (const [n, name, id, gitlabEnv] of slots) {
-  const nm = String(name || '').trim();
-  const ident = String(id || '').trim();
-  // A slot without an ID is unused (its button is hidden), whatever its name says.
+  const nm = core.isUnset(name) ? '' : String(name).trim();
+  const ident = core.isUnset(id) ? '' : String(id).trim();
+  // A slot without an ID (blank, null or filler) is unused and its button is hidden, whatever its name says.
   if (!ident) { continue; }
   configured++;
   if (!nm) { problems.push('env' + n + 'Name is empty but env' + n + 'Id is set'); }
   if (!UUID.test(ident)) { problems.push('env' + n + 'Id must be an environment ID; it is "' + ident.slice(0, 60) + '"'); }
-  const g = String(gitlabEnv || '').trim();
+  const g = core.isUnset(gitlabEnv) ? '' : String(gitlabEnv).trim();
   if (g && !GITLAB_ENV.test(g)) { problems.push('env' + n + 'GitlabEnvironment must be a GitLab environment name like dev or production; it is "' + g.slice(0, 60) + '"'); }
 }
 if (configured < 2) { problems.push('Set at least two environments (env1Name/env1Id and env2Name/env2Id)'); }

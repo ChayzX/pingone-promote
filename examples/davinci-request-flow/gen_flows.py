@@ -552,6 +552,8 @@ cursor:pointer;font:inherit;color:inherit}
 .pp-note.bad{background:var(--pp-bad-soft);color:var(--pp-bad);border-left-color:var(--pp-bad)}
 .pp-note.ok{background:var(--pp-ok-soft);color:var(--pp-ok);border-left-color:var(--pp-ok)}
 .pp-wait{display:flex;align-items:center;gap:14px;margin:6px 0 2px}
+.pp-fallback{display:flex;align-items:center;gap:12px;margin-top:22px;color:var(--pp-muted);font-size:13px;visibility:hidden;animation:pp-reveal 0s linear 10s forwards}
+@keyframes pp-reveal{to{visibility:visible}}
 .pp-spin{width:26px;height:26px;border:3px solid var(--pp-line);border-top-color:var(--pp-accent);border-radius:50%;animation:pp-spin .8s linear infinite;flex:none}
 @keyframes pp-spin{to{transform:rotate(360deg)}}
 .pp a{color:var(--pp-accent);font-weight:600;word-break:break-all}
@@ -658,15 +660,17 @@ AUTO_CONTINUE = """// pp-auto-continue: submit this working page once, after 2 s
   }, 2000);
 })();
 """
-ENV_SCRIPT = """// Hide empty environment slots, and the chosen source on the target page.
+ENV_SCRIPT = r"""// Hide empty environment slots, and the chosen source on the target page.
 (function () {
   var form = document.getElementById('envForm');
   var hide = form ? (form.getAttribute('data-pp-hide') || '').trim() : '';
+  // Same rule as core.isUnset: blank, null, filler or an unresolved {{reference}}.
+  function unset(v) { var s = String(v || '').trim(); return s === '' || /^(null|undefined|none|n\/a|na|-+|unused|empty)$/i.test(s) || /^\{\{.*\}\}$/.test(s); }
   document.querySelectorAll('[data-pp-env]').forEach(function (b) {
     var n = b.querySelector('b');
     var t = n ? n.textContent.trim() : '';
     var id = (b.getAttribute('data-pp-id') || '').trim();
-    if (!t || !id || (hide && t === hide)) { b.style.display = 'none'; }
+    if (unset(t) || unset(id) || (hide && t === hide)) { b.style.display = 'none'; }
   });
 })();
 """
@@ -831,9 +835,11 @@ PICKER_SCRIPT = r"""// pp-picker: the resource table of the local app's Step 2, 
 
 
 def wait_html(title, text, step):
+    """A working page: spinner only. It submits itself (Script field); the Continue button is a fallback that
+    the CSS reveals only if the page is still here after 10 seconds."""
     return shell(step, f'<h1>{title}</h1><div class="pp-wait"><div class="pp-spin"></div><div>{text}<br>'
                        '<small class="pp-lead">This page continues by itself.</small></div></div>'
-                       '<form id="waitForm" data-id="waitForm"><div class="pp-actions">'
+                       '<form id="waitForm" data-id="waitForm"><div class="pp-fallback"><span>Still on this page?</span>'
                        + button("waitForm", "CONTINUE", "Continue", ghost=True) + "</div></form>")
 
 

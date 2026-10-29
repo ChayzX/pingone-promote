@@ -513,6 +513,13 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const pick = r.pages.find((pg) => pg.title === 'Choose source environment').html;
     ok(pick.indexOf('data-pp-id=""') > 0, 'an unused slot is marked for hiding');
   }
+  // However DaVinci hands over a blank variable, an unused slot stays unused.
+  for (const blank of ['', ' ', 'null', 'undefined', '{{global.flow.variables.env3Id}}', '-', 'none', 'N/A']) {
+    const w = world({ settings: { env3Name: 'Env 3', env3Id: blank, env4Name: blank, env4Id: blank } });
+    const r = await runFlow(w, form('a2'));
+    ok(r.title === 'Merge request opened', 'unused slots with ID ' + JSON.stringify(blank) + ' pass the settings check: ' + (r.text || r.title));
+  }
+  await noGitLab('blank-looking slot chosen anyway', world({ settings: { env3Name: 'Env 3', env3Id: 'null' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not configured');
   await noGitLab('unsafe ID in a slot', world({ settings: { env3Name: 'Bad', env3Id: '../x' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'env3Id must be an environment ID');
   // The settings check runs first and names placeholder or malformed variables.
   for (const [what, settings, msg] of [

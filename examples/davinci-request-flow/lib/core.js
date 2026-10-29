@@ -738,6 +738,14 @@ function randomHexId(extra) {
   return sha256(seed).slice(0, 32);
 }
 
+// An admin setting left blank. DaVinci can hand an empty flow variable to a
+// function as null, "null", "undefined" or the unresolved {{reference}}, and
+// admins type filler where a field won't save empty.
+function isUnset(v) {
+  const s = v === null || v === undefined ? '' : String(v).trim();
+  return s === '' || /^(null|undefined|none|n\/a|na|-+|unused|empty)$/i.test(s) || /^\{\{.*\}\}$/.test(s);
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -745,5 +753,5 @@ function escapeHtml(s) {
 const core = {
   rfc3339Nano, gitlabConfig, sameGitLabLocation, gitlabStatus, checkProject, checkDefaultBranch, submitBodies, checkMergeRequest,
   SAFE_ID, apiURL, encodeRequest, goJSON, goFingerprint, newRequest, validateRequest, truncateUtf8, utf8Compare, HEX_ID, canonical, parseBody, sha256, fingerprint, parseURL, redact, inventoryFromSnapshots, nextPageURL,
-  pagesComplete, buildRequest, suggestMappings, escapeHtml, randomHexId, sensitivePaths, variableName, variablesReport
+  pagesComplete, buildRequest, suggestMappings, escapeHtml, isUnset, randomHexId, sensitivePaths, variableName, variablesReport
 };
