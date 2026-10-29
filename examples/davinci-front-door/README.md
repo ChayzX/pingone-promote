@@ -1,5 +1,7 @@
 # DaVinci front door for PingOne Promote
 
+> **Superseded** by the [DaVinci Request flow](../davinci-request-flow/README.md), which commits a normal `request.json` instead of an intent. This preview is kept for reference.
+
 A DaVinci flow that lets PingOne admins request a promotion without the local app. It never changes PingOne. Its only write is a GitLab merge request that adds `intents/<id>/intent.json`. Merging that request starts the existing protected pipeline: `build-request`, then plan, then deployment approval, then apply. See [docs/gitlab.md](../../docs/gitlab.md#intents-from-the-davinci-front-door).
 
 **Status: preview, not yet imported into a live tenant.** The custom functions and the intent format are tested (below). The flow export follows the node shapes of real DaVinci exports. Some field names in it are inferred, though, and are listed under [Check after import](#check-after-import).

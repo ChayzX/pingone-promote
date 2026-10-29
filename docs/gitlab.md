@@ -44,6 +44,10 @@ For a manually started web pipeline, `PROMOTION_REQUEST_FILE` may select one exp
 
 Artifacts contain redacted review data and metadata, not worker secrets or raw native write payloads. Keep project membership narrow; the configured developer artifact access permits project developers to read them. The apply artifact is retained for 90 days for audit. Do not include public or sensitive company data in requests. Secret redaction reduces exposure but does not guarantee removal of every possible secret-like value.
 
+### Requests from DaVinci
+
+The [DaVinci Request flow](../examples/davinci-request-flow/README.md) replaces the local app for requesters. Admins sign in with PingOne SSO, and the flow commits the same `requests/<id>/request.json` the local app makes and opens the merge request. Everything above applies unchanged. The flow also reports, in the merge request, whether each secret in the selection has a sensitive promotion variable.
+
 ### Intents from the DaVinci front door
 
 A DaVinci front-door flow ([examples/davinci-front-door](../examples/davinci-front-door/README.md)) can submit an intent instead of a full request: a merge request that adds exactly one `intents/<intent-id>/intent.json`. An intent names the signed-in PingOne requester, the source and target environments, the selected resource IDs, any mappings and a description. It carries no configuration.

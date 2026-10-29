@@ -1,0 +1,156 @@
+# PingOne Promote: DaVinci Request flow
+
+> Replaces the local app for requesters. It supersedes the [front-door preview](../davinci-front-door/README.md): this flow commits an ordinary `requests/<id>/request.json`, so the pipeline needs no intent support.
+
+One DaVinci flow that replaces the Go tool's local app. Everything after the merge request is unchanged: the same GitLab project, pipeline, `pingone-runner`, approvals and rollback.
+
+```
+DaVinci flow (this kit)                         GitLab (unchanged)
+─────────────────────────────────────────       ───────────────────────────────────────────
+Admin signs in (Entra SSO via PingOne)          MR pipeline: validate_request
+DaVinci Admin role check                        Merge → plan_promotion (native draft + review)
+Live snapshots of source and target             Deployment approval → apply
+Admin picks resources and mappings              Rollback: separate manual pipeline
+Builds request.json (byte-identical to Go)
+Branch promotion/<id> → commit → merge request ──▶
+```
+
+The flow never calls the PingOne promotions API, so it cannot deploy or roll back anything. The flow run test checks that.
+
+**Status: built and tested offline. It has not been imported into a live DaVinci yet,** because the trial tenant has no DaVinci. See [What still needs a live check](#what-still-needs-a-live-check).
+
+## What the admin sees
+
+1. **Sign in.** PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or the source environment. No GitLab account is needed.
+2. **Choose resources.** The page lists source and target resources by type, ID and name, never configuration. The admin enters resource IDs, optional `sourceId=targetId` mappings, and a description, which becomes the MR title.
+3. **Review request.** The page shows the promotion-variable check (below) and `requests/<id>/request.json` exactly as it will be committed, with secrets redacted. The admin chooses **Submit to GitLab** or **Cancel**.
+4. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point.
+
+## Promotion-variable check
+
+PingOne requires a **sensitive promotion variable** for every secret attribute of a promoted resource, such as a DaVinci connector's client secret. Without one, the native draft fails and the GitLab plan stops. The flow checks this before submitting, so the admin can fix it in PingOne first rather than finding out at plan time.
+
+1. **Find the secrets.** Every value the request redacts (`[REDACTED]`) is a sensitive attribute. The flow lists each one by resource ID and path, for example `clientSecret` or `properties.clientSecret.value`.
+2. **Read the declarations.** `GET /v1/environments/{source}/promotionVariableDeclarations/{resourceId}` for each selected resource. This shows which property maps to which variable.
+3. **Read the definitions.** `GET /v1/environments/{source|target}/promotionVariableDefinitions`, every page. Sensitive values come back masked; the flow only needs each variable's name and whether it is sensitive.
+4. **Report** each sensitive attribute as one of:
+   - **ready:** a sensitive variable is declared and defined;
+   - **needs a variable:** nothing is declared for it;
+   - **declared but undefined:** no definition was found in source or target;
+   - **not sensitive:** a definition exists but isn't marked sensitive, which PingOne rejects for secrets;
+   - **could not be checked:** PingOne didn't answer.
+
+The report appears on the review page and as a **Promotion variables** section at the end of the merge request description, so approvers see it too. It is **advisory**: it never blocks the submission, and if the API can't be read (feature off, missing role) the flow says so and carries on. The GitLab plan still enforces PingOne's own rules. `request.json` is unchanged, and no secret value is read or shown.
+
+## How it matches the Go tool
+
+| Go (commit `537dbf4`) | In the flow | Checked how |
+| --- | --- | --- |
+| `pingone.Inventory`, `apiURL`, `Pages` | `inventoryFromSnapshots`, `apiURL`, `pagesComplete` | The real Go client against a fake API: 33 fixtures, 0 differences |
+| `promotion.BuildRequest`, `Redact` | `buildRequest`, `redact` | 57 fixtures run through the Go functions: 0 differences |
+| `gitops.NewRequest` + `Encode` | `newRequest`, `encodeRequest`, `goJSON` | **Byte-for-byte** against Go on 19 fixtures: HTML characters, U+2028, control characters, astral-plane keys, `1e21`, `1e-7`, `-0` and secrets. Go's `Decode` accepts every JS-built file. |
+| `gitlab.Config.Validate`, `sameGitLabLocation` | `gitlabConfig`, `sameGitLabLocation` | 324 URL/config fixtures against Go: 0 differences |
+| `Client.VerifyProject`, `Submit`, MR title and description | `checkProject`, `checkDefaultBranch`, `submitBodies`, `checkMergeRequest` | Flow run test against a fake GitLab |
+| The pipeline's `select-request.sh` + `pingone-runner validate` | — | Each request the flow commits is replayed as a GitLab MR and passes the Go tool's own selector and validator |
+
+The Go Submit sequence, reproduced step for step:
+
+1. Read the project. It must be the configured ID, private, not archived, have a default branch, and its `web_url` must be on the configured server path.
+2. Read the default branch. It must be protected.
+3. Create the branch `promotion/<id>` from the default branch.
+4. Commit `requests/<id>/request.json` (the file plus a trailing newline) with the message `Add promotion request <id>`.
+5. Open the MR with `remove_source_branch: true` and `squash: false`. The title is the description, or "Promote selected PingOne resources", cut to 180 bytes. The description is the same template the Go app uses.
+6. The MR's `web_url` must be on the configured server path.
+
+If any step fails, the flow stops before the next GitLab write.
+
+**Deliberate differences from the Go app:**
+- The promotion-variable check above is new. The Go app has no equivalent; it shows PingOne's errors at plan time.
+- The MR description has one extra line: `Requested in DaVinci by: <username> (PingOne user <id>)`. The GitLab token belongs to a bot, so this line records who asked. `request.json` itself is unchanged.
+- A GitLab base URL containing `\` is refused. Go accepts it, but URL parsers in HTTP clients can read `\` as `/`.
+- The request ID uses the Web Crypto random generator when DaVinci provides it. Otherwise it is SHA-256 over the time, `Math.random` and the request. It needs to be unique, not secret.
+
+## Credentials
+
+| Credential | Lives in | Needs |
+| --- | --- | --- |
+| Admin's own sign-in | Admins' PingOne environment, through your Entra SSO | DaVinci Admin on the organization or the source environment |
+| Snapshot worker | DaVinci company secret `promoteWorkerBasicAuth`, as `base64(clientId:clientSecret)` | Read environments and create Configuration Management snapshots on source and target (the role that fixed the acceptance-test 403s), read promotion-variable declarations and definitions there, plus Identity Data Read Only on the admins' environment for the role check |
+| GitLab token | DaVinci company secret `promoteGitlabToken` | A project or group access token with `api` scope and the Developer role on the promotion project only. It can open MRs. The protected default branch and the pipeline's deployment approval stop it from deploying. |
+
+Production PingOne write credentials stay in protected GitLab CI variables, as before. Neither secret in DaVinci can execute a promotion. Anyone who can edit this flow can still use both secrets, so give DaVinci Admin on the host environment to as few people as possible.
+
+## Setup
+
+1. **Generate the export.** `export/` holds a sample generated from `values.example.json`; its placeholders won't work. Copy `values.example.json` to a private `values.json` and fill in your values. `gitlabUrl` is the base URL of your GitLab instance, including any path prefix. Then run:
+
+   ```sh
+   python3 gen_flows.py out values.json
+   python3 check_flows.py out/*.json
+   ```
+
+2. **Create the sign-in app.** In the environment that holds admin accounts, add an **OIDC Web App** (Authorization Code) that uses the same sign-on policy as the admin console, so admins go through Entra.
+3. **Create the snapshot worker.** In the host environment, add a **Worker** app with the roles above. Store `printf '%s:%s' "$CLIENT_ID" "$CLIENT_SECRET" | base64` in the company secret `promoteWorkerBasicAuth`.
+4. **Create the GitLab token** as described above, and store it in the company secret `promoteGitlabToken`.
+5. **Create the DaVinci connections:** Http, Functions, Error Message, Variables, and **OIDC & OAuth IdP**. Configure the OIDC connection with:
+   - Auth Type: OpenId
+   - Issuer: `https://auth.pingone.com/<adminEnvironmentId>/as`
+   - App ID and secret: from step 2
+   - Scope: `openid profile email`
+
+   Then add the connection's redirect URL to the sign-in app.
+6. **Import** `pingone-promote-request.flow.json` (**Flows → Add Flow → Import from JSON**). Point each node at your connections; the placeholder connection IDs are `a1f0d00a…0001` to `…0005`. Then deploy.
+7. **Network.** DaVinci must be able to reach your GitLab API over HTTPS. A GitLab that is only reachable inside your network needs an allowlisted ingress for DaVinci's egress addresses.
+
+## What still needs a live check
+
+These were written from documentation and real export samples, not captured from a tenant. Check them on first import:
+
+1. **REST node fields.** On every Make REST API Call node, confirm the HTTP method and headers, and on the POST nodes, Body = raw. The export uses `httpMethod`, `bodyType` and `rawBody`.
+2. **Redirects.** The Go client refuses GitLab redirects. Check whether the DaVinci HTTP connector follows them. If it does, GitLab must not redirect API calls.
+3. **Sign-on output.** The sign-on capability is exported as `loginFirstFactor`, and its access token is read as `accessToken`.
+4. **Loops.** Snapshot polling and pagination route back to an earlier REST node. DaVinci must allow this cycle.
+5. **Function outputs.** Confirm each function's Output Schema lists the fields downstream nodes read, such as `state`, `requestJson` and `branchBody`.
+6. **Size.** Large selections make `request.json` large. It is held in function output and sent as one commit body, and DaVinci may cap either.
+7. **Promotion variables.** These endpoints are early access, so check:
+   - that declarations live in the **source** environment, keyed by the source resource ID (the flow assumes so);
+   - how a declaration names a nested DaVinci connector property (the flow matches a declared property to the attribute's path or any parent of it);
+   - that definitions report `isSensitive` or a masked value.
+
+   Create one sensitive variable in the console and compare what the review page reports.
+8. **Randomness.** Check whether `globalThis.crypto` exists in DaVinci functions. The fallback works either way.
+
+## Tests (no tenant needed)
+
+```sh
+bash examples/davinci-request-flow/run_tests.sh   # from a clone of this repository
+```
+
+The Go cross-checks build the Go tool at commit `537dbf4` from this repository's history, in a temporary clone; nothing in the working tree changes. Outside the repository, set `GO_TOOL` to a checkout. Needs Node 18+, Python 3 and Go 1.24+.
+
+- `test/unit.js` (61 checks): SHA-256 against Node crypto, `apiURL`, GitLab project, branch, status and MR checks, ID and time formats, and byte truncation.
+- `test/flow_run.js` (123 checks): **runs the generated export itself**. It executes each node, evaluator branch, template and flow variable against a fake PingOne and a fake GitLab. Function inputs are fed both as objects and as JSON strings. It covers:
+  - the happy path, including the exact GitLab payloads;
+  - title truncation;
+  - the promotion-variable check: ready, missing, declared but undefined, not sensitive, API refused, no secrets, and paging of definitions;
+  - non-admin, cancel and invalid input, each ending with no GitLab call;
+  - a public, archived, wrong-ID or wrong-host project, and an unprotected branch, each ending with no GitLab write;
+  - a failure at each write step;
+  - a merge request URL on another host.
+
+  Ten deliberate wiring faults were injected into the export, and the run caught each one.
+- `check_flows.py`: structure checks. It confirms one start node, every node reachable, references only to nodes that can run earlier, flow variables written before they're read, evaluator branches wired, and function inputs matching their code.
+- `test/shipped_code.js`: every function node in the export is byte-identical to the tested code.
+- With `GO_TOOL`: the Go cross-checks in the table above, plus `test/pipeline_sim.sh`.
+
+## First live run
+
+| Case | Expected |
+| --- | --- |
+| Non-admin signs in | "Access denied: You need the DaVinci Admin role…"; no snapshots, no GitLab call |
+| Admin selects one mapped flow and submits | An MR in the promotion project with one new `requests/<id>/request.json`; `validate_request` passes |
+| Merge the MR | `plan_promotion` runs, as it does for requests from the Go app |
+| Select a DaVinci connector with a secret and no promotion variable | Review page and MR say it needs a sensitive promotion variable; after you create one in PingOne, a new request shows it as ready |
+| Cancel on the review page | "Cancelled. Nothing was sent to GitLab." |
+| Temporarily unprotect the default branch, then submit | "GitLab default branch must be protected"; no branch created |
+| Point `gitlabProjectId` at a public project | "GitLab project must be private…"; no branch created |

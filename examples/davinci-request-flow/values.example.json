@@ -1,0 +1,15 @@
+{
+  "apiOrigin": "https://api.pingone.com",
+  "authOrigin": "https://auth.pingone.com",
+  "adminEnvironmentId": "<environment holding admin accounts and the OIDC sign-in app>",
+  "hostEnvironmentId": "<environment hosting the flow and the snapshot worker>",
+  "sourceEnvironmentId": "<environment to promote from>",
+  "targetEnvironmentId": "<environment to promote to>",
+  "organizationId": "<PingOne organization ID>",
+  "davinciAdminRoleId": "",
+  "sourceRegion": "us",
+  "targetRegion": "us",
+  "gitlabUrl": "https://gitlab.example.com",
+  "gitlabProjectId": "<numeric ID of the private promotion-requests project>",
+  "gitlabEnvironment": "production"
+}
