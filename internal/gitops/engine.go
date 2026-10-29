@@ -358,12 +358,13 @@ func (e *Engine) Apply(ctx context.Context, a Artifact, approvedDigest string, a
 	if subtle.ConstantTimeCompare([]byte(approvedDigest), []byte(fresh.Review.Digest)) != 1 {
 		return result, errors.New("native plan changed after approval; review a fresh artifact")
 	}
-	if err = authorize(ctx, fresh); err != nil {
+	// Check live target drift before authorization can persist durable execution
+	// intent. Keep it after the fresh native review and digest checks, immediately
+	// before authorization and the execute mutation.
+	if err = e.checkTargetDrift(ctx, fresh); err != nil {
 		return result, err
 	}
-	// Last gate before the native mutation: the pinned target snapshot cannot
-	// reveal destination edits made after review, so compare the live target.
-	if err = e.checkTargetDrift(ctx, fresh); err != nil {
+	if err = authorize(ctx, fresh); err != nil {
 		return result, err
 	}
 	if err = e.Client.Do(ctx, "POST", pingone.EnvPath(a.Request.Source.ID)+"/promotions/"+a.NativeID, pingone.ExecuteType, nil, &result); err != nil {

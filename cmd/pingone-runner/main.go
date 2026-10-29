@@ -20,6 +20,7 @@ import (
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
+	"pingone-promote/internal/strictjson"
 )
 
 const maxArtifactBytes = 16 << 20
@@ -460,22 +461,24 @@ func readRequest(path string) (gitops.Request, error) {
 		return gitops.Request{}, fmt.Errorf("could not open request: %w", err)
 	}
 	defer f.Close()
-	return gitops.Decode(f)
+	r, err := gitops.Decode(f)
+	if err != nil {
+		return r, err
+	}
+	dir := filepath.Dir(filepath.Clean(path))
+	if filepath.Base(path) != "request.json" || filepath.Base(dir) != r.ID || filepath.Base(filepath.Dir(dir)) != "requests" {
+		return gitops.Request{}, errors.New("request must be selected from requests/<matching-request-id>/request.json")
+	}
+	return r, nil
 }
 func readArtifact(path string) (gitops.Artifact, error) {
 	b, err := readSmallFile(path, maxArtifactBytes)
 	if err != nil {
 		return gitops.Artifact{}, fmt.Errorf("could not read artifact: %w", err)
 	}
-	d := json.NewDecoder(strings.NewReader(string(b)))
-	d.DisallowUnknownFields()
 	var a gitops.Artifact
-	if err = d.Decode(&a); err != nil {
+	if err = strictjson.Unmarshal(b, &a); err != nil {
 		return a, errors.New("invalid artifact JSON or unknown fields")
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return a, errors.New("artifact must contain exactly one JSON document")
 	}
 	if err = a.Validate(); err != nil {
 		return a, fmt.Errorf("invalid artifact: %w", err)

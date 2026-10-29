@@ -209,10 +209,13 @@
     const mode = $('#profiles-dialog [name="secretMode"]').value;
     const envMode = mode === 'env';
     $('#profiles-dialog .secret-env-field').hidden = !envMode;
-    $('#profiles-dialog [name="secretEnv"]').required = envMode;
+    const secretEnv = $('#profiles-dialog [name="secretEnv"]');
+    secretEnv.required = envMode;
+    secretEnv.disabled = !envMode;
     const secretField = $('#profiles-dialog .secret-value-field');
     secretField.hidden = envMode;
     const secret = $('#profiles-dialog [name="secret"]');
+    secret.disabled = envMode;
     secret.required = !state.profileEditID && !envMode;
     if (mode === 'keychain') $('#secret-help').textContent = 'Stored in macOS Keychain. This option requires the app to run on macOS.';
     if (mode === 'session') $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored secret; a new value replaces it.' : 'Kept in memory for this app session.';

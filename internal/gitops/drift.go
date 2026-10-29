@@ -101,7 +101,7 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 				matched = true
 			}
 		}
-		if !matched && st.Target.ID == "" && strings.EqualFold(st.Action, "POST") {
+		if !matched && strings.EqualFold(st.Action, "POST") {
 			if c := collectionType(p, a.Request.Target.ID); c != "" {
 				collections[c] = true
 			}

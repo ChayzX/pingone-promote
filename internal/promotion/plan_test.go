@@ -210,6 +210,34 @@ func TestReviewDiffsAgainstTargetAndRedactsPropertySecrets(t *testing.T) {
 	}
 }
 
+func TestReviewRedactsSchemaMarkedAndCommonCredentials(t *testing.T) {
+	s, d := inventories()
+	const canary = "SYNTHETIC-REDACTION-CANARY"
+	st := pingone.Step{Action: "PUT", URL: d.Resources[0].URL, Source: pingone.Ref{ID: "f"}, Target: pingone.Ref{ID: "g"}, Payload: json.RawMessage(`{"DaVinci":{"dataType":"secret","value":"SYNTHETIC-REDACTION-CANARY"},"nested":{"IsSensitive":true,"value":"SYNTHETIC-REDACTION-CANARY"},"passphrase":"SYNTHETIC-REDACTION-CANARY","connectionString":"SYNTHETIC-REDACTION-CANARY","authorization":"SYNTHETIC-REDACTION-CANARY","dsn":"SYNTHETIC-REDACTION-CANARY","connectionUri":"SYNTHETIC-REDACTION-CANARY","safe":{"value":"visible"},"array":[{"dataType":"secret","value":"SYNTHETIC-REDACTION-CANARY"}]}`)}
+	r := Inspect(s, d, []string{"f"}, map[string]string{"f": "g"}, []pingone.Step{st}, false)
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), canary) {
+		t.Fatalf("synthetic secret reached serialized review: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"value":"visible"`) {
+		t.Fatalf("ordinary value was redacted: %s", raw)
+	}
+	first, err := json.Marshal(Redact(r.Steps[0].After))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.Marshal(Redact(Redact(r.Steps[0].After)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("redaction was not idempotent: %s != %s", first, second)
+	}
+}
+
 func TestInspectRejectsUninspectableMutationPayloads(t *testing.T) {
 	s, d := inventories()
 	for _, tc := range []struct {

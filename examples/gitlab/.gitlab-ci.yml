@@ -103,8 +103,8 @@ apply_promotion:
       allow_failure: false
   script:
     - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
     - ./pingone-runner apply --artifact plan.json --approved-digest-file plan.sha256 --out result.json
   artifacts:
     access: developer
@@ -123,9 +123,9 @@ rollback_plan:
     - if: '$PROMOTION_MODE == "rollback" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - |
-      test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
+      test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
       test "$CI_API_V4_URL" = "${PROMOTION_GITLAB_URL%/}/api/v4"
-      test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+      test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
       case "${ORIGINAL_PLAN_JOB_ID:-}" in (''|*[!0-9]*) echo "Set ORIGINAL_PLAN_JOB_ID to the numeric plan job ID" >&2; exit 1;; esac
       test -n "${CI_JOB_TOKEN:-}" || { echo "CI_JOB_TOKEN is required to retrieve the original plan" >&2; exit 1; }
       status="$(curl --silent --show-error --output original-plan.json --write-out '%{http_code}' --header "JOB-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/$ORIGINAL_PLAN_JOB_ID/artifacts/plan.json")" || { echo "Could not retrieve the original plan artifact" >&2; exit 1; }
@@ -154,8 +154,8 @@ apply_rollback:
       allow_failure: false
   script:
     - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
     - ./pingone-runner apply --artifact rollback.json --approved-digest-file rollback.sha256 --out rollback-result.json
   artifacts:
     access: developer

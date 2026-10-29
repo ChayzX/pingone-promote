@@ -62,7 +62,7 @@ func TestLiveGateRequiresMatchingProtectedApprovedDeployment(t *testing.T) {
 					if scenario == "wrong job" {
 						id = 12
 					}
-					send(map[string]any{"id": id, "status": "running", "name": "deploy", "ref": "main", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}})
+					send(map[string]any{"id": id, "status": "running", "name": "deploy", "ref": "main", "source": "push", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}})
 				case "/api/v4/projects/7":
 					send(map[string]any{"id": 7, "visibility": "private", "default_branch": "main"})
 				case "/api/v4/projects/7/repository/branches/main":
@@ -121,6 +121,59 @@ func TestLiveGateRequiresMatchingProtectedApprovedDeployment(t *testing.T) {
 			}
 			if scenario != "valid" && err == nil {
 				t.Fatal("unapproved CI execution authorized")
+			}
+		})
+	}
+}
+
+// A runner environment variable can be forged by a sufficiently privileged CI
+// configuration. The live Job API source must independently match it.
+func TestVerifyRequiresPipelineSourceBoundToGitLabJobAPI(t *testing.T) {
+	for _, tc := range []struct {
+		name, configuredSource, apiSource string
+		wantErr, omitAPISource            bool
+	}{
+		{name: "push source", configuredSource: "push", apiSource: "push"},
+		{name: "manual web source", configuredSource: "web", apiSource: "web"},
+		{name: "spoofed push for API source", configuredSource: "push", apiSource: "api", wantErr: true},
+		{name: "spoofed web for trigger source", configuredSource: "web", apiSource: "trigger", wantErr: true},
+		{name: "source mismatch", configuredSource: "push", apiSource: "web", wantErr: true},
+		{name: "missing API source", configuredSource: "web", wantErr: true, omitAPISource: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sha := strings.Repeat("a", 40)
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v4/job" && r.Header.Get("JOB-TOKEN") != "job-token" {
+					t.Errorf("job endpoint did not use the job token")
+				}
+				if r.URL.Path != "/api/v4/job" && r.Header.Get("PRIVATE-TOKEN") != "read-token" {
+					t.Errorf("read endpoint did not use the read token")
+				}
+				switch r.URL.Path {
+				case "/api/v4/job":
+					payload := map[string]any{"id": 11, "status": "running", "name": "deploy", "ref": "main", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}}
+					if !tc.omitAPISource {
+						payload["source"] = tc.apiSource
+					}
+					json.NewEncoder(w).Encode(payload)
+				case "/api/v4/projects/7":
+					json.NewEncoder(w).Encode(map[string]any{"id": 7, "visibility": "private", "default_branch": "main"})
+				case "/api/v4/projects/7/repository/branches/main":
+					json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+				default:
+					t.Errorf("unexpected API request %s", r.URL)
+					http.NotFound(w, r)
+				}
+			}))
+			defer ts.Close()
+			c := Config{BaseURL: ts.URL, ExpectedURL: ts.URL, ProjectID: "7", ExpectedProjectID: "7", PipelineID: "9", JobID: "11", CommitSHA: sha, Branch: "main", DefaultBranch: "main", Environment: "production", TargetEnvironmentID: "prod", TargetRegion: "us", JobToken: "job-token", ReadToken: "read-token", ProtectedRef: true, PipelineSource: tc.configuredSource}
+			v := Verifier{Config: c, HTTP: ts.Client()}
+			err := v.VerifyPlan(context.Background(), fixtureRequest(t))
+			if tc.wantErr && err == nil {
+				t.Fatal("job API source absent or different from CI_PIPELINE_SOURCE was accepted")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("matching pipeline source rejected: %v", err)
 			}
 		})
 	}

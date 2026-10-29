@@ -40,6 +40,7 @@ Then run these in another terminal with the installed Chromium path:
 ```sh
 python3 scripts/test_browser.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_races.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
+python3 scripts/test_browser_profiles.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_gitlab.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 -m unittest discover -s examples/gitlab -p "test_*.py"
 ```

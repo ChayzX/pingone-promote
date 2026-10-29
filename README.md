@@ -2,11 +2,11 @@
 
 > Integration handoff: the GitLab-controlled workflow is on `feat/gitlab-production`. Start with [docs/HANDOFF.md](docs/HANDOFF.md). Local execution is denied by default; live GitLab/PingOne acceptance and a complete production-readiness review remain outstanding. The older `v0.1.0`/`main` build does not contain this new policy.
 
-PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It is written in Go 1.24 or newer and has no third-party runtime dependencies. The API must be enabled for the tenant.
+PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It requires Go 1.27.3 or newer to build and has no third-party runtime dependencies. The API must be enabled for the tenant.
 
 ## Requirements
 
-- Go 1.24+ to build, or a prebuilt release binary.
+- Go 1.27.3+ to build, or a prebuilt release binary.
 - A PingOne worker OAuth client with [Promotion Admin](https://docs.pingidentity.com/pingone/directory/p1_roles.html) explicitly assigned in **both** the source and destination environments, plus the read permissions needed for environment and resource discovery. The environments must belong to the same organization. Environment Admin alone does not establish promotion access.
 - The worker client's authentication environment may differ from the managed environment. Set each profile's Authentication environment ID accordingly.
 

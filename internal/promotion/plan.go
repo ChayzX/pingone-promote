@@ -247,13 +247,24 @@ func Redact(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		out := map[string]any{}
+		markedSensitive := false
 		for k, val := range x {
-			lk := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k, "_", ""), "-", ""))
+			switch redactionKey(k) {
+			case "issensitive":
+				markedSensitive = markedSensitive || val == true
+			case "datatype":
+				if kind, ok := val.(string); ok && strings.EqualFold(kind, "secret") {
+					markedSensitive = true
+				}
+			}
+		}
+		for k, val := range x {
+			lk := redactionKey(k)
 			if lk == "issensitive" {
 				out[k] = val
 				continue
 			}
-			if strings.Contains(lk, "password") || strings.Contains(lk, "secret") || strings.Contains(lk, "token") || strings.Contains(lk, "key") || strings.Contains(lk, "credential") || strings.Contains(lk, "authentication") || lk == "auth" || lk == "value" && x["isSensitive"] == true {
+			if strings.Contains(lk, "password") || strings.Contains(lk, "passphrase") || strings.Contains(lk, "secret") || strings.Contains(lk, "token") || strings.Contains(lk, "key") || strings.Contains(lk, "credential") || strings.Contains(lk, "authentication") || strings.Contains(lk, "authorization") || strings.Contains(lk, "connectionstring") || strings.Contains(lk, "connectionuri") || lk == "dsn" || lk == "auth" || lk == "value" && markedSensitive {
 				out[k] = "[REDACTED]"
 			} else {
 				out[k] = Redact(val)
@@ -269,6 +280,10 @@ func Redact(v any) any {
 	default:
 		return v
 	}
+}
+
+func redactionKey(key string) string {
+	return strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(key))
 }
 func pathFor(raw string) ([]string, bool) {
 	u, e := url.Parse(raw)

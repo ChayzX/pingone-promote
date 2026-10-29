@@ -36,7 +36,7 @@ The uninstall command removes all installed versions of this package, including 
 Each preview also includes versioned macOS arm64/amd64 and Linux amd64 bundles. Download the matching archive and `SHA256SUMS` from the same release and verify the checksum before extracting it:
 
 ```sh
-awk '$2 == "pingone-promote-v0.2.0-rc.1-darwin-arm64.tar.gz"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "pingone-promote-v0.2.0-rc.2-darwin-arm64.tar.gz"' SHA256SUMS | shasum -a 256 -c -
 ```
 
 Replace the filename with the exact version and platform you downloaded. On Linux, use `sha256sum -c -` after the same `awk` selection. Verify that the selected archive is explicitly reported `OK`. Bundles include both commands, the GitLab setup documentation and pipeline template. These archives do not install or manage services.
@@ -48,8 +48,8 @@ The read-only Homebrew workflow installs a generated formula through a temporary
 Build from a committed source revision with Python 3.12+, Git, Go and a POSIX shell:
 
 ```sh
-python3 scripts/release.py release --version v0.2.0-rc.1 --ref HEAD --output dist/release-v0.2.0-rc.1
-python3 scripts/release.py verify --directory dist/release-v0.2.0-rc.1
+python3 scripts/release.py release --version v0.2.0-rc.2 --ref HEAD --output dist/release-v0.2.0-rc.2
+python3 scripts/release.py verify --directory dist/release-v0.2.0-rc.2
 ```
 
 The source archive is exported from the requested Git object, including when the module is a subdirectory. Untracked or uncommitted working files cannot enter it. Platform binaries are built from that exported source with the release version stamped into both commands. The formula pins the source archive URL and checksum; it never downloads a moving branch at install time.

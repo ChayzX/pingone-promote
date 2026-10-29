@@ -96,6 +96,9 @@ func putJSON(t *testing.T, path string, v any) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	if e = os.MkdirAll(filepath.Dir(path), 0700); e != nil {
+		t.Fatal(e)
+	}
 	if e = os.WriteFile(path, b, 0600); e != nil {
 		t.Fatal(e)
 	}
@@ -129,7 +132,7 @@ func TestVersionRejectsExtraArguments(t *testing.T) {
 func TestValidateAndDigestOffline(t *testing.T) {
 	d := t.TempDir()
 	r, a := fixture(t)
-	rp, ap := filepath.Join(d, "request.json"), filepath.Join(d, "artifact.json")
+	rp, ap := filepath.Join(d, "requests", r.ID, "request.json"), filepath.Join(d, "artifact.json")
 	putJSON(t, rp, r)
 	putJSON(t, ap, a)
 	var out, errOut strings.Builder
@@ -162,7 +165,7 @@ func TestStrictArtifactAndFlags(t *testing.T) {
 func TestPlanGateRunsBeforeNativeClient(t *testing.T) {
 	d := t.TempDir()
 	r, _ := fixture(t)
-	rp := filepath.Join(d, "request.json")
+	rp := filepath.Join(d, "requests", r.ID, "request.json")
 	putJSON(t, rp, r)
 	g := &fakeGate{verifyErr: errors.New("not trusted")}
 	var out, errOut strings.Builder
@@ -195,7 +198,7 @@ func TestPlanWritesBlockedArtifactThenReturnsError(t *testing.T) {
 	d := t.TempDir()
 	r, a := fixture(t)
 	a.Review.Issues = []string{"native promotion is not READY"}
-	rp, outp := filepath.Join(d, "request.json"), filepath.Join(d, "artifact.json")
+	rp, outp := filepath.Join(d, "requests", r.ID, "request.json"), filepath.Join(d, "artifact.json")
 	putJSON(t, rp, r)
 	g := &fakeGate{}
 	e := &fakeEngine{artifact: a}
@@ -303,7 +306,7 @@ func TestApplyTimeoutWritesInProgressAndRetainsIntent(t *testing.T) {
 func TestMissingCIRejectsPlanAndApplyBeforeNativeClient(t *testing.T) {
 	d := t.TempDir()
 	r, a := fixture(t)
-	rp, ap := filepath.Join(d, "request.json"), filepath.Join(d, "artifact.json")
+	rp, ap := filepath.Join(d, "requests", r.ID, "request.json"), filepath.Join(d, "artifact.json")
 	putJSON(t, rp, r)
 	putJSON(t, ap, a)
 	for _, key := range []string{"GITLAB_CI", "CI_SERVER_URL", "CI_PROJECT_ID", "CI_PIPELINE_ID", "CI_JOB_ID", "CI_COMMIT_SHA", "CI_COMMIT_BRANCH", "CI_DEFAULT_BRANCH", "CI_COMMIT_REF_PROTECTED", "CI_JOB_TOKEN", "GITLAB_READ_API_TOKEN", "PROMOTION_GITLAB_URL", "PROMOTION_GITLAB_PROJECT_ID", "PROMOTION_ENVIRONMENT", "PINGONE_TARGET_ENVIRONMENT_ID", "PINGONE_TARGET_REGION", "PINGONE_AUTH_ENVIRONMENT_ID", "PINGONE_CLIENT_ID", "PINGONE_CLIENT_SECRET", "PINGONE_SECRET_MODE"} {

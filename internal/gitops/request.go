@@ -2,7 +2,6 @@
 package gitops
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +16,7 @@ import (
 
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
+	"pingone-promote/internal/strictjson"
 )
 
 const maxRequestBytes = 8 << 20
@@ -134,14 +134,8 @@ func Decode(reader io.Reader) (Request, error) {
 	if len(data) > maxRequestBytes {
 		return r, errors.New("request exceeds 8 MiB")
 	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if err = d.Decode(&r); err != nil {
+	if err = strictjson.Unmarshal(data, &r); err != nil {
 		return r, errors.New("invalid request JSON or unknown fields")
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return r, errors.New("request must contain exactly one JSON document")
 	}
 	return r, Validate(r)
 }

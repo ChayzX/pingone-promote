@@ -129,6 +129,7 @@ type job struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Ref    string `json:"ref"`
+	Source string `json:"source"`
 	Tag    *bool  `json:"tag"`
 	Commit struct {
 		ID string `json:"id"`
@@ -156,7 +157,7 @@ func (v *Verifier) verify(ctx context.Context, r gitops.Request) (job, error) {
 	if _, err := v.get(ctx, "job", true, &j); err != nil {
 		return j, err
 	}
-	if strconv.FormatInt(j.ID, 10) != c.JobID || j.Status != "running" || j.Name == "" || j.Tag == nil || *j.Tag || j.Ref != c.Branch || j.Commit.ID != c.CommitSHA || strconv.FormatInt(j.Pipeline.ID, 10) != c.PipelineID || strconv.FormatInt(j.Pipeline.ProjectID, 10) != c.ProjectID || j.Pipeline.SHA != c.CommitSHA || j.Pipeline.Ref != c.Branch {
+	if strconv.FormatInt(j.ID, 10) != c.JobID || j.Status != "running" || j.Name == "" || j.Source == "" || j.Source != c.PipelineSource || j.Tag == nil || *j.Tag || j.Ref != c.Branch || j.Commit.ID != c.CommitSHA || strconv.FormatInt(j.Pipeline.ID, 10) != c.PipelineID || strconv.FormatInt(j.Pipeline.ProjectID, 10) != c.ProjectID || j.Pipeline.SHA != c.CommitSHA || j.Pipeline.Ref != c.Branch {
 		return j, errors.New("live GitLab job token does not match the running protected-branch job")
 	}
 	var project struct {
