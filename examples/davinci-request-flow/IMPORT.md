@@ -1,6 +1,37 @@
 # Import the DaVinci Request flow (proof of concept)
 
-The import file is [`export/pingone-promote-request.flow.json`](export/pingone-promote-request.flow.json). Sign-in is **off**: the flow starts at the resource picker, and the GitLab MR and deployment approvals still gate every change. No Terraform needed.
+The import file is [`export/pingone-promote-request.flow.json`](export/pingone-promote-request.flow.json). Sign-in is **off**: the flow starts with picking environments, and the GitLab MR and deployment approvals still gate every change. No Terraform needed.
+
+## What you have to set (checklist)
+
+After importing, these are the only values the flow needs. Everything else is internal to the flow.
+
+| Where | Name | Required? | What to put | Example |
+| --- | --- | --- | --- | --- |
+| Company variable (secret) | `promoteWorkerBasicAuth` | Yes | `base64(clientId:clientSecret)` of the worker app ([how](#3-set-the-variables-and-settings)) | `YWJj…` |
+| Company variable (secret) | `promoteGitlabToken` | Yes | GitLab token, Developer + `api`, that can reach every promotion project | `glpat-…` |
+| Flow variable | `hostEnvironmentId` | Yes | Environment where the **worker app** lives (its token URL) | `9f1c…` |
+| Flow variable | `env1Name`, `env1Id` | Yes | First environment: button label and environment ID | `Dev`, `2b7e…` |
+| Flow variable | `env2Name`, `env2Id` | Yes | Second environment | `Prod`, `c41a…` |
+| Flow variable | `env3Name`/`env3Id`, `env4Name`/`env4Id` | No | Third and fourth; leave empty to hide the button | `Test`, `Stage` |
+| Flow variable | `gitlabProjectId` | Yes, unless every target has its own | Default GitLab project for targets without their own | `82627171` |
+| Flow variable | `env1GitlabProjectId` … `env4GitlabProjectId` | Only for targets with their own project | Project whose pipeline deploys **to** that environment | `82627172` |
+| Flow variable | `gitlabUrl`, `gitlabEnvironment` | Preset | `https://gitlab.com`, `production` | |
+| Flow variable | `apiOrigin`, `authOrigin`, `sourceRegion`, `targetRegion` | Preset | North America: `https://api.pingone.com`, `https://auth.pingone.com`, `us`, `us` | |
+| Each node | Connections | Yes | HTTP, Functions, Error Message and Variables connections ([table](#2-import)) | |
+| PingOne | Worker app roles | Yes | **Promotion Admin** on every environment in `env1Id` … `env4Id` | |
+| GitLab | Each target's project pipeline | Yes | `PINGONE_TARGET_ENVIRONMENT_ID` = that environment ([details](RUNBOOK.md#several-target-environments)) | |
+
+## Updating from an earlier version
+
+If you imported a previous file, this is what's different:
+
+1. **Re-import** the new file (and delete the old flow). Importing resets flow variables to placeholders, so set the flow variables in the checklist again. The two **company** secrets carry over; don't touch them.
+2. **`sourceEnvironmentId` and `targetEnvironmentId` are no longer settings.** The requester picks them at run time from the `envN…` slots. Put your environments in `env1Name`/`env1Id` … `env4Name`/`env4Id` instead.
+3. **New, optional:** `env1GitlabProjectId` … `env4GitlabProjectId`, the project that deploys to each target. Leave them empty to keep using `gitlabProjectId` for everything.
+4. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
+5. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
+6. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
 
 ## 1. Before importing
 

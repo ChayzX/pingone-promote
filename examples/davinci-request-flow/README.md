@@ -1,5 +1,7 @@
 # PingOne Promote: DaVinci Request flow
 
+> **Setting it up or updating it? Start with [IMPORT.md](IMPORT.md):** one checklist of every value to fill in, and what changed since earlier versions.
+
 > Replaces the local app for requesters. It supersedes the [front-door preview](../davinci-front-door/README.md): this flow commits an ordinary `requests/<id>/request.json`, so the pipeline needs no intent support.
 
 One DaVinci flow that replaces the Go tool's local app. Everything after the merge request is unchanged: the same GitLab project, pipeline, `pingone-runner`, approvals and rollback.
