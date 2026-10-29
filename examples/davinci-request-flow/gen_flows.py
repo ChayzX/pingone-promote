@@ -200,6 +200,15 @@ class Flow:
                                           "displayName": f, "hashedVisibility": False} for f in fields]},
             "validationRules": {"value": []}}, title)
 
+    def wait_page(self, title, text):
+        """A short "working" page that submits itself after 2 s (Continue is the fallback).
+        Long work is split across requests this way, so none hits the browser's timeout."""
+        html = (page_html(title, text + " This page continues by itself.", [], "waitForm", "",
+                          [("CONTINUE", "Continue", "btn-outline-secondary")]) +
+                "<!-- pp-auto-continue --><script>setTimeout(function () { var b = document.querySelector("
+                "'[data-skbuttonvalue=\"CONTINUE\"]'); if (b) { b.click(); } }, 2000);</script>")
+        return self.page(title, html, ["buttonValue"])
+
     # --- composite blocks -----------------------------------------------------
     def bearer(self):
         return [("Authorization", ["Bearer ", self.out(self.token, "rawResponse.body.access_token")])]
@@ -265,7 +274,7 @@ class Flow:
             ("seenUrls", "object", self.fv(f"{prefix}Seen")), ("currentUrl", "string", self.fv(f"{prefix}Url")),
             ("firstUrl", "string", self.fv(f"{prefix}First")), ("apiOrigin", "string", self.fv("apiOrigin")),
             ("statusCode", "number", self.out(get, "rawResponse.statusCode")), ("body", "object", self.out(get, "rawResponse.body")),
-        ], {"state": "string", "error": "string", "pages": "array", "seenUrls": "array", "nextUrl": "string"})
+        ], {"state": "string", "error": "string", "pages": "array", "seenUrls": "array", "nextUrl": "string", "pause": "string"})
         self.link(get, col)
         sv = self.save(f"{prefix}: keep page", [(f"{prefix}Pages", "object", [self.out(col, "pages")]),
                                                (f"{prefix}Seen", "object", [self.out(col, "seenUrls")]),
@@ -276,7 +285,12 @@ class Flow:
             err = self.save(f"{prefix}: note unreadable", [(f"{prefix}Error", "string", [self.out(col, "error")]),
                                                          (f"{prefix}Pages", "object", "[]")])
             self.link(err, cont)
-        self.three_way_from(sv, col, "more", cont, get, prefix + " paging", err)
+        # Every few pages, hand back to the browser so no request runs long.
+        pause = self.equals(f"{prefix}: hand back to the browser?", self.out(col, "pause"), "true")
+        wp = self.wait_page(f"{prefix}: reading", "Reading the snapshot from PingOne.")
+        self.link(pause, wp, false_target=get)
+        self.link(wp, get)
+        self.three_way_from(sv, col, "more", cont, pause, prefix + " paging", err)
         return init
 
     def three_way_from(self, after, fn_node, state_more, cont, more_target, title, err=None):
@@ -325,8 +339,12 @@ class Flow:
         self.link(p2, k2)
         paging = self.pages(prefix, None, [self.fv(f"{prefix}SnapUrl"), "/embeddedSnapshots"], "referencedResources", cont)
         # pages() linked init from `after`=None: wire both poll branches to the paging start.
-        self.three_way_from(k1, p1, "wait", paging, get, prefix + " snapshot")
-        self.three_way_from(k2, p2, "wait", paging, get, prefix + " snapshot (poll)")
+        # Each status check that isn't COMPLETE waits on a self-continuing page,
+        # which also spaces the polls out.
+        wp = self.wait_page(f"{prefix}: preparing", "PingOne is preparing the snapshot.")
+        self.link(wp, get)
+        self.three_way_from(k1, p1, "wait", paging, wp, prefix + " snapshot")
+        self.three_way_from(k2, p2, "wait", paging, wp, prefix + " snapshot (poll)")
         return g
 
     def inventories(self, title, pinned, src_prefix, src_env, tgt_prefix, tgt_env):
@@ -516,13 +534,17 @@ def build_request_flow(signin):
         ("ids", "object", ("node", "local.VSTART.payload.output.ids", "ids")), ("found", "object", f.fv("declFound")),
         ("index", "number", f.fv("declIdx")), ("statusCode", "number", f.out(decl_get, "rawResponse.statusCode")),
         ("body", "object", f.out(decl_get, "rawResponse.body"))],
-        {"state": "string", "error": "string", "found": "array", "index": "number", "nextId": "string"})
+        {"state": "string", "error": "string", "found": "array", "index": "number", "nextId": "string", "pause": "string"})
     f.link(decl_get, decl_col)
     decl_keep = f.save("Next declaration", [("declFound", "object", [f.out(decl_col, "found")]),
                                             ("declIdx", "number", [f.out(decl_col, "index")]),
                                             ("declId", "string", [f.out(decl_col, "nextId")])])
     f.link(decl_col, decl_keep)
-    f.three_way_from(decl_keep, decl_col, "more", src_defs, decl_get, "declarations")
+    decl_pause = f.equals("declarations: hand back to the browser?", f.out(decl_col, "pause"), "true")
+    decl_wait = f.wait_page("Checking promotion variables", "Reading promotion-variable declarations from PingOne.")
+    f.link(decl_pause, decl_wait, false_target=decl_get)
+    f.link(decl_wait, decl_get)
+    f.three_way_from(decl_keep, decl_col, "more", src_defs, decl_pause, "declarations")
     vstart = f.fn("Resources to check for promotion variables", "vars_start", [
         ("requestJson", "string", ("node", "local.BUILD.payload.output.requestJson", "requestJson"))],
         {"state": "string", "error": "string", "ids": "array", "firstId": "string"})

@@ -9,6 +9,6 @@ const body = core.parseBody(params.body);
 found.push({ resourceId: String(ids[index] || ''), status: isFinite(status) ? status : 0, body: status === 200 ? body : null });
 const next = index + 1;
 if (next < ids.length && next < 10000) {
-  return { state: 'more', error: '', found: found, index: next, nextId: String(ids[next]) };
+  return { state: 'more', error: '', found: found, index: next, nextId: String(ids[next]), pause: next % 5 === 0 ? 'true' : 'false' };
 }
-return { state: 'done', error: '', found: found, index: next, nextId: '' };
+return { state: 'done', error: '', found: found, index: next, nextId: '', pause: 'false' };

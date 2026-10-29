@@ -67,6 +67,9 @@ async function runFlow(world, form, opts) {
   opts = opts || {};
   const r = makeRun(world.settings, world.secrets, form, !!opts.stringMode);
   const pages = [];
+  // REST calls made within one browser request (between two rendered pages).
+  let calls = 0;
+  r.maxCalls = 0;
   let id = START[0];
   for (let steps = 0; steps < 5000; steps++) {
     const n = nodes[id];
@@ -78,6 +81,8 @@ async function runFlow(world, form, opts) {
         r.outputs[id] = { accessToken: 'at-' + world.user };
         break;
       case 'makeRestApiCall': {
+        calls++;
+        r.maxCalls = Math.max(r.maxCalls, calls);
         const headers = {};
         for (const h of p.headers.value) { headers[h.key] = r.slate(h.value); }
         const body = p.httpBody && p.httpBody.value === 'raw' ? r.template(p.raw.value) : undefined;
@@ -112,9 +117,11 @@ async function runFlow(world, form, opts) {
         break;
       case 'customHTMLTemplate': {
         const html = r.template(p.customHTML.value);
+        calls = 0;
         pages.push({ title, html });
         const fields = p.formFieldsList.value.map((f) => f.propertyName);
-        const answer = form[title];
+        // Self-continuing "working" pages submit themselves in the browser.
+        const answer = html.indexOf('<!-- pp-auto-continue -->') >= 0 ? { buttonValue: 'CONTINUE' } : form[title];
         if (fields.length === 0 || answer === undefined) { return { end: 'page', title, html, pages, run: r }; }
         r.outputs[id] = {};
         for (const f of fields) { r.outputs[id][f] = answer[f] === undefined ? '' : answer[f]; }
@@ -157,12 +164,15 @@ function world(overrides) {
   };
   st.vars = { decls: {}, defs: { src: [], tgt: [] }, fail: 0 };
   if (o.vars) { o.vars(st.vars); }
+  if (o.bigEnv) {
+    for (let i = 0; i < o.bigEnv; i++) { st.envs.src.resources.push(res('src', 'applications/b' + i, 'b' + i, { name: 'Bulk ' + i })); }
+  }
   if (o.gitlab) { o.gitlab(st.gitlab); }
   const json = (status, body) => ({ status, body });
   const snapshot = (env) => {
     const sid = 'snap' + (++st.n);
     st.snaps[sid] = { env, resources: JSON.parse(JSON.stringify(st.envs[env].resources)) };
-    st.polls[sid] = 2;
+    st.polls[sid] = o.snapshotPolls === undefined ? 2 : o.snapshotPolls;
     return sid;
   };
   const snapRecord = (sid) => ({ snapshotId: sid, resource: { id: st.snaps[sid].env }, status: st.polls[sid]-- > 0 ? 'PREPARING' : 'COMPLETE' });
@@ -362,6 +372,19 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   {
     const { w } = await varsRun('a1', (v) => { v.defs.tgt = [{ name: 'a', value: '******', isSensitive: true }, { name: 'b', value: 1 }, { name: 'c', value: 2 }]; });
     ok(w.log.filter((l) => /tgt\/promotionVariableDefinitions/.test(l)).length === 3, 'every definitions page is read');
+  }
+
+  // Long work is split across browser requests: big environment, slow snapshot.
+  {
+    const w = world({ bigEnv: 60, snapshotPolls: 40 });
+    const r = await runFlow(w, form('b7'));
+    ok(r.title === 'Merge request opened', 'big environment and slow snapshot still complete: ' + (r.text || ''));
+    ok(r.run.maxCalls <= 8, 'no browser request makes more than 8 REST calls (max ' + r.run.maxCalls + ')');
+    ok(r.pages.filter((pg) => pg.html.indexOf('pp-auto-continue') >= 0).length >= 40, 'snapshot polls and page reads hand back to the browser');
+    const many = Array.from({ length: 30 }, (_, i) => 'b' + i).join(' ');
+    const w2 = world({ bigEnv: 60 });
+    const r2 = await runFlow(w2, form(many));
+    ok(r2.title === 'Merge request opened' && r2.run.maxCalls <= 8, '30 selected resources: declarations read in short requests too (max ' + r2.run.maxCalls + ')');
   }
 
   // Refusals that must never reach GitLab.
