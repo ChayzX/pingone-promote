@@ -2271,7 +2271,7 @@
          "status": "configured",
          "capability_name": "customHTMLTemplate",
          "type": "trigger",
-         "properties": "{\"customHTML\":{\"value\":\"<div class=\\\"container py-4\\\" style=\\\"max-width: 900px\\\"><h1 class=\\\"h3 mb-3\\\">Request a PingOne promotion</h1><p class=\\\"text-muted\\\">Proof of concept: sign-in is off, so anyone who can launch this flow can open a request. Source <code>{{global.flow.variables.sourceEnvironmentId}}</code> &rarr; target <code>{{global.flow.variables.targetEnvironmentId}}</code>. This opens a GitLab merge request; nothing changes in PingOne until the protected pipeline deploys it.</p><h2 class=\\\"h6 mt-3\\\">Source resources (type, ID, name)</h2><pre class=\\\"border rounded p-2 small\\\" style=\\\"max-height: 300px; overflow: auto\\\">{{local.n000000225.payload.output.sourceListText}}</pre><h2 class=\\\"h6 mt-3\\\">Target resources (for mappings)</h2><pre class=\\\"border rounded p-2 small\\\" style=\\\"max-height: 300px; overflow: auto\\\">{{local.n000000225.payload.output.targetListText}}</pre><form id=\\\"selectForm\\\" data-id=\\\"selectForm\\\"><div class=\\\"mb-3\\\"><label class=\\\"form-label\\\" for=\\\"selectedRaw\\\">Resource IDs to promote (one per line or comma-separated)</label><textarea class=\\\"form-control\\\" id=\\\"selectedRaw\\\" name=\\\"selectedRaw\\\" rows=\\\"4\\\" data-id=\\\"selectedRaw-input\\\"></textarea></div><div class=\\\"mb-3\\\"><label class=\\\"form-label\\\" for=\\\"mappingsRaw\\\">Optional mappings, one <code>sourceId=targetId</code> per line</label><textarea class=\\\"form-control\\\" id=\\\"mappingsRaw\\\" name=\\\"mappingsRaw\\\" rows=\\\"2\\\" data-id=\\\"mappingsRaw-input\\\"></textarea></div><div class=\\\"mb-3\\\"><label class=\\\"form-label\\\" for=\\\"description\\\">Why is this change needed? (becomes the merge request title)</label><textarea class=\\\"form-control\\\" id=\\\"description\\\" name=\\\"description\\\" rows=\\\"3\\\" data-id=\\\"description-input\\\"></textarea></div><button type=\\\"submit\\\" class=\\\"btn btn-primary me-2\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"selectForm\\\" data-skbuttonvalue=\\\"BUILD\\\">Build request</button></form></div>\"},\"formFieldsList\":{\"value\":[{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"selectedRaw\",\"displayName\":\"selectedRaw\",\"hashedVisibility\":false},{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"mappingsRaw\",\"displayName\":\"mappingsRaw\",\"hashedVisibility\":false},{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"description\",\"displayName\":\"description\",\"hashedVisibility\":false},{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"buttonValue\",\"displayName\":\"buttonValue\",\"hashedVisibility\":false}]},\"validationRules\":{\"value\":[]},\"nodeTitle\":{\"value\":\"Choose resources\"}}"
+         "properties": "{\"customHTML\":{\"value\":\"<div class=\\\"container py-4\\\" style=\\\"max-width: 900px\\\"><h1 class=\\\"h3 mb-3\\\">Request a PingOne promotion</h1><p class=\\\"text-muted\\\">Proof of concept: sign-in is off, so anyone who can launch this flow can open a request. Source <strong>{{global.flow.variables.sourceEnvName}}</strong> &rarr; target <strong>{{global.flow.variables.targetEnvName}}</strong>. This opens a GitLab merge request; nothing changes in PingOne until the protected pipeline deploys it.</p><h2 class=\\\"h6 mt-3\\\">Source resources (type, ID, name)</h2><pre class=\\\"border rounded p-2 small\\\" style=\\\"max-height: 300px; overflow: auto\\\">{{local.n000000225.payload.output.sourceListText}}</pre><h2 class=\\\"h6 mt-3\\\">Target resources (for mappings)</h2><pre class=\\\"border rounded p-2 small\\\" style=\\\"max-height: 300px; overflow: auto\\\">{{local.n000000225.payload.output.targetListText}}</pre><form id=\\\"selectForm\\\" data-id=\\\"selectForm\\\"><div class=\\\"mb-3\\\"><label class=\\\"form-label\\\" for=\\\"selectedRaw\\\">Resource IDs to promote (one per line or comma-separated)</label><textarea class=\\\"form-control\\\" id=\\\"selectedRaw\\\" name=\\\"selectedRaw\\\" rows=\\\"4\\\" data-id=\\\"selectedRaw-input\\\"></textarea></div><div class=\\\"mb-3\\\"><label class=\\\"form-label\\\" for=\\\"mappingsRaw\\\">Optional mappings, one <code>sourceId=targetId</code> per line</label><textarea class=\\\"form-control\\\" id=\\\"mappingsRaw\\\" name=\\\"mappingsRaw\\\" rows=\\\"2\\\" data-id=\\\"mappingsRaw-input\\\"></textarea></div><div class=\\\"mb-3\\\"><label class=\\\"form-label\\\" for=\\\"description\\\">Why is this change needed? (becomes the merge request title)</label><textarea class=\\\"form-control\\\" id=\\\"description\\\" name=\\\"description\\\" rows=\\\"3\\\" data-id=\\\"description-input\\\"></textarea></div><button type=\\\"submit\\\" class=\\\"btn btn-primary me-2\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"selectForm\\\" data-skbuttonvalue=\\\"BUILD\\\">Build request</button></form></div>\"},\"formFieldsList\":{\"value\":[{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"selectedRaw\",\"displayName\":\"selectedRaw\",\"hashedVisibility\":false},{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"mappingsRaw\",\"displayName\":\"mappingsRaw\",\"hashedVisibility\":false},{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"description\",\"displayName\":\"description\",\"hashedVisibility\":false},{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"buttonValue\",\"displayName\":\"buttonValue\",\"hashedVisibility\":false}]},\"validationRules\":{\"value\":[]},\"nodeTitle\":{\"value\":\"Choose resources\"}}"
         },
         "position": {
          "x": 1380,
@@ -4371,14 +4371,392 @@
         "grabbable": true,
         "pannable": false
        },
-       "e000000431": {
+       "n000000431": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Functions",
+         "connection_id": "${local.connection_ids.fn}",
+         "connector_id": "functionsConnector",
+         "name": "Functions",
+         "status": "configured",
+         "capability_name": "customFunction",
+         "type": "trigger",
+         "properties": "{\"variableInputList\":{\"value\":[{\"name\":\"choice\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"buttonValue\\\",\\n        \\\"data\\\": \\\"{{local.n000000445.payload.output.buttonValue}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000445.payload.output.buttonValue}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"buttonValue\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"excludeId\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"sourceEnvironmentId\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.sourceEnvironmentId}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.sourceEnvironmentId}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"sourceEnvironmentId\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env1Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env1Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env1Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env1Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env1Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env1Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env1Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env1Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env1Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env1Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env2Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env2Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env2Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env2Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env2Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env2Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env2Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env2Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env2Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env2Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env3Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env3Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env3Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env3Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env3Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env3Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env3Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env3Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env3Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env3Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env4Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env4Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env4Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env4Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env4Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env4Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env4Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env4Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env4Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env4Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"}]},\"code\":{\"value\":\"module.exports = a = async ({params}) => {\\nconst core = (() => {\\nconst SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/;\\nfunction isObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }\\nfunction canonical(v) {\\nif (Array.isArray(v)) { return '[' + v.map(canonical).join(',') + ']'; }\\nif (isObject(v)) {\\nreturn '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';\\n}\\nreturn JSON.stringify(v === undefined ? null : v);\\n}\\nfunction parseBody(v) {\\nif (typeof v === 'string') {\\ntry { return JSON.parse(v); } catch (e) { return undefined; }\\n}\\nreturn v;\\n}\\nconst K = [\\n0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,\\n0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,\\n0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,\\n0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,\\n0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,\\n0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,\\n0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,\\n0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2\\n];\\nfunction utf8(str) {\\nconst out = [];\\nfor (let i = 0; i < str.length; i++) {\\nlet c = str.charCodeAt(i);\\nif (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {\\nconst d = str.charCodeAt(i + 1);\\nif (d >= 0xdc00 && d <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; }\\n}\\nif (c < 0x80) { out.push(c); }\\nelse if (c < 0x800) { out.push(0xc0 | (c >> 6), 0x80 | (c & 63)); }\\nelse if (c < 0x10000) { out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }\\nelse { out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }\\n}\\nreturn out;\\n}\\nfunction sha256(str) {\\nconst bytes = utf8(str);\\nconst bitLen = bytes.length * 8;\\nbytes.push(0x80);\\nwhile (bytes.length % 64 !== 56) { bytes.push(0); }\\nconst hi = Math.floor(bitLen / 0x100000000);\\nconst lo = bitLen >>> 0;\\nbytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255,\\n(lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);\\nconst h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];\\nconst w = new Array(64);\\nconst rotr = (x, n) => (x >>> n) | (x << (32 - n));\\nfor (let off = 0; off < bytes.length; off += 64) {\\nfor (let i = 0; i < 16; i++) {\\nw[i] = ((bytes[off + 4 * i] << 24) | (bytes[off + 4 * i + 1] << 16) | (bytes[off + 4 * i + 2] << 8) | bytes[off + 4 * i + 3]) >>> 0;\\n}\\nfor (let i = 16; i < 64; i++) {\\nconst s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);\\nconst s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);\\nw[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;\\n}\\nlet [a, b, c, d, e, f, g, hh] = h;\\nfor (let i = 0; i < 64; i++) {\\nconst S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);\\nconst ch = (e & f) ^ (~e & g);\\nconst t1 = (hh + S1 + ch + K[i] + w[i]) >>> 0;\\nconst S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);\\nconst maj = (a & b) ^ (a & c) ^ (b & c);\\nconst t2 = (S0 + maj) >>> 0;\\nhh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;\\n}\\nh[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;\\nh[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;\\n}\\nreturn h.map((x) => x.toString(16).padStart(8, '0')).join('');\\n}\\nfunction fingerprint(v) { return sha256(canonical(v)); }\\nfunction parseURL(raw) {\\nif (typeof raw !== 'string') { return null; }\\nconst m = /^([A-Za-z][A-Za-z0-9+.-]*):\\\\/\\\\/([^/?#]*)([^?#]*)(\\\\?[^#]*)?(#.*)?$/.exec(raw);\\nif (!m) { return null; }\\nconst authority = m[2];\\nconst at = authority.lastIndexOf('@');\\nlet path;\\ntry { path = decodeURIComponent(m[3]); } catch (e) { return null; }\\nreturn {\\nscheme: m[1].toLowerCase(),\\nuser: at >= 0,\\nhost: at >= 0 ? authority.slice(at + 1) : authority,\\npath: path,\\nrawPath: m[3],\\nquery: m[4] === undefined ? '' : m[4].slice(1),\\nhasQuery: m[4] !== undefined,\\nfragment: m[5] === undefined ? '' : m[5].slice(1),\\nhasFragment: m[5] !== undefined\\n};\\n}\\nfunction trimRightSlash(p) { return p.replace(/\\\\/+$/, ''); }\\nfunction trimSlashes(p) { return p.replace(/^\\\\/+/, '').replace(/\\\\/+$/, ''); }\\nfunction eqFold(a, b) { return String(a).toLowerCase() === String(b).toLowerCase(); }\\nfunction redact(v) {\\nif (Array.isArray(v)) { return v.map(redact); }\\nif (!isObject(v)) { return v; }\\nconst out = {};\\nfor (const k of Object.keys(v)) {\\nconst lk = k.replace(/_/g, '').replace(/-/g, '').toLowerCase();\\nif (lk === 'issensitive') { out[k] = v[k]; continue; }\\nif (lk.indexOf('password') >= 0 || lk.indexOf('secret') >= 0 || lk.indexOf('token') >= 0 ||\\nlk.indexOf('key') >= 0 || lk.indexOf('credential') >= 0 || lk.indexOf('authentication') >= 0 ||\\nlk === 'auth' || (lk === 'value' && v.isSensitive === true)) {\\nout[k] = '[REDACTED]';\\n} else {\\nout[k] = redact(v[k]);\\n}\\n}\\nreturn out;\\n}\\nfunction pinnedId(s) { return typeof s === 'string' && s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9_-]+$/.test(s); }\\nfunction inventoryFromSnapshots(apiOrigin, env, envRecord, snapshot, embeddedPages, pinned, expectedSnapshotId) {\\nif (!isObject(envRecord) || envRecord.id !== env || !envRecord.organization || !envRecord.organization.id) {\\nthrow new Error('environment response omitted its identity or organization');\\n}\\nif (!isObject(snapshot) || !snapshot.snapshotId || !snapshot.resource || snapshot.resource.id !== env) {\\nthrow new Error('snapshot response omitted pinned environment/version identity');\\n}\\nif (snapshot.status !== 'COMPLETE') { throw new Error('snapshot is not COMPLETE'); }\\nif (pinned && (snapshot.snapshotId !== expectedSnapshotId || !pinnedId(env) || !pinnedId(expectedSnapshotId))) {\\nthrow new Error('pinned snapshot identity or COMPLETE status did not match');\\n}\\nconst inv = { apiOrigin: apiOrigin, environmentId: env, organizationId: envRecord.organization.id, snapshotId: snapshot.snapshotId, resources: [] };\\nconst seen = {};\\nconst prefix = '/v1/environments/' + env + '/';\\nfor (const page of embeddedPages) {\\nconst items = page && page._embedded && page._embedded.referencedResources;\\nif (!Array.isArray(items)) { throw new Error('incomplete PingOne response: missing referencedResources collection'); }\\nfor (const s of items) {\\nif (!isObject(s) || !isObject(s.configuration)) { throw new Error('inventory contains deleted or unavailable configuration; resolve it before promotion'); }\\nif (s.status && s.status !== 'COMPLETE') { throw new Error('inventory contains an incomplete resource snapshot'); }\\nconst u = apiURL(apiOrigin, s.resourceUrl);\\nif (!u) { throw new Error('refused API URL outside the configured PingOne origin or environment path'); }\\nconst rid = s.resource && s.resource.id;\\nif (u.path.indexOf(prefix) !== 0 || !rid || u.hasQuery || (pinned && (!pinnedId(rid) || u.path.indexOf('//') >= 0))) {\\nthrow new Error('inventory has an invalid resource identity');\\n}\\nif (seen[rid]) { throw new Error('ambiguous resource ID ' + rid); }\\nseen[rid] = true;\\nconst parts = trimSlashes(u.path.slice(prefix.length)).split('/');\\nif (pinned && (parts.length < 2 || parts[parts.length - 1] !== rid)) { throw new Error('pinned resource URL does not match its original identity'); }\\nlet type = parts[0];\\nif (parts.length > 2 || pinned) {\\nconst kinds = [];\\nfor (let i = 0; i < parts.length; i += 2) {\\nif (pinned && !pinnedId(parts[i])) { throw new Error('invalid pinned resource path'); }\\nkinds.push(parts[i]);\\n}\\ntype = kinds.join(' / ');\\n}\\nlet name = typeof s.configuration.name === 'string' ? s.configuration.name : '';\\nif (!name) { name = typeof s.configuration.displayName === 'string' ? s.configuration.displayName : ''; }\\nif (!name) { name = rid; }\\ninv.resources.push({ id: rid, url: apiOrigin + u.path, name: name, type: type, configuration: s.configuration,\\ndependencies: Array.isArray(s.referencedResources) ? s.referencedResources : [] });\\n}\\n}\\nreturn inv;\\n}\\nfunction removeDotSegments(path) {\\nconst out = [];\\nconst segs = path.split('/');\\nfor (let i = 0; i < segs.length; i++) {\\nconst seg = segs[i];\\nif (seg === '.') { if (i === segs.length - 1) { out.push(''); } continue; }\\nif (seg === '..') { if (out.length > 1) { out.pop(); } if (i === segs.length - 1) { out.push(''); } continue; }\\nout.push(seg);\\n}\\nreturn out.join('/');\\n}\\nfunction apiURL(apiOrigin, raw) {\\nconst base = parseURL(apiOrigin);\\nif (!base || typeof raw !== 'string') { return null; }\\nlet u;\\nif (raw.charAt(0) === '/' && raw.charAt(1) !== '/') {\\nu = parseURL(base.scheme + '://' + base.host + raw);\\n} else {\\nu = parseURL(raw);\\n}\\nif (!u || u.scheme !== base.scheme || u.host !== base.host || u.user || u.hasFragment) { return null; }\\nif (!/^[A-Za-z0-9\\\\-._~!$&'()*+,;=:@/]*$/.test(u.rawPath)) { return null; }\\nu.path = removeDotSegments(u.path);\\nif (u.path.indexOf('/v1/environments/') !== 0) { return null; }\\nreturn u;\\n}\\nfunction nextPageURL(page) {\\nconst href = page && page._links && page._links.next && page._links.next.href;\\nreturn typeof href === 'string' ? href : '';\\n}\\nfunction pagesComplete(pages) {\\nlet expected = -1;\\nlet total = 0;\\nfor (const p of pages) {\\nconst items = p && p._embedded && p._embedded.referencedResources;\\ntotal += Array.isArray(items) ? items.length : 0;\\nif (p && typeof p.count === 'number') { expected = Math.max(expected, p.count); }\\n}\\nreturn expected < 0 || total >= expected;\\n}\\nfunction index(inv) {\\nconst m = {};\\nfor (const r of inv.resources) { m[r.id] = r; }\\nreturn m;\\n}\\nfunction buildRequest(source, target, selected, mappings, description) {\\nif (!selected || selected.length === 0) { throw new Error('selection must not be empty'); }\\nif (!source.environmentId || !target.environmentId || source.environmentId === target.environmentId) {\\nthrow new Error('source and target environments must be distinct and known');\\n}\\nif (!source.snapshotId) { throw new Error('source snapshot must be pinned'); }\\nif (!source.organizationId || !target.organizationId || source.organizationId !== target.organizationId) {\\nthrow new Error('source and target must belong to the same organization');\\n}\\nconst src = index(source);\\nconst dst = index(target);\\nconst sel = {};\\nfor (const id of selected) {\\nif (!src[id]) { throw new Error('unknown source resource \\\"' + id + '\\\"'); }\\nif (sel[id]) { throw new Error('duplicate selected resource \\\"' + id + '\\\"'); }\\nsel[id] = true;\\n}\\nconst seenTargets = {};\\nfor (const sid of Object.keys(mappings || {})) {\\nconst tid = mappings[sid];\\nif (!src[sid]) { throw new Error('mapping source \\\"' + sid + '\\\" is unknown'); }\\nif (!dst[tid]) { throw new Error('mapping target \\\"' + tid + '\\\" is unknown'); }\\nif (src[sid].type !== dst[tid].type) { throw new Error('mapping \\\"' + sid + '\\\" to \\\"' + tid + '\\\" has incompatible resource types'); }\\nif (seenTargets[tid] !== undefined && seenTargets[tid] !== sid) { throw new Error('multiple sources map to target \\\"' + tid + '\\\"'); }\\nseenTargets[tid] = sid;\\n}\\nconst excluded = Object.keys(src).filter((id) => !sel[id]).sort();\\nreturn {\\nsourceSnapshot: { id: source.snapshotId },\\ntargetEnvironment: { id: target.environmentId },\\nselectedResources: selected.slice().sort(),\\nexcludedResources: excluded,\\nresourceMapping: mappings || {},\\ndescription: description\\n};\\n}\\nfunction utf8Compare(a, b) {\\nconst x = utf8(a);\\nconst y = utf8(b);\\nconst n = Math.min(x.length, y.length);\\nfor (let i = 0; i < n; i++) { if (x[i] !== y[i]) { return x[i] - y[i]; } }\\nreturn x.length - y.length;\\n}\\nfunction goString(s) {\\nlet out = '\\\"';\\nfor (let i = 0; i < s.length; i++) {\\nlet c = s.charCodeAt(i);\\nif (c >= 0xd800 && c <= 0xdbff) {\\nconst d = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;\\nif (d >= 0xdc00 && d <= 0xdfff) { out += s.charAt(i) + s.charAt(i + 1); i++; continue; }\\nout += '\\ufffd';\\ncontinue;\\n}\\nif (c >= 0xdc00 && c <= 0xdfff) { out += '\\ufffd'; continue; }\\nif (c === 0x22) { out += '\\\\\\\\\\\"'; }\\nelse if (c === 0x5c) { out += '\\\\\\\\\\\\\\\\'; }\\nelse if (c === 0x0a) { out += '\\\\\\\\n'; }\\nelse if (c === 0x0d) { out += '\\\\\\\\r'; }\\nelse if (c === 0x09) { out += '\\\\\\\\t'; }\\nelse if (c === 0x08) { out += '\\\\\\\\b'; }\\nelse if (c === 0x0c) { out += '\\\\\\\\f'; }\\nelse if (c < 0x20 || c === 0x3c || c === 0x3e || c === 0x26 || c === 0x2028 || c === 0x2029) {\\nout += '\\\\\\\\u' + c.toString(16).padStart(4, '0');\\n} else { out += s.charAt(i); }\\n}\\nreturn out + '\\\"';\\n}\\nfunction goNumber(v) {\\nif (!isFinite(v)) { throw new Error('unsupported number in configuration'); }\\nif (v === 0) { return Object.is(v, -0) ? '-0' : '0'; }\\nconst abs = Math.abs(v);\\nif (abs < 1e-6 || abs >= 1e21) {\\nreturn v.toExponential().replace(/e([+-])(\\\\d)$/, 'e$10$2').replace(/e([+-])0(\\\\d)$/, 'e$1$2');\\n}\\nreturn String(v);\\n}\\nfunction goJSON(v, indent, level) {\\nconst nl = indent ? '\\\\n' + indent.repeat(level + 1) : '';\\nconst end = indent ? '\\\\n' + indent.repeat(level) : '';\\nconst sep = indent ? ': ' : ':';\\nif (v === null || v === undefined) { return 'null'; }\\nif (typeof v === 'boolean') { return v ? 'true' : 'false'; }\\nif (typeof v === 'number') { return goNumber(v); }\\nif (typeof v === 'string') { return goString(v); }\\nif (Array.isArray(v)) {\\nif (v.length === 0) { return '[]'; }\\nreturn '[' + v.map((x) => nl + goJSON(x, indent, level + 1)).join(',') + end + ']';\\n}\\nif (v.__goOrder) {\\nconst keys = v.__goOrder;\\nif (keys.length === 0) { return '{}'; }\\nreturn '{' + keys.map((k) => nl + goString(k) + sep + goJSON(v[k], indent, level + 1)).join(',') + end + '}';\\n}\\nconst keys = Object.keys(v).sort(utf8Compare);\\nif (keys.length === 0) { return '{}'; }\\nreturn '{' + keys.map((k) => nl + goString(k) + sep + goJSON(v[k], indent, level + 1)).join(',') + end + '}';\\n}\\nfunction goStruct(order, values) {\\nconst o = Object.assign({}, values);\\nObject.defineProperty(o, '__goOrder', { value: order, enumerable: false });\\nreturn o;\\n}\\nfunction goFingerprint(v) { return sha256(goJSON(v, '', 0)); }\\nconst HEX_ID = /^[a-f0-9]{32}$/;\\nconst HASH_ID = /^[a-f0-9]{64}$/;\\nconst REGIONS = { us: 1, eu: 1, ca: 1, au: 1, sg: 1, asia: 1 };\\nconst RFC3339 = /^\\\\d{4}-\\\\d{2}-\\\\d{2}T\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d{1,9})?(Z|[+-]\\\\d{2}:\\\\d{2})$/;\\nfunction validateRequest(r) {\\nif (r.version !== 1 || !HEX_ID.test(r.id)) { throw new Error('unsupported request version or invalid request identity'); }\\nif (!RFC3339.test(r.createdAt)) { throw new Error('invalid request creation time'); }\\nif (utf8(r.description).length > 4000) { throw new Error('request description is too long'); }\\nfor (const env of [r.source, r.target]) {\\nif (!SAFE_ID.test(env.id) || !SAFE_ID.test(env.organizationId) || !SAFE_ID.test(env.snapshotId) || !REGIONS[env.region]) {\\nthrow new Error('request requires safe environment, region, organization and pinned snapshot identities');\\n}\\n}\\nif (r.source.id === r.target.id || r.source.organizationId !== r.target.organizationId) {\\nthrow new Error('source and target must be distinct environments in the same organization');\\n}\\nconst n = r.selected.length;\\nif (n === 0 || n > 10000 || Object.keys(r.configurations).length !== n || Object.keys(r.fingerprints).length !== n) {\\nthrow new Error('request selection and configuration/fingerprint sets must match exactly');\\n}\\nconst seen = {};\\nfor (const id of r.selected) {\\nif (!SAFE_ID.test(id) || seen[id]) { throw new Error('invalid or duplicate selected resource identity'); }\\nseen[id] = true;\\nconst config = r.configurations[id];\\nif (!isObject(config) || Object.keys(config).length === 0 || !HASH_ID.test(r.fingerprints[id] || '') || goFingerprint(config) !== r.fingerprints[id]) {\\nthrow new Error('selected resource \\\"' + id + '\\\" has missing or mismatched configuration fingerprint');\\n}\\nif (canonical(config) !== canonical(redact(config))) { throw new Error('configuration contains unredacted sensitive fields'); }\\n}\\nconst targets = {};\\nfor (const k of Object.keys(r.mappings)) {\\nconst v = r.mappings[k];\\nif (!SAFE_ID.test(k) || !SAFE_ID.test(v) || targets[v]) { throw new Error('invalid or conflicting resource mapping'); }\\ntargets[v] = true;\\n}\\n}\\nfunction newRequest(source, target, sourceRegion, targetRegion, selected, mappings, description, id, createdAt) {\\nbuildRequest(source, target, selected, mappings, description);\\nconst src = index(source);\\nconst configurations = {};\\nconst fingerprints = {};\\nfor (const sid of selected) {\\nconst res = src[sid];\\nif (!res || !isObject(res.configuration) || Object.keys(res.configuration).length === 0) {\\nthrow new Error('selected resource has no available configuration');\\n}\\nconst redacted = redact(res.configuration);\\nconfigurations[sid] = redacted;\\nfingerprints[sid] = goFingerprint(redacted);\\n}\\nconst r = encodeOrder({\\nversion: 1, id: id, createdAt: createdAt, description: description,\\nsource: { id: source.environmentId, region: sourceRegion, organizationId: source.organizationId, snapshotId: source.snapshotId },\\ntarget: { id: target.environmentId, region: targetRegion, organizationId: target.organizationId, snapshotId: target.snapshotId },\\nselected: selected.slice().sort(utf8Compare), mappings: Object.assign({}, mappings || {}),\\nconfigurations: configurations, fingerprints: fingerprints\\n});\\nvalidateRequest(r);\\nreturn { request: r, json: encodeRequest(r) };\\n}\\nfunction encodeOrder(r) {\\nconst env = (e) => goStruct(['id', 'region', 'organizationId', 'snapshotId'], e || {});\\nreturn goStruct(['version', 'id', 'createdAt', 'description', 'source', 'target', 'selected', 'mappings', 'configurations', 'fingerprints'],\\nObject.assign({}, r, { source: env(r.source), target: env(r.target) }));\\n}\\nfunction encodeRequest(r) {\\nconst raw = goJSON(encodeOrder(r), '  ', 0);\\nif (utf8(raw).length > (8 << 20)) { throw new Error('request exceeds 8 MiB'); }\\nreturn raw;\\n}\\nfunction truncateUtf8(s, max) {\\nconst b = utf8(s);\\nif (b.length <= max) { return s; }\\nlet out = '';\\nlet i = 0;\\nconst cut = b.slice(0, max);\\nwhile (i < cut.length) {\\nconst c = cut[i];\\nconst len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;\\nif (i + len > cut.length) { out += '\\ufffd'.repeat(cut.length - i); break; }\\nlet cp = len === 1 ? c : len === 2 ? c & 0x1f : len === 3 ? c & 0x0f : c & 0x07;\\nfor (let k = 1; k < len; k++) { cp = (cp << 6) | (cut[i + k] & 0x3f); }\\nout += String.fromCodePoint(cp);\\ni += len;\\n}\\nreturn out;\\n}\\nfunction rfc3339Nano(date) {\\nreturn date.toISOString().replace(/\\\\.(\\\\d*?)0+Z$/, (m, f) => (f ? '.' + f + 'Z' : 'Z'));\\n}\\nconst NUMERIC_ID = /^[0-9]+$/;\\nconst SAFE_ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;\\nfunction noTraversal(rawPath) {\\nfor (const part of rawPath.split('/')) {\\nlet d;\\ntry { d = decodeURIComponent(part); } catch (e) { return false; }\\nif (d === '.' || d === '..') { return false; }\\n}\\nreturn true;\\n}\\nfunction gitlabConfig(baseUrl, projectId, environment) {\\nconst raw = String(baseUrl || '').trim() === '' ? '' : String(baseUrl);\\nif (!raw) { throw new Error('GitLab base URL is required'); }\\nconst u = parseURL(raw);\\nif (!u || u.scheme !== 'https' || u.host === '' || u.user || u.hasQuery || u.hasFragment || raw.indexOf('\\\\\\\\') >= 0) {\\nthrow new Error('GitLab base URL must be HTTPS without credentials, query, or fragment');\\n}\\nif (!noTraversal(u.rawPath)) { throw new Error('GitLab base URL cannot contain traversal'); }\\nif (!NUMERIC_ID.test(String(projectId || ''))) { throw new Error('GitLab project ID must be numeric'); }\\nconst env = String(environment || '') || 'production';\\nif (!SAFE_ENVIRONMENT.test(env)) { throw new Error('GitLab environment name is invalid'); }\\nconst prefix = u.scheme + '://' + u.host + trimRightSlash(u.rawPath);\\nreturn { base: u, api: prefix + '/api/v4/projects/' + projectId, projectId: String(projectId), environment: env };\\n}\\nfunction sameGitLabLocation(base, raw) {\\nconst u = parseURL(raw);\\nif (!base || !u || u.scheme !== 'https' || !eqFold(u.host, base.host) || u.user || u.hasQuery || u.hasFragment) { return false; }\\nif (!noTraversal(u.rawPath)) { return false; }\\nconst bp = trimRightSlash(base.path);\\nreturn u.path === bp || u.path.indexOf(bp + '/') === 0;\\n}\\nfunction gitlabStatus(statusCode, what) {\\nconst s = Number(statusCode);\\nif (!(s >= 200 && s < 300)) { throw new Error(what + ': GitLab returned HTTP ' + (isFinite(s) ? s : 'error')); }\\n}\\nfunction checkProject(cfg, statusCode, body) {\\ngitlabStatus(statusCode, 'verify GitLab project');\\nconst p = parseBody(body);\\nif (!isObject(p)) { throw new Error('verify GitLab project: GitLab returned invalid JSON'); }\\nconst branch = typeof p.default_branch === 'string' ? p.default_branch : '';\\nif (p.visibility !== 'private' || p.archived === true || branch.trim() === '') {\\nthrow new Error('GitLab project must be private, active, and have a default branch');\\n}\\nif (typeof p.id !== 'number' || String(p.id) !== String(Number(cfg.projectId))) { throw new Error('GitLab returned a different project than configured'); }\\nif (typeof p.web_url !== 'string' || !sameGitLabLocation(cfg.base, p.web_url)) {\\nthrow new Error('GitLab returned a project URL outside the configured server path');\\n}\\nreturn { defaultBranch: branch, defaultBranchPath: encodeURIComponent(branch) };\\n}\\nfunction checkDefaultBranch(defaultBranch, statusCode, body) {\\ngitlabStatus(statusCode, 'verify GitLab default branch');\\nconst b = parseBody(body);\\nif (!isObject(b) || b.name !== defaultBranch || b.protected !== true) { throw new Error('GitLab default branch must be protected'); }\\n}\\nfunction submitBodies(request, requestJson, environment, requestedBy, extra) {\\nconst id = request.id;\\nconst branch = 'promotion/' + id;\\nlet title = request.description !== '' ? request.description : 'Promote selected PingOne resources';\\ntitle = truncateUtf8(title, 180);\\nlet description = 'Promotion request `' + id + '`\\\\n\\\\nSource environment: `' + request.source.id + '` (snapshot `' + request.source.snapshotId +\\n'`)\\\\nTarget environment: `' + request.target.id + '`\\\\nSelected resources: ' + request.selected.length + '\\\\nGitLab environment: `' + environment +\\n'`\\\\n\\\\nThis merge request submits configuration for review. Actual deployment and rollback must execute through protected GitLab jobs. ' +\\n'Review the configuration exports and final native plan before approving deployment.';\\nif (requestedBy) { description += '\\\\n\\\\nRequested in DaVinci by: `' + requestedBy + '`'; }\\nif (extra) { description += String(extra); }\\nreturn {\\nbranch: branch,\\ntitle: title,\\ndescription: description,\\nbranchBody: (defaultBranch) => goJSON({ branch: branch, ref: defaultBranch }, '', 0),\\ncommitBody: (defaultBranch) => goJSON({\\nactions: [{ action: 'create', content: requestJson + '\\\\n', file_path: 'requests/' + id + '/request.json' }],\\nbranch: branch, commit_message: 'Add promotion request ' + id, start_branch: defaultBranch\\n}, '', 0),\\nmrBody: (defaultBranch) => goJSON({ description: description, remove_source_branch: true, source_branch: branch, squash: false,\\ntarget_branch: defaultBranch, title: title }, '', 0)\\n};\\n}\\nfunction checkMergeRequest(cfg, statusCode, body) {\\ngitlabStatus(statusCode, 'create merge request');\\nconst mr = parseBody(body);\\nif (!isObject(mr) || typeof mr.web_url !== 'string' || !sameGitLabLocation(cfg.base, mr.web_url)) {\\nthrow new Error('GitLab returned a merge request URL outside the configured server path');\\n}\\nreturn { webUrl: mr.web_url, iid: typeof mr.iid === 'number' ? mr.iid : 0 };\\n}\\nfunction sensitivePaths(v, prefix, out) {\\nout = out || [];\\nif (v === '[REDACTED]') { out.push(prefix); return out; }\\nif (Array.isArray(v)) { v.forEach((x, i) => sensitivePaths(x, prefix + '[' + i + ']', out)); return out; }\\nif (isObject(v)) {\\nfor (const k of Object.keys(v).sort(utf8Compare)) { sensitivePaths(v[k], prefix ? prefix + '.' + k : k, out); }\\n}\\nreturn out;\\n}\\nfunction variableName(ref) {\\nconst m = /^\\\\$\\\\{\\\\s*promotionVariable\\\\s*:\\\\s*([^}]*?)\\\\s*\\\\}$/.exec(String(ref || ''));\\nreturn m ? m[1] : String(ref || '');\\n}\\nfunction definitionsFrom(pages) {\\nconst defs = {};\\nfor (const p of Array.isArray(pages) ? pages : []) {\\nfor (const d of ((p && p._embedded && p._embedded.referencedResources) || [])) {\\nif (d && typeof d.name === 'string') {\\ndefs[d.name] = { sensitive: d.isSensitive === true || d.variableType === 'ENCRYPTED_STRING' || d.value === '******' };\\n}\\n}\\n}\\nreturn defs;\\n}\\nfunction covers(prop, path) {\\nreturn prop === path || path.indexOf(prop + '.') === 0 || path.indexOf(prop + '[') === 0;\\n}\\nfunction md(s) { return String(s).replace(/[`\\\\r\\\\n]/g, ''); }\\nfunction variablesReport(request, decls, srcPages, srcError, tgtPages, tgtError) {\\nconst src = definitionsFrom(srcPages);\\nconst tgt = definitionsFrom(tgtPages);\\nconst byId = {};\\nfor (const d of Array.isArray(decls) ? decls : []) { if (d && typeof d.resourceId === 'string') { byId[d.resourceId] = d; } }\\nconst findings = [];\\nconst notes = [];\\nlet unreadable = 0;\\nfor (const id of request.selected) {\\nconst paths = sensitivePaths(request.configurations[id], '');\\nif (paths.length === 0) { continue; }\\nconst d = byId[id] || { status: 0 };\\nconst status = Number(d.status);\\nlet vars = {};\\nif (status === 200) {\\nconst body = parseBody(d.body) || {};\\nvars = isObject(body.variables) ? body.variables : {};\\n} else if (status !== 404) {\\nunreadable++;\\n}\\nfor (const path of paths) {\\nconst f = { resourceId: id, path: path, variable: '', state: '' };\\nconst prop = Object.keys(vars).sort(utf8Compare).find((p) => covers(p, path));\\nif (status !== 200 && status !== 404) {\\nf.state = 'unknown';\\n} else if (prop === undefined) {\\nf.state = 'missing';\\n} else {\\nf.variable = variableName(vars[prop]);\\nconst def = tgt[f.variable] || src[f.variable];\\nif (!def) { f.state = (srcError || tgtError) ? 'unknown' : 'undefined'; }\\nelse if (!def.sensitive) { f.state = 'not-sensitive'; }\\nelse { f.state = 'ready'; }\\n}\\nfindings.push(f);\\n}\\n}\\nif (unreadable) { notes.push(unreadable + ' resource declaration(s) could not be read.'); }\\nif (srcError) { notes.push('Source variable definitions could not be read: ' + srcError); }\\nif (tgtError) { notes.push('Target variable definitions could not be read: ' + tgtError); }\\nconst say = {\\nready: 'ready: sensitive promotion variable {v} is defined',\\nmissing: 'needs a sensitive promotion variable; none is declared for it',\\nundefined: 'declared as {v}, but no definition was found in source or target',\\n'not-sensitive': 'declared as {v}, but its definition is not marked sensitive',\\nunknown: 'could not be checked'\\n};\\nconst line = (f) => f.resourceId + '  ' + f.path + ': ' + say[f.state].replace('{v}', f.variable);\\nconst open = findings.filter((f) => f.state !== 'ready').length;\\nlet summary;\\nif (findings.length === 0) {\\nsummary = 'No sensitive values in the selected resources; no promotion variables are needed.';\\n} else if (open === 0) {\\nsummary = 'All ' + findings.length + ' sensitive value(s) have a sensitive promotion variable.';\\n} else {\\nsummary = open + ' of ' + findings.length + ' sensitive value(s) need attention in PingOne (Configuration Management, promotion variables) before deployment, or the GitLab plan will stop.';\\n}\\nconst shown = findings.slice(0, 200);\\nif (findings.length > shown.length) { notes.push('Showing the first 200 of ' + findings.length + ' sensitive values.'); }\\nconst text = [summary].concat(notes, shown.map(line)).join('\\\\n');\\nlet mrText = '\\\\n\\\\n### Promotion variables (advisory check by the DaVinci flow)\\\\n\\\\n' + md(summary);\\nfor (const n of notes) { mrText += '\\\\n\\\\n' + md(n); }\\nfor (const f of shown) {\\nmrText += '\\\\n- `' + md(f.resourceId) + '` `' + md(f.path) + '`: ' + say[f.state].replace('{v}', '`' + md(f.variable) + '`');\\n}\\nreturn { findings: findings, open: open, summaryText: summary, reportText: text, mrText: mrText };\\n}\\nfunction randomHexId(extra) {\\nconst g = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;\\nif (g && typeof g.getRandomValues === 'function') {\\nconst b = new Uint8Array(16);\\ng.getRandomValues(b);\\nreturn Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');\\n}\\nlet seed = String(extra || '') + '|' + Date.now();\\nfor (let i = 0; i < 8; i++) { seed += '|' + Math.random(); }\\nreturn sha256(seed).slice(0, 32);\\n}\\nfunction escapeHtml(s) {\\nreturn String(s).replace(/[&<>\\\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\\\"': '&quot;', \\\"'\\\": '&#39;' }[c]));\\n}\\nconst core = {\\nrfc3339Nano, gitlabConfig, sameGitLabLocation, gitlabStatus, checkProject, checkDefaultBranch, submitBodies, checkMergeRequest,\\nSAFE_ID, apiURL, encodeRequest, goJSON, goFingerprint, newRequest, validateRequest, truncateUtf8, utf8Compare, HEX_ID, canonical, parseBody, sha256, fingerprint, parseURL, redact, inventoryFromSnapshots, nextPageURL,\\npagesComplete, buildRequest, escapeHtml, randomHexId, sensitivePaths, variableName, variablesReport\\n};\\nreturn core;\\n})();\\n// ---- step: resolve_env ----\\n// Turn an environment button (ENV1..ENV4) into that environment's configured\\n// ID and name. Refuses an empty slot, an unsafe ID, and the excluded ID (the\\n// source, when choosing the target).\\nconst choice = String(params.choice || '');\\nconst m = /^ENV([1-4])$/.exec(choice);\\nconst fail = (msg) => ({ state: 'error', error: core.escapeHtml(msg), environmentId: '', name: '', nameText: '' });\\nif (!m) { return fail('Choose one of the listed environments.'); }\\nconst slots = {\\n  1: [params.env1Id, params.env1Name], 2: [params.env2Id, params.env2Name],\\n  3: [params.env3Id, params.env3Name], 4: [params.env4Id, params.env4Name]\\n};\\nconst id = String(slots[m[1]][0] || '').trim();\\nconst name = String(slots[m[1]][1] || '').trim().slice(0, 100);\\nif (!id || !name) { return fail('That environment slot is not configured. Set env' + m[1] + 'Name and env' + m[1] + 'Id in the flow variables.'); }\\nif (!core.SAFE_ID.test(id)) { return fail('env' + m[1] + 'Id is not a valid environment ID.'); }\\nif (id === String(params.excludeId || '')) { return fail('Source and target must be different environments.'); }\\nreturn { state: 'ok', error: '', environmentId: id, name: name, nameText: core.escapeHtml(name) };\\n\\n};\\n\"},\"outputSchema\":{\"value\":\"{\\n  \\\"type\\\": \\\"object\\\",\\n  \\\"properties\\\": {\\n    \\\"state\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"error\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"environmentId\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"name\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"nameText\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    }\\n  }\\n}\"},\"nodeTitle\":{\"value\":\"Target environment chosen\"}}"
+        },
+        "position": {
+         "x": 1540,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000432": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Variables",
+         "connection_id": "${local.connection_ids.var}",
+         "connector_id": "variablesConnector",
+         "name": "Variables",
+         "status": "configured",
+         "capability_name": "saveFlowValue",
+         "type": "trigger",
+         "properties": "{\"saveFlowVariables\":{\"value\":[{\"name\":\"targetEnvironmentId\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"environmentId\\\",\\n        \\\"data\\\": \\\"{{local.n000000431.payload.output.environmentId}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000431.payload.output.environmentId}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"environmentId\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\",\"key\":0.1,\"label\":\"targetEnvironmentId (string - flow)\",\"type\":\"string\"},{\"name\":\"targetEnvName\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"nameText\\\",\\n        \\\"data\\\": \\\"{{local.n000000431.payload.output.nameText}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000431.payload.output.nameText}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"nameText\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\",\"key\":0.11,\"label\":\"targetEnvName (string - flow)\",\"type\":\"string\"}]},\"nodeTitle\":{\"value\":\"Keep target environment\"}}"
+        },
+        "position": {
+         "x": 1700,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000433": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Functions",
+         "connection_id": "${local.connection_ids.fn}",
+         "connector_id": "functionsConnector",
+         "name": "Functions",
+         "status": "configured",
+         "capability_name": "AEqualsB",
+         "type": "trigger",
+         "properties": "{\"leftValueA\":{\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"state\\\",\\n        \\\"data\\\": \\\"{{local.n000000431.payload.output.state}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000431.payload.output.state}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"state\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},\"rightValueB\":{\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"ok\\\"\\n      }\\n    ]\\n  }\\n]\"},\"nodeTitle\":{\"value\":\"Target valid?\"}}"
+        },
+        "position": {
+         "x": 1860,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000434": {
         "data": {
          "node_type": "EVAL",
          "label": "Evaluator"
         },
         "position": {
-         "x": 1540,
+         "x": 2020,
          "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000437": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Error Message",
+         "connection_id": "${local.connection_ids.err}",
+         "connector_id": "errorConnector",
+         "name": "Error Message",
+         "status": "configured",
+         "capability_name": "customErrorMessage",
+         "type": "action",
+         "properties": "{\"errorMessage\":{\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"Invalid target environment: \\\"\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"error\\\",\\n        \\\"data\\\": \\\"{{local.n000000431.payload.output.error}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000431.payload.output.error}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"error\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},\"nodeTitle\":{\"value\":\"Invalid target environment\"}}"
+        },
+        "position": {
+         "x": 2180,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000438": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator",
+         "properties": "{\"n000000437\":{\"value\":\"allTriggersFalse\"}}"
+        },
+        "position": {
+         "x": 2340,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000442": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator"
+        },
+        "position": {
+         "x": 2500,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000445": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Http",
+         "connection_id": "${local.connection_ids.http}",
+         "connector_id": "httpConnector",
+         "name": "Http",
+         "status": "configured",
+         "capability_name": "customHTMLTemplate",
+         "type": "trigger",
+         "properties": "{\"customHTML\":{\"value\":\"<div class=\\\"container py-4\\\" style=\\\"max-width: 900px\\\"><h1 class=\\\"h3 mb-3\\\">Choose the target environment</h1><p class=\\\"text-muted\\\">Promote from <strong>{{global.flow.variables.sourceEnvName}}</strong> to:</p><form id=\\\"envForm\\\" data-id=\\\"envForm\\\"><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV1\\\">{{global.flow.variables.env1Name}}</button><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV2\\\">{{global.flow.variables.env2Name}}</button><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV3\\\">{{global.flow.variables.env3Name}}</button><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV4\\\">{{global.flow.variables.env4Name}}</button></form></div><script>(function () { var hide = \\\"{{global.flow.variables.sourceEnvName}}\\\"; document.querySelectorAll('[data-pp-env]').forEach(function (b) { var t = b.textContent.trim(); if (!t || t === hide) { b.style.display = 'none'; } }); })();</script>\"},\"formFieldsList\":{\"value\":[{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"buttonValue\",\"displayName\":\"buttonValue\",\"hashedVisibility\":false}]},\"validationRules\":{\"value\":[]},\"nodeTitle\":{\"value\":\"Choose target environment\"}}"
+        },
+        "position": {
+         "x": 2660,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000446": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator"
+        },
+        "position": {
+         "x": 2820,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000449": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Functions",
+         "connection_id": "${local.connection_ids.fn}",
+         "connector_id": "functionsConnector",
+         "name": "Functions",
+         "status": "configured",
+         "capability_name": "customFunction",
+         "type": "trigger",
+         "properties": "{\"variableInputList\":{\"value\":[{\"name\":\"choice\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"buttonValue\\\",\\n        \\\"data\\\": \\\"{{local.n000000463.payload.output.buttonValue}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000463.payload.output.buttonValue}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"buttonValue\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"excludeId\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env1Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env1Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env1Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env1Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env1Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env1Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env1Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env1Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env1Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env1Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env2Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env2Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env2Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env2Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env2Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env2Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env2Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env2Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env2Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env2Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env3Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env3Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env3Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env3Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env3Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env3Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env3Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env3Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env3Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env3Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env4Id\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env4Id\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env4Id}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env4Id}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env4Id\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},{\"name\":\"env4Name\",\"preferredDataType\":\"string\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"variable.svg\\\",\\n        \\\"url\\\": \\\"env4Name\\\",\\n        \\\"data\\\": \\\"{{global.flow.variables.env4Name}}\\\",\\n        \\\"tooltip\\\": \\\"{{global.flow.variables.env4Name}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"env4Name\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"}]},\"code\":{\"value\":\"module.exports = a = async ({params}) => {\\nconst core = (() => {\\nconst SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/;\\nfunction isObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }\\nfunction canonical(v) {\\nif (Array.isArray(v)) { return '[' + v.map(canonical).join(',') + ']'; }\\nif (isObject(v)) {\\nreturn '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';\\n}\\nreturn JSON.stringify(v === undefined ? null : v);\\n}\\nfunction parseBody(v) {\\nif (typeof v === 'string') {\\ntry { return JSON.parse(v); } catch (e) { return undefined; }\\n}\\nreturn v;\\n}\\nconst K = [\\n0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,\\n0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,\\n0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,\\n0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,\\n0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,\\n0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,\\n0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,\\n0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2\\n];\\nfunction utf8(str) {\\nconst out = [];\\nfor (let i = 0; i < str.length; i++) {\\nlet c = str.charCodeAt(i);\\nif (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {\\nconst d = str.charCodeAt(i + 1);\\nif (d >= 0xdc00 && d <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; }\\n}\\nif (c < 0x80) { out.push(c); }\\nelse if (c < 0x800) { out.push(0xc0 | (c >> 6), 0x80 | (c & 63)); }\\nelse if (c < 0x10000) { out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }\\nelse { out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }\\n}\\nreturn out;\\n}\\nfunction sha256(str) {\\nconst bytes = utf8(str);\\nconst bitLen = bytes.length * 8;\\nbytes.push(0x80);\\nwhile (bytes.length % 64 !== 56) { bytes.push(0); }\\nconst hi = Math.floor(bitLen / 0x100000000);\\nconst lo = bitLen >>> 0;\\nbytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255,\\n(lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);\\nconst h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];\\nconst w = new Array(64);\\nconst rotr = (x, n) => (x >>> n) | (x << (32 - n));\\nfor (let off = 0; off < bytes.length; off += 64) {\\nfor (let i = 0; i < 16; i++) {\\nw[i] = ((bytes[off + 4 * i] << 24) | (bytes[off + 4 * i + 1] << 16) | (bytes[off + 4 * i + 2] << 8) | bytes[off + 4 * i + 3]) >>> 0;\\n}\\nfor (let i = 16; i < 64; i++) {\\nconst s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);\\nconst s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);\\nw[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;\\n}\\nlet [a, b, c, d, e, f, g, hh] = h;\\nfor (let i = 0; i < 64; i++) {\\nconst S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);\\nconst ch = (e & f) ^ (~e & g);\\nconst t1 = (hh + S1 + ch + K[i] + w[i]) >>> 0;\\nconst S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);\\nconst maj = (a & b) ^ (a & c) ^ (b & c);\\nconst t2 = (S0 + maj) >>> 0;\\nhh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;\\n}\\nh[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;\\nh[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;\\n}\\nreturn h.map((x) => x.toString(16).padStart(8, '0')).join('');\\n}\\nfunction fingerprint(v) { return sha256(canonical(v)); }\\nfunction parseURL(raw) {\\nif (typeof raw !== 'string') { return null; }\\nconst m = /^([A-Za-z][A-Za-z0-9+.-]*):\\\\/\\\\/([^/?#]*)([^?#]*)(\\\\?[^#]*)?(#.*)?$/.exec(raw);\\nif (!m) { return null; }\\nconst authority = m[2];\\nconst at = authority.lastIndexOf('@');\\nlet path;\\ntry { path = decodeURIComponent(m[3]); } catch (e) { return null; }\\nreturn {\\nscheme: m[1].toLowerCase(),\\nuser: at >= 0,\\nhost: at >= 0 ? authority.slice(at + 1) : authority,\\npath: path,\\nrawPath: m[3],\\nquery: m[4] === undefined ? '' : m[4].slice(1),\\nhasQuery: m[4] !== undefined,\\nfragment: m[5] === undefined ? '' : m[5].slice(1),\\nhasFragment: m[5] !== undefined\\n};\\n}\\nfunction trimRightSlash(p) { return p.replace(/\\\\/+$/, ''); }\\nfunction trimSlashes(p) { return p.replace(/^\\\\/+/, '').replace(/\\\\/+$/, ''); }\\nfunction eqFold(a, b) { return String(a).toLowerCase() === String(b).toLowerCase(); }\\nfunction redact(v) {\\nif (Array.isArray(v)) { return v.map(redact); }\\nif (!isObject(v)) { return v; }\\nconst out = {};\\nfor (const k of Object.keys(v)) {\\nconst lk = k.replace(/_/g, '').replace(/-/g, '').toLowerCase();\\nif (lk === 'issensitive') { out[k] = v[k]; continue; }\\nif (lk.indexOf('password') >= 0 || lk.indexOf('secret') >= 0 || lk.indexOf('token') >= 0 ||\\nlk.indexOf('key') >= 0 || lk.indexOf('credential') >= 0 || lk.indexOf('authentication') >= 0 ||\\nlk === 'auth' || (lk === 'value' && v.isSensitive === true)) {\\nout[k] = '[REDACTED]';\\n} else {\\nout[k] = redact(v[k]);\\n}\\n}\\nreturn out;\\n}\\nfunction pinnedId(s) { return typeof s === 'string' && s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9_-]+$/.test(s); }\\nfunction inventoryFromSnapshots(apiOrigin, env, envRecord, snapshot, embeddedPages, pinned, expectedSnapshotId) {\\nif (!isObject(envRecord) || envRecord.id !== env || !envRecord.organization || !envRecord.organization.id) {\\nthrow new Error('environment response omitted its identity or organization');\\n}\\nif (!isObject(snapshot) || !snapshot.snapshotId || !snapshot.resource || snapshot.resource.id !== env) {\\nthrow new Error('snapshot response omitted pinned environment/version identity');\\n}\\nif (snapshot.status !== 'COMPLETE') { throw new Error('snapshot is not COMPLETE'); }\\nif (pinned && (snapshot.snapshotId !== expectedSnapshotId || !pinnedId(env) || !pinnedId(expectedSnapshotId))) {\\nthrow new Error('pinned snapshot identity or COMPLETE status did not match');\\n}\\nconst inv = { apiOrigin: apiOrigin, environmentId: env, organizationId: envRecord.organization.id, snapshotId: snapshot.snapshotId, resources: [] };\\nconst seen = {};\\nconst prefix = '/v1/environments/' + env + '/';\\nfor (const page of embeddedPages) {\\nconst items = page && page._embedded && page._embedded.referencedResources;\\nif (!Array.isArray(items)) { throw new Error('incomplete PingOne response: missing referencedResources collection'); }\\nfor (const s of items) {\\nif (!isObject(s) || !isObject(s.configuration)) { throw new Error('inventory contains deleted or unavailable configuration; resolve it before promotion'); }\\nif (s.status && s.status !== 'COMPLETE') { throw new Error('inventory contains an incomplete resource snapshot'); }\\nconst u = apiURL(apiOrigin, s.resourceUrl);\\nif (!u) { throw new Error('refused API URL outside the configured PingOne origin or environment path'); }\\nconst rid = s.resource && s.resource.id;\\nif (u.path.indexOf(prefix) !== 0 || !rid || u.hasQuery || (pinned && (!pinnedId(rid) || u.path.indexOf('//') >= 0))) {\\nthrow new Error('inventory has an invalid resource identity');\\n}\\nif (seen[rid]) { throw new Error('ambiguous resource ID ' + rid); }\\nseen[rid] = true;\\nconst parts = trimSlashes(u.path.slice(prefix.length)).split('/');\\nif (pinned && (parts.length < 2 || parts[parts.length - 1] !== rid)) { throw new Error('pinned resource URL does not match its original identity'); }\\nlet type = parts[0];\\nif (parts.length > 2 || pinned) {\\nconst kinds = [];\\nfor (let i = 0; i < parts.length; i += 2) {\\nif (pinned && !pinnedId(parts[i])) { throw new Error('invalid pinned resource path'); }\\nkinds.push(parts[i]);\\n}\\ntype = kinds.join(' / ');\\n}\\nlet name = typeof s.configuration.name === 'string' ? s.configuration.name : '';\\nif (!name) { name = typeof s.configuration.displayName === 'string' ? s.configuration.displayName : ''; }\\nif (!name) { name = rid; }\\ninv.resources.push({ id: rid, url: apiOrigin + u.path, name: name, type: type, configuration: s.configuration,\\ndependencies: Array.isArray(s.referencedResources) ? s.referencedResources : [] });\\n}\\n}\\nreturn inv;\\n}\\nfunction removeDotSegments(path) {\\nconst out = [];\\nconst segs = path.split('/');\\nfor (let i = 0; i < segs.length; i++) {\\nconst seg = segs[i];\\nif (seg === '.') { if (i === segs.length - 1) { out.push(''); } continue; }\\nif (seg === '..') { if (out.length > 1) { out.pop(); } if (i === segs.length - 1) { out.push(''); } continue; }\\nout.push(seg);\\n}\\nreturn out.join('/');\\n}\\nfunction apiURL(apiOrigin, raw) {\\nconst base = parseURL(apiOrigin);\\nif (!base || typeof raw !== 'string') { return null; }\\nlet u;\\nif (raw.charAt(0) === '/' && raw.charAt(1) !== '/') {\\nu = parseURL(base.scheme + '://' + base.host + raw);\\n} else {\\nu = parseURL(raw);\\n}\\nif (!u || u.scheme !== base.scheme || u.host !== base.host || u.user || u.hasFragment) { return null; }\\nif (!/^[A-Za-z0-9\\\\-._~!$&'()*+,;=:@/]*$/.test(u.rawPath)) { return null; }\\nu.path = removeDotSegments(u.path);\\nif (u.path.indexOf('/v1/environments/') !== 0) { return null; }\\nreturn u;\\n}\\nfunction nextPageURL(page) {\\nconst href = page && page._links && page._links.next && page._links.next.href;\\nreturn typeof href === 'string' ? href : '';\\n}\\nfunction pagesComplete(pages) {\\nlet expected = -1;\\nlet total = 0;\\nfor (const p of pages) {\\nconst items = p && p._embedded && p._embedded.referencedResources;\\ntotal += Array.isArray(items) ? items.length : 0;\\nif (p && typeof p.count === 'number') { expected = Math.max(expected, p.count); }\\n}\\nreturn expected < 0 || total >= expected;\\n}\\nfunction index(inv) {\\nconst m = {};\\nfor (const r of inv.resources) { m[r.id] = r; }\\nreturn m;\\n}\\nfunction buildRequest(source, target, selected, mappings, description) {\\nif (!selected || selected.length === 0) { throw new Error('selection must not be empty'); }\\nif (!source.environmentId || !target.environmentId || source.environmentId === target.environmentId) {\\nthrow new Error('source and target environments must be distinct and known');\\n}\\nif (!source.snapshotId) { throw new Error('source snapshot must be pinned'); }\\nif (!source.organizationId || !target.organizationId || source.organizationId !== target.organizationId) {\\nthrow new Error('source and target must belong to the same organization');\\n}\\nconst src = index(source);\\nconst dst = index(target);\\nconst sel = {};\\nfor (const id of selected) {\\nif (!src[id]) { throw new Error('unknown source resource \\\"' + id + '\\\"'); }\\nif (sel[id]) { throw new Error('duplicate selected resource \\\"' + id + '\\\"'); }\\nsel[id] = true;\\n}\\nconst seenTargets = {};\\nfor (const sid of Object.keys(mappings || {})) {\\nconst tid = mappings[sid];\\nif (!src[sid]) { throw new Error('mapping source \\\"' + sid + '\\\" is unknown'); }\\nif (!dst[tid]) { throw new Error('mapping target \\\"' + tid + '\\\" is unknown'); }\\nif (src[sid].type !== dst[tid].type) { throw new Error('mapping \\\"' + sid + '\\\" to \\\"' + tid + '\\\" has incompatible resource types'); }\\nif (seenTargets[tid] !== undefined && seenTargets[tid] !== sid) { throw new Error('multiple sources map to target \\\"' + tid + '\\\"'); }\\nseenTargets[tid] = sid;\\n}\\nconst excluded = Object.keys(src).filter((id) => !sel[id]).sort();\\nreturn {\\nsourceSnapshot: { id: source.snapshotId },\\ntargetEnvironment: { id: target.environmentId },\\nselectedResources: selected.slice().sort(),\\nexcludedResources: excluded,\\nresourceMapping: mappings || {},\\ndescription: description\\n};\\n}\\nfunction utf8Compare(a, b) {\\nconst x = utf8(a);\\nconst y = utf8(b);\\nconst n = Math.min(x.length, y.length);\\nfor (let i = 0; i < n; i++) { if (x[i] !== y[i]) { return x[i] - y[i]; } }\\nreturn x.length - y.length;\\n}\\nfunction goString(s) {\\nlet out = '\\\"';\\nfor (let i = 0; i < s.length; i++) {\\nlet c = s.charCodeAt(i);\\nif (c >= 0xd800 && c <= 0xdbff) {\\nconst d = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;\\nif (d >= 0xdc00 && d <= 0xdfff) { out += s.charAt(i) + s.charAt(i + 1); i++; continue; }\\nout += '\\ufffd';\\ncontinue;\\n}\\nif (c >= 0xdc00 && c <= 0xdfff) { out += '\\ufffd'; continue; }\\nif (c === 0x22) { out += '\\\\\\\\\\\"'; }\\nelse if (c === 0x5c) { out += '\\\\\\\\\\\\\\\\'; }\\nelse if (c === 0x0a) { out += '\\\\\\\\n'; }\\nelse if (c === 0x0d) { out += '\\\\\\\\r'; }\\nelse if (c === 0x09) { out += '\\\\\\\\t'; }\\nelse if (c === 0x08) { out += '\\\\\\\\b'; }\\nelse if (c === 0x0c) { out += '\\\\\\\\f'; }\\nelse if (c < 0x20 || c === 0x3c || c === 0x3e || c === 0x26 || c === 0x2028 || c === 0x2029) {\\nout += '\\\\\\\\u' + c.toString(16).padStart(4, '0');\\n} else { out += s.charAt(i); }\\n}\\nreturn out + '\\\"';\\n}\\nfunction goNumber(v) {\\nif (!isFinite(v)) { throw new Error('unsupported number in configuration'); }\\nif (v === 0) { return Object.is(v, -0) ? '-0' : '0'; }\\nconst abs = Math.abs(v);\\nif (abs < 1e-6 || abs >= 1e21) {\\nreturn v.toExponential().replace(/e([+-])(\\\\d)$/, 'e$10$2').replace(/e([+-])0(\\\\d)$/, 'e$1$2');\\n}\\nreturn String(v);\\n}\\nfunction goJSON(v, indent, level) {\\nconst nl = indent ? '\\\\n' + indent.repeat(level + 1) : '';\\nconst end = indent ? '\\\\n' + indent.repeat(level) : '';\\nconst sep = indent ? ': ' : ':';\\nif (v === null || v === undefined) { return 'null'; }\\nif (typeof v === 'boolean') { return v ? 'true' : 'false'; }\\nif (typeof v === 'number') { return goNumber(v); }\\nif (typeof v === 'string') { return goString(v); }\\nif (Array.isArray(v)) {\\nif (v.length === 0) { return '[]'; }\\nreturn '[' + v.map((x) => nl + goJSON(x, indent, level + 1)).join(',') + end + ']';\\n}\\nif (v.__goOrder) {\\nconst keys = v.__goOrder;\\nif (keys.length === 0) { return '{}'; }\\nreturn '{' + keys.map((k) => nl + goString(k) + sep + goJSON(v[k], indent, level + 1)).join(',') + end + '}';\\n}\\nconst keys = Object.keys(v).sort(utf8Compare);\\nif (keys.length === 0) { return '{}'; }\\nreturn '{' + keys.map((k) => nl + goString(k) + sep + goJSON(v[k], indent, level + 1)).join(',') + end + '}';\\n}\\nfunction goStruct(order, values) {\\nconst o = Object.assign({}, values);\\nObject.defineProperty(o, '__goOrder', { value: order, enumerable: false });\\nreturn o;\\n}\\nfunction goFingerprint(v) { return sha256(goJSON(v, '', 0)); }\\nconst HEX_ID = /^[a-f0-9]{32}$/;\\nconst HASH_ID = /^[a-f0-9]{64}$/;\\nconst REGIONS = { us: 1, eu: 1, ca: 1, au: 1, sg: 1, asia: 1 };\\nconst RFC3339 = /^\\\\d{4}-\\\\d{2}-\\\\d{2}T\\\\d{2}:\\\\d{2}:\\\\d{2}(\\\\.\\\\d{1,9})?(Z|[+-]\\\\d{2}:\\\\d{2})$/;\\nfunction validateRequest(r) {\\nif (r.version !== 1 || !HEX_ID.test(r.id)) { throw new Error('unsupported request version or invalid request identity'); }\\nif (!RFC3339.test(r.createdAt)) { throw new Error('invalid request creation time'); }\\nif (utf8(r.description).length > 4000) { throw new Error('request description is too long'); }\\nfor (const env of [r.source, r.target]) {\\nif (!SAFE_ID.test(env.id) || !SAFE_ID.test(env.organizationId) || !SAFE_ID.test(env.snapshotId) || !REGIONS[env.region]) {\\nthrow new Error('request requires safe environment, region, organization and pinned snapshot identities');\\n}\\n}\\nif (r.source.id === r.target.id || r.source.organizationId !== r.target.organizationId) {\\nthrow new Error('source and target must be distinct environments in the same organization');\\n}\\nconst n = r.selected.length;\\nif (n === 0 || n > 10000 || Object.keys(r.configurations).length !== n || Object.keys(r.fingerprints).length !== n) {\\nthrow new Error('request selection and configuration/fingerprint sets must match exactly');\\n}\\nconst seen = {};\\nfor (const id of r.selected) {\\nif (!SAFE_ID.test(id) || seen[id]) { throw new Error('invalid or duplicate selected resource identity'); }\\nseen[id] = true;\\nconst config = r.configurations[id];\\nif (!isObject(config) || Object.keys(config).length === 0 || !HASH_ID.test(r.fingerprints[id] || '') || goFingerprint(config) !== r.fingerprints[id]) {\\nthrow new Error('selected resource \\\"' + id + '\\\" has missing or mismatched configuration fingerprint');\\n}\\nif (canonical(config) !== canonical(redact(config))) { throw new Error('configuration contains unredacted sensitive fields'); }\\n}\\nconst targets = {};\\nfor (const k of Object.keys(r.mappings)) {\\nconst v = r.mappings[k];\\nif (!SAFE_ID.test(k) || !SAFE_ID.test(v) || targets[v]) { throw new Error('invalid or conflicting resource mapping'); }\\ntargets[v] = true;\\n}\\n}\\nfunction newRequest(source, target, sourceRegion, targetRegion, selected, mappings, description, id, createdAt) {\\nbuildRequest(source, target, selected, mappings, description);\\nconst src = index(source);\\nconst configurations = {};\\nconst fingerprints = {};\\nfor (const sid of selected) {\\nconst res = src[sid];\\nif (!res || !isObject(res.configuration) || Object.keys(res.configuration).length === 0) {\\nthrow new Error('selected resource has no available configuration');\\n}\\nconst redacted = redact(res.configuration);\\nconfigurations[sid] = redacted;\\nfingerprints[sid] = goFingerprint(redacted);\\n}\\nconst r = encodeOrder({\\nversion: 1, id: id, createdAt: createdAt, description: description,\\nsource: { id: source.environmentId, region: sourceRegion, organizationId: source.organizationId, snapshotId: source.snapshotId },\\ntarget: { id: target.environmentId, region: targetRegion, organizationId: target.organizationId, snapshotId: target.snapshotId },\\nselected: selected.slice().sort(utf8Compare), mappings: Object.assign({}, mappings || {}),\\nconfigurations: configurations, fingerprints: fingerprints\\n});\\nvalidateRequest(r);\\nreturn { request: r, json: encodeRequest(r) };\\n}\\nfunction encodeOrder(r) {\\nconst env = (e) => goStruct(['id', 'region', 'organizationId', 'snapshotId'], e || {});\\nreturn goStruct(['version', 'id', 'createdAt', 'description', 'source', 'target', 'selected', 'mappings', 'configurations', 'fingerprints'],\\nObject.assign({}, r, { source: env(r.source), target: env(r.target) }));\\n}\\nfunction encodeRequest(r) {\\nconst raw = goJSON(encodeOrder(r), '  ', 0);\\nif (utf8(raw).length > (8 << 20)) { throw new Error('request exceeds 8 MiB'); }\\nreturn raw;\\n}\\nfunction truncateUtf8(s, max) {\\nconst b = utf8(s);\\nif (b.length <= max) { return s; }\\nlet out = '';\\nlet i = 0;\\nconst cut = b.slice(0, max);\\nwhile (i < cut.length) {\\nconst c = cut[i];\\nconst len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;\\nif (i + len > cut.length) { out += '\\ufffd'.repeat(cut.length - i); break; }\\nlet cp = len === 1 ? c : len === 2 ? c & 0x1f : len === 3 ? c & 0x0f : c & 0x07;\\nfor (let k = 1; k < len; k++) { cp = (cp << 6) | (cut[i + k] & 0x3f); }\\nout += String.fromCodePoint(cp);\\ni += len;\\n}\\nreturn out;\\n}\\nfunction rfc3339Nano(date) {\\nreturn date.toISOString().replace(/\\\\.(\\\\d*?)0+Z$/, (m, f) => (f ? '.' + f + 'Z' : 'Z'));\\n}\\nconst NUMERIC_ID = /^[0-9]+$/;\\nconst SAFE_ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;\\nfunction noTraversal(rawPath) {\\nfor (const part of rawPath.split('/')) {\\nlet d;\\ntry { d = decodeURIComponent(part); } catch (e) { return false; }\\nif (d === '.' || d === '..') { return false; }\\n}\\nreturn true;\\n}\\nfunction gitlabConfig(baseUrl, projectId, environment) {\\nconst raw = String(baseUrl || '').trim() === '' ? '' : String(baseUrl);\\nif (!raw) { throw new Error('GitLab base URL is required'); }\\nconst u = parseURL(raw);\\nif (!u || u.scheme !== 'https' || u.host === '' || u.user || u.hasQuery || u.hasFragment || raw.indexOf('\\\\\\\\') >= 0) {\\nthrow new Error('GitLab base URL must be HTTPS without credentials, query, or fragment');\\n}\\nif (!noTraversal(u.rawPath)) { throw new Error('GitLab base URL cannot contain traversal'); }\\nif (!NUMERIC_ID.test(String(projectId || ''))) { throw new Error('GitLab project ID must be numeric'); }\\nconst env = String(environment || '') || 'production';\\nif (!SAFE_ENVIRONMENT.test(env)) { throw new Error('GitLab environment name is invalid'); }\\nconst prefix = u.scheme + '://' + u.host + trimRightSlash(u.rawPath);\\nreturn { base: u, api: prefix + '/api/v4/projects/' + projectId, projectId: String(projectId), environment: env };\\n}\\nfunction sameGitLabLocation(base, raw) {\\nconst u = parseURL(raw);\\nif (!base || !u || u.scheme !== 'https' || !eqFold(u.host, base.host) || u.user || u.hasQuery || u.hasFragment) { return false; }\\nif (!noTraversal(u.rawPath)) { return false; }\\nconst bp = trimRightSlash(base.path);\\nreturn u.path === bp || u.path.indexOf(bp + '/') === 0;\\n}\\nfunction gitlabStatus(statusCode, what) {\\nconst s = Number(statusCode);\\nif (!(s >= 200 && s < 300)) { throw new Error(what + ': GitLab returned HTTP ' + (isFinite(s) ? s : 'error')); }\\n}\\nfunction checkProject(cfg, statusCode, body) {\\ngitlabStatus(statusCode, 'verify GitLab project');\\nconst p = parseBody(body);\\nif (!isObject(p)) { throw new Error('verify GitLab project: GitLab returned invalid JSON'); }\\nconst branch = typeof p.default_branch === 'string' ? p.default_branch : '';\\nif (p.visibility !== 'private' || p.archived === true || branch.trim() === '') {\\nthrow new Error('GitLab project must be private, active, and have a default branch');\\n}\\nif (typeof p.id !== 'number' || String(p.id) !== String(Number(cfg.projectId))) { throw new Error('GitLab returned a different project than configured'); }\\nif (typeof p.web_url !== 'string' || !sameGitLabLocation(cfg.base, p.web_url)) {\\nthrow new Error('GitLab returned a project URL outside the configured server path');\\n}\\nreturn { defaultBranch: branch, defaultBranchPath: encodeURIComponent(branch) };\\n}\\nfunction checkDefaultBranch(defaultBranch, statusCode, body) {\\ngitlabStatus(statusCode, 'verify GitLab default branch');\\nconst b = parseBody(body);\\nif (!isObject(b) || b.name !== defaultBranch || b.protected !== true) { throw new Error('GitLab default branch must be protected'); }\\n}\\nfunction submitBodies(request, requestJson, environment, requestedBy, extra) {\\nconst id = request.id;\\nconst branch = 'promotion/' + id;\\nlet title = request.description !== '' ? request.description : 'Promote selected PingOne resources';\\ntitle = truncateUtf8(title, 180);\\nlet description = 'Promotion request `' + id + '`\\\\n\\\\nSource environment: `' + request.source.id + '` (snapshot `' + request.source.snapshotId +\\n'`)\\\\nTarget environment: `' + request.target.id + '`\\\\nSelected resources: ' + request.selected.length + '\\\\nGitLab environment: `' + environment +\\n'`\\\\n\\\\nThis merge request submits configuration for review. Actual deployment and rollback must execute through protected GitLab jobs. ' +\\n'Review the configuration exports and final native plan before approving deployment.';\\nif (requestedBy) { description += '\\\\n\\\\nRequested in DaVinci by: `' + requestedBy + '`'; }\\nif (extra) { description += String(extra); }\\nreturn {\\nbranch: branch,\\ntitle: title,\\ndescription: description,\\nbranchBody: (defaultBranch) => goJSON({ branch: branch, ref: defaultBranch }, '', 0),\\ncommitBody: (defaultBranch) => goJSON({\\nactions: [{ action: 'create', content: requestJson + '\\\\n', file_path: 'requests/' + id + '/request.json' }],\\nbranch: branch, commit_message: 'Add promotion request ' + id, start_branch: defaultBranch\\n}, '', 0),\\nmrBody: (defaultBranch) => goJSON({ description: description, remove_source_branch: true, source_branch: branch, squash: false,\\ntarget_branch: defaultBranch, title: title }, '', 0)\\n};\\n}\\nfunction checkMergeRequest(cfg, statusCode, body) {\\ngitlabStatus(statusCode, 'create merge request');\\nconst mr = parseBody(body);\\nif (!isObject(mr) || typeof mr.web_url !== 'string' || !sameGitLabLocation(cfg.base, mr.web_url)) {\\nthrow new Error('GitLab returned a merge request URL outside the configured server path');\\n}\\nreturn { webUrl: mr.web_url, iid: typeof mr.iid === 'number' ? mr.iid : 0 };\\n}\\nfunction sensitivePaths(v, prefix, out) {\\nout = out || [];\\nif (v === '[REDACTED]') { out.push(prefix); return out; }\\nif (Array.isArray(v)) { v.forEach((x, i) => sensitivePaths(x, prefix + '[' + i + ']', out)); return out; }\\nif (isObject(v)) {\\nfor (const k of Object.keys(v).sort(utf8Compare)) { sensitivePaths(v[k], prefix ? prefix + '.' + k : k, out); }\\n}\\nreturn out;\\n}\\nfunction variableName(ref) {\\nconst m = /^\\\\$\\\\{\\\\s*promotionVariable\\\\s*:\\\\s*([^}]*?)\\\\s*\\\\}$/.exec(String(ref || ''));\\nreturn m ? m[1] : String(ref || '');\\n}\\nfunction definitionsFrom(pages) {\\nconst defs = {};\\nfor (const p of Array.isArray(pages) ? pages : []) {\\nfor (const d of ((p && p._embedded && p._embedded.referencedResources) || [])) {\\nif (d && typeof d.name === 'string') {\\ndefs[d.name] = { sensitive: d.isSensitive === true || d.variableType === 'ENCRYPTED_STRING' || d.value === '******' };\\n}\\n}\\n}\\nreturn defs;\\n}\\nfunction covers(prop, path) {\\nreturn prop === path || path.indexOf(prop + '.') === 0 || path.indexOf(prop + '[') === 0;\\n}\\nfunction md(s) { return String(s).replace(/[`\\\\r\\\\n]/g, ''); }\\nfunction variablesReport(request, decls, srcPages, srcError, tgtPages, tgtError) {\\nconst src = definitionsFrom(srcPages);\\nconst tgt = definitionsFrom(tgtPages);\\nconst byId = {};\\nfor (const d of Array.isArray(decls) ? decls : []) { if (d && typeof d.resourceId === 'string') { byId[d.resourceId] = d; } }\\nconst findings = [];\\nconst notes = [];\\nlet unreadable = 0;\\nfor (const id of request.selected) {\\nconst paths = sensitivePaths(request.configurations[id], '');\\nif (paths.length === 0) { continue; }\\nconst d = byId[id] || { status: 0 };\\nconst status = Number(d.status);\\nlet vars = {};\\nif (status === 200) {\\nconst body = parseBody(d.body) || {};\\nvars = isObject(body.variables) ? body.variables : {};\\n} else if (status !== 404) {\\nunreadable++;\\n}\\nfor (const path of paths) {\\nconst f = { resourceId: id, path: path, variable: '', state: '' };\\nconst prop = Object.keys(vars).sort(utf8Compare).find((p) => covers(p, path));\\nif (status !== 200 && status !== 404) {\\nf.state = 'unknown';\\n} else if (prop === undefined) {\\nf.state = 'missing';\\n} else {\\nf.variable = variableName(vars[prop]);\\nconst def = tgt[f.variable] || src[f.variable];\\nif (!def) { f.state = (srcError || tgtError) ? 'unknown' : 'undefined'; }\\nelse if (!def.sensitive) { f.state = 'not-sensitive'; }\\nelse { f.state = 'ready'; }\\n}\\nfindings.push(f);\\n}\\n}\\nif (unreadable) { notes.push(unreadable + ' resource declaration(s) could not be read.'); }\\nif (srcError) { notes.push('Source variable definitions could not be read: ' + srcError); }\\nif (tgtError) { notes.push('Target variable definitions could not be read: ' + tgtError); }\\nconst say = {\\nready: 'ready: sensitive promotion variable {v} is defined',\\nmissing: 'needs a sensitive promotion variable; none is declared for it',\\nundefined: 'declared as {v}, but no definition was found in source or target',\\n'not-sensitive': 'declared as {v}, but its definition is not marked sensitive',\\nunknown: 'could not be checked'\\n};\\nconst line = (f) => f.resourceId + '  ' + f.path + ': ' + say[f.state].replace('{v}', f.variable);\\nconst open = findings.filter((f) => f.state !== 'ready').length;\\nlet summary;\\nif (findings.length === 0) {\\nsummary = 'No sensitive values in the selected resources; no promotion variables are needed.';\\n} else if (open === 0) {\\nsummary = 'All ' + findings.length + ' sensitive value(s) have a sensitive promotion variable.';\\n} else {\\nsummary = open + ' of ' + findings.length + ' sensitive value(s) need attention in PingOne (Configuration Management, promotion variables) before deployment, or the GitLab plan will stop.';\\n}\\nconst shown = findings.slice(0, 200);\\nif (findings.length > shown.length) { notes.push('Showing the first 200 of ' + findings.length + ' sensitive values.'); }\\nconst text = [summary].concat(notes, shown.map(line)).join('\\\\n');\\nlet mrText = '\\\\n\\\\n### Promotion variables (advisory check by the DaVinci flow)\\\\n\\\\n' + md(summary);\\nfor (const n of notes) { mrText += '\\\\n\\\\n' + md(n); }\\nfor (const f of shown) {\\nmrText += '\\\\n- `' + md(f.resourceId) + '` `' + md(f.path) + '`: ' + say[f.state].replace('{v}', '`' + md(f.variable) + '`');\\n}\\nreturn { findings: findings, open: open, summaryText: summary, reportText: text, mrText: mrText };\\n}\\nfunction randomHexId(extra) {\\nconst g = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;\\nif (g && typeof g.getRandomValues === 'function') {\\nconst b = new Uint8Array(16);\\ng.getRandomValues(b);\\nreturn Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');\\n}\\nlet seed = String(extra || '') + '|' + Date.now();\\nfor (let i = 0; i < 8; i++) { seed += '|' + Math.random(); }\\nreturn sha256(seed).slice(0, 32);\\n}\\nfunction escapeHtml(s) {\\nreturn String(s).replace(/[&<>\\\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\\\"': '&quot;', \\\"'\\\": '&#39;' }[c]));\\n}\\nconst core = {\\nrfc3339Nano, gitlabConfig, sameGitLabLocation, gitlabStatus, checkProject, checkDefaultBranch, submitBodies, checkMergeRequest,\\nSAFE_ID, apiURL, encodeRequest, goJSON, goFingerprint, newRequest, validateRequest, truncateUtf8, utf8Compare, HEX_ID, canonical, parseBody, sha256, fingerprint, parseURL, redact, inventoryFromSnapshots, nextPageURL,\\npagesComplete, buildRequest, escapeHtml, randomHexId, sensitivePaths, variableName, variablesReport\\n};\\nreturn core;\\n})();\\n// ---- step: resolve_env ----\\n// Turn an environment button (ENV1..ENV4) into that environment's configured\\n// ID and name. Refuses an empty slot, an unsafe ID, and the excluded ID (the\\n// source, when choosing the target).\\nconst choice = String(params.choice || '');\\nconst m = /^ENV([1-4])$/.exec(choice);\\nconst fail = (msg) => ({ state: 'error', error: core.escapeHtml(msg), environmentId: '', name: '', nameText: '' });\\nif (!m) { return fail('Choose one of the listed environments.'); }\\nconst slots = {\\n  1: [params.env1Id, params.env1Name], 2: [params.env2Id, params.env2Name],\\n  3: [params.env3Id, params.env3Name], 4: [params.env4Id, params.env4Name]\\n};\\nconst id = String(slots[m[1]][0] || '').trim();\\nconst name = String(slots[m[1]][1] || '').trim().slice(0, 100);\\nif (!id || !name) { return fail('That environment slot is not configured. Set env' + m[1] + 'Name and env' + m[1] + 'Id in the flow variables.'); }\\nif (!core.SAFE_ID.test(id)) { return fail('env' + m[1] + 'Id is not a valid environment ID.'); }\\nif (id === String(params.excludeId || '')) { return fail('Source and target must be different environments.'); }\\nreturn { state: 'ok', error: '', environmentId: id, name: name, nameText: core.escapeHtml(name) };\\n\\n};\\n\"},\"outputSchema\":{\"value\":\"{\\n  \\\"type\\\": \\\"object\\\",\\n  \\\"properties\\\": {\\n    \\\"state\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"error\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"environmentId\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"name\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    },\\n    \\\"nameText\\\": {\\n      \\\"type\\\": \\\"string\\\"\\n    }\\n  }\\n}\"},\"nodeTitle\":{\"value\":\"Source environment chosen\"}}"
+        },
+        "position": {
+         "x": 2980,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000450": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Variables",
+         "connection_id": "${local.connection_ids.var}",
+         "connector_id": "variablesConnector",
+         "name": "Variables",
+         "status": "configured",
+         "capability_name": "saveFlowValue",
+         "type": "trigger",
+         "properties": "{\"saveFlowVariables\":{\"value\":[{\"name\":\"sourceEnvironmentId\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"environmentId\\\",\\n        \\\"data\\\": \\\"{{local.n000000449.payload.output.environmentId}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000449.payload.output.environmentId}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"environmentId\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\",\"key\":0.1,\"label\":\"sourceEnvironmentId (string - flow)\",\"type\":\"string\"},{\"name\":\"sourceEnvName\",\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"nameText\\\",\\n        \\\"data\\\": \\\"{{local.n000000449.payload.output.nameText}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000449.payload.output.nameText}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"nameText\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\",\"key\":0.11,\"label\":\"sourceEnvName (string - flow)\",\"type\":\"string\"}]},\"nodeTitle\":{\"value\":\"Keep source environment\"}}"
+        },
+        "position": {
+         "x": 3140,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000451": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Functions",
+         "connection_id": "${local.connection_ids.fn}",
+         "connector_id": "functionsConnector",
+         "name": "Functions",
+         "status": "configured",
+         "capability_name": "AEqualsB",
+         "type": "trigger",
+         "properties": "{\"leftValueA\":{\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"state\\\",\\n        \\\"data\\\": \\\"{{local.n000000449.payload.output.state}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000449.payload.output.state}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"state\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},\"rightValueB\":{\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"ok\\\"\\n      }\\n    ]\\n  }\\n]\"},\"nodeTitle\":{\"value\":\"Source valid?\"}}"
+        },
+        "position": {
+         "x": 3300,
+         "y": 2400
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000452": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator"
+        },
+        "position": {
+         "x": 260,
+         "y": 2620
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000455": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Error Message",
+         "connection_id": "${local.connection_ids.err}",
+         "connector_id": "errorConnector",
+         "name": "Error Message",
+         "status": "configured",
+         "capability_name": "customErrorMessage",
+         "type": "action",
+         "properties": "{\"errorMessage\":{\"value\":\"[\\n  {\\n    \\\"children\\\": [\\n      {\\n        \\\"text\\\": \\\"Invalid source environment: \\\"\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      },\\n      {\\n        \\\"type\\\": \\\"link\\\",\\n        \\\"src\\\": \\\"http.svg\\\",\\n        \\\"url\\\": \\\"error\\\",\\n        \\\"data\\\": \\\"{{local.n000000449.payload.output.error}}\\\",\\n        \\\"tooltip\\\": \\\"{{local.n000000449.payload.output.error}}\\\",\\n        \\\"children\\\": [\\n          {\\n            \\\"text\\\": \\\"error\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"text\\\": \\\"\\\"\\n      }\\n    ]\\n  }\\n]\"},\"nodeTitle\":{\"value\":\"Invalid source environment\"}}"
+        },
+        "position": {
+         "x": 420,
+         "y": 2620
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000456": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator",
+         "properties": "{\"n000000455\":{\"value\":\"allTriggersFalse\"}}"
+        },
+        "position": {
+         "x": 580,
+         "y": 2620
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000460": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator"
+        },
+        "position": {
+         "x": 740,
+         "y": 2620
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "n000000463": {
+        "data": {
+         "node_type": "CONNECTION",
+         "label": "Http",
+         "connection_id": "${local.connection_ids.http}",
+         "connector_id": "httpConnector",
+         "name": "Http",
+         "status": "configured",
+         "capability_name": "customHTMLTemplate",
+         "type": "trigger",
+         "properties": "{\"customHTML\":{\"value\":\"<div class=\\\"container py-4\\\" style=\\\"max-width: 900px\\\"><h1 class=\\\"h3 mb-3\\\">Choose the source environment</h1><p class=\\\"text-muted\\\">Promote configuration from:</p><form id=\\\"envForm\\\" data-id=\\\"envForm\\\"><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV1\\\">{{global.flow.variables.env1Name}}</button><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV2\\\">{{global.flow.variables.env2Name}}</button><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV3\\\">{{global.flow.variables.env3Name}}</button><button type=\\\"submit\\\" class=\\\"btn btn-outline-primary me-2 mb-2\\\" data-pp-env=\\\"1\\\" data-id=\\\"button\\\" data-skcomponent=\\\"skbutton\\\" data-skbuttontype=\\\"form-submit\\\" data-skform=\\\"envForm\\\" data-skbuttonvalue=\\\"ENV4\\\">{{global.flow.variables.env4Name}}</button></form></div><script>(function () { var hide = \\\"\\\"; document.querySelectorAll('[data-pp-env]').forEach(function (b) { var t = b.textContent.trim(); if (!t || t === hide) { b.style.display = 'none'; } }); })();</script>\"},\"formFieldsList\":{\"value\":[{\"preferredControlType\":\"textField\",\"preferredDataType\":\"string\",\"propertyName\":\"buttonValue\",\"displayName\":\"buttonValue\",\"hashedVisibility\":false}]},\"validationRules\":{\"value\":[]},\"nodeTitle\":{\"value\":\"Choose source environment\"}}"
+        },
+        "position": {
+         "x": 900,
+         "y": 2620
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000464": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator"
+        },
+        "position": {
+         "x": 1060,
+         "y": 2620
+        },
+        "group": "nodes",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": false
+       },
+       "e000000467": {
+        "data": {
+         "node_type": "EVAL",
+         "label": "Evaluator"
+        },
+        "position": {
+         "x": 1220,
+         "y": 2620
         },
         "group": "nodes",
         "removed": false,
@@ -8164,10 +8542,10 @@
         "grabbable": true,
         "pannable": true
        },
-       "g000000432": {
+       "g000000435": {
         "data": {
-         "source": "n000000001",
-         "target": "e000000431"
+         "source": "n000000431",
+         "target": "e000000434"
         },
         "position": {
          "x": 0,
@@ -8181,10 +8559,316 @@
         "grabbable": true,
         "pannable": true
        },
-       "g000000433": {
+       "g000000436": {
         "data": {
-         "source": "e000000431",
+         "source": "e000000434",
+         "target": "n000000433"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000439": {
+        "data": {
+         "source": "n000000433",
+         "target": "e000000438"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000440": {
+        "data": {
+         "source": "e000000438",
+         "target": "n000000432"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000441": {
+        "data": {
+         "source": "e000000438",
+         "target": "n000000437"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000443": {
+        "data": {
+         "source": "n000000432",
+         "target": "e000000442"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000444": {
+        "data": {
+         "source": "e000000442",
          "target": "n000000333"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000447": {
+        "data": {
+         "source": "n000000445",
+         "target": "e000000446"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000448": {
+        "data": {
+         "source": "e000000446",
+         "target": "n000000431"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000453": {
+        "data": {
+         "source": "n000000449",
+         "target": "e000000452"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000454": {
+        "data": {
+         "source": "e000000452",
+         "target": "n000000451"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000457": {
+        "data": {
+         "source": "n000000451",
+         "target": "e000000456"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000458": {
+        "data": {
+         "source": "e000000456",
+         "target": "n000000450"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000459": {
+        "data": {
+         "source": "e000000456",
+         "target": "n000000455"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000461": {
+        "data": {
+         "source": "n000000450",
+         "target": "e000000460"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000462": {
+        "data": {
+         "source": "e000000460",
+         "target": "n000000445"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000465": {
+        "data": {
+         "source": "n000000463",
+         "target": "e000000464"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000466": {
+        "data": {
+         "source": "e000000464",
+         "target": "n000000449"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000468": {
+        "data": {
+         "source": "n000000001",
+         "target": "e000000467"
+        },
+        "position": {
+         "x": 0,
+         "y": 0
+        },
+        "group": "edges",
+        "removed": false,
+        "selected": false,
+        "selectable": true,
+        "locked": false,
+        "grabbable": true,
+        "pannable": true
+       },
+       "g000000469": {
+        "data": {
+         "source": "e000000467",
+         "target": "n000000463"
         },
         "position": {
          "x": 0,
@@ -8276,6 +8960,118 @@
     "mutable": true,
     "flow": {
      "id": "${pingone_davinci_flow.request.id}"
+    }
+   },
+   "flow_env1Id": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env1Id",
+    "display_name": "env1Id",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[0].id, \"\")}"
+    }
+   },
+   "flow_env1Name": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env1Name",
+    "display_name": "env1Name",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[0].name, \"\")}"
+    }
+   },
+   "flow_env2Id": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env2Id",
+    "display_name": "env2Id",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[1].id, \"\")}"
+    }
+   },
+   "flow_env2Name": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env2Name",
+    "display_name": "env2Name",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[1].name, \"\")}"
+    }
+   },
+   "flow_env3Id": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env3Id",
+    "display_name": "env3Id",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[2].id, \"\")}"
+    }
+   },
+   "flow_env3Name": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env3Name",
+    "display_name": "env3Name",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[2].name, \"\")}"
+    }
+   },
+   "flow_env4Id": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env4Id",
+    "display_name": "env4Id",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[3].id, \"\")}"
+    }
+   },
+   "flow_env4Name": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "env4Name",
+    "display_name": "env4Name",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    },
+    "value": {
+     "string": "${try(var.environments[3].name, \"\")}"
     }
    },
    "flow_gitlabEnvironment": {
@@ -8532,6 +9328,17 @@
      "id": "${pingone_davinci_flow.request.id}"
     }
    },
+   "flow_sourceEnvName": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "sourceEnvName",
+    "display_name": "sourceEnvName",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    }
+   },
    "flow_sourceEnvironmentId": {
     "environment_id": "${var.host_environment_id}",
     "context": "flow",
@@ -8541,9 +9348,6 @@
     "mutable": true,
     "flow": {
      "id": "${pingone_davinci_flow.request.id}"
-    },
-    "value": {
-     "string": "${var.source_environment_id}"
     }
    },
    "flow_sourceRegion": {
@@ -8615,6 +9419,17 @@
      "id": "${pingone_davinci_flow.request.id}"
     }
    },
+   "flow_targetEnvName": {
+    "environment_id": "${var.host_environment_id}",
+    "context": "flow",
+    "name": "targetEnvName",
+    "display_name": "targetEnvName",
+    "data_type": "string",
+    "mutable": true,
+    "flow": {
+     "id": "${pingone_davinci_flow.request.id}"
+    }
+   },
    "flow_targetEnvironmentId": {
     "environment_id": "${var.host_environment_id}",
     "context": "flow",
@@ -8624,9 +9439,6 @@
     "mutable": true,
     "flow": {
      "id": "${pingone_davinci_flow.request.id}"
-    },
-    "value": {
-     "string": "${var.target_environment_id}"
     }
    },
    "flow_targetRegion": {

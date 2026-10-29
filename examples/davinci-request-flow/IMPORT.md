@@ -4,7 +4,7 @@ The import file is [`export/pingone-promote-request.flow.json`](export/pingone-p
 
 ## 1. Before importing
 
-1. **Worker app.** In the DaVinci host environment, add a **Worker** application. Give it **Promotion Admin** on the source and target environments, the role set that fixed the pipeline worker's Configuration Management 403s.
+1. **Worker app.** In the DaVinci host environment, add a **Worker** application. Give it **Promotion Admin** on each environment you'll list (all four slots), the role set that fixed the pipeline worker's Configuration Management 403s.
 2. **GitLab token.** In the promotion project: **Settings → Access tokens**, role **Developer**, scope **api**. Note its expiry date.
 3. **Connection IDs.** In **DaVinci → Connections**, note the IDs of the HTTP, Functions, Error Message and Variables connections the flow should use.
 
@@ -37,7 +37,7 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 | Name | Value |
 | --- | --- |
 | `hostEnvironmentId` | Environment holding the worker app (used for its token URL) |
-| `sourceEnvironmentId` / `targetEnvironmentId` | Environments you promote between |
+| `env1Name` / `env1Id` … `env4Name` / `env4Id` | Up to four environments. The requester picks source and target from these as buttons labelled with the names. Leave a pair empty to hide that slot. |
 | `gitlabUrl` | `https://gitlab.com`, already set |
 | `gitlabProjectId` | Numeric project ID of the private promotion-requests project |
 | `gitlabEnvironment` | `production`, already set |
@@ -45,13 +45,15 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 
 `adminEnvironmentId`, `organizationId` and `davinciAdminRoleId` are only used when sign-in is on.
 
+> **One deployment target per pipeline.** The GitLab pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`. The flow lets the requester pick any of the four environments as the target, but a request for any other target opens fine and then stops at `plan_promotion` with "request destination differs from protected runner target policy". Deploying to several targets needs a pipeline change (for example one protected GitLab environment per PingOne target); the Go tool and pipeline are unchanged for now.
+
 ## 4. Deploy and launch
 
 **Deploy** the flow. Then, in **DaVinci → Applications**, add an application with a flow policy that runs it at 100% weight, and launch it the way your team launches other DaVinci flows. Keep that policy limited to POC testers while sign-in is off.
 
 ## 5. First run
 
-1. Launch: **Choose resources** lists the source and target resources.
+1. Launch: pick the source, then the target. **Choose resources** lists both environments' resources.
 2. Pick one low-risk resource and build: **Review request** shows the promotion-variable check and the redacted `request.json`.
 3. Submit: **Merge request opened** links to an MR adding `requests/<id>/request.json`.
 4. In GitLab, `validate_request` passes; after merge, the normal pipeline plans the promotion.

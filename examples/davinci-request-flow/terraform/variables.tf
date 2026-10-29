@@ -36,14 +36,20 @@ variable "host_environment_id" {
   type        = string
 }
 
-variable "source_environment_id" {
-  description = "Environment to promote from."
-  type        = string
-}
-
-variable "target_environment_id" {
-  description = "Environment to promote to."
-  type        = string
+variable "environments" {
+  description = "Up to four environments the requester can choose as source and target, in button order."
+  type = list(object({
+    name = string
+    id   = string
+  }))
+  validation {
+    condition     = length(var.environments) >= 2 && length(var.environments) <= 4
+    error_message = "List two to four environments."
+  }
+  validation {
+    condition     = length(distinct([for e in var.environments : e.id])) == length(var.environments)
+    error_message = "Environment IDs must be unique."
+  }
 }
 
 variable "davinci_admin_role_id" {

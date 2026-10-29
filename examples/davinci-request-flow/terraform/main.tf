@@ -22,8 +22,8 @@ locals {
 }
 
 # ---------------- Snapshot worker (host environment) ---------------------------
-# Reads environments, creates snapshots and reads promotion variables on source
-# and target (and, with sign-in on, role assignments in the admin environment).
+# Reads environments, creates snapshots and reads promotion variables in every
+# listed environment (and, with sign-in on, role assignments in the admin environment).
 # The flow never calls the promotions API; deployment stays in GitLab.
 
 resource "pingone_application" "worker" {
@@ -49,13 +49,14 @@ data "pingone_role" "worker" {
 }
 
 resource "pingone_application_role_assignment" "worker" {
+  # Every listed environment can be a source or a target.
   for_each = {
-    for pair in setproduct(var.worker_role_names, ["source", "target"]) : "${pair[0]}|${pair[1]}" => pair
+    for pair in setproduct(var.worker_role_names, [for e in var.environments : e.id]) : "${pair[0]}|${pair[1]}" => pair
   }
   environment_id       = var.host_environment_id
   application_id       = pingone_application.worker.id
   role_id              = data.pingone_role.worker[each.value[0]].id
-  scope_environment_id = each.value[1] == "source" ? var.source_environment_id : var.target_environment_id
+  scope_environment_id = each.value[1]
 }
 
 # ---------------- DaVinci (host environment) ----------------------------------

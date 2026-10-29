@@ -23,10 +23,13 @@ The flow never calls the PingOne promotions API, so it cannot deploy or roll bac
 
 ## What the admin sees
 
-1. **Sign in** (only when sign-in is on). PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or the source environment. No GitLab account is needed.
-2. **Choose resources.** The page lists source and target resources by type, ID and name, never configuration. The admin enters resource IDs, optional `sourceId=targetId` mappings, and a description, which becomes the MR title.
-3. **Review request.** The page shows the promotion-variable check (below) and `requests/<id>/request.json` exactly as it will be committed, with secrets redacted. The admin chooses **Submit to GitLab** or **Cancel**.
-4. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point.
+1. **Sign in** (only when sign-in is on). PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or on one of the configured environments. No GitLab account is needed.
+2. **Choose environments.** Two pages with one button per configured environment (up to four): first the source, then the target. The same environment twice, or an empty slot, is refused.
+3. **Choose resources.** The page lists source and target resources by type, ID and name, never configuration. The admin enters resource IDs, optional `sourceId=targetId` mappings, and a description, which becomes the MR title.
+4. **Review request.** The page shows the promotion-variable check (below) and `requests/<id>/request.json` exactly as it will be committed, with secrets redacted. The admin chooses **Submit to GitLab** or **Cancel**.
+5. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point.
+
+> **One deployment target per pipeline.** The GitLab pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`. The flow lets the requester pick any of the four environments as the target, but a request for any other target opens fine and then stops at `plan_promotion` with "request destination differs from protected runner target policy". Deploying to several targets needs a pipeline change (for example one protected GitLab environment per PingOne target); the Go tool and pipeline are unchanged for now.
 
 ## Promotion-variable check
 

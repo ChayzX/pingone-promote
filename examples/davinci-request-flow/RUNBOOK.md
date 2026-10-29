@@ -25,7 +25,7 @@ Tick each one before you start; every item has bitten a first run.
 
 - [ ] **GitLab pipeline already works** for requests from the local app (see [docs/gitlab.md](../../docs/gitlab.md)). This flow only replaces the local app.
 - [ ] **Promotion project is private** and its **default branch is protected**. The flow refuses to submit otherwise.
-- [ ] **Configuration Management is enabled** on the source and target environments, and the pipeline worker can take snapshots. (The worker roles fixed for the 403s are what this flow's worker copies.)
+- [ ] **Configuration Management is enabled** on every environment you'll list, and the pipeline worker can take snapshots. (The worker roles fixed for the 403s are what this flow's worker copies.)
 - [ ] **A DaVinci-enabled host environment** for the flow. Prefer one that is never a promotion source or target.
 - [ ] **Your DaVinci connections to reuse**, if any: HTTP, Functions, Error Message and Variables. Copy each connection's 32-character ID from **DaVinci → Connections**.
 - [ ] **DaVinci can reach GitLab.** gitlab.com needs nothing extra; a private GitLab needs an allowlisted ingress.
@@ -37,7 +37,7 @@ Collect these values (IDs, not secrets) as you go:
 | PingOne domain | Your console URL (`console.pingone.com` → `pingone.com`) | `pingone_domain` | `apiOrigin`, `authOrigin` |
 | Organization ID | Admin console → **Organization** | `organization_id` | `organizationId` |
 | Host environment ID | The DaVinci environment for the flow | `host_environment_id` | `hostEnvironmentId` |
-| Source / target environment IDs | Environments you promote between | `source_environment_id`, `target_environment_id` | `sourceEnvironmentId`, `targetEnvironmentId` |
+| Up to four environments (name + ID) | The environments requesters choose between | `environments` | `env1Name`, `env1Id` … `env4Name`, `env4Id` |
 | Region code | Derived from the domain (`.com` → `us`) | automatic | `sourceRegion`, `targetRegion` |
 | GitLab URL, project ID, environment | Project → **Settings → General** | `gitlab_url`, `gitlab_project_id`, `gitlab_environment` | `gitlabUrl`, `gitlabProjectId`, `gitlabEnvironment` |
 | Existing connection IDs | DaVinci → **Connections** | `connection_ids` | `httpConnectionId`, `functionsConnectionId`, `errorConnectionId`, `variablesConnectionId` |
@@ -97,7 +97,7 @@ Every name starts with `name_prefix` (default `PingOne Promote`), so the objects
 
 ## 3B. Path B: console
 
-1. **Worker (host environment).** Add a **Worker** app. Give it your worker roles (for example Promotion Admin) on the source and target environments.
+1. **Worker (host environment).** Add a **Worker** app. Give it your worker roles (for example Promotion Admin) on every listed environment.
 2. **Company secrets (DaVinci → Variables).** Create `promoteWorkerBasicAuth` (type secret, context company) with the value from `printf '%s:%s' "$CLIENT_ID" "$CLIENT_SECRET" | base64`, and `promoteGitlabToken` (type secret, company) with the GitLab token.
 3. **Connections.** Reuse your HTTP, Functions, Error Message and Variables connections. Copy the four IDs.
 4. **Generate the export** with your IDs and connection IDs in a private `values.json` (copy `values.example.json`; leave `"requireSignIn": false`):
@@ -150,7 +150,8 @@ Note the results in the README's live-check list.
 
 - **Rotate the worker secret.** Path A: `terraform apply -replace=pingone_application_secret.worker`. Path B: generate a new secret and update `promoteWorkerBasicAuth`.
 - **Rotate the GitLab token.** Create a new one, update `TF_VAR_gitlab_token` (or the variable), apply, then revoke the old one.
-- **Add an environment pair.** Deploy a second copy with different `source_environment_id`/`target_environment_id` and a different `name_prefix`.
+- **Change the environments.** Edit the `environments` list (Path A) or the `envN…` flow variables (Path B). Up to four.
+- **One deployment target per pipeline.** The GitLab pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`. The flow lets the requester pick any of the four environments as the target, but a request for any other target opens fine and then stops at `plan_promotion` with "request destination differs from protected runner target policy". Deploying to several targets needs a pipeline change (for example one protected GitLab environment per PingOne target); the Go tool and pipeline are unchanged for now.
 - **Remove everything.** Path A: `terraform destroy`. Path B: delete the flow, the DaVinci application, the two company variables, and the worker app.
 - **Audit.** Every request is a merge request (naming the admin once sign-in is on); every deployment is a protected GitLab job; PingOne records each native promotion.
 

@@ -2,8 +2,12 @@
 pingone_domain             = "pingone.com"
 organization_id            = "<organization ID>"
 host_environment_id        = "<DaVinci environment that runs the flow>"
-source_environment_id      = "<environment to promote from>"
-target_environment_id      = "<environment to promote to>"
+environments = [ # two to four; the requester picks source and target from these
+  { name = "Dev", id = "<environment ID>" },
+  { name = "Test", id = "<environment ID>" },
+  { name = "Stage", id = "<environment ID>" },
+  { name = "Prod", id = "<environment ID>" },
+]
 worker_role_names          = ["Promotion Admin"]
 
 gitlab_url         = "https://gitlab.com"

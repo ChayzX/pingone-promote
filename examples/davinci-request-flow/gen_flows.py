@@ -38,8 +38,9 @@ VALUE_KEYS = {
     "authOrigin": "https://auth.pingone.com",
     "adminEnvironmentId": "",
     "hostEnvironmentId": "",
-    "sourceEnvironmentId": "",
-    "targetEnvironmentId": "",
+    # Up to four environments; the requester picks source and target from these.
+    "env1Name": "", "env1Id": "", "env2Name": "", "env2Id": "",
+    "env3Name": "", "env3Id": "", "env4Name": "", "env4Id": "",
     "organizationId": "",
     "davinciAdminRoleId": "",
     "sourceRegion": "",
@@ -170,7 +171,8 @@ class Flow:
 
     def fn(self, title, step, inputs, outputs):
         return self.node("fn", "customFunction", {
-            "variableInputList": {"value": [{"name": n, "preferredDataType": t, "value": slate(r)} for n, t, r in inputs]},
+            "variableInputList": {"value": [{"name": n, "preferredDataType": t, "value": slate(*r) if isinstance(r, list) else slate(r)}
+                                           for n, t, r in inputs]},
             "code": {"value": fn_code(step)},
             "outputSchema": {"value": json.dumps({"type": "object", "properties": {k: {"type": v} for k, v in outputs.items()}}, indent=2)},
         }, title)
@@ -245,7 +247,7 @@ class Flow:
             ("rolesListBody", "object", self.out(rl, "rawResponse.body")),
             ("davinciAdminRoleId", "string", self.fv("davinciAdminRoleId")),
             ("organizationId", "string", self.fv("organizationId")),
-            ("sourceEnvironmentId", "string", self.fv("sourceEnvironmentId")),
+            ("environmentIds", "string", [self.fv("env1Id"), ",", self.fv("env2Id"), ",", self.fv("env3Id"), ",", self.fv("env4Id")]),
         ], {"decision": "string", "reason": "string", "userId": "string", "username": "string", "usernameText": "string"})
         self.link(rl, az)
         allow = self.equals("Allowed?", self.out(az, "decision"), "allow")
@@ -397,6 +399,19 @@ def page_html(title, intro, pre_blocks, form_id, fields_html, buttons):
                    f'data-skform="{form_id}" data-skbuttonvalue="{val}">{label}</button>' for val, label, cls in buttons)
     return (f'<div class="container py-4" style="max-width: 900px"><h1 class="h3 mb-3">{title}</h1><p class="text-muted">{intro}</p>{pres}'
             f'<form id="{form_id}" data-id="{form_id}">{fields_html}{btns}</form></div>')
+
+
+def env_page(title, intro, hide_name):
+    """One button per configured environment (ENV1..ENV4). Empty slots, and the
+    already-chosen source on the target page, are hidden in the browser and
+    refused again by resolve_env."""
+    btns = "".join(f'<button type="submit" class="btn btn-outline-primary me-2 mb-2" data-pp-env="1" data-id="button" '
+                   f'data-skcomponent="skbutton" data-skbuttontype="form-submit" data-skform="envForm" '
+                   f'data-skbuttonvalue="ENV{i}">{{{{global.flow.variables.env{i}Name}}}}</button>' for i in range(1, 5))
+    script = ("<script>(function () { var hide = " + json.dumps(hide_name) + "; document.querySelectorAll('[data-pp-env]')"
+              ".forEach(function (b) { var t = b.textContent.trim(); if (!t || t === hide) { b.style.display = 'none'; } }); })();</script>")
+    return (f'<div class="container py-4" style="max-width: 900px"><h1 class="h3 mb-3">{title}</h1><p class="text-muted">{intro}</p>'
+            f'<form id="envForm" data-id="envForm">{btns}</form></div>' + script)
 
 
 def textarea(name, label, rows=3):
@@ -558,8 +573,8 @@ def build_request_flow(signin):
     select = f.page("Choose resources", page_html(
         "Request a PingOne promotion",
         ("Signed in as <strong>{{local.AUTHZ.payload.output.usernameText}}</strong>. " if signin else
-         "Proof of concept: sign-in is off, so anyone who can launch this flow can open a request. ") + "Source <code>{{global.flow.variables.sourceEnvironmentId}}</code> "
-        "&rarr; target <code>{{global.flow.variables.targetEnvironmentId}}</code>. This opens a GitLab merge request; nothing changes in "
+         "Proof of concept: sign-in is off, so anyone who can launch this flow can open a request. ") + "Source <strong>{{global.flow.variables.sourceEnvName}}</strong> "
+        "&rarr; target <strong>{{global.flow.variables.targetEnvName}}</strong>. This opens a GitLab merge request; nothing changes in "
         "PingOne until the protected pipeline deploys it.",
         [("Source resources (type, ID, name)", "{{local.INVLIVE.payload.output.sourceListText}}"),
          ("Target resources (for mappings)", "{{local.INVLIVE.payload.output.targetListText}}")],
@@ -575,12 +590,40 @@ def build_request_flow(signin):
     f.link(inv_live_ok, select, false_target=f.fail("Could not read the environments", inv_live))
     live_tgt = f.live_snapshot("liveTgt", None, TGT, inv_live)
     live_src = f.live_snapshot("liveSrc", None, SRC, live_tgt)
+    # Choose source and target from the configured environments, then snapshot them.
+    env_inputs = [(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Id", "Name")]
+    tgt_res = f.fn("Target environment chosen", "resolve_env", [
+        ("choice", "string", ("node", "local.TGTPAGE.payload.output.buttonValue", "buttonValue")),
+        ("excludeId", "string", f.fv("sourceEnvironmentId"))] + env_inputs,
+        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string"})
+    tgt_save = f.save("Keep target environment", [("targetEnvironmentId", "string", [f.out(tgt_res, "environmentId")]),
+                                                  ("targetEnvName", "string", [f.out(tgt_res, "nameText")])])
+    tgt_ok = f.equals("Target valid?", f.out(tgt_res, "state"), "ok")
+    f.link(tgt_res, tgt_ok)
+    f.link(tgt_ok, tgt_save, false_target=f.fail("Invalid target environment", tgt_res))
+    f.link(tgt_save, live_src)
+    tgt_page = f.page("Choose target environment", env_page(
+        "Choose the target environment", "Promote from <strong>{{global.flow.variables.sourceEnvName}}</strong> to:",
+        "{{global.flow.variables.sourceEnvName}}"), ["buttonValue"])
+    f.link(tgt_page, tgt_res)
+    src_res = f.fn("Source environment chosen", "resolve_env", [
+        ("choice", "string", ("node", "local.SRCPAGE.payload.output.buttonValue", "buttonValue")), ("excludeId", "string", "")] + env_inputs,
+        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string"})
+    src_save = f.save("Keep source environment", [("sourceEnvironmentId", "string", [f.out(src_res, "environmentId")]),
+                                                  ("sourceEnvName", "string", [f.out(src_res, "nameText")])])
+    src_ok = f.equals("Source valid?", f.out(src_res, "state"), "ok")
+    f.link(src_res, src_ok)
+    f.link(src_ok, src_save, false_target=f.fail("Invalid source environment", src_res))
+    f.link(src_save, tgt_page)
+    src_page = f.page("Choose source environment", env_page(
+        "Choose the source environment", "Promote configuration from:", ""), ["buttonValue"])
+    f.link(src_page, src_res)
     if signin:
-        f.link(allow, live_src, false_target=denied)
+        f.link(allow, src_page, false_target=denied)
     else:
-        f.link(start, live_src)
+        f.link(start, src_page)
     f.alias = {"VARS": vars_report, "VSTART": vstart, "MR": mr_ok_fn, "MRPOST": mr_post, "COMMIT": commit, "BRANCHPOST": branch_post, "BODIES": bodies, "PROJ": proj,
-               "BRGET": br_get, "PROJGET": proj_get, "PREVIEW": preview, "BUILD": build, "SELECT": select, "INVLIVE": inv_live,
+               "SRCPAGE": src_page, "TGTPAGE": tgt_page, "BRGET": br_get, "PROJGET": proj_get, "PREVIEW": preview, "BUILD": build, "SELECT": select, "INVLIVE": inv_live,
                **({"AUTHZ": f.authz} if signin else {})}
     return f
 
@@ -598,7 +641,7 @@ def resolve_aliases(flow):
 TF_SETTING = {
     "apiOrigin": "${local.api_origin}", "authOrigin": "${local.auth_origin}",
     "adminEnvironmentId": "${var.admin_environment_id}", "hostEnvironmentId": "${var.host_environment_id}",
-    "sourceEnvironmentId": "${var.source_environment_id}", "targetEnvironmentId": "${var.target_environment_id}",
+    **{f"env{i}{k}": "${try(var.environments[%d].%s, \"\")}" % (i - 1, k.lower()) for i in range(1, 5) for k in ("Name", "Id")},
     "organizationId": "${var.organization_id}", "davinciAdminRoleId": "${var.davinci_admin_role_id}",
     "sourceRegion": "${local.region}", "targetRegion": "${local.region}",
     "gitlabUrl": "${var.gitlab_url}", "gitlabProjectId": "${var.gitlab_project_id}",

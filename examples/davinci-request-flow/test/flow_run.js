@@ -200,7 +200,7 @@ function world(overrides) {
     }
     if (p === '/v1/roles') { return json(200, { _embedded: { roles: [{ id: ROLE, name: 'DaVinci Admin' }] } }); }
     if ((m = /^\/v1\/environments\/(\w+)\/promotionVariableDeclarations\/(\w+)$/.exec(p)) && method === 'GET') {
-      assert.strictEqual(m[1], 'src', 'declarations are read in the source environment');
+      assert.ok(st.envs[m[1]].resources.some((x) => x.id === m[2]), 'declarations are read in the environment the resource comes from (the source)');
       if (st.vars.fail) { return json(st.vars.fail, { code: 'ACCESS_FAILED' }); }
       const d = st.vars.decls[m[2]];
       return d ? json(200, { resource: { id: m[2] }, environment: { id: 'src' }, variables: d }) : json(404, { code: 'NOT_FOUND' });
@@ -258,14 +258,17 @@ function world(overrides) {
     if (url.indexOf(G + '/') === 0) { return gitlab(method, url, headers, body); }
     throw new Error('unexpected host: ' + url);
   };
-  st.settings = Object.assign({ apiOrigin: O, authOrigin: A, adminEnvironmentId: 'admins', hostEnvironmentId: 'host', sourceEnvironmentId: 'src',
-    targetEnvironmentId: 'tgt', organizationId: 'org', davinciAdminRoleId: '', sourceRegion: 'us', targetRegion: 'us', gitlabUrl: G,
+  st.settings = Object.assign({ apiOrigin: O, authOrigin: A, adminEnvironmentId: 'admins', hostEnvironmentId: 'host',
+    env1Name: 'Dev', env1Id: 'src', env2Name: 'Prod', env2Id: 'tgt', env3Name: '', env3Id: '', env4Name: '', env4Id: '',
+    organizationId: 'org', davinciAdminRoleId: '', sourceRegion: 'us', targetRegion: 'us', gitlabUrl: G,
     gitlabProjectId: '42', gitlabEnvironment: 'production' }, o.settings || {});
   st.secrets = { promoteWorkerBasicAuth: 'd29ya2VyOnNlY3JldA==', promoteGitlabToken: 'glpat-test' };
   return st;
 }
 
-const form = (selectedRaw, mappingsRaw, description, button) => ({
+const form = (selectedRaw, mappingsRaw, description, button, envs) => ({
+  'Choose source environment': { buttonValue: (envs || ['ENV1', 'ENV2'])[0] },
+  'Choose target environment': { buttonValue: (envs || ['ENV1', 'ENV2'])[1] },
   'Choose resources': { selectedRaw, mappingsRaw: mappingsRaw || '', description: description === undefined ? 'Promote login' : description, buttonValue: 'BUILD' },
   'Review request': { buttonValue: button || 'SUBMIT' }
 });
@@ -402,6 +405,33 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     await runFlow(w, form('a1'));
     ok(w.log.every((l) => l.indexOf('/snapshots') < 0), 'non-admin: no snapshots taken');
   }
+  // Choosing environments.
+  {
+    const w = world();
+    const r = await runFlow(w, form('a2'));
+    const pick = r.pages.find((pg) => pg.title === 'Choose source environment').html;
+    ok(pick.indexOf('>Dev</button>') > 0 && pick.indexOf('>Prod</button>') > 0 && (pick.match(/data-pp-env="1"/g) || []).length === 4, 'source page offers one button per slot, labelled by name');
+    const tpage = r.pages.find((pg) => pg.title === 'Choose target environment').html;
+    ok(tpage.indexOf('Promote from <strong>Dev</strong>') > 0 && tpage.indexOf('var hide = "Dev"') > 0, 'target page names the source and hides it');
+    ok(r.pages.find((pg) => pg.title === 'Choose resources').html.indexOf('Source <strong>Dev</strong> &rarr; target <strong>Prod</strong>') > 0, 'resource page shows the chosen pair');
+    ok(JSON.parse(w.gitlab.commits[0].actions[0].content).source.id === 'src', 'request uses the chosen source');
+  }
+  {
+    const w = world();
+    const r = await runFlow(w, form('tf1', '', 'reverse', 'SUBMIT', ['ENV2', 'ENV1']));
+    const req = JSON.parse(w.gitlab.commits[0].actions[0].content);
+    ok(r.title === 'Merge request opened' && req.source.id === 'tgt' && req.target.id === 'src', 'either direction: Prod to Dev');
+  }
+  await noGitLab('same environment twice', world(), form('a2', '', 'x', 'SUBMIT', ['ENV1', 'ENV1']), 'must be different');
+  await noGitLab('empty slot chosen', world(), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not configured');
+  await noGitLab('unsafe ID in a slot', world({ settings: { env3Name: 'Bad', env3Id: '../x' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not a valid environment ID');
+  await noGitLab('forged button value', world(), form('a2', '', 'x', 'SUBMIT', ['ENV9', 'ENV1']), 'Choose one of the listed');
+  {
+    const w = world();
+    await runFlow(w, form('a2', '', 'x', 'SUBMIT', ['ENV1', 'ENV1']));
+    ok(w.log.every((l) => l.indexOf('/snapshots') < 0), 'no snapshot before both environments are valid');
+  }
+
   await noGitLab('cancel at review', world(), form('a1', '', 'x', 'CANCEL'), 'Nothing was sent to GitLab');
   await noGitLab('unknown resource', world(), form('nope'), 'unknown source resource');
   await noGitLab('duplicate resource', world(), form('a1 a1'), 'duplicate');

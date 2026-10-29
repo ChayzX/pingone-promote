@@ -78,8 +78,8 @@ for path in sys.argv[1:]:
                 written_by[item["name"]].add(i)
     declared_company = {v["name"].split("##SK##")[0] for v in f["variables"] if v["context"] == "company"}
     # Settings come with the import as flow variables the admin edits in DaVinci.
-    preset = {"apiOrigin", "authOrigin", "adminEnvironmentId", "hostEnvironmentId", "sourceEnvironmentId", "targetEnvironmentId",
-              "organizationId", "davinciAdminRoleId", "sourceRegion", "targetRegion", "gitlabUrl", "gitlabProjectId",
+    preset = {"apiOrigin", "authOrigin", "adminEnvironmentId", "hostEnvironmentId",
+              "env1Name", "env1Id", "env2Name", "env2Id", "env3Name", "env3Id", "env4Name", "env4Id", "organizationId", "davinciAdminRoleId", "sourceRegion", "targetRegion", "gitlabUrl", "gitlabProjectId",
               "gitlabEnvironment"}
     for i, n in nodes.items():
         blob = json.dumps(n.get("properties", {}))
