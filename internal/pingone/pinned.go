@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 )
 
 // InventoryVersion reads an immutable snapshot without creating a new version.
@@ -51,25 +50,16 @@ func (c *Client) InventoryVersion(ctx context.Context, env, snapshotID string) (
 		if err != nil {
 			return inv, err
 		}
-		prefix := EnvPath(env) + "/"
-		if !strings.HasPrefix(u.Path, prefix) || !pinnedID(s.Resource.ID) || u.RawQuery != "" || strings.Contains(u.Path, "//") {
-			return inv, errors.New("pinned inventory has an invalid resource identity")
+		typ, err := snapshotResourceType(u, env, s.Resource.ID)
+		if err != nil {
+			return inv, fmt.Errorf("pinned %w", err)
 		}
+		// Keep plan URLs canonical after validating native read expansions.
+		u.RawQuery, u.ForceQuery = "", false
 		if seen[s.Resource.ID] {
 			return inv, fmt.Errorf("ambiguous resource ID %s", s.Resource.ID)
 		}
 		seen[s.Resource.ID] = true
-		parts := strings.Split(strings.Trim(strings.TrimPrefix(u.Path, prefix), "/"), "/")
-		if len(parts) < 2 || len(parts)%2 != 0 || parts[len(parts)-1] != s.Resource.ID {
-			return inv, errors.New("pinned resource URL does not match its original identity")
-		}
-		kinds := []string{}
-		for i := 0; i < len(parts); i += 2 {
-			if !pinnedID(parts[i]) {
-				return inv, errors.New("invalid pinned resource path")
-			}
-			kinds = append(kinds, parts[i])
-		}
 		name, _ := s.Configuration["name"].(string)
 		if name == "" {
 			name, _ = s.Configuration["displayName"].(string)
@@ -77,7 +67,7 @@ func (c *Client) InventoryVersion(ctx context.Context, env, snapshotID string) (
 		if name == "" {
 			name = s.Resource.ID
 		}
-		inv.Resources = append(inv.Resources, Resource{ID: s.Resource.ID, URL: u.String(), Name: name, Type: strings.Join(kinds, " / "), Configuration: s.Configuration, Dependencies: s.Dependencies})
+		inv.Resources = append(inv.Resources, Resource{ID: s.Resource.ID, URL: u.String(), Name: name, Type: typ, Configuration: s.Configuration, Dependencies: s.Dependencies})
 	}
 	return inv, nil
 }

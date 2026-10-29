@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -79,14 +78,12 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		if err != nil {
 			return inv, err
 		}
-		prefix := EnvPath(env) + "/"
-		if !strings.HasPrefix(u.Path, prefix) || s.Resource.ID == "" || u.RawQuery != "" {
-			return inv, errors.New("inventory has an invalid resource identity")
+		typ, err := snapshotResourceType(u, env, s.Resource.ID)
+		if err != nil {
+			return inv, err
 		}
-		parts := strings.Split(strings.Trim(strings.TrimPrefix(u.Path, prefix), "/"), "/")
-		if len(parts) < 2 || len(parts)%2 != 0 || parts[len(parts)-1] != s.Resource.ID {
-			return inv, errors.New("inventory resource URL does not match its original identity")
-		}
+		// The identity adapter permits only known read-expansion queries.
+		u.RawQuery, u.ForceQuery = "", false
 		if seen[s.Resource.ID] {
 			return inv, fmt.Errorf("ambiguous resource ID %s; this API response needs an explicit adapter", s.Resource.ID)
 		}
@@ -97,14 +94,6 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		}
 		if name == "" {
 			name = s.Resource.ID
-		}
-		typ := parts[0]
-		if len(parts) > 2 {
-			var kinds []string
-			for i := 0; i < len(parts); i += 2 {
-				kinds = append(kinds, parts[i])
-			}
-			typ = strings.Join(kinds, " / ")
 		}
 		inv.Resources = append(inv.Resources, Resource{ID: s.Resource.ID, URL: u.String(), Name: name, Type: typ, Configuration: s.Configuration, Dependencies: s.Dependencies})
 	}

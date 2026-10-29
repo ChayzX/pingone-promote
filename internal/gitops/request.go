@@ -103,7 +103,7 @@ func Validate(r Request) error {
 	}
 	seen := map[string]bool{}
 	for _, id := range r.Selected {
-		if !safeID.MatchString(id) || seen[id] {
+		if !pingone.ValidResourceID(id) || seen[id] {
 			return errors.New("invalid or duplicate selected resource identity")
 		}
 		seen[id] = true
@@ -118,7 +118,7 @@ func Validate(r Request) error {
 	}
 	targets := map[string]bool{}
 	for k, v := range r.Mappings {
-		if !safeID.MatchString(k) || !safeID.MatchString(v) || targets[v] {
+		if !pingone.ValidResourceID(k) || !pingone.ValidResourceID(v) || targets[v] {
 			return errors.New("invalid or conflicting resource mapping")
 		}
 		targets[v] = true
