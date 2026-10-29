@@ -28,6 +28,20 @@ for path in sys.argv[1:]:
     for i in nodes:
         if not re.fullmatch(r"[a-z0-9]{10}", i):
             problems.append(f"bad node id {i}")
+    # Make REST API Call: the property names a live DaVinci export uses.
+    rest_keys = {"url", "httpMethod", "headers", "httpBody", "raw", "nodeTitle"}
+    for i, n in nodes.items():
+        if n.get("capabilityName") != "makeRestApiCall":
+            continue
+        p = n.get("properties", {})
+        if set(p) - rest_keys:
+            problems.append(f"{i} REST node has unknown properties {sorted(set(p) - rest_keys)}")
+        if p.get("httpMethod", {}).get("value") not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+            problems.append(f"{i} REST node has no valid httpMethod")
+        if ("raw" in p) != (p.get("httpBody", {}).get("value") == "raw"):
+            problems.append(f"{i} REST node body: httpBody must be 'raw' exactly when raw is set")
+        if "raw" in p and (not isinstance(p["raw"].get("value"), str) or p["raw"]["value"].lstrip().startswith('[\n  {\n    "children"')):
+            problems.append(f"{i} REST node raw body must be plain text, not rich text")
     succ, pred = collections.defaultdict(set), collections.defaultdict(set)
     for e in edges:
         if e["source"] not in nodes or e["target"] not in nodes:
@@ -63,9 +77,9 @@ for path in sys.argv[1:]:
             for item in n["properties"]["saveFlowVariables"]["value"]:
                 written_by[item["name"]].add(i)
     declared_company = {v["name"].split("##SK##")[0] for v in f["variables"] if v["context"] == "company"}
-    preset = {"apiOrigin", "authOrigin", "adminEnvironmentId", "hostEnvironmentId", "sourceEnvironmentId", "targetEnvironmentId",
-              "organizationId", "davinciAdminRoleId", "sourceRegion", "targetRegion", "gitlabUrl", "gitlabProjectId",
-              "gitlabEnvironment"}
+    # Every flow variable must be written by a save node before it is read:
+    # DaVinci drops flow variables that no save node writes on import.
+    preset = set()
     for i, n in nodes.items():
         blob = json.dumps(n.get("properties", {}))
         anc = ancestors(i)

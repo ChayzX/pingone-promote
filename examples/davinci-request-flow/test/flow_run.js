@@ -32,11 +32,8 @@ function get(obj, dotted) {
 }
 
 function makeRun(settings, secrets, form, stringMode) {
+  // Like a live import: flow variables start empty and only save nodes set them.
   const flowVars = {};
-  for (const v of FLOW.variables) {
-    if (v.context === 'flow') { flowVars[v.fields.displayName] = v.fields.value; }
-  }
-  Object.assign(flowVars, settings);
   const outputs = {};
   const lookup = (ref) => {
     let m;
@@ -44,7 +41,7 @@ function makeRun(settings, secrets, form, stringMode) {
       assert.ok(m[1] in outputs, 'reference to a node that has not run: ' + ref);
       return get(outputs[m[1]], m[2]);
     }
-    if ((m = /^global\.flow\.variables\.(.+)$/.exec(ref))) { return flowVars[m[1]]; }
+    if ((m = /^global\.flow\.variables\.(.+)$/.exec(ref))) { assert.ok(m[1] in flowVars, 'flow variable read before any node set it: ' + m[1]); return flowVars[m[1]]; }
     if ((m = /^global\.company\.variables\.(.+)$/.exec(ref))) { return secrets[m[1]]; }
     throw new Error('unknown reference ' + ref);
   };
@@ -79,7 +76,7 @@ async function runFlow(world, form, opts) {
       case 'makeRestApiCall': {
         const headers = {};
         for (const h of p.headers.value) { headers[h.key] = r.slate(h.value); }
-        const body = p.rawBody ? r.slate(p.rawBody.value) : undefined;
+        const body = p.httpBody && p.httpBody.value === 'raw' ? r.template(p.raw.value) : undefined;
         const res = world.http(p.httpMethod.value, r.slate(p.url.value), headers, body);
         r.outputs[id] = { rawResponse: { statusCode: res.status, body: res.body } };
         break;
@@ -106,6 +103,11 @@ async function runFlow(world, form, opts) {
           if (item.type === 'object' && typeof v === 'string') { v = JSON.parse(v); }
           if (item.type === 'number') { v = Number(v); }
           r.flowVars[item.name] = v;
+        }
+        if (title === 'Settings') {
+          // The admin edits the Settings node; the test world's settings stand in for that edit.
+          for (const k of Object.keys(world.settings)) { assert.ok(k in r.flowVars, 'Settings node sets ' + k); }
+          Object.assign(r.flowVars, world.settings);
         }
         r.outputs[id] = {};
         break;

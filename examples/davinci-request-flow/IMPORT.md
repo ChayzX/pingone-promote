@@ -23,7 +23,7 @@ The flow's nodes point at placeholder connections:
 
 To skip re-pointing nodes after import, generate your own copy with your connection IDs filled in (below).
 
-## 3. Set the variables
+## 3. Set the variables and settings
 
 **Company variables** (DaVinci → Variables; the import creates them empty):
 
@@ -32,11 +32,11 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 | `promoteWorkerBasicAuth` | `printf '%s:%s' "$WORKER_CLIENT_ID" "$WORKER_CLIENT_SECRET" \| base64` |
 | `promoteGitlabToken` | The GitLab token from step 1 |
 
-**Flow variables** (the flow's Variables panel):
+**Settings:** open the first node in the flow, **Settings**, and set these values there. Don't set them in the Variables panel: DaVinci drops flow variables that no node writes, and this node is what writes them.
 
 | Name | Value |
 | --- | --- |
-| `hostEnvironmentId` | Environment running the flow and holding the worker |
+| `hostEnvironmentId` | Environment holding the worker app (used for its token URL) |
 | `sourceEnvironmentId` / `targetEnvironmentId` | Environments you promote between |
 | `gitlabUrl` | `https://gitlab.com`, already set |
 | `gitlabProjectId` | Numeric project ID of the private promotion-requests project |
