@@ -214,20 +214,47 @@ func TestFlowLifecycleExposesAllowedContentAndBindsItToRawDigest(t *testing.T) {
 	}
 }
 
+func TestInspectAllowsMatchingFlowVersionSourceReferenceNames(t *testing.T) {
+	source, target, selected, baseSteps := flowVersionLifecycleFixture()
+	base := Inspect(source, target, selected, nil, baseSteps, false)
+	if len(base.Issues) != 0 {
+		t.Fatalf("empty optional source names rejected: %v", base.Issues)
+	}
+	for _, tc := range []struct {
+		name      string
+		root, ver bool
+	}{
+		{name: "root", root: true},
+		{name: "version", ver: true},
+		{name: "both", root: true, ver: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := append([]pingone.Step(nil), baseSteps...)
+			if tc.root {
+				steps[0].Source.Name = source.Resources[0].Name
+			}
+			if tc.ver {
+				steps[2].Source.Name = source.Resources[1].Name
+			}
+			review := Inspect(source, target, selected, nil, steps, false)
+			if len(review.Issues) != 0 {
+				t.Fatalf("matching pinned source resource names rejected: %v", review.Issues)
+			}
+			if review.Digest == base.Digest {
+				t.Fatal("sourceRef.Name was omitted from the canonical raw-step digest")
+			}
+		})
+	}
+}
+
 func TestInspectProvidesDistinctSafeFlowLifecycleReasons(t *testing.T) {
 	tests := []struct {
 		name   string
 		want   string
 		mutate func(*pingone.Inventory, *pingone.Inventory, *[]pingone.Step)
 	}{
-		{name: "source ref matching name metadata", want: "root-step-source-ref-name-matches-source", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
-			(*steps)[0].Source.Name = "Flow A"
-		}},
 		{name: "source ref mismatched name metadata", want: "root-step-source-ref-name-mismatch", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
 			(*steps)[0].Source.Name = "Other Flow"
-		}},
-		{name: "version ref matching name metadata", want: "version-step-source-ref-name-matches-source", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
-			(*steps)[2].Source.Name = "Flow A version 1"
 		}},
 		{name: "version ref mismatched name metadata", want: "version-step-source-ref-name-mismatch", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
 			(*steps)[2].Source.Name = "Another version"

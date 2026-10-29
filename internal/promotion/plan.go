@@ -340,10 +340,9 @@ func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []s
 		return reject("root-step-source-ref")
 	}
 	if steps[0].Source.Name != "" {
-		if steps[0].Source.Name == root.Name {
-			return reject("root-step-source-ref-name-matches-source")
+		if steps[0].Source.Name != root.Name {
+			return reject("root-step-source-ref-name-mismatch")
 		}
-		return reject("root-step-source-ref-name-mismatch")
 	}
 	if !emptyRef(steps[0].Target) {
 		return reject("root-step-target-ref")
@@ -367,10 +366,9 @@ func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []s
 		return reject("version-step-source-ref")
 	}
 	if steps[2].Source.Name != "" {
-		if steps[2].Source.Name == version.Name {
-			return reject("version-step-source-ref-name-matches-source")
+		if steps[2].Source.Name != version.Name {
+			return reject("version-step-source-ref-name-mismatch")
 		}
-		return reject("version-step-source-ref-name-mismatch")
 	}
 	if !emptyRef(steps[2].Target) {
 		return reject("version-step-target-ref")
