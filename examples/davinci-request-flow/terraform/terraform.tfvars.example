@@ -3,10 +3,12 @@ pingone_domain             = "pingone.com"
 organization_id            = "<organization ID>"
 host_environment_id        = "<DaVinci environment that runs the flow>"
 environments = [ # two to four; the requester picks source and target from these
-  { name = "Dev", id = "<environment ID>" },
-  { name = "Test", id = "<environment ID>" },
-  { name = "Stage", id = "<environment ID>" },
-  { name = "Prod", id = "<environment ID>" },
+  # gitlab_project_id: the project whose pipeline deploys to that environment
+  # (its PINGONE_TARGET_ENVIRONMENT_ID). Omit to use gitlab_project_id.
+  { name = "Dev", id = "<environment ID>", gitlab_project_id = "<project ID>" },
+  { name = "Test", id = "<environment ID>", gitlab_project_id = "<project ID>" },
+  { name = "Stage", id = "<environment ID>", gitlab_project_id = "<project ID>" },
+  { name = "Prod", id = "<environment ID>", gitlab_project_id = "<project ID>" },
 ]
 worker_role_names          = ["Promotion Admin"]
 

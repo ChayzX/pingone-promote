@@ -134,11 +134,29 @@ Launch the flow through its flow policy (output `flow_policy_id`) the way your t
 
 Note the results in the README's live-check list.
 
+## Several target environments
+
+The pipeline in each promotion project deploys to exactly one PingOne environment, its `PINGONE_TARGET_ENVIRONMENT_ID`, and refuses any request for another. So for every environment you want to deploy **to**:
+
+1. **Create a private promotion project** from the same template: `.gitlab-ci.yml` and `select-request.sh` from `examples/gitlab/`, default branch protected. See [docs/gitlab.md](../../docs/gitlab.md).
+2. **Set its CI/CD variables:** `PINGONE_TARGET_ENVIRONMENT_ID` and `PINGONE_TARGET_REGION` for that environment, and the pipeline worker's credentials with roles on that environment. Then add a protected deployment environment with the approvers that environment needs; Prod can require more people than Test.
+3. **Point the flow at it:** put the project's numeric ID in that environment's slot, `envNGitlabProjectId` (Terraform: `gitlab_project_id` in `environments`).
+4. **Let the flow's GitLab token reach every project.** A group access token (Developer, `api`) on a group holding all the promotion projects is simplest.
+
+An environment you only promote **from**, often Dev, needs no project. If the requester picks a target with no project (and `gitlabProjectId` is empty), the flow says so before building anything.
+
+| Example | Source | Target | Merge request goes to |
+| --- | --- | --- | --- |
+| Dev → Test | Dev | Test | Test's project, whose pipeline deploys to Test |
+| Test → Prod | Test | Prod | Prod's project, with Prod's approvers |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Snapshot step fails with HTTP 403 | Worker roles on source or target | Match the pipeline worker's roles that fixed Configuration Management |
+| "No GitLab project is set up for <name>" | The chosen target has no `envNGitlabProjectId` and `gitlabProjectId` is empty | Set the project for that environment ([Several target environments](#several-target-environments)) |
+| "request destination differs from protected runner target policy" (in GitLab) | The project's pipeline targets another environment | Fix that environment's project ID in the flow, or the project's `PINGONE_TARGET_ENVIRONMENT_ID` |
 | "GitLab project must be private…" | Project visibility, ID typo or archived project | Fix the project or `gitlab_project_id` |
 | "GitLab default branch must be protected" | Branch protection removed | Re-protect it |
 | "create promotion branch: GitLab returned HTTP 401/403" | Token expired, wrong scope or role | New token (step 2), then update `promoteGitlabToken` |
@@ -151,7 +169,7 @@ Note the results in the README's live-check list.
 - **Rotate the worker secret.** Path A: `terraform apply -replace=pingone_application_secret.worker`. Path B: generate a new secret and update `promoteWorkerBasicAuth`.
 - **Rotate the GitLab token.** Create a new one, update `TF_VAR_gitlab_token` (or the variable), apply, then revoke the old one.
 - **Change the environments.** Edit the `environments` list (Path A) or the `envN…` flow variables (Path B). Up to four.
-- **One deployment target per pipeline.** The GitLab pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`. The flow lets the requester pick any of the four environments as the target, but a request for any other target opens fine and then stops at `plan_promotion` with "request destination differs from protected runner target policy". Deploying to several targets needs a pipeline change (for example one protected GitLab environment per PingOne target); the Go tool and pipeline are unchanged for now.
+- **Several targets: one GitLab project per target.** The pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`, so set up one private promotion project per environment you deploy to, each with that environment as its target and its own approvals. Put each project ID in that environment's slot (`envNGitlabProjectId`, or `gitlab_project_id` in Terraform). The flow sends each request to the chosen target's project; a slot without one uses `gitlabProjectId`. See the runbook's [Several target environments](RUNBOOK.md#several-target-environments).
 - **Remove everything.** Path A: `terraform destroy`. Path B: delete the flow, the DaVinci application, the two company variables, and the worker app.
 - **Audit.** Every request is a merge request (naming the admin once sign-in is on); every deployment is a protected GitLab job; PingOne records each native promotion.
 

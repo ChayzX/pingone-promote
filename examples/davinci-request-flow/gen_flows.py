@@ -41,6 +41,9 @@ VALUE_KEYS = {
     # Up to four environments; the requester picks source and target from these.
     "env1Name": "", "env1Id": "", "env2Name": "", "env2Id": "",
     "env3Name": "", "env3Id": "", "env4Name": "", "env4Id": "",
+    # Optional: the GitLab project whose pipeline deploys to each environment.
+    # Empty = gitlabProjectId. Each project's PINGONE_TARGET_ENVIRONMENT_ID must be that environment.
+    "env1GitlabProjectId": "", "env2GitlabProjectId": "", "env3GitlabProjectId": "", "env4GitlabProjectId": "",
     "organizationId": "",
     "davinciAdminRoleId": "",
     "sourceRegion": "",
@@ -426,7 +429,9 @@ def text_input(name, label):
 
 SRC = Flow.fv("sourceEnvironmentId")
 TGT = Flow.fv("targetEnvironmentId")
-GITLAB_CFG = [("gitlabUrl", "string", Flow.fv("gitlabUrl")), ("gitlabProjectId", "string", Flow.fv("gitlabProjectId")),
+# The project comes from the chosen target (targetGitlabProjectId), so each
+# target's merge request goes to the pipeline that deploys to it.
+GITLAB_CFG = [("gitlabUrl", "string", Flow.fv("gitlabUrl")), ("gitlabProjectId", "string", Flow.fv("targetGitlabProjectId")),
               ("gitlabEnvironment", "string", Flow.fv("gitlabEnvironment"))]
 
 
@@ -591,13 +596,15 @@ def build_request_flow(signin):
     live_tgt = f.live_snapshot("liveTgt", None, TGT, inv_live)
     live_src = f.live_snapshot("liveSrc", None, SRC, live_tgt)
     # Choose source and target from the configured environments, then snapshot them.
-    env_inputs = [(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Id", "Name")]
+    env_inputs = ([(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Id", "Name", "GitlabProjectId")] +
+                  [("defaultGitlabProjectId", "string", f.fv("gitlabProjectId"))])
     tgt_res = f.fn("Target environment chosen", "resolve_env", [
         ("choice", "string", ("node", "local.TGTPAGE.payload.output.buttonValue", "buttonValue")),
-        ("excludeId", "string", f.fv("sourceEnvironmentId"))] + env_inputs,
-        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string"})
+        ("excludeId", "string", f.fv("sourceEnvironmentId")), ("needProject", "string", "true")] + env_inputs,
+        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string", "gitlabProjectId": "string"})
     tgt_save = f.save("Keep target environment", [("targetEnvironmentId", "string", [f.out(tgt_res, "environmentId")]),
-                                                  ("targetEnvName", "string", [f.out(tgt_res, "nameText")])])
+                                                  ("targetEnvName", "string", [f.out(tgt_res, "nameText")]),
+                                                  ("targetGitlabProjectId", "string", [f.out(tgt_res, "gitlabProjectId")])])
     tgt_ok = f.equals("Target valid?", f.out(tgt_res, "state"), "ok")
     f.link(tgt_res, tgt_ok)
     f.link(tgt_ok, tgt_save, false_target=f.fail("Invalid target environment", tgt_res))
@@ -607,8 +614,9 @@ def build_request_flow(signin):
         "{{global.flow.variables.sourceEnvName}}"), ["buttonValue"])
     f.link(tgt_page, tgt_res)
     src_res = f.fn("Source environment chosen", "resolve_env", [
-        ("choice", "string", ("node", "local.SRCPAGE.payload.output.buttonValue", "buttonValue")), ("excludeId", "string", "")] + env_inputs,
-        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string"})
+        ("choice", "string", ("node", "local.SRCPAGE.payload.output.buttonValue", "buttonValue")), ("excludeId", "string", ""),
+        ("needProject", "string", "false")] + env_inputs,
+        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string", "gitlabProjectId": "string"})
     src_save = f.save("Keep source environment", [("sourceEnvironmentId", "string", [f.out(src_res, "environmentId")]),
                                                   ("sourceEnvName", "string", [f.out(src_res, "nameText")])])
     src_ok = f.equals("Source valid?", f.out(src_res, "state"), "ok")
@@ -645,6 +653,7 @@ TF_SETTING = {
     "organizationId": "${var.organization_id}", "davinciAdminRoleId": "${var.davinci_admin_role_id}",
     "sourceRegion": "${local.region}", "targetRegion": "${local.region}",
     "gitlabUrl": "${var.gitlab_url}", "gitlabProjectId": "${var.gitlab_project_id}",
+    **{f"env{i}GitlabProjectId": "${try(var.environments[%d].gitlab_project_id, \"\")}" % (i - 1) for i in range(1, 5)},
     "gitlabEnvironment": "${var.gitlab_environment}",
 }
 assert set(TF_SETTING) == set(VALUE_KEYS)

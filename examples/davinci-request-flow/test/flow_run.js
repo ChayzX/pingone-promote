@@ -159,7 +159,7 @@ function world(overrides) {
     },
     snaps: {}, polls: {}, n: 0,
     log: [],
-    gitlab: { project: { id: 42, visibility: 'private', archived: false, default_branch: 'main', web_url: G + '/platform/promote' },
+    gitlab: { projectId: 42, project: { id: 42, visibility: 'private', archived: false, default_branch: 'main', web_url: G + '/platform/promote' },
       branchInfo: { name: 'main', protected: true }, branches: {}, commits: [], mrs: [], fail: {} }
   };
   st.vars = { decls: {}, defs: { src: [], tgt: [] }, fail: 0 };
@@ -221,23 +221,23 @@ function world(overrides) {
     assert.strictEqual(headers.Accept, 'application/json');
     const gl = st.gitlab;
     const p = url.slice((G + '/api/v4').length);
-    const fail = gl.fail[method + ' ' + p.replace(/^\/projects\/42/, '')];
+    const fail = gl.fail[method + ' ' + p.replace(/^\/projects\/\d+/, '')];
     if (fail) { return json(fail, { message: 'failed' }); }
     if (method === 'POST') { assert.strictEqual(headers['Content-Type'], 'application/json'); }
     const b = body === undefined ? undefined : JSON.parse(body);
-    if (method === 'GET' && p === '/projects/42') { return json(200, gl.project); }
-    if (method === 'GET' && p === '/projects/42/repository/branches/main') { return json(200, gl.branchInfo); }
-    if (method === 'POST' && p === '/projects/42/repository/branches') {
+    if (method === 'GET' && p === '/projects/' + gl.projectId) { return json(200, gl.project); }
+    if (method === 'GET' && p === '/projects/' + gl.projectId + '/repository/branches/main') { return json(200, gl.branchInfo); }
+    if (method === 'POST' && p === '/projects/' + gl.projectId + '/repository/branches') {
       if (gl.branches[b.branch]) { return json(400, { message: 'Branch already exists' }); }
       gl.branches[b.branch] = b.ref;
       return json(201, { name: b.branch });
     }
-    if (method === 'POST' && p === '/projects/42/repository/commits') {
+    if (method === 'POST' && p === '/projects/' + gl.projectId + '/repository/commits') {
       assert.ok(gl.branches[b.branch], 'commit goes to the created branch');
       gl.commits.push(b);
       return json(201, { id: 'c1' });
     }
-    if (method === 'POST' && p === '/projects/42/merge_requests') {
+    if (method === 'POST' && p === '/projects/' + gl.projectId + '/merge_requests') {
       gl.mrs.push(b);
       return json(201, { id: 900, iid: gl.mrs.length, web_url: gl.mrUrl || (G + '/platform/promote/-/merge_requests/' + gl.mrs.length) });
     }
@@ -421,6 +421,26 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const r = await runFlow(w, form('tf1', '', 'reverse', 'SUBMIT', ['ENV2', 'ENV1']));
     const req = JSON.parse(w.gitlab.commits[0].actions[0].content);
     ok(r.title === 'Merge request opened' && req.source.id === 'tgt' && req.target.id === 'src', 'either direction: Prod to Dev');
+  }
+  // Each target can have its own GitLab project (the pipeline that deploys to it).
+  {
+    const w = world({ settings: { env2GitlabProjectId: '77' }, gitlab: (g) => { g.projectId = 77; g.project.id = 77; } });
+    const r = await runFlow(w, form('a2'));
+    ok(r.title === 'Merge request opened' && w.log.some((l) => l.indexOf('/api/v4/projects/77/merge_requests') > 0) &&
+      w.log.every((l) => l.indexOf('/projects/42') < 0), 'target Prod uses its own project 77: ' + (r.text || ''));
+  }
+  {
+    const w = world();
+    await runFlow(w, form('a2'));
+    ok(w.log.some((l) => l.indexOf('/api/v4/projects/42/merge_requests') > 0), 'a target without its own project uses gitlabProjectId');
+  }
+  await noGitLab('target without any project', world({ settings: { gitlabProjectId: '', env2GitlabProjectId: '77' } }),
+    form('tf1', '', 'x', 'SUBMIT', ['ENV2', 'ENV1']), 'No GitLab project is set up for Dev');
+  await noGitLab('non-numeric project for the target', world({ settings: { env2GitlabProjectId: 'abc' } }), form('a2'), 'must be numeric');
+  {
+    const w = world({ settings: { gitlabProjectId: '', env2GitlabProjectId: '42' } });
+    const r = await runFlow(w, form('a2'));
+    ok(r.title === 'Merge request opened', 'a source without a project is fine: only the target needs one');
   }
   await noGitLab('same environment twice', world(), form('a2', '', 'x', 'SUBMIT', ['ENV1', 'ENV1']), 'must be different');
   await noGitLab('empty slot chosen', world(), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not configured');

@@ -39,8 +39,9 @@ variable "host_environment_id" {
 variable "environments" {
   description = "Up to four environments the requester can choose as source and target, in button order."
   type = list(object({
-    name = string
-    id   = string
+    name              = string
+    id                = string
+    gitlab_project_id = optional(string, "") # project whose pipeline deploys here; empty = gitlab_project_id
   }))
   validation {
     condition     = length(var.environments) >= 2 && length(var.environments) <= 4
@@ -71,7 +72,7 @@ variable "gitlab_url" {
 }
 
 variable "gitlab_project_id" {
-  description = "Numeric ID of the private promotion-requests project."
+  description = "Default GitLab project (numeric ID) for environments without their own gitlab_project_id. Each project's pipeline must have that environment as PINGONE_TARGET_ENVIRONMENT_ID."
   type        = string
 }
 
