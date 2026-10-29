@@ -32,7 +32,7 @@ The flow never calls the PingOne promotions API, so it cannot deploy or roll bac
 4. **Review request.** The page shows the promotion-variable check (below) and `requests/<id>/request.json` exactly as it will be committed, with secrets redacted. The admin chooses **Submit to GitLab** or **Cancel**.
 5. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point.
 
-> **Several targets: one GitLab project per target.** The pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`, so set up one private promotion project per environment you deploy to, each with that environment as its target and its own approvals. Put each project ID in that environment's slot (`envNGitlabProjectId`, or `gitlab_project_id` in Terraform). The flow sends each request to the chosen target's project; a slot without one uses `gitlabProjectId`. See the runbook's [Several target environments](RUNBOOK.md#several-target-environments).
+> **One GitLab project for every environment.** All requests go to `gitlabProjectId`. In that project, each environment you deploy to is a GitLab environment (`dev`, `test`, `production` …) with its own scoped variables and approvals, and the pipeline from `gitlab/make_pipeline.py` runs each environment's jobs only for requests that target it. Name a target's GitLab environment in `envNGitlabEnvironment` (Terraform: `gitlab_environment` in `environments`); empty uses `gitlabEnvironment`. See the runbook's [One project, several environments](RUNBOOK.md#one-project-several-environments).
 
 ## Promotion-variable check
 

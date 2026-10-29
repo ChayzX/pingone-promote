@@ -3,17 +3,17 @@ pingone_domain             = "pingone.com"
 organization_id            = "<organization ID>"
 host_environment_id        = "<DaVinci environment that runs the flow>"
 environments = [ # two to four; the requester picks source and target from these
-  # gitlab_project_id: the project whose pipeline deploys to that environment
-  # (its PINGONE_TARGET_ENVIRONMENT_ID). Omit to use gitlab_project_id.
-  { name = "Dev", id = "<environment ID>", gitlab_project_id = "<project ID>" },
-  { name = "Test", id = "<environment ID>", gitlab_project_id = "<project ID>" },
-  { name = "Stage", id = "<environment ID>", gitlab_project_id = "<project ID>" },
-  { name = "Prod", id = "<environment ID>", gitlab_project_id = "<project ID>" },
+  # gitlab_environment: the GitLab environment (in the one promotion project)
+  # that deploys to it. Omit to use gitlab_environment.
+  { name = "Dev", id = "<environment ID>", gitlab_environment = "dev" },
+  { name = "Test", id = "<environment ID>", gitlab_environment = "test" },
+  { name = "Stage", id = "<environment ID>", gitlab_environment = "stage" },
+  { name = "Prod", id = "<environment ID>", gitlab_environment = "production" },
 ]
 worker_role_names          = ["Promotion Admin"]
 
 gitlab_url         = "https://gitlab.com"
-gitlab_project_id  = "<numeric project ID>"
+gitlab_project_id  = "<numeric ID of the one promotion project>"
 gitlab_environment = "production"
 
 # Reuse existing DaVinci connections by ID; leave a key out to create one.

@@ -134,32 +134,41 @@ Launch the flow through its flow policy (output `flow_policy_id`) the way your t
 
 Note the results in the README's live-check list.
 
-## Several target environments
+## One project, several environments
 
-The pipeline in each promotion project deploys to exactly one PingOne environment, its `PINGONE_TARGET_ENVIRONMENT_ID`, and refuses any request for another. So for every environment you want to deploy **to**:
+You keep one private promotion project for the whole lifecycle. The runner still deploys a request only to its job's trusted `PINGONE_TARGET_ENVIRONMENT_ID`, so the trust moves from "one project per target" to "one GitLab environment per target" inside the same project:
 
-1. **Create a private promotion project** from the same template: `.gitlab-ci.yml` and `select-request.sh` from `examples/gitlab/`, default branch protected. See [docs/gitlab.md](../../docs/gitlab.md).
-2. **Set its CI/CD variables:** `PINGONE_TARGET_ENVIRONMENT_ID` and `PINGONE_TARGET_REGION` for that environment, and the pipeline worker's credentials with roles on that environment. Then add a protected deployment environment with the approvers that environment needs; Prod can require more people than Test.
-3. **Point the flow at it:** put the project's numeric ID in that environment's slot, `envNGitlabProjectId` (Terraform: `gitlab_project_id` in `environments`).
-4. **Let the flow's GitLab token reach every project.** A group access token (Developer, `api`) on a group holding all the promotion projects is simplest.
+1. **Generate the pipeline** for your environment names and commit it as the project's `.gitlab-ci.yml`, together with `examples/gitlab/select-request.sh` and `examples/davinci-request-flow/gitlab/for-this-environment.sh` (same paths):
+   ```bash
+   python3 gitlab/make_pipeline.py ../gitlab/.gitlab-ci.yml dev test production > .gitlab-ci.yml
+   ```
+   [`gitlab/example.gitlab-ci.yml`](gitlab/example.gitlab-ci.yml) is the output for `dev test production`. The suite checks it stays in step with the tool's pipeline.
+2. **Create a protected GitLab environment per name** (**Operate → Environments**), each with at least one deployment approval. The runner refuses an environment without one, Dev included. Prod can require more approvers than Test.
+3. **Scope the trusted variables to each environment** (**Settings → CI/CD → Variables**, *Environment scope*): `PINGONE_TARGET_ENVIRONMENT_ID`, `PINGONE_TARGET_REGION`, the worker credentials, and optionally `PROMOTION_ENVIRONMENT` set to the same name. Don't leave an unscoped (`*`) copy of these; a job with no scoped target stops.
+4. **Point the flow at it:** `gitlabProjectId` is the one project. If a target's GitLab environment isn't `gitlabEnvironment`, set it in that slot's `envNGitlabEnvironment` so the merge request names the right one.
 
-An environment you only promote **from**, often Dev, needs no project. If the requester picks a target with no project (and `gitlabProjectId` is empty), the flow says so before building anything.
+What happens after a merge: the plan job of **every** environment starts. Each reads the request's target; only the environment whose scoped `PINGONE_TARGET_ENVIRONMENT_ID` matches it plans ("This request targets …"), and the others finish at once ("Not for dev …") without touching PingOne. Run the manual deploy job of the environment named in the merge request. The deploy job of another environment has no plan and stops. The runner re-checks the target in every job, so a mistake here fails closed.
 
-| Example | Source | Target | Merge request goes to |
+Rollback, preflight and evidence are manual web pipelines as before, plus `PROMOTION_GITLAB_ENVIRONMENT=<name>` to choose the environment.
+
+| Example | Source | Target | Jobs that act |
 | --- | --- | --- | --- |
-| Dev → Test | Dev | Test | Test's project, whose pipeline deploys to Test |
-| Test → Prod | Test | Prod | Prod's project, with Prod's approvers |
+| Dev → Test | Dev | Test | `plan_promotion_test`, then `apply_promotion_test` (Test's approvers) |
+| Test → Prod | Test | Prod | `plan_promotion_production`, then `apply_promotion_production` (Prod's approvers) |
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| DaVinci's generic error page (red triangle) | A step failed with nothing to catch it. Since this version every API call has a failure path, so you should see a named error screen instead | Open **Analytics** for the flow (log level is Debug); the last step names where it stopped. Send that step and its response |
+| Last step in analytics is a "…: preparing" or "…: reading" page | The page submitted itself twice (fixed: it now submits once) or the next status call failed | Re-import this version; click **Continue** by hand if a page stays |
+| "Failed: <step>" screen | That API call returned an error; the screen gives the HTTP status and the usual cause | 403 on a PingOne step: give the worker app the pipeline worker's roles on that environment |
 | "Settings need attention: Fix these flow variables…" | A flow variable is a placeholder, malformed or empty. The flow checks them first, before any API call | Set each named variable in **Flow → Variables**, deploy, launch again |
 | Token step fails with HTTP 400 `INVALID_REQUEST` (analytics shows validation errors) | The token URL `{authOrigin}/{hostEnvironmentId}/as/token` is wrong: usually `hostEnvironmentId` reset to the file's placeholder by a re-import, or a custom domain/trailing slash in `authOrigin` | Set `hostEnvironmentId` to the worker app's environment and `authOrigin` to `https://auth.pingone.com` (your region's domain) |
 | Token step fails with HTTP 401 `invalid_client` | Worker client ID or secret wrong, or the worker app is in a different environment than `hostEnvironmentId` | Re-paste the worker credentials in the HTTP connector headers / variables |
 | Snapshot step fails with HTTP 403 | Worker roles on source or target | Match the pipeline worker's roles that fixed Configuration Management |
-| "No GitLab project is set up for <name>" | The chosen target has no `envNGitlabProjectId` and `gitlabProjectId` is empty | Set the project for that environment ([Several target environments](#several-target-environments)) |
-| "request destination differs from protected runner target policy" (in GitLab) | The project's pipeline targets another environment | Fix that environment's project ID in the flow, or the project's `PINGONE_TARGET_ENVIRONMENT_ID` |
+| "request destination differs from protected runner target policy" (in GitLab) | A job ran for an environment whose scoped `PINGONE_TARGET_ENVIRONMENT_ID` isn't the request's target | Use the jobs of the environment named in the merge request; check the variable's environment scope |
+| "Not for <env>: this request targets …" (in GitLab) | Normal: that environment's job skips requests for other targets | Nothing; use the target environment's jobs |
 | "GitLab project must be private…" | Project visibility, ID typo or archived project | Fix the project or `gitlab_project_id` |
 | "GitLab default branch must be protected" | Branch protection removed | Re-protect it |
 | "create promotion branch: GitLab returned HTTP 401/403" | Token expired, wrong scope or role | New token (step 2), then update `promoteGitlabToken` |
@@ -172,7 +181,7 @@ An environment you only promote **from**, often Dev, needs no project. If the re
 - **Rotate the worker secret.** Path A: `terraform apply -replace=pingone_application_secret.worker`. Path B: generate a new secret and update `promoteWorkerBasicAuth`.
 - **Rotate the GitLab token.** Create a new one, update `TF_VAR_gitlab_token` (or the variable), apply, then revoke the old one.
 - **Change the environments.** Edit the `environments` list (Path A) or the `envN…` flow variables (Path B). Up to four.
-- **Several targets: one GitLab project per target.** The pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`, so set up one private promotion project per environment you deploy to, each with that environment as its target and its own approvals. Put each project ID in that environment's slot (`envNGitlabProjectId`, or `gitlab_project_id` in Terraform). The flow sends each request to the chosen target's project; a slot without one uses `gitlabProjectId`. See the runbook's [Several target environments](RUNBOOK.md#several-target-environments).
+- **One GitLab project for every environment.** All requests go to `gitlabProjectId`. In that project, each environment you deploy to is a GitLab environment (`dev`, `test`, `production` …) with its own scoped variables and approvals, and the pipeline from `gitlab/make_pipeline.py` runs each environment's jobs only for requests that target it. Name a target's GitLab environment in `envNGitlabEnvironment` (Terraform: `gitlab_environment` in `environments`); empty uses `gitlabEnvironment`. See the runbook's [One project, several environments](RUNBOOK.md#one-project-several-environments).
 - **Remove everything.** Path A: `terraform destroy`. Path B: delete the flow, the DaVinci application, the two company variables, and the worker app.
 - **Audit.** Every request is a merge request (naming the admin once sign-in is on); every deployment is a protected GitLab job; PingOne records each native promotion.
 

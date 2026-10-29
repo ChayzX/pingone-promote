@@ -43,7 +43,7 @@ VALUE_KEYS = {
     "env3Name": "", "env3Id": "", "env4Name": "", "env4Id": "",
     # Optional: the GitLab project whose pipeline deploys to each environment.
     # Empty = gitlabProjectId. Each project's PINGONE_TARGET_ENVIRONMENT_ID must be that environment.
-    "env1GitlabProjectId": "", "env2GitlabProjectId": "", "env3GitlabProjectId": "", "env4GitlabProjectId": "",
+    "env1GitlabEnvironment": "", "env2GitlabEnvironment": "", "env3GitlabEnvironment": "", "env4GitlabEnvironment": "",
     "organizationId": "",
     "davinciAdminRoleId": "",
     "sourceRegion": "",
@@ -107,8 +107,12 @@ class Flow:
     def __init__(self, name, flow_id, description):
         self.name, self.flow_id, self.description = name, flow_id, description
         self.nodes, self.edges, self.vars = [], [], {}
+        self.rest_fail = {}
         self.n = 0
         self.x, self.y = 100, 200
+
+    def node_title(self, nid):
+        return next(n["data"]["properties"]["nodeTitle"]["value"] for n in self.nodes if n["data"]["id"] == nid)
 
     # --- references -------------------------------------------------------
     @staticmethod
@@ -151,7 +155,19 @@ class Flow:
         return nid
 
     def link(self, source, target, false_target=None):
-        """source -> evaluator -> target (true/default) [and false_target]."""
+        """source -> evaluator -> target (true/default) [and false_target].
+        A REST call's false branch is its failure: an error naming the step, or (soft) a pass-through to target."""
+        if source in self.rest_fail and false_target is None:
+            info = self.rest_fail[source]
+            if info is None:
+                false_target = self.save(self.node_title(source) + ": call failed, continue",
+                                         [("lastFailedCall", "string", self.node_title(source))])
+                self.link(false_target, target)
+            else:
+                title, hint = info
+                false_target = self.error(f"Failed: {title}", [
+                    f"Step \"{title}\" failed (HTTP ", self.out(source, "rawResponse.statusCode"), "). " + hint +
+                    " Flow analytics show the full response."])
         eid = self._id("e")
         data = {"id": eid, "nodeType": "EVAL", "label": "Evaluator"}
         if false_target:
@@ -163,14 +179,28 @@ class Flow:
                                "group": "edges", "removed": False, "selected": False, "selectable": True, "locked": False,
                                "grabbable": True, "pannable": True, "classes": ""})
 
-    def rest(self, title, method, url, headers, raw=None):
+    def rest(self, title, method, url, headers, raw=None, soft=True):
+        """soft (default): a failed call (non-2xx) still continues to the next step, a function that
+        turns the status into a specific message. soft=False, for calls whose next step does not
+        check the status: a failed call ends on an error naming this step."""
+        first = url[0]
+        if "/as/token" in url:
+            hint = ("Check hostEnvironmentId (the worker app's environment), authOrigin, and the worker client ID and secret "
+                    "in promoteWorkerBasicAuth.")
+        elif first == ("node", "local.BUILD.payload.output.gitlabApi", "gitlabApi"):
+            hint = "Check the GitLab token (promoteGitlabToken: api scope, Developer role) and gitlabProjectId."
+        else:
+            hint = ("HTTP 403 usually means the worker app has no role on that environment (give it the same roles as the "
+                    "pipeline worker); 404 means a wrong environment ID or an API not enabled for it.")
         props = {"url": {"value": slate(*url)}, "httpMethod": {"value": method},
                  "headers": {"value": [{"key": k, "value": slate(*v)} for k, v in headers]}}
         if raw is not None:
             # As DaVinci saves the Body dropdown and raw editor (confirmed from a live export).
             props["httpBody"] = {"value": "raw"}
             props["raw"] = {"value": plain(*raw)}
-        return self.node("http", "makeRestApiCall", props, title)
+        nid = self.node("http", "makeRestApiCall", props, title)
+        self.rest_fail[nid] = None if soft else (title, hint)
+        return nid
 
     def fn(self, title, step, inputs, outputs):
         return self.node("fn", "customFunction", {
@@ -192,11 +222,11 @@ class Flow:
         return self.node("var", "saveFlowValue", {"saveFlowVariables": {"value": items}}, title)
 
     def error(self, title, message):
-        return self.node("err", "customErrorMessage", {"errorMessage": {"value": slate(*message)}}, title, ntype="action")
+        """A styled final screen naming what failed (instead of DaVinci's generic error page)."""
+        return self.page(title, notice_html(title, plain(*message), "error"), [])
 
     def message(self, title, parts):
-        return self.node("http", "customHtmlMessage", {"message": {"value": slate(*parts)}, "showContinueButton": {"value": False}},
-                         title, ntype="action")
+        return self.page(title, notice_html(title, plain(*parts), "message"), [])
 
     def page(self, title, html, fields):
         return self.node("http", "customHTMLTemplate", {
@@ -205,13 +235,19 @@ class Flow:
                                           "displayName": f, "hashedVisibility": False} for f in fields]},
             "validationRules": {"value": []}}, title)
 
-    def wait_page(self, title, text):
+    def wait_page(self, title, text, step=None):
         """A short "working" page that submits itself after 2 s (Continue is the fallback).
         Long work is split across requests this way, so none hits the browser's timeout."""
-        html = (page_html(title, text + " This page continues by itself.", [], "waitForm", "",
-                          [("CONTINUE", "Continue", "btn-outline-secondary")]) +
-                "<!-- pp-auto-continue --><script>setTimeout(function () { var b = document.querySelector("
-                "'[data-skbuttonvalue=\"CONTINUE\"]'); if (b) { b.click(); } }, 2000);</script>")
+        html = (wait_html(title, text, step) +
+                # Exactly one submit per rendered page: DaVinci may run an inline script more than
+                # once, and a second submit of a step that already moved on ends on its generic error.
+                # The button is marked when clicked; a manual click marks it too.
+                "<!-- pp-auto-continue --><script>(function () { function go() { var b = document.querySelector("
+                "'[data-skbuttonvalue=\"CONTINUE\"]'); if (!b || b.getAttribute('data-pp-sent')) { return; } "
+                "b.setAttribute('data-pp-sent', '1'); b.click(); } "
+                "document.addEventListener('click', function (e) { var t = e.target && e.target.closest && "
+                "e.target.closest('[data-skbuttonvalue=\"CONTINUE\"]'); if (t && e.isTrusted) { t.setAttribute('data-pp-sent', '1'); } }, true); "
+                "setTimeout(go, 2000); })();</script>")
         return self.page(title, html, ["buttonValue"])
 
     # --- composite blocks -----------------------------------------------------
@@ -222,7 +258,7 @@ class Flow:
         """Sign-in off (POC): the flow starts at the worker token."""
         self.token = self.rest("Promotion worker token", "POST", [self.fv("authOrigin"), "/", self.fv("hostEnvironmentId"), "/as/token"],
                                [("Authorization", ["Basic ", self.cv("promoteWorkerBasicAuth")]),
-                                ("Content-Type", ["application/x-www-form-urlencoded"])], raw=["grant_type=client_credentials"])
+                                ("Content-Type", ["application/x-www-form-urlencoded"])], raw=["grant_type=client_credentials"], soft=False)
         return self.token
 
     def sign_in(self):
@@ -233,7 +269,7 @@ class Flow:
         self.link(s, ui)
         self.token = self.rest("Promotion worker token", "POST", [self.fv("authOrigin"), "/", self.fv("hostEnvironmentId"), "/as/token"],
                                [("Authorization", ["Basic ", self.cv("promoteWorkerBasicAuth")]),
-                                ("Content-Type", ["application/x-www-form-urlencoded"])], raw=["grant_type=client_credentials"])
+                                ("Content-Type", ["application/x-www-form-urlencoded"])], raw=["grant_type=client_credentials"], soft=False)
         self.link(ui, self.token)
         ra = self.rest("Signed-in admin's role assignments", "GET",
                        [self.fv("apiOrigin"), "/v1/environments/", self.fv("adminEnvironmentId"), "/users/",
@@ -269,33 +305,33 @@ class Flow:
                      (f"{prefix}Url", "string", first_url), (f"{prefix}First", "string", first_url)]
         if soft:
             init_vars.append((f"{prefix}Error", "string", ""))
-        init = self.save(f"{prefix}: start paging", init_vars)
+        init = self.save(f"{label(prefix)}: start paging", init_vars)
         if after:
             self.link(after, init)
-        get = self.rest(f"{prefix}: read page", "GET", [self.fv(f"{prefix}Url")], self.bearer())
+        get = self.rest(f"{label(prefix)}: read page", "GET", [self.fv(f"{prefix}Url")], self.bearer())
         self.link(init, get)
-        col = self.fn(f"{prefix}: collect page", "page_collect", [
+        col = self.fn(f"{label(prefix)}: collect page", "page_collect", [
             ("collectionKey", "string", key), ("pagesSoFar", "object", self.fv(f"{prefix}Pages")),
             ("seenUrls", "object", self.fv(f"{prefix}Seen")), ("currentUrl", "string", self.fv(f"{prefix}Url")),
             ("firstUrl", "string", self.fv(f"{prefix}First")), ("apiOrigin", "string", self.fv("apiOrigin")),
             ("statusCode", "number", self.out(get, "rawResponse.statusCode")), ("body", "object", self.out(get, "rawResponse.body")),
         ], {"state": "string", "error": "string", "pages": "array", "seenUrls": "array", "nextUrl": "string", "pause": "string"})
         self.link(get, col)
-        sv = self.save(f"{prefix}: keep page", [(f"{prefix}Pages", "object", [self.out(col, "pages")]),
+        sv = self.save(f"{label(prefix)}: keep page", [(f"{prefix}Pages", "object", [self.out(col, "pages")]),
                                                (f"{prefix}Seen", "object", [self.out(col, "seenUrls")]),
                                                (f"{prefix}Url", "string", [self.out(col, "nextUrl")])])
         self.link(col, sv)
         err = None
         if soft:
-            err = self.save(f"{prefix}: note unreadable", [(f"{prefix}Error", "string", [self.out(col, "error")]),
+            err = self.save(f"{label(prefix)}: note unreadable", [(f"{prefix}Error", "string", [self.out(col, "error")]),
                                                          (f"{prefix}Pages", "object", "[]")])
             self.link(err, cont)
         # Every few pages, hand back to the browser so no request runs long.
-        pause = self.equals(f"{prefix}: hand back to the browser?", self.out(col, "pause"), "true")
-        wp = self.wait_page(f"{prefix}: reading", "Reading the snapshot from PingOne.")
+        pause = self.equals(f"{label(prefix)}: hand back to the browser?", self.out(col, "pause"), "true")
+        wp = self.wait_page(f"{label(prefix)}: reading", f"Reading the {label(prefix).lower()} from PingOne.", 3 if prefix.endswith("Defs") else 2)
         self.link(pause, wp, false_target=get)
         self.link(wp, get)
-        self.three_way_from(sv, col, "more", cont, pause, prefix + " paging", err)
+        self.three_way_from(sv, col, "more", cont, pause, label(prefix) + " paging", err)
         return init
 
     def three_way_from(self, after, fn_node, state_more, cont, more_target, title, err=None):
@@ -309,7 +345,8 @@ class Flow:
         self.link(is_done, cont, false_target=err)
 
     def env_record(self, prefix, after, env):
-        g = self.rest(f"{prefix}: environment", "GET", [self.fv("apiOrigin"), "/v1/environments/", env], self.bearer())
+        g = self.rest(f"{label(prefix)}: read environment", "GET", [self.fv("apiOrigin"), "/v1/environments/", env], self.bearer(),
+                      soft=False)
         if after:
             self.link(after, g)
         return g
@@ -317,9 +354,9 @@ class Flow:
     def live_snapshot(self, prefix, after, env, cont):
         """Environment record + new snapshot polled to COMPLETE + all pages. Leaves <prefix>Env, <prefix>Snap, <prefix>Pages."""
         g = self.env_record(prefix, after, env)
-        keep_env = self.save(f"{prefix}: keep environment", [(f"{prefix}Env", "object", [self.out(g, "rawResponse.body")])])
+        keep_env = self.save(f"{label(prefix)}: keep environment", [(f"{prefix}Env", "object", [self.out(g, "rawResponse.body")])])
         self.link(g, keep_env)
-        post = self.rest(f"{prefix}: take snapshot", "POST", [self.fv("apiOrigin"), "/v1/environments/", env, "/snapshots?expand=all"],
+        post = self.rest(f"{label(prefix)}: take snapshot", "POST", [self.fv("apiOrigin"), "/v1/environments/", env, "/snapshots?expand=all"],
                          self.bearer() + [("Content-Type", ["application/json"])],
                          raw=['{"baseResourceURL":"', self.fv("apiOrigin"), "/v1/environments/", env, '"}'])
         self.link(keep_env, post)
@@ -327,29 +364,29 @@ class Flow:
                                    ("body", "object", self.out(src, "rawResponse.body")), ("statusCode", "number", self.out(src, "rawResponse.statusCode")),
                                    ("apiOrigin", "string", self.fv("apiOrigin"))]
         outputs = {"state": "string", "error": "string", "snapshotId": "string", "attempts": "number", "versionUrl": "string"}
-        init = self.save(f"{prefix}: reset poll counter", [(f"{prefix}Attempts", "number", "0")])
+        init = self.save(f"{label(prefix)}: reset poll counter", [(f"{prefix}Attempts", "number", "0")])
         self.link(post, init)
-        p1 = self.fn(f"{prefix}: snapshot ready?", "snapshot_poll", poll_inputs(post), outputs)
+        p1 = self.fn(f"{label(prefix)}: snapshot ready?", "snapshot_poll", poll_inputs(post), outputs)
         self.link(init, p1)
-        k1 = self.save(f"{prefix}: keep snapshot", [(f"{prefix}Attempts", "number", [self.out(p1, "attempts")]),
+        k1 = self.save(f"{label(prefix)}: keep snapshot", [(f"{prefix}Attempts", "number", [self.out(p1, "attempts")]),
                                                     (f"{prefix}SnapUrl", "string", [self.out(p1, "versionUrl")]),
                                                     (f"{prefix}SnapId", "string", [self.out(p1, "snapshotId")]),
                                                     (f"{prefix}Snap", "object", [self.out(post, "rawResponse.body")])])
         self.link(p1, k1)
-        get = self.rest(f"{prefix}: snapshot status", "GET", [self.fv(f"{prefix}SnapUrl")], self.bearer())
-        p2 = self.fn(f"{prefix}: snapshot ready? (poll)", "snapshot_poll", poll_inputs(get), outputs)
+        get = self.rest(f"{label(prefix)}: snapshot status", "GET", [self.fv(f"{prefix}SnapUrl")], self.bearer())
+        p2 = self.fn(f"{label(prefix)}: snapshot ready? (poll)", "snapshot_poll", poll_inputs(get), outputs)
         self.link(get, p2)
-        k2 = self.save(f"{prefix}: keep snapshot (poll)", [(f"{prefix}Attempts", "number", [self.out(p2, "attempts")]),
+        k2 = self.save(f"{label(prefix)}: keep snapshot (poll)", [(f"{prefix}Attempts", "number", [self.out(p2, "attempts")]),
                                                            (f"{prefix}Snap", "object", [self.out(get, "rawResponse.body")])])
         self.link(p2, k2)
         paging = self.pages(prefix, None, [self.fv(f"{prefix}SnapUrl"), "/embeddedSnapshots"], "referencedResources", cont)
         # pages() linked init from `after`=None: wire both poll branches to the paging start.
         # Each status check that isn't COMPLETE waits on a self-continuing page,
         # which also spaces the polls out.
-        wp = self.wait_page(f"{prefix}: preparing", "PingOne is preparing the snapshot.")
+        wp = self.wait_page(f"{label(prefix)}: preparing", f"PingOne is taking a snapshot of the {label(prefix).lower()}.", 2)
         self.link(wp, get)
-        self.three_way_from(k1, p1, "wait", paging, wp, prefix + " snapshot")
-        self.three_way_from(k2, p2, "wait", paging, wp, prefix + " snapshot (poll)")
+        self.three_way_from(k1, p1, "wait", paging, wp, label(prefix) + " snapshot")
+        self.three_way_from(k2, p2, "wait", paging, wp, label(prefix) + " snapshot (poll)")
         return g
 
     def inventories(self, title, pinned, src_prefix, src_env, tgt_prefix, tgt_env):
@@ -391,48 +428,140 @@ class Flow:
             "graphData": {"elements": {"nodes": self.nodes, "edges": self.edges}, "data": {}, "zoomingEnabled": True,
                           "userZoomingEnabled": True, "zoom": 1, "minZoom": 1e-50, "maxZoom": 1e50, "panningEnabled": True,
                           "userPanningEnabled": True, "pan": {"x": 0, "y": 0}, "boxSelectionEnabled": True, "renderer": {"name": "null"}},
-            "flowColor": "#E3F0FF", "savedDate": 1793232000000, "variables": variables, "connections": [],
+            "settings": FLOW_SETTINGS, "flowColor": "#E3F0FF", "savedDate": 1793232000000, "variables": variables, "connections": [],
         }
 
 
-def page_html(title, intro, pre_blocks, form_id, fields_html, buttons):
-    pres = "".join(f'<h2 class="h6 mt-3">{h}</h2><pre class="border rounded p-2 small" style="max-height: 300px; overflow: auto">{v}</pre>'
-                   for h, v in pre_blocks)
-    btns = "".join(f'<button type="submit" class="btn {cls} me-2" data-id="button" data-skcomponent="skbutton" data-skbuttontype="form-submit" '
-                   f'data-skform="{form_id}" data-skbuttonvalue="{val}">{label}</button>' for val, label, cls in buttons)
-    return (f'<div class="container py-4" style="max-width: 900px"><h1 class="h3 mb-3">{title}</h1><p class="text-muted">{intro}</p>{pres}'
-            f'<form id="{form_id}" data-id="{form_id}">{fields_html}{btns}</form></div>')
+# DaVinci defaults as in a live export (inline scripts need unsafe-inline); logLevel 3 = debug.
+FLOW_SETTINGS = {"csp": "worker-src 'self' blob:; script-src 'self' https://cdn.jsdelivr.net https://code.jquery.com https://devsdk.singularkey.com http://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval';", "intermediateLoadingScreenCSS": "", "intermediateLoadingScreenHTML": "", "customTimeoutErrorScreenMessage": "", "customTimeoutErrorScreenHTML": "", "customTimeoutErrorScreenCSS": "", "logLevel": 3}
 
 
-def env_page(title, intro, hide_name):
-    """One button per configured environment (ENV1..ENV4). Empty slots, and the
+STEP_LABEL = {"liveSrc": "Source environment", "liveTgt": "Target environment",
+              "srcDefs": "Source promotion variables", "tgtDefs": "Target promotion variables"}
+
+
+def label(prefix):
+    return STEP_LABEL.get(prefix, prefix)
+
+
+# ---------------- screens -----------------------------------------------------
+# Every page carries its own small stylesheet (scoped to .pp) so it renders the
+# same in any DaVinci application, with or without the host page's CSS.
+STEPS = ["Source", "Target", "Resources", "Review", "Submitted"]
+CSS = """<style>
+.pp{--pp-bg:#f4f6f9;--pp-card:#fff;--pp-ink:#1b2430;--pp-muted:#5b6675;--pp-line:#dde2e9;--pp-accent:#1f5fbf;--pp-accent-ink:#fff;
+--pp-soft:#eaf1fb;--pp-code:#0f1720;--pp-code-ink:#d7e1ec;--pp-bad:#b42318;--pp-bad-soft:#fdecea;--pp-ok:#1a7f4b;--pp-ok-soft:#e7f6ee;
+font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--pp-ink);background:var(--pp-bg);min-height:100vh;padding:32px 16px;box-sizing:border-box}
+.pp *{box-sizing:border-box}
+.pp-card{max-width:920px;margin:0 auto;background:var(--pp-card);border:1px solid var(--pp-line);border-radius:12px;box-shadow:0 1px 2px rgba(16,24,40,.06);overflow:hidden}
+.pp-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;border-bottom:1px solid var(--pp-line)}
+.pp-brand{font-weight:650;letter-spacing:.2px}.pp-brand span{color:var(--pp-accent)}
+.pp-tag{font-size:12px;font-weight:600;color:#8a5a00;background:#fff4dc;border:1px solid #f3dca6;border-radius:999px;padding:2px 10px}
+.pp-steps{display:flex;gap:4px;padding:14px 24px 0;margin:0;list-style:none;flex-wrap:wrap}
+.pp-steps li{flex:1 1 0;min-width:90px;font-size:12px;font-weight:600;color:var(--pp-muted);padding-top:8px;border-top:3px solid var(--pp-line)}
+.pp-steps li.done{color:var(--pp-ink);border-color:#8fb0e3}.pp-steps li.now{color:var(--pp-accent);border-color:var(--pp-accent)}
+.pp-body{padding:20px 24px 26px}
+.pp h1{font-size:22px;line-height:1.3;margin:4px 0 6px}
+.pp-lead{color:var(--pp-muted);margin:0 0 18px}
+.pp-route{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+.pp-chip{display:inline-block;background:var(--pp-soft);color:var(--pp-accent);border-radius:999px;padding:3px 12px;font-weight:600;font-size:13px}
+.pp h2{font-size:14px;font-weight:650;color:var(--pp-muted);margin:20px 0 8px}
+.pp pre{background:var(--pp-code);color:var(--pp-code-ink);border-radius:8px;padding:12px 14px;margin:0;max-height:300px;overflow:auto;
+font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
+.pp-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media (max-width:720px){.pp-grid{grid-template-columns:1fr}}
+.pp label{display:block;font-weight:600;margin:16px 0 6px}
+.pp textarea,.pp input[type=text]{width:100%;border:1px solid #c5cdd8;border-radius:8px;padding:9px 11px;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;color:var(--pp-ink);background:#fff}
+.pp textarea:focus,.pp input:focus{outline:2px solid #9cc0f5;border-color:var(--pp-accent)}
+.pp code{background:var(--pp-soft);border-radius:4px;padding:0 4px;font-size:.92em}
+.pp-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.pp-btn{appearance:none;border:1px solid var(--pp-accent);background:var(--pp-accent);color:var(--pp-accent-ink);border-radius:8px;padding:10px 18px;font:600 14px system-ui,sans-serif;cursor:pointer}
+.pp-btn:hover{filter:brightness(1.08)}.pp-btn.ghost{background:#fff;color:var(--pp-ink);border-color:#c5cdd8}
+.pp-envs{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.pp-env{appearance:none;text-align:left;background:#fff;border:1px solid var(--pp-line);border-radius:10px;padding:16px;cursor:pointer;font:inherit;color:inherit;
+transition:border-color .15s,box-shadow .15s}
+.pp-env:hover,.pp-env:focus{border-color:var(--pp-accent);box-shadow:0 0 0 3px #d6e5fb;outline:none}
+.pp-env b{display:block;font-size:16px}.pp-env small{color:var(--pp-muted)}
+.pp-note{border-radius:8px;padding:12px 14px;margin:0 0 16px;background:var(--pp-soft)}
+.pp-note.bad{background:var(--pp-bad-soft);color:var(--pp-bad);border:1px solid #f5c2bc}
+.pp-note.ok{background:var(--pp-ok-soft);color:var(--pp-ok);border:1px solid #bfe3cf}
+.pp-wait{display:flex;align-items:center;gap:14px;margin:8px 0 4px}
+.pp-spin{width:28px;height:28px;border:3px solid var(--pp-line);border-top-color:var(--pp-accent);border-radius:50%;animation:pp-spin .8s linear infinite;flex:none}
+@keyframes pp-spin{to{transform:rotate(360deg)}}
+.pp a{color:var(--pp-accent);font-weight:600;word-break:break-all}
+</style>"""
+POC_TAG = '<span class="pp-tag">Proof of concept</span>'
+
+
+def shell(step, body, kind="page"):
+    """Card with brand bar and step tracker; step is an index into STEPS, or None."""
+    steps = ""
+    if step is not None:
+        steps = '<ol class="pp-steps">' + "".join(
+            f'<li class="{"now" if i == step else "done" if i < step else ""}">{i + 1}. {name}</li>' for i, name in enumerate(STEPS)) + "</ol>"
+    return (CSS + f'<div class="pp" data-pp-kind="{kind}"><div class="pp-card"><div class="pp-top"><div class="pp-brand">PingOne <span>Promote</span></div>'
+            f'{POC_TAG}</div>{steps}<div class="pp-body">{body}</div></div></div>')
+
+
+def button(form_id, value, label, ghost=False, extra=""):
+    return (f'<button type="submit" class="pp-btn{" ghost" if ghost else ""}"{extra} data-id="button" data-skcomponent="skbutton" '
+            f'data-skbuttontype="form-submit" data-skform="{form_id}" data-skbuttonvalue="{value}">{label}</button>')
+
+
+ROUTE = ('<div class="pp-route"><span class="pp-chip">{{global.flow.variables.sourceEnvName}}</span>&rarr;'
+         '<span class="pp-chip">{{global.flow.variables.targetEnvName}}</span></div>')
+
+
+def page_html(title, intro, pre_blocks, form_id, fields_html, buttons, step=None, route=False, grid=False, note=""):
+    pres = "".join(f'<div><h2>{h}</h2><pre>{v}</pre></div>' for h, v in pre_blocks)
+    if grid and pres:
+        pres = f'<div class="pp-grid">{pres}</div>'
+    btns = "".join(button(form_id, val, label, ghost="primary" not in cls) for val, label, cls in buttons)
+    form = f'<form id="{form_id}" data-id="{form_id}">{fields_html}' + (f'<div class="pp-actions">{btns}</div>' if btns else "") + "</form>"
+    return shell(step, f'<h1>{title}</h1><p class="pp-lead">{intro}</p>' + (ROUTE if route else "") + note + pres + form)
+
+
+def env_page(title, intro, hide_name, step):
+    """One tile per configured environment (ENV1..ENV4). Empty slots, and the
     already-chosen source on the target page, are hidden in the browser and
     refused again by resolve_env."""
-    btns = "".join(f'<button type="submit" class="btn btn-outline-primary me-2 mb-2" data-pp-env="1" data-id="button" '
-                   f'data-skcomponent="skbutton" data-skbuttontype="form-submit" data-skform="envForm" '
-                   f'data-skbuttonvalue="ENV{i}">{{{{global.flow.variables.env{i}Name}}}}</button>' for i in range(1, 5))
+    tiles = "".join(button("envForm", f"ENV{i}", f'<b>{{{{global.flow.variables.env{i}Name}}}}</b><small>Environment {i}</small>',
+                           extra=' data-pp-env="1"').replace('class="pp-btn"', 'class="pp-env"') for i in range(1, 5))
     script = ("<script>(function () { var hide = " + json.dumps(hide_name) + "; document.querySelectorAll('[data-pp-env]')"
-              ".forEach(function (b) { var t = b.textContent.trim(); if (!t || t === hide) { b.style.display = 'none'; } }); })();</script>")
-    return (f'<div class="container py-4" style="max-width: 900px"><h1 class="h3 mb-3">{title}</h1><p class="text-muted">{intro}</p>'
-            f'<form id="envForm" data-id="envForm">{btns}</form></div>' + script)
+              ".forEach(function (b) { var n = b.querySelector('b'); var t = n ? n.textContent.trim() : '';"
+              " if (!t || t === hide) { b.style.display = 'none'; } }); })();</script>")
+    return shell(step, f'<h1>{title}</h1><p class="pp-lead">{intro}</p><form id="envForm" data-id="envForm"><div class="pp-envs">{tiles}</div></form>') + script
+
+
+def wait_html(title, text, step):
+    return shell(step, f'<h1>{title}</h1><div class="pp-wait"><div class="pp-spin"></div><div>{text}<br>'
+                       '<small class="pp-lead">This page continues by itself.</small></div></div>'
+                       '<form id="waitForm" data-id="waitForm"><div class="pp-actions">'
+                       + button("waitForm", "CONTINUE", "Continue", ghost=True) + "</div></form>")
+
+
+def notice_html(title, text, kind):
+    """A final screen: kind 'error' (something failed) or 'message' (e.g. cancelled)."""
+    note_cls = "bad" if kind == "error" else ""
+    return shell(None, f'<h1>{title}</h1><div class="pp-note {note_cls}">{text}</div>'
+                       '<p class="pp-lead">Close this window, or launch the flow again to start over.</p>', kind=kind)
 
 
 def textarea(name, label, rows=3):
-    return (f'<div class="mb-3"><label class="form-label" for="{name}">{label}</label>'
-            f'<textarea class="form-control" id="{name}" name="{name}" rows="{rows}" data-id="{name}-input"></textarea></div>')
+    return (f'<label for="{name}">{label}</label>'
+            f'<textarea id="{name}" name="{name}" rows="{rows}" data-id="{name}-input"></textarea>')
 
 
 def text_input(name, label):
-    return (f'<div class="mb-3"><label class="form-label" for="{name}">{label}</label>'
-            f'<input class="form-control" type="text" id="{name}" name="{name}" autocomplete="off" data-id="{name}-input" /></div>')
+    return (f'<label for="{name}">{label}</label>'
+            f'<input type="text" id="{name}" name="{name}" autocomplete="off" data-id="{name}-input" />')
 
 
 SRC = Flow.fv("sourceEnvironmentId")
 TGT = Flow.fv("targetEnvironmentId")
-# The project comes from the chosen target (targetGitlabProjectId), so each
-# target's merge request goes to the pipeline that deploys to it.
-GITLAB_CFG = [("gitlabUrl", "string", Flow.fv("gitlabUrl")), ("gitlabProjectId", "string", Flow.fv("targetGitlabProjectId")),
-              ("gitlabEnvironment", "string", Flow.fv("gitlabEnvironment"))]
+# One promotion project for every environment; the GitLab environment named in
+# the merge request is the chosen target's (targetGitlabEnvironment).
+GITLAB_CFG = [("gitlabUrl", "string", Flow.fv("gitlabUrl")), ("gitlabProjectId", "string", Flow.fv("gitlabProjectId")),
+              ("gitlabEnvironment", "string", Flow.fv("targetGitlabEnvironment"))]
 
 
 def gitlab_headers(post=False):
@@ -447,7 +576,7 @@ def build_request_flow(signin):
     # First: check the admin-set flow variables, naming any placeholder or typo.
     settings_check = f.fn("Check settings", "check_settings",
                           [(k, "string", f.fv(k)) for k in ("apiOrigin", "authOrigin", "hostEnvironmentId", "gitlabUrl", "gitlabProjectId")] +
-                          [(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Name", "Id", "GitlabProjectId")],
+                          [(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Name", "Id", "GitlabEnvironment")] + [("gitlabEnvironment", "string", f.fv("gitlabEnvironment"))],
                           {"state": "string", "error": "string"})
     settings_ok = f.equals("Settings ok?", f.out(settings_check, "state"), "ok")
     f.link(settings_check, settings_ok)
@@ -461,10 +590,11 @@ def build_request_flow(signin):
     # Built back-to-front so each block knows its continuation.
     done = f.page("Merge request opened", page_html(
         "Promotion request submitted",
-        "Merge request: <a href=\"{{local.MR.payload.output.webUrlText}}\" target=\"_blank\" rel=\"noopener\">"
-        "{{local.MR.payload.output.webUrlText}}</a>. Nothing has changed in PingOne. After the merge request is approved and merged, "
-        "the protected GitLab pipeline plans the promotion; deployment needs its own approval there.",
-        [], "doneForm", "", []), [])
+        "Nothing has changed in PingOne yet. After the merge request is approved and merged, the GitLab pipeline plans the "
+        "promotion; deployment needs its own approval there.",
+        [], "doneForm", "", [], step=4, route=True,
+        note='<div class="pp-note ok">Merge request opened: <a href="{{local.MR.payload.output.webUrlText}}" target="_blank" '
+             'rel="noopener">{{local.MR.payload.output.webUrlText}}</a></div>'), [])
     mr_ok_fn = f.fn("Merge request opened?", "gitlab_mr", GITLAB_CFG + [
         ("statusCode", "number", ("node", "local.MRPOST.payload.output.rawResponse.statusCode", "statusCode")),
         ("body", "object", ("node", "local.MRPOST.payload.output.rawResponse.body", "body"))],
@@ -528,7 +658,8 @@ def build_request_flow(signin):
         "file in the merge request.",
         [("Promotion variables: {{local.VARS.payload.output.summaryText}}", "{{local.VARS.payload.output.reportText}}"),
          ("requests/{{local.BUILD.payload.output.requestId}}/request.json", "{{local.BUILD.payload.output.previewText}}")],
-        "previewForm", "", [("SUBMIT", "Submit to GitLab", "btn-primary"), ("CANCEL", "Cancel", "btn-outline-secondary")]), ["buttonValue"])
+        "previewForm", "", [("SUBMIT", "Submit to GitLab", "btn-primary"), ("CANCEL", "Cancel", "btn-outline-secondary")],
+        step=3, route=True), ["buttonValue"])
     f.link(preview, submit_go)
     build = f.fn("Build request.json", "build_request", GITLAB_CFG + [
         ("selectedRaw", "string", ("node", "local.SELECT.payload.output.selectedRaw", "selectedRaw")),
@@ -568,7 +699,7 @@ def build_request_flow(signin):
                                             ("declId", "string", [f.out(decl_col, "nextId")])])
     f.link(decl_col, decl_keep)
     decl_pause = f.equals("declarations: hand back to the browser?", f.out(decl_col, "pause"), "true")
-    decl_wait = f.wait_page("Checking promotion variables", "Reading promotion-variable declarations from PingOne.")
+    decl_wait = f.wait_page("Checking promotion variables", "Reading promotion-variable declarations from PingOne.", 3)
     f.link(decl_pause, decl_wait, false_target=decl_get)
     f.link(decl_wait, decl_get)
     f.three_way_from(decl_keep, decl_col, "more", src_defs, decl_pause, "declarations")
@@ -585,16 +716,17 @@ def build_request_flow(signin):
     select = f.page("Choose resources", page_html(
         "Request a PingOne promotion",
         ("Signed in as <strong>{{local.AUTHZ.payload.output.usernameText}}</strong>. " if signin else
-         "Proof of concept: sign-in is off, so anyone who can launch this flow can open a request. ") + "Source <strong>{{global.flow.variables.sourceEnvName}}</strong> "
-        "&rarr; target <strong>{{global.flow.variables.targetEnvName}}</strong>. This opens a GitLab merge request; nothing changes in "
-        "PingOne until the protected pipeline deploys it.",
+         "Sign-in is off for this proof of concept, so anyone who can launch the flow can open a request. ") +
+        "Pick the source resources to promote. This opens a GitLab merge request; nothing changes in PingOne until the "
+        "pipeline deploys it.",
         [("Source resources (type, ID, name)", "{{local.INVLIVE.payload.output.sourceListText}}"),
          ("Target resources (for mappings)", "{{local.INVLIVE.payload.output.targetListText}}")],
         "selectForm",
         textarea("selectedRaw", "Resource IDs to promote (one per line or comma-separated)", 4) +
         textarea("mappingsRaw", "Optional mappings, one <code>sourceId=targetId</code> per line", 2) +
         textarea("description", "Why is this change needed? (becomes the merge request title)", 3),
-        [("BUILD", "Build request", "btn-primary")]), ["selectedRaw", "mappingsRaw", "description", "buttonValue"])
+        [("BUILD", "Build request", "btn-primary")], step=2, route=True, grid=True),
+        ["selectedRaw", "mappingsRaw", "description", "buttonValue"])
     f.link(select, build)
     inv_live = f.inventories("Live inventories", False, "liveSrc", SRC, "liveTgt", TGT)
     inv_live_ok = f.equals("Live inventories ok?", f.out(inv_live, "state"), "ok")
@@ -603,27 +735,26 @@ def build_request_flow(signin):
     live_tgt = f.live_snapshot("liveTgt", None, TGT, inv_live)
     live_src = f.live_snapshot("liveSrc", None, SRC, live_tgt)
     # Choose source and target from the configured environments, then snapshot them.
-    env_inputs = ([(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Id", "Name", "GitlabProjectId")] +
-                  [("defaultGitlabProjectId", "string", f.fv("gitlabProjectId"))])
+    env_inputs = ([(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Id", "Name", "GitlabEnvironment")] +
+                  [("defaultGitlabEnvironment", "string", f.fv("gitlabEnvironment"))])
     tgt_res = f.fn("Target environment chosen", "resolve_env", [
         ("choice", "string", ("node", "local.TGTPAGE.payload.output.buttonValue", "buttonValue")),
-        ("excludeId", "string", f.fv("sourceEnvironmentId")), ("needProject", "string", "true")] + env_inputs,
-        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string", "gitlabProjectId": "string"})
+        ("excludeId", "string", f.fv("sourceEnvironmentId"))] + env_inputs,
+        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string", "gitlabEnvironment": "string"})
     tgt_save = f.save("Keep target environment", [("targetEnvironmentId", "string", [f.out(tgt_res, "environmentId")]),
                                                   ("targetEnvName", "string", [f.out(tgt_res, "nameText")]),
-                                                  ("targetGitlabProjectId", "string", [f.out(tgt_res, "gitlabProjectId")])])
+                                                  ("targetGitlabEnvironment", "string", [f.out(tgt_res, "gitlabEnvironment")])])
     tgt_ok = f.equals("Target valid?", f.out(tgt_res, "state"), "ok")
     f.link(tgt_res, tgt_ok)
     f.link(tgt_ok, tgt_save, false_target=f.fail("Invalid target environment", tgt_res))
     f.link(tgt_save, live_src)
     tgt_page = f.page("Choose target environment", env_page(
         "Choose the target environment", "Promote from <strong>{{global.flow.variables.sourceEnvName}}</strong> to:",
-        "{{global.flow.variables.sourceEnvName}}"), ["buttonValue"])
+        "{{global.flow.variables.sourceEnvName}}", 1), ["buttonValue"])
     f.link(tgt_page, tgt_res)
     src_res = f.fn("Source environment chosen", "resolve_env", [
-        ("choice", "string", ("node", "local.SRCPAGE.payload.output.buttonValue", "buttonValue")), ("excludeId", "string", ""),
-        ("needProject", "string", "false")] + env_inputs,
-        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string", "gitlabProjectId": "string"})
+        ("choice", "string", ("node", "local.SRCPAGE.payload.output.buttonValue", "buttonValue")), ("excludeId", "string", "")] + env_inputs,
+        {"state": "string", "error": "string", "environmentId": "string", "name": "string", "nameText": "string", "gitlabEnvironment": "string"})
     src_save = f.save("Keep source environment", [("sourceEnvironmentId", "string", [f.out(src_res, "environmentId")]),
                                                   ("sourceEnvName", "string", [f.out(src_res, "nameText")])])
     src_ok = f.equals("Source valid?", f.out(src_res, "state"), "ok")
@@ -631,7 +762,7 @@ def build_request_flow(signin):
     f.link(src_ok, src_save, false_target=f.fail("Invalid source environment", src_res))
     f.link(src_save, tgt_page)
     src_page = f.page("Choose source environment", env_page(
-        "Choose the source environment", "Promote configuration from:", ""), ["buttonValue"])
+        "Choose the source environment", "Which environment has the configuration you want to promote?", "", 0), ["buttonValue"])
     f.link(src_page, src_res)
     f.link(settings_ok, start, false_target=f.fail("Settings need attention", settings_check))
     if signin:
@@ -661,7 +792,7 @@ TF_SETTING = {
     "organizationId": "${var.organization_id}", "davinciAdminRoleId": "${var.davinci_admin_role_id}",
     "sourceRegion": "${local.region}", "targetRegion": "${local.region}",
     "gitlabUrl": "${var.gitlab_url}", "gitlabProjectId": "${var.gitlab_project_id}",
-    **{f"env{i}GitlabProjectId": "${try(var.environments[%d].gitlab_project_id, \"\")}" % (i - 1) for i in range(1, 5)},
+    **{f"env{i}GitlabEnvironment": "${try(var.environments[%d].gitlab_environment, \"\")}" % (i - 1) for i in range(1, 5)},
     "gitlabEnvironment": "${var.gitlab_environment}",
 }
 assert set(TF_SETTING) == set(VALUE_KEYS)
@@ -691,6 +822,7 @@ def terraform(flow_data):
              for e in flow_data["graphData"]["elements"]["edges"]}
     flow = {"environment_id": "${var.host_environment_id}", "name": flow_data["name"], "description": flow_data["description"],
             "color": flow_data["flowColor"],
+            "settings": {"log_level": FLOW_SETTINGS["logLevel"], "csp": FLOW_SETTINGS["csp"]},
             "graph_data": {"elements": {"nodes": nodes, "edges": edges}, "zooming_enabled": True, "user_zooming_enabled": True, "zoom": 1,
                            "min_zoom": 1e-50, "max_zoom": 1e50, "panning_enabled": True, "user_panning_enabled": True,
                            "pan": {"x": 0, "y": 0}, "box_selection_enabled": True, "renderer": '{"name":"null"}'}}

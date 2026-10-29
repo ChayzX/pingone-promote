@@ -60,3 +60,7 @@ python3 -I test/gitlab_fixtures.py > "$work/gl.json" && node test/xgitlab.js "$w
 "$work/xreq" "$work/gl.json" "$work/glj.json" gitlab
 # What the flow committed, through the pipeline's selector and validator
 bash test/pipeline_sim.sh "$work/pingone-runner" "$go/examples/gitlab/select-request.sh" "$work/saved"
+# One promotion project: the generated pipeline is current and routes each request to one environment
+python3 -I gitlab/make_pipeline.py ../gitlab/.gitlab-ci.yml dev test production | cmp -s - gitlab/example.gitlab-ci.yml ||
+  { echo "gitlab/example.gitlab-ci.yml is stale: run python3 gitlab/make_pipeline.py ../gitlab/.gitlab-ci.yml dev test production > gitlab/example.gitlab-ci.yml"; exit 1; }
+bash test/one_project_sim.sh "$go/examples/gitlab/select-request.sh" gitlab/for-this-environment.sh "$work/saved"

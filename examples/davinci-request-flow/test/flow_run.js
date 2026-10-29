@@ -92,7 +92,10 @@ async function runFlow(world, form, opts) {
         for (const h of p.headers.value) { headers[h.key] = r.slate(h.value); }
         const body = p.httpBody && p.httpBody.value === 'raw' ? r.template(p.raw.value) : undefined;
         const res = world.http(p.httpMethod.value, r.slate(p.url.value), headers, body);
-        r.outputs[id] = { rawResponse: { statusCode: res.status, body: res.body } };
+        // DaVinci treats a non-2xx response as a failed step (its false branch).
+        // world.dropFailedOutput models a failed step that keeps no output.
+        result = res.status < 400;
+        r.outputs[id] = !result && world.dropFailedOutput ? {} : { rawResponse: { statusCode: res.status, body: res.body } };
         break;
       }
       case 'customFunction': {
@@ -124,6 +127,12 @@ async function runFlow(world, form, opts) {
         const html = r.template(p.customHTML.value);
         calls = 0;
         pages.push({ title, html });
+        // Final screens (styled error or notice) end the run like DaVinci's error and message nodes did.
+        const kind = /data-pp-kind="(error|message)"/.exec(html);
+        if (kind) {
+          const text = html.replace(/<style>[\s\S]*?<\/style>/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          return { end: kind[1], title, text, html, pages, run: r };
+        }
         const fields = p.formFieldsList.value.map((f) => f.propertyName);
         // Self-continuing "working" pages submit themselves in the browser.
         const answer = html.indexOf('<!-- pp-auto-continue -->') >= 0 ? { buttonValue: 'CONTINUE' } : form[title];
@@ -192,7 +201,7 @@ function world(overrides) {
     const p = url.slice(O.length).split('?')[0];
     const q = url.indexOf('?') >= 0 ? url.split('?')[1] : '';
     let m;
-    if ((m = /^\/v1\/environments\/([\w-]+)$/.exec(p)) && method === 'GET') { return json(200, { id: m[1], organization: { id: st.envs[m[1]].org } }); }
+    if ((m = /^\/v1\/environments\/([\w-]+)$/.exec(p)) && method === 'GET') { if (st.denyEnv === m[1]) { return json(403, { code: 'ACCESS_FAILED', message: 'denied' }); } return json(200, { id: m[1], organization: { id: st.envs[m[1]].org } }); }
     if ((m = /^\/v1\/environments\/([\w-]+)\/snapshots$/.exec(p)) && method === 'POST') {
       assert.strictEqual(q, 'expand=all');
       assert.strictEqual(JSON.parse(body).baseResourceURL, `${O}/v1/environments/${m[1]}`);
@@ -255,6 +264,7 @@ function world(overrides) {
       return json(200, { sub: st.user, preferred_username: st.user + '@example.com' });
     }
     if (url === `${A}/${HOST}/as/token`) {
+      if (st.tokenStatus) { return json(st.tokenStatus, { code: 'INVALID_REQUEST' }); }
       assert.strictEqual(headers.Authorization, 'Basic d29ya2VyOnNlY3JldA==');
       assert.strictEqual(body, 'grant_type=client_credentials');
       return json(200, { access_token: 'worker-token' });
@@ -319,7 +329,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const preview = r.pages.find((pg) => pg.title === 'Review request').html;
     ok(preview.indexOf('requests/' + id + '/request.json') >= 0 && preview.indexOf('&quot;version&quot;: 1') >= 0 && preview.indexOf('"version"') < 0 && preview.indexOf('s3cr3t') < 0, 'preview shows the escaped, redacted file' + mode);
     const sel = r.pages.find((pg) => pg.title === 'Choose resources').html;
-    ok(sel.indexOf('a1') >= 0 && sel.indexOf('s3cr3t') < 0 && (SIGNIN ? sel.indexOf('alice@example.com') >= 0 : sel.indexOf('sign-in is off') >= 0), 'selection page lists IDs and who (or that sign-in is off), never configuration' + mode);
+    ok(sel.indexOf('a1') >= 0 && sel.indexOf('s3cr3t') < 0 && (SIGNIN ? sel.indexOf('alice@example.com') >= 0 : sel.indexOf('Sign-in is off') >= 0), 'selection page lists IDs and who (or that sign-in is off), never configuration' + mode);
     ok(w.log.indexOf('GET ' + G + '/api/v4/projects/42') < w.log.indexOf('POST ' + G + '/api/v4/projects/42/repository/branches'), 'project verified before any write' + mode);
     if (SAVE_DIR) { fs.writeFileSync(path.join(SAVE_DIR, 'flow-' + (saved++) + '.json'), content); }
   }
@@ -415,10 +425,10 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const w = world();
     const r = await runFlow(w, form('a2'));
     const pick = r.pages.find((pg) => pg.title === 'Choose source environment').html;
-    ok(pick.indexOf('>Dev</button>') > 0 && pick.indexOf('>Prod</button>') > 0 && (pick.match(/data-pp-env="1"/g) || []).length === 4, 'source page offers one button per slot, labelled by name');
+    ok(pick.indexOf('<b>Dev</b>') > 0 && pick.indexOf('<b>Prod</b>') > 0 && (pick.match(/data-pp-env="1"/g) || []).length === 4, 'source page offers one button per slot, labelled by name');
     const tpage = r.pages.find((pg) => pg.title === 'Choose target environment').html;
     ok(tpage.indexOf('Promote from <strong>Dev</strong>') > 0 && tpage.indexOf('var hide = "Dev"') > 0, 'target page names the source and hides it');
-    ok(r.pages.find((pg) => pg.title === 'Choose resources').html.indexOf('Source <strong>Dev</strong> &rarr; target <strong>Prod</strong>') > 0, 'resource page shows the chosen pair');
+    ok(r.pages.find((pg) => pg.title === 'Choose resources').html.indexOf('<span class="pp-chip">Dev</span>&rarr;<span class="pp-chip">Prod</span>') > 0, 'resource page shows the chosen pair');
     ok(JSON.parse(w.gitlab.commits[0].actions[0].content).source.id === SRC, 'request uses the chosen source');
   }
   {
@@ -427,26 +437,22 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const req = JSON.parse(w.gitlab.commits[0].actions[0].content);
     ok(r.title === 'Merge request opened' && req.source.id === TGT && req.target.id === SRC, 'either direction: Prod to Dev');
   }
-  // Each target can have its own GitLab project (the pipeline that deploys to it).
+  // One promotion project; each target can name its GitLab environment.
   {
-    const w = world({ settings: { env2GitlabProjectId: '77' }, gitlab: (g) => { g.projectId = 77; g.project.id = 77; } });
+    const w = world({ settings: { env2GitlabEnvironment: 'prod' } });
     const r = await runFlow(w, form('a2'));
-    ok(r.title === 'Merge request opened' && w.log.some((l) => l.indexOf('/api/v4/projects/77/merge_requests') > 0) &&
-      w.log.every((l) => l.indexOf('/projects/42') < 0), 'target Prod uses its own project 77: ' + (r.text || ''));
+    const mr = w.gitlab.mrs[0];
+    ok(r.title === 'Merge request opened' && w.log.some((l) => l.indexOf('/api/v4/projects/42/merge_requests') > 0) &&
+      mr.description.indexOf('GitLab environment: `prod`') > 0, 'target Prod names its GitLab environment, same project: ' + (r.text || ''));
   }
   {
-    const w = world();
-    await runFlow(w, form('a2'));
-    ok(w.log.some((l) => l.indexOf('/api/v4/projects/42/merge_requests') > 0), 'a target without its own project uses gitlabProjectId');
+    const w = world({ settings: { env2GitlabEnvironment: 'prod' } });
+    const r = await runFlow(w, form('tf1', '', 'reverse', 'SUBMIT', ['ENV2', 'ENV1']));
+    ok(r.title === 'Merge request opened' && w.gitlab.mrs[0].description.indexOf('GitLab environment: `production`') > 0,
+      'a target without its own GitLab environment uses gitlabEnvironment');
   }
-  await noGitLab('target without any project', world({ settings: { gitlabProjectId: '', env2GitlabProjectId: '77' } }),
-    form('tf1', '', 'x', 'SUBMIT', ['ENV2', 'ENV1']), 'No GitLab project is set up for Dev');
-  await noGitLab('non-numeric project for the target', world({ settings: { env2GitlabProjectId: 'abc' } }), form('a2'), 'env2GitlabProjectId must be a numeric GitLab project ID');
-  {
-    const w = world({ settings: { gitlabProjectId: '', env2GitlabProjectId: '42' } });
-    const r = await runFlow(w, form('a2'));
-    ok(r.title === 'Merge request opened', 'a source without a project is fine: only the target needs one');
-  }
+  await noGitLab('bad GitLab environment name', world({ settings: { env2GitlabEnvironment: 'prod env' } }), form('a2'), 'env2GitlabEnvironment must be a GitLab environment name');
+  await noGitLab('promotion project missing', world({ settings: { gitlabProjectId: '' } }), form('a2'), 'gitlabProjectId must be the numeric ID');
   await noGitLab('same environment twice', world(), form('a2', '', 'x', 'SUBMIT', ['ENV1', 'ENV1']), 'must be different');
   await noGitLab('empty slot chosen', world(), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not configured');
   await noGitLab('unsafe ID in a slot', world({ settings: { env3Name: 'Bad', env3Id: '../x' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'env3Id must be an environment ID');
@@ -503,6 +509,27 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   await noWrite('branch name mismatch', (g) => { g.branchInfo.name = 'other'; }, 'must be protected');
   await noWrite('project unreadable', (g) => { g.fail['GET '] = 401; }, 'HTTP 401');
 
+  // A failed API call ends on an error naming the step, never DaVinci's generic error page.
+  for (const drop of [false, true]) {
+    const sfx = drop ? ' (failed step keeps no output)' : '';
+    {
+      const w = world(); w.denyEnv = TGT; w.dropFailedOutput = drop;
+      const r = await runFlow(w, form('a1'));
+      ok(r.end === 'error' && r.text.indexOf('Target environment: read environment') >= 0 && r.text.indexOf('no role on that environment') >= 0 &&
+        w.log.every((l) => l.indexOf(TGT + '/snapshots') < 0), 'target environment 403 is named' + sfx + ': ' + (r.text || r.title));
+    }
+    {
+      const w = world(); w.tokenStatus = 400; w.dropFailedOutput = drop;
+      const r = await runFlow(w, form('a1'));
+      ok(r.end === 'error' && r.text.indexOf('Promotion worker token') >= 0 && r.text.indexOf('hostEnvironmentId') >= 0 && w.log.every((l) => l.indexOf('/v1/') < 0),
+        'token 400 is named' + sfx + ': ' + (r.text || r.title));
+    }
+    {
+      const w = world({ gitlab: (g) => { g.fail['POST /repository/branches'] = 400; } }); w.dropFailedOutput = drop;
+      const r = await runFlow(w, form('a1'));
+      ok(r.end === 'error' && r.text.indexOf('create promotion branch') >= 0 && w.gitlab.commits.length === 0, 'GitLab failure still stops at its step' + sfx);
+    }
+  }
   // Partial failures stop at the failed step.
   {
     const w = world({ gitlab: (g) => { g.fail['POST /repository/branches'] = 400; } });

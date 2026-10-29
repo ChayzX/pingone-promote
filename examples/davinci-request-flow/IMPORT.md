@@ -9,18 +9,18 @@ After importing, these are the only values the flow needs. Everything else is in
 | Where | Name | Required? | What to put | Example |
 | --- | --- | --- | --- | --- |
 | Company variable (secret) | `promoteWorkerBasicAuth` | Yes | `base64(clientId:clientSecret)` of the worker app ([how](#3-set-the-variables-and-settings)) | `YWJj…` |
-| Company variable (secret) | `promoteGitlabToken` | Yes | GitLab token, Developer + `api`, that can reach every promotion project | `glpat-…` |
+| Company variable (secret) | `promoteGitlabToken` | Yes | GitLab project access token on the promotion project, Developer + `api` | `glpat-…` |
 | Flow variable | `hostEnvironmentId` | Yes | Environment where the **worker app** lives (its token URL) | `9f1c…` |
 | Flow variable | `env1Name`, `env1Id` | Yes | First environment: button label and environment ID | `Dev`, `2b7e…` |
 | Flow variable | `env2Name`, `env2Id` | Yes | Second environment | `Prod`, `c41a…` |
 | Flow variable | `env3Name`/`env3Id`, `env4Name`/`env4Id` | No | Third and fourth; leave empty to hide the button | `Test`, `Stage` |
-| Flow variable | `gitlabProjectId` | Yes, unless every target has its own | Default GitLab project for targets without their own | `82627171` |
-| Flow variable | `env1GitlabProjectId` … `env4GitlabProjectId` | Only for targets with their own project | Project whose pipeline deploys **to** that environment | `82627172` |
+| Flow variable | `gitlabProjectId` | Yes | Numeric ID of the one promotion project | `12345678` |
+| Flow variable | `env1GitlabEnvironment` … `env4GitlabEnvironment` | No | GitLab environment that deploys **to** that environment; empty = `gitlabEnvironment` | `dev`, `test` |
 | Flow variable | `gitlabUrl`, `gitlabEnvironment` | Preset | `https://gitlab.com`, `production` | |
 | Flow variable | `apiOrigin`, `authOrigin`, `sourceRegion`, `targetRegion` | Preset | North America: `https://api.pingone.com`, `https://auth.pingone.com`, `us`, `us` | |
 | Each node | Connections | Yes | HTTP, Functions, Error Message and Variables connections ([table](#2-import)) | |
 | PingOne | Worker app roles | Yes | **Promotion Admin** on every environment in `env1Id` … `env4Id` | |
-| GitLab | Each target's project pipeline | Yes | `PINGONE_TARGET_ENVIRONMENT_ID` = that environment ([details](RUNBOOK.md#several-target-environments)) | |
+| GitLab | One environment per target in the promotion project | Yes | Scoped `PINGONE_TARGET_ENVIRONMENT_ID` per GitLab environment, pipeline from `gitlab/make_pipeline.py` ([details](RUNBOOK.md#one-project-several-environments)) | |
 
 ## Updating from an earlier version
 
@@ -28,10 +28,12 @@ If you imported a previous file, this is what's different:
 
 1. **Re-import** the new file (and delete the old flow). Importing resets flow variables to placeholders, so set the flow variables in the checklist again. The two **company** secrets carry over; don't touch them.
 2. **`sourceEnvironmentId` and `targetEnvironmentId` are no longer settings.** The requester picks them at run time from the `envN…` slots. Put your environments in `env1Name`/`env1Id` … `env4Name`/`env4Id` instead.
-3. **New, optional:** `env1GitlabProjectId` … `env4GitlabProjectId`, the project that deploys to each target. Leave them empty to keep using `gitlabProjectId` for everything.
-4. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
-5. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
-6. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
+3. **One GitLab project.** `env1GitlabProjectId` … `env4GitlabProjectId` are gone; every request goes to `gitlabProjectId`. New and optional: `env1GitlabEnvironment` … `env4GitlabEnvironment`, the GitLab environment in that project that deploys to each target.
+4. **Debug logging is on** (flow settings, log level Debug), so Analytics shows every step's inputs and outputs. Debug logs can include tokens and configuration, so set it back to Info after the proof of concept.
+5. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page.
+6. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
+7. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
+8. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
 
 ## 1. Before importing
 
@@ -69,15 +71,15 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 | --- | --- |
 | `hostEnvironmentId` | Environment holding the worker app (used for its token URL) |
 | `env1Name` / `env1Id` … `env4Name` / `env4Id` | Up to four environments. The requester picks source and target from these as buttons labelled with the names. Leave a pair empty to hide that slot. |
-| `env1GitlabProjectId` … `env4GitlabProjectId` | Optional: the GitLab project whose pipeline deploys to that environment. Empty = `gitlabProjectId`. |
+| `env1GitlabEnvironment` … `env4GitlabEnvironment` | Optional: the GitLab environment (in the promotion project) that deploys to that environment, named in the merge request. Empty = `gitlabEnvironment`. |
 | `gitlabUrl` | `https://gitlab.com`, already set |
-| `gitlabProjectId` | Default project, for targets without their own |
+| `gitlabProjectId` | The promotion project's numeric ID |
 | `gitlabEnvironment` | `production`, already set |
 | `apiOrigin` / `authOrigin` / `sourceRegion` / `targetRegion` | Preset for North America (`pingone.com`, `us`); change for other regions |
 
 `adminEnvironmentId`, `organizationId` and `davinciAdminRoleId` are only used when sign-in is on.
 
-> **Several targets: one GitLab project per target.** The pipeline deploys only to its trusted `PINGONE_TARGET_ENVIRONMENT_ID`, so set up one private promotion project per environment you deploy to, each with that environment as its target and its own approvals. Put each project ID in that environment's slot (`envNGitlabProjectId`, or `gitlab_project_id` in Terraform). The flow sends each request to the chosen target's project; a slot without one uses `gitlabProjectId`. See the runbook's [Several target environments](RUNBOOK.md#several-target-environments).
+> **One GitLab project for every environment.** All requests go to `gitlabProjectId`. In that project, each environment you deploy to is a GitLab environment (`dev`, `test`, `production` …) with its own scoped variables and approvals, and the pipeline from `gitlab/make_pipeline.py` runs each environment's jobs only for requests that target it. Name a target's GitLab environment in `envNGitlabEnvironment` (Terraform: `gitlab_environment` in `environments`); empty uses `gitlabEnvironment`. See the runbook's [One project, several environments](RUNBOOK.md#one-project-several-environments).
 
 ## 4. Deploy and launch
 

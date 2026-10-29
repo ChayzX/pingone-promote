@@ -60,6 +60,12 @@ for path in sys.argv[1:]:
             queue.extend(succ[i])
     if seen != set(nodes):
         problems.append(f"unreachable nodes: {sorted(set(nodes) - seen)[:5]}")
+    # A failed REST call must lead somewhere: otherwise DaVinci shows its generic error page.
+    for i, n in nodes.items():
+        if n.get("capabilityName") == "makeRestApiCall":
+            evs = [e for e in succ[i] if nodes[e]["nodeType"] == "EVAL"]
+            if len(evs) != 1 or not any(v.get("value") == "allTriggersFalse" for v in (nodes[evs[0]].get("properties") or {}).values()):
+                problems.append(f"{i} ({n['properties']['nodeTitle']['value']}) REST call has no failure branch")
 
     def ancestors(i):
         out, q = set(), list(pred[i])
@@ -80,7 +86,7 @@ for path in sys.argv[1:]:
     # Settings come with the import as flow variables the admin edits in DaVinci.
     preset = {"apiOrigin", "authOrigin", "adminEnvironmentId", "hostEnvironmentId",
               "env1Name", "env1Id", "env2Name", "env2Id", "env3Name", "env3Id", "env4Name", "env4Id", "organizationId",
-              "env1GitlabProjectId", "env2GitlabProjectId", "env3GitlabProjectId", "env4GitlabProjectId", "davinciAdminRoleId", "sourceRegion", "targetRegion", "gitlabUrl", "gitlabProjectId",
+              "env1GitlabEnvironment", "env2GitlabEnvironment", "env3GitlabEnvironment", "env4GitlabEnvironment", "davinciAdminRoleId", "sourceRegion", "targetRegion", "gitlabUrl", "gitlabProjectId",
               "gitlabEnvironment"}
     for i, n in nodes.items():
         blob = json.dumps(n.get("properties", {}))

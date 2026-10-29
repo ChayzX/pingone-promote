@@ -41,7 +41,7 @@ variable "environments" {
   type = list(object({
     name              = string
     id                = string
-    gitlab_project_id = optional(string, "") # project whose pipeline deploys here; empty = gitlab_project_id
+    gitlab_environment = optional(string, "") # GitLab environment that deploys here; empty = gitlab_environment
   }))
   validation {
     condition     = length(var.environments) >= 2 && length(var.environments) <= 4
@@ -72,12 +72,12 @@ variable "gitlab_url" {
 }
 
 variable "gitlab_project_id" {
-  description = "Default GitLab project (numeric ID) for environments without their own gitlab_project_id. Each project's pipeline must have that environment as PINGONE_TARGET_ENVIRONMENT_ID."
+  description = "The one private promotion project (numeric ID) whose pipeline deploys to every environment."
   type        = string
 }
 
 variable "gitlab_environment" {
-  description = "Protected GitLab deployment environment named in the merge request."
+  description = "GitLab environment for targets without their own gitlab_environment; named in the merge request."
   type        = string
   default     = "production"
 }
