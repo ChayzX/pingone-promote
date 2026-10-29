@@ -207,7 +207,7 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	for _, name := range names {
 		actions = append(actions, map[string]string{"action": "create", "file_path": "requests/" + id + "/" + name, "content": files[name]})
 	}
-	commit := map[string]any{"branch": branch, "start_branch": project.DefaultBranch, "commit_message": "Add promotion request " + id, "actions": actions}
+	commit := map[string]any{"branch": branch, "commit_message": "Add promotion request " + id, "actions": actions}
 	if err = c.Do(ctx, http.MethodPost, "projects/"+c.Config.ProjectID+"/repository/commits", commit, nil); err != nil {
 		return MergeRequest{}, fmt.Errorf("commit promotion request on branch %q: %w", branch, err)
 	}

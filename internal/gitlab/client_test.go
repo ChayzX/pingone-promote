@@ -116,6 +116,7 @@ func TestVerifyProjectRequiresPrivateProtectedDefaultBranch(t *testing.T) {
 
 func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 	var gotBranch, gotCommit, gotMR bool
+	branchExists := false
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/projects/42"):
@@ -129,14 +130,25 @@ func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 				t.Errorf("branch payload: %#v", b)
 			}
 			gotBranch = true
+			branchExists = true
 			w.WriteHeader(201)
 			_, _ = w.Write([]byte(`{"name":"promotion/req-1"}`))
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/repository/commits"):
 			var b map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&b)
 			gotCommit = true
-			if b["branch"] != "promotion/req-1" || b["start_branch"] != "main" {
+			if !branchExists {
+				t.Error("commit attempted before promotion branch was created")
+			}
+			if b["branch"] != "promotion/req-1" {
 				t.Errorf("commit refs: %#v", b)
+			}
+			if _, ok := b["start_branch"]; ok || b["force"] == true {
+				// GitLab's create-commit API treats start_branch/force as branch
+				// creation or replacement controls; this branch already exists.
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"message":"A branch called 'promotion/req-1' already exists"}`))
+				return
 			}
 			actions, _ := b["actions"].([]any)
 			if len(actions) != 1 {
@@ -176,6 +188,46 @@ func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 	}
 	if mr.IID != 9 || !gotBranch || !gotCommit || !gotMR {
 		t.Fatalf("result=%#v calls=%v/%v/%v", mr, gotBranch, gotCommit, gotMR)
+	}
+}
+
+func TestSubmitBranchCollisionStopsBeforeCommitOrMergeRequest(t *testing.T) {
+	var serverURL string
+	var gotCommit, gotMR bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/projects/42"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "visibility": "private", "archived": false, "default_branch": "main", "web_url": serverURL + "/gitlab/group/project"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/repository/branches/main"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/branches"):
+			// The request-specific branch already exists. GitLab rejects branch
+			// creation; the client must leave it untouched and stop here.
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"Branch already exists"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/commits"):
+			gotCommit = true
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			gotMR = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	serverURL = srv.URL
+	c, err := NewClient(testConfig(srv.URL+"/gitlab"), "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = srv.Client()
+	if _, err = c.Submit(context.Background(), "req-1", map[string]string{"request.json": "{}"}, "title", "desc"); err == nil {
+		t.Fatal("preexisting promotion branch was accepted")
+	}
+	if gotCommit || gotMR {
+		t.Fatalf("branch collision did not abort before later writes: commit=%v merge_request=%v", gotCommit, gotMR)
 	}
 }
 
