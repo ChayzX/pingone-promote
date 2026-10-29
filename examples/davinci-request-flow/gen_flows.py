@@ -488,7 +488,9 @@ class Flow:
 
 
 # DaVinci defaults as in a live export (inline scripts need unsafe-inline); logLevel 3 = debug.
-FLOW_SETTINGS = {"csp": "worker-src 'self' blob:; script-src 'self' https://cdn.jsdelivr.net https://code.jquery.com https://devsdk.singularkey.com http://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval';", "intermediateLoadingScreenCSS": "", "intermediateLoadingScreenHTML": "", "customTimeoutErrorScreenMessage": "", "customTimeoutErrorScreenHTML": "", "customTimeoutErrorScreenCSS": "", "logLevel": 3}
+FLOW_SETTINGS = {"csp": "worker-src 'self' blob:; script-src 'self' https://cdn.jsdelivr.net https://code.jquery.com https://devsdk.singularkey.com http://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval';", "intermediateLoadingScreenCSS": "", "intermediateLoadingScreenHTML": "", "customTimeoutErrorScreenMessage": "", "customTimeoutErrorScreenHTML": "", "customTimeoutErrorScreenCSS": "", "logLevel": 3,
+                 # Whole run (snapshots of two environments take minutes) and each backend call; defaults are 300 s and 15 s.
+                 "flowTimeoutInSeconds": 3600, "flowHttpTimeoutInSeconds": 120}
 
 
 STEP_LABEL = {"liveSrc": "Source environment", "liveTgt": "Target environment",
@@ -1234,7 +1236,9 @@ def terraform(flow_datas):
                  for e in flow_data["graphData"]["elements"]["edges"]}
         flow = {"environment_id": "${var.host_environment_id}", "name": flow_data["name"], "description": flow_data["description"],
                 "color": flow_data["flowColor"],
-                "settings": {"log_level": FLOW_SETTINGS["logLevel"], "csp": FLOW_SETTINGS["csp"]},
+                "settings": {"log_level": FLOW_SETTINGS["logLevel"], "csp": FLOW_SETTINGS["csp"],
+                             "flow_timeout_in_seconds": FLOW_SETTINGS["flowTimeoutInSeconds"],
+                             "flow_http_timeout_in_seconds": FLOW_SETTINGS["flowHttpTimeoutInSeconds"]},
                 "graph_data": {"elements": {"nodes": nodes, "edges": edges}, "zooming_enabled": True, "user_zooming_enabled": True, "zoom": 1,
                                "min_zoom": 1e-50, "max_zoom": 1e50, "panning_enabled": True, "user_panning_enabled": True,
                                "pan": {"x": 0, "y": 0}, "box_selection_enabled": True, "renderer": '{"name":"null"}'}}
