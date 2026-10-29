@@ -111,3 +111,27 @@ func TestInventoryUsesOriginalIDsAndPinnedVersion(t *testing.T) {
 		t.Fatalf("wrong inventory: %+v", inv)
 	}
 }
+
+// Live acceptance finding: the PingOne API gateway answers unknown routes with a
+// message that reflects a SHA-256 hash of the Authorization header. Runner errors
+// are printed to CI job logs, so credential-derived material must not be relayed.
+func TestGatewayAuthorizationReflectionIsNotRelayed(t *testing.T) {
+	const hash = "rz05vny4b9Gv0kuFUimjEYoQ0123456789abcdefXYZ="
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"message":"Invalid key=value pair (missing equal-sign) in Authorization header (hashed with SHA-256 and encoded with Base64): '` + hash + `'."}`))
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "token"}
+	err := c.Do(context.Background(), "GET", "/v1/environments/env/unknownRoute", "", nil, nil)
+	if err == nil {
+		t.Fatal("gateway rejection was accepted")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, hash) || strings.Contains(msg, "rz05") || strings.Contains(strings.ToLower(msg), "authorization header") {
+		t.Fatalf("credential-derived gateway text relayed: %q", msg)
+	}
+	if !strings.Contains(msg, "403") {
+		t.Fatalf("status lost: %q", msg)
+	}
+}

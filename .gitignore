@@ -11,3 +11,12 @@ records.json
 /.lock
 /pingone-promote
 /local-data/
+
+gitlab.json
+*.execute-intent
+/plan.json
+/plan.sha256
+/result.json
+/rollback.json
+/rollback.sha256
+/selected-request.txt

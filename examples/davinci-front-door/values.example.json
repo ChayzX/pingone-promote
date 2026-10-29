@@ -1,0 +1,12 @@
+{
+  "adminEnvironmentId": "<Administrators environment ID: where admin accounts and the OIDC app live>",
+  "hostEnvironmentId": "<environment that hosts this DaVinci flow and the read-only worker>",
+  "sourceEnvironmentId": "<environment to promote from>",
+  "targetEnvironmentId": "<protected production target in the GitLab pipeline>",
+  "organizationId": "<PingOne organization ID>",
+  "region": "us",
+  "davinciAdminRoleId": "",
+  "gitlabApiBase": "https://gitlab.com/api/v4",
+  "gitlabProjectId": "<numeric ID of the private promotion project>",
+  "gitlabDefaultBranch": "main"
+}

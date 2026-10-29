@@ -19,14 +19,15 @@ type inventoryPair struct {
 	TargetID string `json:"targetInventoryId"`
 }
 type PlanView struct {
-	ID          string           `json:"id"`
-	NativeID    string           `json:"nativeId"`
-	Kind        string           `json:"kind"`
-	Description string           `json:"description"`
-	Status      string           `json:"status"`
-	Errors      any              `json:"errors,omitempty"`
-	Review      promotion.Review `json:"review"`
-	CanDeploy   bool             `json:"canDeploy"`
+	ID             string           `json:"id"`
+	NativeID       string           `json:"nativeId"`
+	Kind           string           `json:"kind"`
+	Description    string           `json:"description"`
+	Status         string           `json:"status"`
+	Errors         any              `json:"errors,omitempty"`
+	Review         promotion.Review `json:"review"`
+	CanDeploy      bool             `json:"canDeploy"`
+	GitLabRequired bool             `json:"gitlabRequired"`
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -86,6 +87,9 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) error {
 	source, target, err := s.pair(input.inventoryPair)
 	if err != nil {
 		return err
+	}
+	if !s.localTargets[target.EnvironmentID] {
+		return problem(403, errors.New(gitlabOnlyMessage))
 	}
 	body, err := promotion.BuildRequest(source.Inventory, target.Inventory, input.Selected, input.Mappings, input.Description)
 	if err != nil {
@@ -258,10 +262,17 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if rec.Intent != "" && native.Status == "READY" {
 		v.Review.Issues = append(v.Review.Issues, "An execution or rollback request was already sent or its outcome is uncertain. Refresh status; this app will not automatically resend it.")
 	}
+	if !s.localAllowed(rec.Target) {
+		v.GitLabRequired = true
+		v.Review.Issues = append(v.Review.Issues, gitlabOnlyMessage)
+	}
 	v.CanDeploy = native.Status == "READY" && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
 	return v, nil
 }
 func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession) error {
+	if !s.localAllowed(ps.Record.Target) {
+		return problem(403, errors.New(gitlabOnlyMessage))
+	}
 	var input struct {
 		Digest  string `json:"digest"`
 		Confirm bool   `json:"confirm"`
@@ -314,6 +325,9 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession)
 	return nil
 }
 func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSession) error {
+	if !s.localAllowed(ps.Record.Target) {
+		return problem(403, errors.New(gitlabOnlyMessage))
+	}
 	var input struct {
 		Confirm bool `json:"confirm"`
 	}

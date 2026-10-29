@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 
+	"pingone-promote/internal/gitlab"
+	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
 	"pingone-promote/internal/store"
@@ -34,19 +36,24 @@ type planSession struct {
 }
 type clientFactory func(pingone.Profile, string) (*pingone.Client, error)
 type Server struct {
-	store         *store.Store
-	token, csrf   string
-	mu            sync.Mutex
-	inventories   map[string]*inventorySession
-	plans         map[string]*planSession
-	clients       map[string]*pingone.Client
-	clientFactory clientFactory
-	files         http.Handler
+	store                                  *store.Store
+	token, csrf                            string
+	mu                                     sync.Mutex
+	inventories                            map[string]*inventorySession
+	plans                                  map[string]*planSession
+	clients                                map[string]*pingone.Client
+	clientFactory                          clientFactory
+	files                                  http.Handler
+	localTargets                           map[string]bool
+	gitlabFactory                          func(gitlab.Config, string) (*gitlab.Client, error)
+	gitlabSessionToken, gitlabTokenBinding string
+	requests                               map[string]gitops.Request
+	submissionAttempts                     map[string]bool
 }
 
 func New(st *store.Store, token string) *Server {
 	root, _ := fs.Sub(assets, "web")
-	return &Server{store: st, token: token, csrf: RandomToken(), inventories: map[string]*inventorySession{}, plans: map[string]*planSession{}, clients: map[string]*pingone.Client{}, clientFactory: pingone.NewClient, files: http.FileServer(http.FS(root))}
+	return &Server{store: st, token: token, csrf: RandomToken(), inventories: map[string]*inventorySession{}, plans: map[string]*planSession{}, clients: map[string]*pingone.Client{}, clientFactory: pingone.NewClient, gitlabFactory: gitlab.NewClient, requests: map[string]gitops.Request{}, submissionAttempts: map[string]bool{}, localTargets: map[string]bool{}, files: http.FileServer(http.FS(root))}
 }
 func RandomToken() string {
 	var b [24]byte
@@ -156,9 +163,12 @@ func decodeBody(w http.ResponseWriter, r *http.Request, out any) error {
 }
 func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	path := r.URL.Path
+	if path == "/api/gitlab" || path == "/api/gitlab/submit" || path == "/api/requests/preview" {
+		return s.gitlabRoute(w, r)
+	}
 	switch {
 	case path == "/api/session" && r.Method == "GET":
-		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains})
+		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains, "localTargets": s.localTargetIDs()})
 		return nil
 	case path == "/api/profiles" && r.Method == "GET":
 		p, err := s.store.ListProfiles()

@@ -361,3 +361,7 @@ func (s *Store) GetRecord(id string) (Record, error) {
 	}
 	return Record{}, fmt.Errorf("record %q not found", id)
 }
+
+// Directory is the private application-data directory used by additional
+// metadata-only adapters. Credential values must not be written there.
+func (s *Store) Directory() string { return s.dir }

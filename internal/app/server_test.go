@@ -155,6 +155,7 @@ func setup(t *testing.T) *harness {
 	f.url = native.URL
 	t.Cleanup(native.Close)
 	app := New(st, "bootstrap-token")
+	app.localTargets = map[string]bool{"dst": true}
 	app.clientFactory = func(p pingone.Profile, secret string) (*pingone.Client, error) {
 		return &pingone.Client{BaseURL: native.URL, HTTP: native.Client(), AccessToken: "test-token", Profile: p}, nil
 	}
@@ -315,6 +316,7 @@ func TestRestartReconstructsPinnedScopeWithoutReplayingExecution(t *testing.T) {
 	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, nil, 200)
 	original := h.server.Config.Handler.(*Server)
 	restarted := New(original.store, "restarted-token")
+	restarted.localTargets = map[string]bool{"dst": true}
 	restarted.clientFactory = original.clientFactory
 	ts := httptest.NewServer(restarted)
 	defer ts.Close()

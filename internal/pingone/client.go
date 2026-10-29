@@ -148,6 +148,11 @@ func (c *Client) Do(ctx context.Context, method, path, contentType string, body,
 		if tok != "" {
 			message = strings.ReplaceAll(message, tok, "[redacted]")
 		}
+		// The API gateway answers unknown routes by reflecting a hash of the
+		// Authorization header. Never relay credential-derived text into logs.
+		if strings.Contains(strings.ToLower(message), "authorization") {
+			message = "request rejected by the PingOne API gateway (unknown route or unsupported method); details withheld because they reference request credentials"
+		}
 		if len(message) > 700 {
 			message = message[:700]
 		}
