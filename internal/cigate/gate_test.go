@@ -62,7 +62,7 @@ func TestLiveGateRequiresMatchingProtectedApprovedDeployment(t *testing.T) {
 					if scenario == "wrong job" {
 						id = 12
 					}
-					send(map[string]any{"id": id, "status": "running", "name": "deploy", "ref": "main", "source": "push", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}})
+					send(map[string]any{"id": id, "status": "running", "name": "deploy", "ref": "main", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main", "source": "push"}})
 				case "/api/v4/projects/7":
 					send(map[string]any{"id": 7, "visibility": "private", "default_branch": "main"})
 				case "/api/v4/projects/7/repository/branches/main":
@@ -130,15 +130,15 @@ func TestLiveGateRequiresMatchingProtectedApprovedDeployment(t *testing.T) {
 // configuration. The live Job API source must independently match it.
 func TestVerifyRequiresPipelineSourceBoundToGitLabJobAPI(t *testing.T) {
 	for _, tc := range []struct {
-		name, configuredSource, apiSource string
-		wantErr, omitAPISource            bool
+		name, configuredSource, pipelineSource, topLevelSource string
+		wantErr, omitPipelineSource                            bool
 	}{
-		{name: "push source", configuredSource: "push", apiSource: "push"},
-		{name: "manual web source", configuredSource: "web", apiSource: "web"},
-		{name: "spoofed push for API source", configuredSource: "push", apiSource: "api", wantErr: true},
-		{name: "spoofed web for trigger source", configuredSource: "web", apiSource: "trigger", wantErr: true},
-		{name: "source mismatch", configuredSource: "push", apiSource: "web", wantErr: true},
-		{name: "missing API source", configuredSource: "web", wantErr: true, omitAPISource: true},
+		{name: "nested push source without top-level source", configuredSource: "push", pipelineSource: "push"},
+		{name: "nested web source without top-level source", configuredSource: "web", pipelineSource: "web"},
+		{name: "nested trigger rejects top-level web", configuredSource: "web", pipelineSource: "trigger", topLevelSource: "web", wantErr: true},
+		{name: "missing nested source rejects top-level web", configuredSource: "web", topLevelSource: "web", omitPipelineSource: true, wantErr: true},
+		{name: "nested source mismatch", configuredSource: "push", pipelineSource: "web", wantErr: true},
+		{name: "nested api source rejected", configuredSource: "push", pipelineSource: "api", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sha := strings.Repeat("a", 40)
@@ -151,9 +151,13 @@ func TestVerifyRequiresPipelineSourceBoundToGitLabJobAPI(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/api/v4/job":
-					payload := map[string]any{"id": 11, "status": "running", "name": "deploy", "ref": "main", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}}
-					if !tc.omitAPISource {
-						payload["source"] = tc.apiSource
+					pipeline := map[string]any{"id": 9, "project_id": 7, "sha": sha, "ref": "main"}
+					if !tc.omitPipelineSource {
+						pipeline["source"] = tc.pipelineSource
+					}
+					payload := map[string]any{"id": 11, "status": "running", "name": "deploy", "ref": "main", "tag": false, "commit": map[string]string{"id": sha}, "pipeline": pipeline}
+					if tc.topLevelSource != "" {
+						payload["source"] = tc.topLevelSource
 					}
 					json.NewEncoder(w).Encode(payload)
 				case "/api/v4/projects/7":
@@ -215,7 +219,7 @@ func TestVerifyOriginalPlanRequiresBoundSuccessfulDefaultBranchPlanJob(t *testin
 				payload := map[string]any{
 					"id": 41, "name": name, "status": status, "ref": ref, "tag": tag,
 					"commit":   map[string]string{"id": commit},
-					"pipeline": map[string]any{"id": pipelineID, "project_id": pipelineProjectID, "sha": sha, "ref": pipelineRef},
+					"pipeline": map[string]any{"id": pipelineID, "project_id": pipelineProjectID, "sha": sha, "ref": pipelineRef, "source": "push"},
 				}
 				if scenario == "missing tag metadata" {
 					delete(payload, "tag")
