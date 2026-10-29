@@ -46,7 +46,7 @@ Artifacts contain redacted review data and metadata, not worker secrets or raw n
 
 ### Intents from the DaVinci front door
 
-A DaVinci front-door flow can submit an intent instead of a full request: a merge request that adds exactly one `intents/<intent-id>/intent.json`. An intent names the signed-in PingOne requester, the source and target environments, the selected resource IDs, any mappings and a description. It carries no configuration.
+A DaVinci front-door flow ([examples/davinci-front-door](../examples/davinci-front-door/README.md)) can submit an intent instead of a full request: a merge request that adds exactly one `intents/<intent-id>/intent.json`. An intent names the signed-in PingOne requester, the source and target environments, the selected resource IDs, any mappings and a description. It carries no configuration.
 
 - **Merge request pipelines** run `pingone-runner validate --intent`. That check is strict: it rejects unknown, duplicate or case-variant keys, and an ID that doesn't match its `intents/<id>/` folder.
 - **After merge**, the protected `plan_promotion` job runs `pingone-runner build-request`. It first proves it is the live protected job for the protected target, then takes fresh snapshots and writes `built-request.json` with the same redaction and fingerprints as a locally built request, reusing the intent's ID. Planning, approval and apply then proceed exactly as above.
