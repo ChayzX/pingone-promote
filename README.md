@@ -1,6 +1,6 @@
 # PingOne Promote
 
-> **DaVinci Request flow (this branch):** admins can request promotions from a DaVinci flow instead of this local app. See [examples/davinci-request-flow](examples/davinci-request-flow/README.md) and its [setup runbook](examples/davinci-request-flow/RUNBOOK.md).
+> **DaVinci Request flow (this branch):** admins can request promotions from a DaVinci flow instead of this local app. Import file: [examples/davinci-request-flow/export/pingone-promote-request.flow.json](examples/davinci-request-flow/export/pingone-promote-request.flow.json); steps: [IMPORT.md](examples/davinci-request-flow/IMPORT.md). Full details: [README](examples/davinci-request-flow/README.md) and [runbook](examples/davinci-request-flow/RUNBOOK.md).
 
 > Integration handoff: the GitLab-controlled workflow is on `feat/gitlab-production`. Start with [docs/HANDOFF.md](docs/HANDOFF.md). Local execution is denied by default; live GitLab/PingOne acceptance and a complete production-readiness review remain outstanding. The older `v0.1.0`/`main` build does not contain this new policy.
 

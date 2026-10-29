@@ -10,7 +10,7 @@
   "davinciAdminRoleId": "",
   "sourceRegion": "us",
   "targetRegion": "us",
-  "gitlabUrl": "https://gitlab.example.com",
+  "gitlabUrl": "https://gitlab.com",
   "gitlabProjectId": "<numeric ID of the private promotion-requests project>",
   "gitlabEnvironment": "production",
   "oidcConnectionId": "",

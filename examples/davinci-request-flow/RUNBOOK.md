@@ -4,6 +4,8 @@ The flow lets someone pick resources and open a GitLab merge request with the sa
 
 > **Proof of concept: sign-in is off.** The flow starts straight at the resource picker, with no Entra sign-in and no DaVinci Admin check, and the MR doesn't name the requester. Anyone who can launch the flow can open a merge request. Nothing deploys without the MR approval and the protected deployment approval in GitLab, but keep the flow policy unpublished or limited to a test audience until sign-in is back. To restore it, see [Turning sign-in back on](#turning-sign-in-back-on).
 
+> **Only importing the JSON?** [IMPORT.md](IMPORT.md) is the short version of Path B.
+
 **Time:** about 45 minutes. **People:** someone who can run your PingOne Terraform (or a PingOne org admin for the console path) and a GitLab Maintainer on the promotion project.
 
 There are two ways to do it. Use **Path A (Terraform)** unless you can't run Terraform against the tenant; **Path B (console)** gets the same result by hand.

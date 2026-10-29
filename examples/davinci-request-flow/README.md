@@ -84,7 +84,9 @@ Production PingOne write credentials stay in protected GitLab CI variables, as b
 
 ## Setup
 
-Follow **[RUNBOOK.md](RUNBOOK.md)**. It covers prerequisites, the GitLab token, setup with Terraform ([`terraform/`](terraform/), pingone provider 1.23+) or by hand in the console, the one console step both paths share, first-run checks, troubleshooting and rotation.
+**Just want to import the flow? Use [IMPORT.md](IMPORT.md)** and the file in [`export/`](export/pingone-promote-request.flow.json).
+
+For the full setup, follow **[RUNBOOK.md](RUNBOOK.md)**. It covers prerequisites, the GitLab token, setup with Terraform ([`terraform/`](terraform/), pingone provider 1.23+) or by hand in the console, the one console step both paths share, first-run checks, troubleshooting and rotation.
 
 ## What still needs a live check
 
