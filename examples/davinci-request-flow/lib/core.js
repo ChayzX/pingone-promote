@@ -260,6 +260,98 @@ function index(inv) {
   return m;
 }
 
+// ---------- slim snapshot items --------------------------------------------
+// What inventoryFromSnapshots and the picker need from one embedded snapshot,
+// without its configuration (names only). Large environments (dozens of
+// DaVinci flows) are tens of MB of configuration: the flow never holds it;
+// the pipeline's runner builds the request from fresh snapshots.
+function slimSnapshotItem(s) {
+  if (!isObject(s) || !isObject(s.configuration)) { return s; }
+  const conf = {};
+  if (typeof s.configuration.name === 'string') { conf.name = s.configuration.name; }
+  if (typeof s.configuration.displayName === 'string') { conf.displayName = s.configuration.displayName; }
+  const out = { resourceUrl: s.resourceUrl, resource: isObject(s.resource) ? { id: s.resource.id } : s.resource, configuration: conf };
+  if (s.status !== undefined) { out.status = s.status; }
+  if (Array.isArray(s.referencedResources)) { out.referencedResources = s.referencedResources.filter((d) => typeof d === 'string'); }
+  return out;
+}
+
+// ---------- promotion intent (internal/gitops/intent.go) ------------------
+// The DaVinci request commits intents/<id>/intent.json; the protected plan job
+// runs `pingone-runner build-request` to turn it into request.json.
+// Go's printable(): at most max UTF-8 bytes, no control characters except \n and \t.
+function goPrintable(s, max) {
+  if (utf8(s).length > max) { return false; }
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if ((c < 0x20 || (c >= 0x7f && c <= 0x9f)) && ch !== '\n' && ch !== '\t') { return false; }
+  }
+  return true;
+}
+// gitops.ValidateIntent, with the same messages.
+function validateIntent(i) {
+  if (i.version !== 1 || !HEX_ID.test(String(i.id))) { throw new Error('unsupported intent version or invalid intent identity'); }
+  const rb = i.requestedBy || {};
+  if (!SAFE_ID.test(String(rb.pingoneUserId)) || typeof rb.username !== 'string' || !goPrintable(rb.username, 256) || rb.username === '') {
+    throw new Error('intent requires the requesting PingOne user ID and username');
+  }
+  for (const env of [i.source, i.target]) {
+    if (!env || !SAFE_ID.test(String(env.id)) || !Object.prototype.hasOwnProperty.call(REGIONS, env.region)) {
+      throw new Error('intent requires safe source and target environment identities and regions');
+    }
+  }
+  if (i.source.id === i.target.id) { throw new Error('source and target must be distinct environments'); }
+  if (!Array.isArray(i.selected) || i.selected.length === 0 || i.selected.length > 10000) { throw new Error('intent must select between 1 and 10000 resources'); }
+  const seen = {};
+  for (const id of i.selected) {
+    if (!SAFE_ID.test(String(id)) || seen[id]) { throw new Error('invalid or duplicate selected resource identity'); }
+    seen[id] = true;
+  }
+  const targets = {};
+  for (const k of Object.keys(i.mappings || {})) {
+    const v = i.mappings[k];
+    if (!SAFE_ID.test(k) || !SAFE_ID.test(String(v)) || targets[v]) { throw new Error('invalid or conflicting resource mapping'); }
+    targets[v] = true;
+  }
+  if (typeof i.description !== 'string' || !goPrintable(i.description, 3000)) {
+    throw new Error('intent description is too long or contains control characters');
+  }
+}
+// Builds and validates an intent; json is what gets committed (2-space indent, trailing newline).
+function newIntent(id, requester, source, target, selected, mappings, description) {
+  const intent = { version: 1, id: id, requestedBy: { pingoneUserId: requester.userId, username: requester.username },
+    source: { id: source.id, region: source.region }, target: { id: target.id, region: target.region },
+    selected: selected.slice(), mappings: Object.assign({}, mappings), description: description };
+  validateIntent(intent);
+  return { intent: intent, json: JSON.stringify(intent, null, 2) + '\n' };
+}
+// GitLab payloads for an intent, in the style of submitBodies.
+function intentBodies(intent, intentJson, environment, names, extra) {
+  const id = intent.id;
+  const branch = 'promotion/' + id;
+  const title = truncateUtf8(intent.description !== '' ? intent.description.split('\n')[0] : 'Promote selected PingOne resources', 180);
+  const tick = (s) => String(s).replace(/[`\r\n]/g, '');
+  let description = 'Promotion intent `' + id + '`\n\nSource environment: ' + (names.source ? tick(names.source) + ' ' : '') + '`' + intent.source.id +
+    '` (' + intent.source.region + ')\nTarget environment: ' + (names.target ? tick(names.target) + ' ' : '') + '`' + intent.target.id + '` (' +
+    intent.target.region + ')\nSelected resources: ' + intent.selected.length + '\nGitLab environment: `' + environment + '`\nRequested by: `' +
+    tick(intent.requestedBy.username) + '` (PingOne user `' + intent.requestedBy.pingoneUserId + '`)\n\n' +
+    'This merge request adds an intent, not configuration. After it is merged, the protected plan job runs `pingone-runner build-request` ' +
+    'to build the redacted, fingerprinted request from fresh snapshots, then plans it for review. Deployment and rollback run only in ' +
+    'protected GitLab jobs.\n\n### Selected resources\n\n' +
+    intent.selected.map((s) => '- `' + s + '`' + (intent.mappings[s] ? ' → `' + intent.mappings[s] + '`' : '')).join('\n');
+  if (extra) { description += String(extra); }
+  return {
+    branch: branch, title: title, description: description,
+    branchBody: (defaultBranch) => goJSON({ branch: branch, ref: defaultBranch }, '', 0),
+    commitBody: (defaultBranch) => goJSON({
+      actions: [{ action: 'create', content: intentJson, file_path: 'intents/' + id + '/intent.json' }],
+      branch: branch, commit_message: 'Add promotion intent ' + id, start_branch: defaultBranch
+    }, '', 0),
+    mrBody: (defaultBranch) => goJSON({ description: description, remove_source_branch: true, source_branch: branch, squash: false,
+      target_branch: defaultBranch, title: title }, '', 0)
+  };
+}
+
 // ---------- mapping suggestions (internal/app/workflow.go suggestMappings) --
 // Saved PingOne promotion mappings first (same type, each destination used
 // once), then a unique same-type match by trimmed, case-insensitive name.
@@ -753,5 +845,5 @@ function escapeHtml(s) {
 const core = {
   rfc3339Nano, gitlabConfig, sameGitLabLocation, gitlabStatus, checkProject, checkDefaultBranch, submitBodies, checkMergeRequest,
   SAFE_ID, apiURL, encodeRequest, goJSON, goFingerprint, newRequest, validateRequest, truncateUtf8, utf8Compare, HEX_ID, canonical, parseBody, sha256, fingerprint, parseURL, redact, inventoryFromSnapshots, nextPageURL,
-  pagesComplete, buildRequest, suggestMappings, escapeHtml, isUnset, randomHexId, sensitivePaths, variableName, variablesReport
+  pagesComplete, buildRequest, suggestMappings, escapeHtml, isUnset, slimSnapshotItem, validateIntent, newIntent, intentBodies, goPrintable, randomHexId, sensitivePaths, variableName, variablesReport
 };

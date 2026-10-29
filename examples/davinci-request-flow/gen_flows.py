@@ -339,7 +339,7 @@ class Flow:
     def fail(self, title, src_fn):
         return self.error(title, [title + ": ", self.out(src_fn, "error")])
 
-    def pages(self, prefix, after, first_url, key, cont, soft=False):
+    def pages(self, prefix, after, first_url, key, cont, soft=False, slim=False):
         """Collect every page of a collection into flow variable <prefix>Pages, then go to cont.
         soft=True: a failed read records <prefix>Error and still continues (advisory data)."""
         init_vars = [(f"{prefix}Pages", "object", "[]"), (f"{prefix}Seen", "object", "[]"),
@@ -352,7 +352,7 @@ class Flow:
         get = self.rest(f"{label(prefix)}: read page", "GET", [self.fv(f"{prefix}Url")], self.bearer())
         self.link(init, get)
         col = self.fn(f"{label(prefix)}: collect page", "page_collect", [
-            ("collectionKey", "string", key), ("pagesSoFar", "object", self.fv(f"{prefix}Pages")),
+            ("collectionKey", "string", key), ("slim", "string", "true" if slim else "false"), ("pagesSoFar", "object", self.fv(f"{prefix}Pages")),
             ("seenUrls", "object", self.fv(f"{prefix}Seen")), ("currentUrl", "string", self.fv(f"{prefix}Url")),
             ("firstUrl", "string", self.fv(f"{prefix}First")), ("apiOrigin", "string", self.s("apiOrigin")),
             ("statusCode", "number", self.out(get, "rawResponse.statusCode")), ("body", "object", self.out(get, "rawResponse.body")),
@@ -404,7 +404,7 @@ class Flow:
         poll_inputs = lambda src: [("environmentId", "string", env), ("attempts", "number", self.fv(f"{prefix}Attempts")),
                                    ("body", "object", self.out(src, "rawResponse.body")), ("statusCode", "number", self.out(src, "rawResponse.statusCode")),
                                    ("apiOrigin", "string", self.s("apiOrigin"))]
-        outputs = {"state": "string", "error": "string", "snapshotId": "string", "attempts": "number", "versionUrl": "string"}
+        outputs = {"state": "string", "error": "string", "snapshotId": "string", "attempts": "number", "versionUrl": "string", "record": "object"}
         init = self.save(f"{label(prefix)}: reset poll counter", [(f"{prefix}Attempts", "number", "0")])
         self.link(post, init)
         p1 = self.fn(f"{label(prefix)}: snapshot ready?", "snapshot_poll", poll_inputs(post), outputs)
@@ -412,15 +412,16 @@ class Flow:
         k1 = self.save(f"{label(prefix)}: keep snapshot", [(f"{prefix}Attempts", "number", [self.out(p1, "attempts")]),
                                                     (f"{prefix}SnapUrl", "string", [self.out(p1, "versionUrl")]),
                                                     (f"{prefix}SnapId", "string", [self.out(p1, "snapshotId")]),
-                                                    (f"{prefix}Snap", "object", [self.out(post, "rawResponse.body")])])
+                                                    (f"{prefix}Snap", "object", [self.out(p1, "record")])])
         self.link(p1, k1)
         get = self.rest(f"{label(prefix)}: snapshot status", "GET", [self.fv(f"{prefix}SnapUrl")], self.bearer())
         p2 = self.fn(f"{label(prefix)}: snapshot ready? (poll)", "snapshot_poll", poll_inputs(get), outputs)
         self.link(get, p2)
         k2 = self.save(f"{label(prefix)}: keep snapshot (poll)", [(f"{prefix}Attempts", "number", [self.out(p2, "attempts")]),
-                                                           (f"{prefix}Snap", "object", [self.out(get, "rawResponse.body")])])
+                                                           (f"{prefix}Snap", "object", [self.out(p2, "record")])])
         self.link(p2, k2)
-        paging = self.pages(prefix, None, [self.fv(f"{prefix}SnapUrl"), "/embeddedSnapshots"], "referencedResources", cont)
+        # slim: the flow keeps names, IDs, types and dependencies only; the runner builds the request from fresh snapshots.
+        paging = self.pages(prefix, None, [self.fv(f"{prefix}SnapUrl"), "/embeddedSnapshots"], "referencedResources", cont, slim=True)
         # pages() linked init from `after`=None: wire both poll branches to the paging start.
         # Each status check that isn't COMPLETE waits on a self-continuing page,
         # which also spaces the polls out.
@@ -875,6 +876,8 @@ def gitlab_headers(post=False):
 
 
 P = Flow.param
+SIGNIN_OFF_USER_ID = "sign-in-off"
+SIGNIN_OFF_USERNAME = "Sign-in off (proof of concept, requester not verified)"
 FLOW_IDS = {"main": "f0d00a7e00000000000000000000aa01", "envs": "f0d00a7e00000000000000000000aa02",
             "snap": "f0d00a7e00000000000000000000aa03", "request": "f0d00a7e00000000000000000000aa04",
             "submit": "f0d00a7e00000000000000000000aa05"}
@@ -937,105 +940,62 @@ def build_snapshot_flow():
     return f
 
 
-REQ_INPUTS = [("apiOrigin", "string"), ("accessToken", "string"),
-              ("sourceEnvironmentId", "string"), ("targetEnvironmentId", "string"),
+REQ_INPUTS = [("sourceEnvironmentId", "string"), ("targetEnvironmentId", "string"),
               ("sourceEnvName", "string"), ("targetEnvName", "string"),
-              ("sourceInventory", "object"), ("targetInventory", "object"),
               ("sourceListText", "string"), ("targetListText", "string"), ("pickerData", "string"),
+              ("sourceInventory", "object"), ("targetInventory", "object"),
               ("sourceRegion", "string"), ("targetRegion", "string"),
               ("gitlabUrl", "string"), ("gitlabProjectId", "string"), ("gitlabEnvironment", "string"),
-              ("userId", "string"), ("usernameText", "string")]
+              ("requesterId", "string"), ("requesterName", "string"), ("usernameText", "string")]
 
 
 def build_request_subflow(signin):
-    """Subflow 3: choose resources, build request.json, check promotion variables, review. Returns on Submit."""
+    """Subflow 3: choose resources, build the promotion intent, review. Returns on Submit.
+    No configuration reaches this flow: the runner builds request.json from fresh snapshots after the merge."""
     f = Flow("PingOne Promote - 3 Choose resources and review", FLOW_IDS["request"],
-             "Subflow of PingOne Promote - Request: the requester picks resources; the flow builds request.json exactly as the "
-             "Go app does, checks promotion variables and shows the review. Returns only when the requester submits.",
+             "Subflow of PingOne Promote - Request: the requester picks resources and destination mappings; the flow builds "
+             "intents/<id>/intent.json (validated with the runner's rules) and shows it for review. Returns only on Submit.",
              letter="c", inputs=REQ_INPUTS)
-    src, tgt = P("sourceEnvironmentId"), P("targetEnvironmentId")
     select = f.page("Choose resources", picker_html(signin), ["selectedRaw", "mappingsRaw", "description", "buttonValue"],
                     script=PICKER_SCRIPT)
-    build = f.fn("Build request.json", "build_request", gitlab_cfg(f) + [
+    build = f.fn("Build the promotion intent", "build_intent", gitlab_cfg(f) + [
         ("selectedRaw", "string", f.out(select, "selectedRaw")), ("mappingsRaw", "string", f.out(select, "mappingsRaw")),
         ("description", "string", f.out(select, "description")),
-        ("source", "object", P("sourceInventory")), ("target", "object", P("targetInventory")),
+        ("sourceEnvironmentId", "string", P("sourceEnvironmentId")), ("targetEnvironmentId", "string", P("targetEnvironmentId")),
         ("sourceRegion", "string", P("sourceRegion")), ("targetRegion", "string", P("targetRegion")),
-        ("userId", "string", P("userId") if signin else "")],
-        {"state": "string", "error": "string", "requestId": "string", "requestJson": "string", "gitlabApi": "string",
+        ("requesterId", "string", P("requesterId")), ("requesterName", "string", P("requesterName")),
+        ("sourceInventory", "object", P("sourceInventory")), ("targetInventory", "object", P("targetInventory"))],
+        {"state": "string", "error": "string", "intentId": "string", "intentJson": "string", "gitlabApi": "string",
          "previewText": "string", "summaryText": "string"})
     f.link(select, build)
-    build_ok = f.equals("Request valid?", f.out(build, "state"), "ok")
+    build_ok = f.equals("Intent valid?", f.out(build, "state"), "ok")
     f.link(build, build_ok)
-    vstart = f.fn("Resources to check for promotion variables", "vars_start", [
-        ("requestJson", "string", f.out(build, "requestJson"))],
-        {"state": "string", "error": "string", "ids": "array", "firstId": "string"})
-    f.link(build_ok, vstart, false_target=f.fail("Invalid request", build))
-    vstart_ok = f.equals("Selection readable?", f.out(vstart, "state"), "ok")
-    f.link(vstart, vstart_ok)
-    decl_init = f.save("Start declarations", [("declFound", "object", "[]"), ("declIdx", "number", "0"),
-                                              ("declId", "string", [f.out(vstart, "firstId")])])
-    f.link(vstart_ok, decl_init, false_target=f.fail("Invalid request", vstart))
-    # Built back-to-front from here so each block knows its continuation.
-    submit_go_title = "Submit pressed?"
     preview = f.page("Review request", page_html(
         "Review the promotion request",
-        "{{local.BUILD.payload.output.summaryText}} Secret values are redacted. Check the configuration below; reviewers see the same "
-        "file in the merge request.",
-        [("Promotion variables: {{local.VARS.payload.output.summaryText}}", "{{local.VARS.payload.output.reportText}}"),
-         ("requests/{{local.BUILD.payload.output.requestId}}/request.json", "{{local.BUILD.payload.output.previewText}}")],
+        "{{local.BUILD.payload.output.summaryText}} Submitting opens a merge request that adds this intent; nothing changes in PingOne.",
+        [("intents/{{local.BUILD.payload.output.intentId}}/intent.json", "{{local.BUILD.payload.output.previewText}}")],
         "previewForm", "", [("SUBMIT", "Submit to GitLab", "btn-primary"), ("CANCEL", "Cancel", "btn-outline-secondary")],
         step=3, route="global.parameters"), ["buttonValue"])
-    vars_report = f.fn("Promotion variables ready?", "vars_report", [
-        ("requestJson", "string", f.out(build, "requestJson")),
-        ("declarations", "object", f.fv("declFound")),
-        ("sourceDefinitionPages", "object", f.fv("srcDefsPages")), ("sourceDefinitionError", "string", f.fv("srcDefsError")),
-        ("targetDefinitionPages", "object", f.fv("tgtDefsPages")), ("targetDefinitionError", "string", f.fv("tgtDefsError"))],
-        {"state": "string", "error": "string", "open": "number", "count": "number", "summaryText": "string", "reportText": "string",
-         "variablesMd": "string"})
-    f.link(vars_report, preview)
-    submit_go = f.equals(submit_go_title, f.out(preview, "buttonValue"), "SUBMIT")
+    f.link(build_ok, preview, false_target=f.fail("Invalid request", build))
+    submit_go = f.equals("Submit pressed?", f.out(preview, "buttonValue"), "SUBMIT")
     f.link(preview, submit_go)
-    done = f.success("Return the request", [
-        ("requestJson", "string", f.out(build, "requestJson")), ("requestId", "string", f.out(build, "requestId")),
-        ("gitlabApi", "string", f.out(build, "gitlabApi")), ("variablesMd", "string", f.out(vars_report, "variablesMd"))])
+    done = f.success("Return the intent", [
+        ("intentJson", "string", f.out(build, "intentJson")), ("intentId", "string", f.out(build, "intentId")),
+        ("gitlabApi", "string", f.out(build, "gitlabApi"))])
     f.link(submit_go, done, false_target=f.message("Cancelled", ["Cancelled. Nothing was sent to GitLab."]))
-    tgt_defs = f.pages("tgtDefs", None, [f.s("apiOrigin"), "/v1/environments/", tgt, "/promotionVariableDefinitions"],
-                       "variableDefinitions", vars_report, soft=True)
-    src_defs = f.pages("srcDefs", None, [f.s("apiOrigin"), "/v1/environments/", src, "/promotionVariableDefinitions"],
-                       "variableDefinitions", tgt_defs, soft=True)
-    decl_get = f.rest("Read promotion-variable declaration", "GET",
-                      [f.s("apiOrigin"), "/v1/environments/", src, "/promotionVariableDeclarations/", f.fv("declId")], f.bearer())
-    decl_col = f.fn("Keep declaration", "decl_collect", [
-        ("ids", "object", f.out(vstart, "ids")), ("found", "object", f.fv("declFound")),
-        ("index", "number", f.fv("declIdx")), ("statusCode", "number", f.out(decl_get, "rawResponse.statusCode")),
-        ("body", "object", f.out(decl_get, "rawResponse.body"))],
-        {"state": "string", "error": "string", "found": "array", "index": "number", "nextId": "string", "pause": "string"})
-    f.link(decl_get, decl_col)
-    decl_keep = f.save("Next declaration", [("declFound", "object", [f.out(decl_col, "found")]),
-                                            ("declIdx", "number", [f.out(decl_col, "index")]),
-                                            ("declId", "string", [f.out(decl_col, "nextId")])])
-    f.link(decl_col, decl_keep)
-    decl_pause = f.equals("declarations: hand back to the browser?", f.out(decl_col, "pause"), "true")
-    decl_wait = f.wait_page("Checking promotion variables", "Reading promotion-variable declarations from PingOne.", 3)
-    f.link(decl_pause, decl_wait, false_target=decl_get)
-    f.link(decl_wait, decl_get)
-    f.three_way_from(decl_keep, decl_col, "more", src_defs, decl_pause, "declarations")
-    f.link(decl_init, decl_get)
-    f.alias = {"VARS": vars_report, "BUILD": build}
+    f.alias = {"BUILD": build}
     return f
 
 
 SUBMIT_INPUTS = [("gitlabUrl", "string"), ("gitlabProjectId", "string"), ("gitlabEnvironment", "string"),
-                 ("gitlabApi", "string"), ("requestJson", "string"), ("variablesMd", "string"),
-                 ("username", "string"), ("userId", "string")]
+                 ("gitlabApi", "string"), ("intentJson", "string"), ("sourceEnvName", "string"), ("targetEnvName", "string")]
 
 
 def build_submit_flow():
     """Subflow 4: check the project and default branch, create promotion/<id>, commit request.json, open the MR."""
     f = Flow("PingOne Promote - 4 Submit to GitLab", FLOW_IDS["submit"],
-             "Subflow of PingOne Promote - Request: commits request.json to a promotion branch and opens the merge request, "
-             "exactly as the Go app does. Returns the merge request URL.",
+             "Subflow of PingOne Promote - Request: commits intents/<id>/intent.json to a promotion branch and opens the "
+             "merge request. Returns the merge request URL.",
              letter="d", inputs=SUBMIT_INPUTS)
     api = P("gitlabApi")
     intro = f.wait_page("Submitting to GitLab", "Checking the promotion project, then committing the request and opening the merge request.", 3)
@@ -1052,8 +1012,8 @@ def build_submit_flow():
     bodies = f.fn("Default branch protected? Build GitLab payloads", "gitlab_branch", gitlab_cfg(f) + [
         ("defaultBranch", "string", f.out(proj, "defaultBranch")),
         ("statusCode", "number", f.out(br_get, "rawResponse.statusCode")), ("body", "object", f.out(br_get, "rawResponse.body")),
-        ("requestJson", "string", P("requestJson")), ("username", "string", P("username")),
-        ("variablesMd", "string", P("variablesMd")), ("userId", "string", P("userId"))],
+        ("intentJson", "string", P("intentJson")), ("sourceEnvName", "string", P("sourceEnvName")),
+        ("targetEnvName", "string", P("targetEnvName"))],
         {"state": "string", "error": "string", "branch": "string", "branchBody": "string", "commitBody": "string", "mrBody": "string"})
     f.link(br_get, bodies)
     bodies_ok = f.equals("Branch protected?", f.out(bodies, "state"), "ok")
@@ -1067,7 +1027,7 @@ def build_submit_flow():
     f.link(branch_post, branch_ok_fn)
     branch_ok = f.equals("Branch ok?", f.out(branch_ok_fn, "state"), "ok")
     f.link(branch_ok_fn, branch_ok)
-    commit = f.rest("GitLab: commit request.json", "POST", [api, "/repository/commits"], gitlab_headers(True),
+    commit = f.rest("GitLab: commit intent.json", "POST", [api, "/repository/commits"], gitlab_headers(True),
                     raw=[f.out(bodies, "commitBody")])
     f.link(branch_ok, commit, false_target=f.fail("Could not create the promotion branch", branch_ok_fn))
     commit_ok_fn = f.fn("Commit created?", "gitlab_step", [
@@ -1109,9 +1069,12 @@ def build_flows(signin):
     if signin:
         start, allow, denied = f.sign_in()
         who = lambda field: f.out(f.authz, field)
+        requester = who
     else:
         start = f.worker_token()
         who = lambda field: ""
+        # An intent names who asked. With sign-in off there is no one to name, so it says so (visible in the MR and request).
+        requester = lambda field: {"userId": SIGNIN_OFF_USER_ID, "username": SIGNIN_OFF_USERNAME}[field]
     f.link(settings_ok, start, false_target=f.fail("Settings need attention", settings_check))
     token = f.out(f.token, "rawResponse.body.access_token")
     c_envs = f.conductor("1 Choose environments", envs, {k: f.fv(k) for k, _ in ENV_SLOT_INPUTS})
@@ -1150,20 +1113,18 @@ def build_flows(signin):
     inv_ok = f.equals("Live inventories ok?", f.out(inv, "state"), "ok")
     f.link(inv, inv_ok)
     c_req = f.conductor("3 Choose resources and review", req, {
-        "apiOrigin": f.fv("apiOrigin"), "accessToken": token,
         "sourceEnvironmentId": f.fv("sourceEnvironmentId"), "targetEnvironmentId": f.fv("targetEnvironmentId"),
         "sourceEnvName": f.fv("sourceEnvName"), "targetEnvName": f.fv("targetEnvName"),
-        "sourceInventory": f.out(inv, "source"), "targetInventory": f.out(inv, "target"),
         "sourceListText": f.out(inv, "sourceListText"), "targetListText": f.out(inv, "targetListText"),
-        "pickerData": f.out(inv, "pickerDataText"),
+        "pickerData": f.out(inv, "pickerDataText"), "sourceInventory": f.out(inv, "source"), "targetInventory": f.out(inv, "target"),
         "sourceRegion": f.fv("sourceRegion"), "targetRegion": f.fv("targetRegion"),
         "gitlabUrl": f.fv("gitlabUrl"), "gitlabProjectId": f.fv("gitlabProjectId"), "gitlabEnvironment": f.fv("targetGitlabEnvironment"),
-        "userId": who("userId"), "usernameText": who("usernameText")})
+        "requesterId": requester("userId"), "requesterName": requester("username"), "usernameText": who("usernameText")})
     f.link(inv_ok, c_req, false_target=f.fail("Could not read the environments", inv))
     c_sub = f.conductor("4 Submit to GitLab", submit, {
         "gitlabUrl": f.fv("gitlabUrl"), "gitlabProjectId": f.fv("gitlabProjectId"), "gitlabEnvironment": f.fv("targetGitlabEnvironment"),
-        "gitlabApi": f.out(c_req, "gitlabApi"), "requestJson": f.out(c_req, "requestJson"), "variablesMd": f.out(c_req, "variablesMd"),
-        "username": who("username"), "userId": who("userId")})
+        "gitlabApi": f.out(c_req, "gitlabApi"), "intentJson": f.out(c_req, "intentJson"),
+        "sourceEnvName": f.fv("sourceEnvName"), "targetEnvName": f.fv("targetEnvName")})
     f.link(c_req, c_sub)
     done = f.page("Merge request opened", page_html(
         "Promotion request submitted",

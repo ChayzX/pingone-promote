@@ -26,19 +26,20 @@ After importing, these are the only values the flow needs. Everything else is in
 
 If you imported a previous file, this is what's different:
 
-1. **Re-import** the new file (and delete the old flow). Importing resets flow variables to placeholders, so set the flow variables in the checklist again. The two **company** secrets carry over; don't touch them.
-2. **`sourceEnvironmentId` and `targetEnvironmentId` are no longer settings.** The requester picks them at run time from the `envN…` slots. Put your environments in `env1Name`/`env1Id` … `env4Name`/`env4Id` instead.
-3. **One GitLab project.** `env1GitlabProjectId` … `env4GitlabProjectId` are gone; every request goes to `gitlabProjectId`. New and optional: `env1GitlabEnvironment` … `env4GitlabEnvironment`, the GitLab environment in that project that deploys to each target.
-4. **Flow settings to set by hand after every import** (DaVinci keeps its defaults on import), on **all five flows** (main and each subflow), in **Flow → Settings**:
+1. **The flow now commits an intent, not `request.json`.** Large environments are too big to carry through DaVinci, so the flow keeps names, IDs and types only and commits `intents/<id>/intent.json`; the plan job builds the request with `pingone-runner build-request`. Set `PROMOTION_TOOL_REF` in the GitLab project to a commit with intent support (`2d038c1` or later on this branch). The in-flow promotion-variable check is gone; the plan job's PingOne plan reports missing variables.
+2. **Re-import** the new file (and delete the old flow). Importing resets flow variables to placeholders, so set the flow variables in the checklist again. The two **company** secrets carry over; don't touch them.
+3. **`sourceEnvironmentId` and `targetEnvironmentId` are no longer settings.** The requester picks them at run time from the `envN…` slots. Put your environments in `env1Name`/`env1Id` … `env4Name`/`env4Id` instead.
+4. **One GitLab project.** `env1GitlabProjectId` … `env4GitlabProjectId` are gone; every request goes to `gitlabProjectId`. New and optional: `env1GitlabEnvironment` … `env4GitlabEnvironment`, the GitLab environment in that project that deploys to each target.
+5. **Flow settings to set by hand after every import** (DaVinci keeps its defaults on import), on **all five flows** (main and each subflow), in **Flow → Settings**:
    - **General → Flow Timeout: 3600** seconds. The default 300 s covers the whole run, and live snapshots of two environments take minutes; at the default the run ends with `TIMEOUT` ("Request timed out") in the snapshot subflow.
    - **General → Flow HTTP Response Timeout: 120** seconds (default 15), for slow snapshot calls.
    - **Logging → Debug** for the proof of concept (default Error). Debug logs include node inputs and outputs, tokens among them; set it back to Info afterwards.
-5. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page. Each screen's styles are in its node's **CSS** field and the auto-continue in its **Script** field, as in Ping's own flows (DaVinci ignores `<style>`/`<script>` inside the HTML).
-6. **Resource picker like the local app:** search, type filter, dependencies and destination-mapping dropdowns with suggestions. The main flow also reads PingOne's saved promotion mappings for the chosen pair, so the worker app needs read access to promotion mappings in the source environment (a failure only shows a warning).
-7. **The flow is now a main flow plus four subflows** in one import file. Delete the old single flow, import, point the Flow Conductor nodes at your Flow Conductor connection, and deploy all five. Set the flow variables on the **main** flow only; the subflows get their values from it.
-8. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
-9. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
-10. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
+6. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page. Each screen's styles are in its node's **CSS** field and the auto-continue in its **Script** field, as in Ping's own flows (DaVinci ignores `<style>`/`<script>` inside the HTML).
+7. **Resource picker like the local app:** search, type filter, dependencies and destination-mapping dropdowns with suggestions. The main flow also reads PingOne's saved promotion mappings for the chosen pair, so the worker app needs read access to promotion mappings in the source environment (a failure only shows a warning).
+8. **The flow is now a main flow plus four subflows** in one import file. Delete the old single flow, import, point the Flow Conductor nodes at your Flow Conductor connection, and deploy all five. Set the flow variables on the **main** flow only; the subflows get their values from it.
+9. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
+10. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
+11. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
 
 ## 1. Before importing
 
@@ -94,9 +95,9 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 
 1. Launch. If a page titled **Settings need attention** appears, it names each flow variable that is still a placeholder or malformed; fix those, deploy and launch again. Re-importing resets flow variables to the file's values, so expect this after every re-import.
 2. Pick the source, then the target. **Choose resources** lists both environments' resources.
-3. Pick one low-risk resource and build: **Review request** shows the promotion-variable check and the redacted `request.json`.
-4. Submit: **Merge request opened** links to an MR adding `requests/<id>/request.json`.
-5. In GitLab, `validate_request` passes; after merge, the normal pipeline plans the promotion.
+3. Pick one low-risk resource and build: **Review request** shows the intent that will be committed.
+4. Submit: **Merge request opened** links to an MR adding `intents/<id>/intent.json`.
+5. In GitLab, `validate_request` passes; after merge, `plan_promotion` builds the request from fresh snapshots and plans it.
 
 Errors and fixes are in the runbook's [troubleshooting table](RUNBOOK.md#troubleshooting).
 

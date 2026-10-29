@@ -13,7 +13,9 @@ if (status !== 200) { return fail('PingOne returned HTTP ' + status + ' while re
 const body = core.parseBody(params.body);
 const items = body && body._embedded && body._embedded[key];
 if (!Array.isArray(items)) { return fail('Incomplete PingOne response: missing ' + key + ' collection.'); }
-pages.push({ count: typeof body.count === 'number' ? body.count : undefined, _embedded: { referencedResources: items } });
+// slim: keep only what the picker and inventory need (identity, name, type, dependencies), never configuration.
+const kept = String(params.slim) === 'true' ? items.map(core.slimSnapshotItem) : items;
+pages.push({ count: typeof body.count === 'number' ? body.count : undefined, _embedded: { referencedResources: kept } });
 seen.push(current);
 const href = core.nextPageURL(body);
 if (href) {

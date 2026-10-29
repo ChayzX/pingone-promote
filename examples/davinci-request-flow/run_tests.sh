@@ -37,17 +37,19 @@ if [[ -z "${GO_TOOL:-}" ]]; then
   exit 0
 fi
 go="$work/go"
-git clone -q "$GO_TOOL" "$go" && git -C "$go" checkout -q 537dbf4
+# 2d038c1: the runner with intent support (build-request); Go code unchanged since.
+git clone -q "$GO_TOOL" "$go" && git -C "$go" checkout -q 2d038c1
 cp test/testdata/go/xcheck_drift.go "$go/internal/gitops/"
 cp test/testdata/go/xinv_export.go "$go/internal/pingone/"
 cp test/testdata/go/xgitlab_export.go "$go/internal/gitlab/"
 cp test/testdata/go/xmap_export.go "$go/internal/app/"
-mkdir -p "$go/cmd/xcheck" "$go/cmd/xinv" "$go/cmd/xreq" "$go/cmd/xmap"
+mkdir -p "$go/cmd/xcheck" "$go/cmd/xinv" "$go/cmd/xreq" "$go/cmd/xmap" "$go/cmd/xintent"
 cp test/testdata/go/xcheck_main.go "$go/cmd/xcheck/main.go"
 cp test/testdata/go/xinv_main.go "$go/cmd/xinv/main.go"
 cp test/testdata/go/xreq_main.go "$go/cmd/xreq/main.go"
 cp test/testdata/go/xmap_main.go "$go/cmd/xmap/main.go"
-(cd "$go" && for c in xcheck xinv xreq xmap pingone-runner; do go build -o "$work/$c" "./cmd/$c"; done)
+cp test/testdata/go/xintent_main.go "$go/cmd/xintent/main.go"
+(cd "$go" && for c in xcheck xinv xreq xmap xintent pingone-runner; do go build -o "$work/$c" "./cmd/$c"; done)
 
 # BuildRequest rules and Redact
 python3 -I test/fixtures.py > "$work/f.json" && "$work/xcheck" < "$work/f.json" > "$work/g.json"
@@ -64,6 +66,9 @@ python3 -I test/gitlab_fixtures.py > "$work/gl.json" && node test/xgitlab.js "$w
 # Destination-mapping suggestions against the local app's suggestMappings
 python3 -I test/map_fixtures.py > "$work/m.json" && "$work/xmap" < "$work/m.json" > "$work/mg.json"
 node test/xmap.js "$work/m.json" "$work/mg.json"
+# Intent rules against the runner's own DecodeIntent
+node test/intent_fixtures.js > "$work/in.json" && "$work/xintent" < "$work/in.json" > "$work/ing.json"
+node test/xintent.js "$work/in.json" "$work/ing.json"
 # What the flow committed, through the pipeline's selector and validator
 bash test/pipeline_sim.sh "$work/pingone-runner" "$go/examples/gitlab/select-request.sh" "$work/saved"
 # One promotion project: the generated pipeline is current and routes each request to one environment

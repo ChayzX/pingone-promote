@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One promotion project, several GitLab environments: replays each request the
+# One promotion project, several GitLab environments: replays each intent the
 # flow committed as a post-merge push to main. For every environment, the Go
 # tool's select-request.sh picks the file and for-this-environment.sh decides
 # whether that environment's jobs act on it. Exactly the environment whose
@@ -14,9 +14,9 @@ for f in "$saved"/flow-*.json; do
   (
     cd "$repo"
     git init -q -b main && git config user.email t@example.com && git config user.name t
-    mkdir requests && touch requests/.keep && git add . && git commit -qm base
+    mkdir intents && touch intents/.keep && git add . && git commit -qm base
     before="$(git rev-parse HEAD)"
-    mkdir -p "requests/$id" && cp "$f" "requests/$id/request.json" && git add . && git commit -qm "Add promotion request $id"
+    mkdir -p "intents/$id" && cp "$f" "intents/$id/intent.json" && git add . && git commit -qm "Add promotion intent $id"
     sha="$(git rev-parse HEAD)"
     job() { # env trusted-target [PROMOTION_ENVIRONMENT]
       env -i PATH="$PATH" CI_PIPELINE_SOURCE=push CI_COMMIT_BEFORE_SHA="$before" CI_COMMIT_SHA="$sha" CI_ENVIRONMENT_NAME="$1" \
@@ -37,4 +37,4 @@ for f in "$saved"/flow-*.json; do
   rm -rf "$repo"
   n=$((n + 1))
 done
-echo "one project: $n flow-committed requests routed to exactly the environment that deploys to their target"
+echo "one project: $n flow-committed intents routed to exactly the environment that deploys to their target"

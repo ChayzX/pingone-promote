@@ -4,7 +4,7 @@
 // the exact HTTP requests each REST node sends.
 //
 // usage: node test/flow_run.js out/pingone-promote-request.flow.json [DIR]
-// With DIR, every committed request.json is written there for the Go check.
+// With DIR, every committed intent.json is written there for the Go check.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -84,13 +84,14 @@ async function runFlow(world, form, opts) {
   opts = opts || {};
   // Shared by the main flow and every subflow it invokes: the screens shown and
   // the REST calls made within one browser request (between two rendered pages).
-  const st = { pages: [], calls: 0, maxCalls: 0, subflows: [] };
+  const st = { pages: [], calls: 0, maxCalls: 0, subflows: [], returned: [] };
   const main = makeRun(MAIN, world.settings, world.secrets, {}, !!opts.stringMode);
   const res = await runGraph(MAIN, main, world, form, opts, st);
   main.maxCalls = st.maxCalls;
   res.pages = st.pages;
   res.run = main;
   res.subflows = st.subflows;
+  res.returned = st.returned;
   return res;
 }
 
@@ -158,6 +159,7 @@ async function runGraph(flow, r, world, form, opts, st) {
         const subRun = makeRun(sub, {}, world.secrets, params, !!opts.stringMode);
         const res = await runGraph(sub, subRun, world, form, opts, st);
         if (res.end !== 'success') { return res; }
+        st.returned.push({ flow: sub.name, bytes: JSON.stringify(res.claims).length });
         // As JSON across the response: objects come back as parsed JSON.
         r.outputs[id] = JSON.parse(JSON.stringify(res.claims));
         break;
@@ -226,7 +228,9 @@ function world(overrides) {
   st.vars = { decls: {}, defs: { [SRC]: [], [TGT]: [] }, fail: 0 };
   if (o.vars) { o.vars(st.vars); }
   if (o.bigEnv) {
-    for (let i = 0; i < o.bigEnv; i++) { st.envs[SRC].resources.push(res(SRC, 'applications/b' + i, 'b' + i, { name: 'Bulk ' + i })); }
+    // configKB: each resource carries that much configuration, like large DaVinci flows.
+    const filler = o.configKB ? 'x'.repeat(o.configKB * 1024) : undefined;
+    for (let i = 0; i < o.bigEnv; i++) { st.envs[SRC].resources.push(res(SRC, 'applications/b' + i, 'b' + i, filler ? { name: 'Bulk ' + i, blob: filler } : { name: 'Bulk ' + i })); }
   }
   if (o.gitlab) { o.gitlab(st.gitlab); }
   const json = (status, body) => ({ status, body });
@@ -355,29 +359,26 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const id = Object.keys(gl.branches)[0].slice('promotion/'.length);
     ok(/^[a-f0-9]{32}$/.test(id) && gl.branches['promotion/' + id] === 'main', 'branch promotion/<id> from the default branch' + mode);
     const c = gl.commits[0];
-    ok(c.branch === 'promotion/' + id && c.start_branch === 'main' && c.commit_message === 'Add promotion request ' + id, 'commit metadata as Go' + mode);
-    ok(c.actions.length === 1 && c.actions[0].action === 'create' && c.actions[0].file_path === 'requests/' + id + '/request.json', 'one create action at requests/<id>/request.json' + mode);
+    ok(c.branch === 'promotion/' + id && c.start_branch === 'main' && c.commit_message === 'Add promotion intent ' + id, 'commit metadata' + mode);
+    ok(c.actions.length === 1 && c.actions[0].action === 'create' && c.actions[0].file_path === 'intents/' + id + '/intent.json', 'one create action at intents/<id>/intent.json' + mode);
     const content = c.actions[0].content;
     ok(content.slice(-2) === '}\n' && content.indexOf('\n  "version": 1,') > 0, 'content is indented JSON plus a trailing newline' + mode);
-    ok(content.indexOf('s3cr3t') < 0 && content.indexOf('hidden-v') < 0 && content.indexOf('[REDACTED]') > 0, 'secrets redacted in the commit' + mode);
-    ok(content.indexOf('\\u003cb\\u003e\\u0026\\u003c/b\\u003e') > 0 && content.indexOf('1e-7') > 0, 'Go escaping and number format in the commit' + mode);
-    const req = JSON.parse(content);
-    ok(req.selected.join() === 'a1,a2,f1' && req.mappings.f1 === 'tf1' && req.source.region === 'us' && req.target.snapshotId, 'request content' + mode);
+    const intent = JSON.parse(content);
+    ok(Object.keys(intent).join() === 'version,id,requestedBy,source,target,selected,mappings,description', 'exactly the intent schema, in order' + mode);
+    ok(intent.id === id && intent.selected.join() === 'f1,a1,a2' && intent.mappings.f1 === 'tf1' && intent.mappings.a1 === 'ta1' &&
+      intent.source.id === SRC && intent.target.id === TGT && intent.source.region === 'us' && intent.description === 'Fix <login> & "MFA"', 'intent content' + mode);
+    ok(SIGNIN ? (intent.requestedBy.pingoneUserId === 'alice' && intent.requestedBy.username === 'alice@example.com')
+      : (intent.requestedBy.pingoneUserId === 'sign-in-off' && /Sign-in off/.test(intent.requestedBy.username)), 'requester: the signed-in admin, or plainly "sign-in off"' + mode);
+    ok(content.indexOf('s3cr3t') < 0 && content.indexOf('hidden-v') < 0 && content.indexOf('configuration') < 0, 'no configuration in the intent' + mode);
     const mr = gl.mrs[0];
-    ok(mr.source_branch === 'promotion/' + id && mr.target_branch === 'main' && mr.remove_source_branch === true && mr.squash === false, 'MR branches and flags as Go' + mode);
+    ok(mr.source_branch === 'promotion/' + id && mr.target_branch === 'main' && mr.remove_source_branch === true && mr.squash === false, 'MR branches and flags' + mode);
     ok(mr.title === 'Fix <login> & "MFA"', 'MR title is the description' + mode);
-    ok(mr.description.indexOf('Promotion request `' + id + '`\n\nSource environment: `' + SRC + '` (snapshot `' + req.source.snapshotId + '`)\nTarget environment: `' + TGT + '`\n' +
-      'Selected resources: 3\nGitLab environment: `production`\n\nThis merge request submits configuration for review.') === 0, 'MR description as Go' + mode);
-    if (SIGNIN) {
-      ok(/Requested in DaVinci by: `alice@example\.com \(PingOne user alice\)`\n\n### Promotion variables/.test(mr.description), 'MR names the signed-in admin' + mode);
-    } else {
-      ok(mr.description.indexOf('Requested in DaVinci by') < 0 && /approving deployment\.\n\n### Promotion variables/.test(mr.description), 'sign-in off: MR names no requester' + mode);
-      ok(w.log.every((l) => l.indexOf('userinfo') < 0 && l.indexOf('roleAssignments') < 0), 'sign-in off: no userinfo or role calls' + mode);
-    }
-    ok(mr.description.indexOf('2 of 2 sensitive value(s) need attention') > 0 && mr.description.indexOf('- `a1` `clientSecret`: needs a sensitive promotion variable') > 0 &&
-      mr.description.indexOf('- `a1` `settings[0].value`: needs') > 0, 'MR lists the missing promotion variables' + mode);
+    ok(mr.description.indexOf('Promotion intent `' + id + '`\n\nSource environment: Dev `' + SRC + '` (us)\nTarget environment: Prod `' + TGT + '` (us)\n' +
+      'Selected resources: 3\nGitLab environment: `production`\nRequested by: `') === 0, 'MR description names both environments' + mode + ': ' + mr.description.slice(0, 200));
+    ok(mr.description.indexOf('pingone-runner build-request') > 0 && mr.description.indexOf('- `f1` → `tf1`') > 0 && mr.description.indexOf('- `a2`') > 0, 'MR explains the build and lists the selection' + mode);
+    if (!SIGNIN) { ok(w.log.every((l) => l.indexOf('userinfo') < 0 && l.indexOf('roleAssignments') < 0), 'sign-in off: no userinfo or role calls' + mode); }
     const preview = r.pages.find((pg) => pg.title === 'Review request').html;
-    ok(preview.indexOf('requests/' + id + '/request.json') >= 0 && preview.indexOf('&quot;version&quot;: 1') >= 0 && preview.indexOf('"version"') < 0 && preview.indexOf('s3cr3t') < 0, 'preview shows the escaped, redacted file' + mode);
+    ok(preview.indexOf('intents/' + id + '/intent.json') >= 0 && preview.indexOf('&quot;version&quot;: 1') >= 0 && preview.indexOf('"version"') < 0, 'review shows the escaped intent' + mode);
     const sel = r.pages.find((pg) => pg.title === 'Choose resources').html;
     ok(sel.indexOf('a1') >= 0 && sel.indexOf('s3cr3t') < 0 && (SIGNIN ? sel.indexOf('alice@example.com') >= 0 : sel.indexOf('Sign-in is off') >= 0), 'selection page lists IDs and who (or that sign-in is off), never configuration' + mode);
     ok(w.log.indexOf('GET ' + G + '/api/v4/projects/42') < w.log.indexOf('POST ' + G + '/api/v4/projects/42/repository/branches'), 'project verified before any write' + mode);
@@ -390,7 +391,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const d = 'é'.repeat(95);
     await runFlow(w, form('a2', '', d));
     ok(w.gitlab.mrs[0].title === 'é'.repeat(90), 'title truncated to 180 bytes');
-    ok(JSON.parse(w.gitlab.commits[0].actions[0].content).description === d, 'request keeps the full description');
+    ok(JSON.parse(w.gitlab.commits[0].actions[0].content).description === d, 'intent keeps the full description');
     if (SAVE_DIR) { fs.writeFileSync(path.join(SAVE_DIR, 'flow-' + (saved++) + '.json'), w.gitlab.commits[0].actions[0].content); }
     const w2 = world();
     await runFlow(w2, form('a2', '', 'x'.repeat(179) + 'é'));
@@ -400,46 +401,24 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     ok(w3.gitlab.mrs[0].title === 'Promote selected PingOne resources', 'empty description uses the default title');
   }
 
-  // Promotion-variable pre-check (advisory: it never blocks the submission).
-  const varsRun = async (selected, tweak) => {
-    const w = world({ vars: tweak });
-    const r = await runFlow(w, form(selected));
-    ok(r.title === 'Merge request opened', 'variables check never blocks: ' + (r.text || ''));
-    const review = r.pages.find((pg) => pg.title === 'Review request').html;
-    return { w, review, mr: w.gitlab.mrs[0].description };
-  };
+  // Large environments: the flow never holds configuration. The runner builds request.json in the pipeline.
   {
-    const { review, mr } = await varsRun('a1', (v) => {
-      v.decls.a1 = { clientSecret: '${promotionVariable: appSecret}', settings: '${promotionVariable:settingsVal}' };
-      v.defs[TGT] = [{ id: 'd1', name: 'appSecret', value: '******', isSensitive: true }, { id: 'd2', name: 'settingsVal', value: '******', variableType: 'ENCRYPTED_STRING' }];
-    });
-    ok(mr.indexOf('All 2 sensitive value(s) have a sensitive promotion variable.') > 0 && mr.indexOf('ready: sensitive promotion variable `appSecret` is defined') > 0, 'declared and defined: ready');
-    ok(review.indexOf('All 2 sensitive value(s)') >= 0 && review.indexOf('settings[0].value: ready') >= 0, 'review page shows the check');
-    ok(review.indexOf('s3cr3t') < 0 && mr.indexOf('s3cr3t') < 0 && review.indexOf('hidden-v') < 0, 'no secret value anywhere in the check');
+    const w = world();
+    const r = await runFlow(w, form('a1'));
+    const everything = JSON.stringify(r.pages) + JSON.stringify(r.run.flowVars) + JSON.stringify(r.run.outputs) + JSON.stringify(w.gitlab);
+    ok(everything.indexOf('s3cr3t') < 0 && everything.indexOf('hidden-v') < 0 && everything.indexOf('"ratio"') < 0,
+      'no configuration value in any screen, main-flow variable or step output, or anything sent to GitLab');
+    ok(w.log.every((l) => l.indexOf('promotionVariable') < 0), 'no promotion-variable calls: the plan review in GitLab covers that');
   }
+
+  // A large environment (80 resources of 300 KB configuration, 24 MB in all): what the flows keep and pass stays small.
   {
-    const { mr } = await varsRun('a1', (v) => {
-      v.decls.a1 = { clientSecret: 'appSecret', 'settings[0]': '${promotionVariable: plainVar}' };
-      v.defs[SRC] = [{ id: 'd3', name: 'plainVar', value: 'x' }];
-    });
-    ok(mr.indexOf('`clientSecret`: declared as `appSecret`, but no definition was found') > 0, 'declared without a definition');
-    ok(mr.indexOf('`settings[0].value`: declared as `plainVar`, but its definition is not marked sensitive') > 0, 'definition not sensitive; ancestor property covers the path');
-    ok(mr.indexOf('2 of 2 sensitive value(s) need attention') > 0, 'both counted as open');
-  }
-  {
-    const { review, mr } = await varsRun('a1', (v) => { v.fail = 403; });
-    ok(mr.indexOf('could not be checked') > 0 && mr.indexOf('Source variable definitions could not be read') > 0 && mr.indexOf('1 resource declaration(s) could not be read') > 0, 'unreadable API reported, not fatal');
-    ok(review.indexOf('could not be checked') >= 0, 'review page says it could not check');
-  }
-  {
-    const { w, mr } = await varsRun('f1 a2', () => {});
-    ok(mr.indexOf('No sensitive values in the selected resources') > 0, 'no sensitive values: nothing needed');
-    const read = w.log.filter((l) => /promotionVariableDeclarations/.test(l)).map((l) => l.split('/').pop());
-    ok(read.join() === 'a2,f1', 'each selected resource\'s declaration read once, by ID: ' + read.join());
-  }
-  {
-    const { w } = await varsRun('a1', (v) => { v.defs[TGT] = [{ name: 'a', value: '******', isSensitive: true }, { name: 'b', value: 1 }, { name: 'c', value: 2 }]; });
-    ok(w.log.filter((l) => l.indexOf(TGT + '/promotionVariableDefinitions') > 0).length === 3, 'every definitions page is read');
+    const w = world({ bigEnv: 80, configKB: 300 });
+    const r = await runFlow(w, form('b7 b8'));
+    ok(r.title === 'Merge request opened', 'large environment completes: ' + (r.text || r.title));
+    const biggest = Math.max.apply(null, r.returned.map((x) => x.bytes));
+    const kept = JSON.stringify(r.run.flowVars).length;
+    ok(biggest < 100 * 1024 && kept < 100 * 1024, 'subflows return under 100 KB (largest ' + biggest + ' bytes) and the main flow keeps ' + kept + ' bytes, against 24 MB of configuration');
   }
 
   // Long work is split across browser requests: big environment, slow snapshot.
@@ -452,7 +431,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const many = Array.from({ length: 30 }, (_, i) => 'b' + i).join(' ');
     const w2 = world({ bigEnv: 60 });
     const r2 = await runFlow(w2, form(many));
-    ok(r2.title === 'Merge request opened' && r2.run.maxCalls <= 8, '30 selected resources: declarations read in short requests too (max ' + r2.run.maxCalls + ')');
+    ok(r2.title === 'Merge request opened' && r2.run.maxCalls <= 8 && JSON.parse(w2.gitlab.commits[0].actions[0].content).selected.length === 30, '30 selected resources in one intent (max ' + r2.run.maxCalls + ' calls per request)');
   }
 
   // Refusals that must never reach GitLab.
@@ -660,5 +639,5 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const r = await runFlow(w, form('a1'));
     ok(r.title === 'Merge request opened' && w.log.indexOf('GET ' + G + '/api/v4/projects/42') >= 0, 'trailing slash in the GitLab URL is normalised');
   }
-  console.log('flow run (sign-in ' + (SIGNIN ? 'on' : 'off') + '): ' + n + ' checks passed' + (SAVE_DIR ? ', ' + saved + ' committed requests saved' : ''));
+  console.log('flow run (sign-in ' + (SIGNIN ? 'on' : 'off') + '): ' + n + ' checks passed' + (SAVE_DIR ? ', ' + saved + ' committed intents saved' : ''));
 })().catch((e) => { console.error('FAILED:', e.stack || e.message); process.exit(1); });

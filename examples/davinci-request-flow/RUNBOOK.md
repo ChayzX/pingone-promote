@@ -1,6 +1,6 @@
 # Runbook: set up the DaVinci Request flow
 
-The flow lets someone pick resources and open a GitLab merge request with the same `requests/<id>/request.json` the local app makes. Planning, approval, deployment and rollback stay in the existing GitLab pipeline. This runbook takes the flow from nothing to a first merge request.
+The flow lets someone pick resources and open a GitLab merge request with a promotion intent (`intents/<id>/intent.json`); after the merge, the plan job's `pingone-runner build-request` builds the same `request.json` the local app makes, from fresh snapshots. Planning, approval, deployment and rollback stay in the existing GitLab pipeline. This runbook takes the flow from nothing to a first merge request.
 
 > **Proof of concept: sign-in is off.** The flow starts straight at the resource picker, with no Entra sign-in and no DaVinci Admin check, and the MR doesn't name the requester. Anyone who can launch the flow can open a merge request. Nothing deploys without the MR approval and the protected deployment approval in GitLab, but keep the flow policy unpublished or limited to a test audience until sign-in is back. To restore it, see [Turning sign-in back on](#turning-sign-in-back-on).
 
@@ -60,7 +60,7 @@ The module is in [`terraform/`](terraform/). It creates:
 
 | Created | Where | Purpose |
 | --- | --- | --- |
-| Worker app + secret, with your worker roles on source and target | Host env | Snapshots and promotion-variable reads |
+| Worker app + secret, with your worker roles on source and target | Host env | Snapshots and saved promotion mappings |
 | Any of the HTTP, Functions, Error or Variables connections you don't reuse | Host env | Flow steps |
 | Company secret variables `promoteWorkerBasicAuth`, `promoteGitlabToken` | Host env | Built from the worker secret and your token; nobody copies them by hand |
 | The flow, its 44 flow-scoped variables, deploy, enable | Host env | The flow itself |
@@ -119,9 +119,9 @@ Launch the flow through its flow policy (output `flow_policy_id`) the way your t
 | # | Do | Expect |
 | --- | --- | --- |
 | 1 | Launch the flow | **Choose resources** lists source and target resources, with the "sign-in is off" note |
-| 2 | Pick one low-risk resource, build | **Review request** shows the promotion-variable check and the redacted `request.json` |
+| 2 | Pick one low-risk resource, build | **Review request** shows the intent |
 | 3 | Cancel | "Nothing was sent to GitLab." |
-| 4 | Repeat 1–2 and submit | **Merge request opened** with a link; MR has one new `requests/<id>/request.json` and the Promotion variables section |
+| 4 | Repeat 1–2 and submit | **Merge request opened** with a link; MR has one new `intents/<id>/intent.json` |
 | 5 | Watch the MR pipeline | `validate_request` passes |
 | 6 | Merge, then follow the normal pipeline | `plan_promotion` runs as it does for local-app requests |
 | 7 | Pick a connector with a secret and no promotion variable | Review page and MR say it needs a sensitive promotion variable |
@@ -130,7 +130,6 @@ Launch the flow through its flow policy (output `flow_policy_id`) the way your t
 - REST nodes use `httpMethod`, `bodyType`, `rawBody`;
 - the polling and paging loops are allowed;
 - `globalThis.crypto` is available in functions (there's a fallback either way);
-- the promotion-variable reads return what the check expects.
 
 Note the results in the README's live-check list.
 
@@ -178,7 +177,8 @@ Rollback, preflight and evidence are manual web pipelines as before, plus `PROMO
 | "GitLab default branch must be protected" | Branch protection removed | Re-protect it |
 | "create promotion branch: GitLab returned HTTP 401/403" | Token expired, wrong scope or role | New token (step 2), then update `promoteGitlabToken` |
 | "… HTTP 400" on create branch | A branch for that request ID already exists | Rare; start the flow again for a new ID |
-| "Promotion variables could not be checked" | Promotion-variable API not enabled or role missing | Advisory only; the GitLab plan still enforces PingOne's rules |
+| `validate_request` fails on `intents/<id>/intent.json` | The project's `PROMOTION_TOOL_REF` predates intent support | Set it to a reviewed commit with intent support (`2d038c1` or later on this branch) |
+| DaVinci's generic error page during a snapshot of a large environment, nothing logged | A version before intents carried full configuration through the flow | Import this version: the flow keeps names, IDs and types only |
 | Request too large | Very large selection | Promote in smaller batches |
 
 ## Operating it
