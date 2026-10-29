@@ -95,9 +95,9 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 		approved[id] = true
 	}
 	add := func(issue string) { r.Issues = append(r.Issues, issue) }
-	flowLifecycle, flowLifecycleCandidate := selectedFlowVersionLifecycle(source, target, selected, mappings, steps, rollback)
+	flowLifecycle, flowLifecycleCandidate, flowLifecycleReason := selectedFlowVersionLifecycle(source, target, selected, mappings, steps, rollback)
 	if flowLifecycleCandidate && flowLifecycle == nil {
-		add("selected flow/version create lifecycle is unsupported or mismatched")
+		add("selected flow/version create lifecycle is unsupported or mismatched: " + flowLifecycleReason)
 	}
 	if len(steps) == 0 {
 		add("promotion plan has no steps")
@@ -225,10 +225,11 @@ type flowVersionLifecycle struct {
 // lifecycle. A selected flow and its explicitly selected version form a
 // candidate; if any detail differs from this exact sequence, the candidate is
 // rejected rather than falling back to generic collection-create rules.
-func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []string, mappings map[string]string, steps []pingone.Step, rollback bool) (*flowVersionLifecycle, bool) {
+func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []string, mappings map[string]string, steps []pingone.Step, rollback bool) (*flowVersionLifecycle, bool, string) {
 	if rollback {
-		return nil, false
+		return nil, false, ""
 	}
+	reject := func(reason string) (*flowVersionLifecycle, bool, string) { return nil, true, reason }
 	src := resourceIndex(source)
 	selectedSet := map[string]bool{}
 	selectedRoots := []string{}
@@ -243,120 +244,204 @@ func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []s
 		}
 	}
 	if len(selectedRoots) == 0 || len(selectedVersions) == 0 {
-		return nil, false
+		return nil, false, ""
 	}
 	candidate := true
 	if len(selectedRoots) != 1 || len(selectedVersions) != 1 {
-		return nil, candidate
+		return reject("selection-shape")
 	}
 	rootID, versionID := selectedRoots[0], selectedVersions[0]
 	owner, _, ownerOK := flowVersionResourceIdentity(versionID)
 	if !ownerOK || owner != rootID {
-		return nil, candidate
+		return reject("selected-version-identity")
 	}
-	if len(selected) != 2 || len(selectedSet) != 2 || !selectedSet[rootID] || !selectedSet[versionID] || len(steps) != 4 {
-		return nil, candidate
+	if len(selected) != 2 || len(selectedSet) != 2 || !selectedSet[rootID] || !selectedSet[versionID] {
+		return reject("selection-shape")
+	}
+	if len(steps) != 4 {
+		return reject("step-count")
 	}
 	if _, mapped := mappings[rootID]; mapped {
-		return nil, candidate
+		return reject("root-mapping-unsupported")
 	}
 	if _, mapped := mappings[versionID]; mapped {
-		return nil, candidate
+		return reject("version-mapping-unsupported")
 	}
 	root, rootExists := src[rootID]
 	version, versionExists := src[versionID]
-	if !rootExists || !versionExists || root.Type != "flows" || version.Type != "flows / versions / details" || root.Name == "" || root.Configuration == nil || version.Configuration == nil {
-		return nil, candidate
+	if !rootExists || root.Type != "flows" || root.Name == "" || root.Configuration == nil {
+		return reject("source-root-config")
+	}
+	if !versionExists || version.Type != "flows / versions / details" || version.Configuration == nil {
+		return reject("source-version-config")
 	}
 	owner, versionNumber, validVersion := flowVersionResourceIdentity(versionID)
-	if !validVersion || owner != rootID || !exactInventoryURL(root.URL, source.APIOrigin, source.EnvironmentID, "/flows/"+rootID) || !exactInventoryURL(version.URL, source.APIOrigin, source.EnvironmentID, "/flows/"+rootID+"/versions/"+strconv.FormatUint(versionNumber, 10)+"/details") {
-		return nil, candidate
+	if !validVersion || owner != rootID {
+		return reject("selected-version-identity")
+	}
+	if !exactInventoryURL(root.URL, source.APIOrigin, source.EnvironmentID, "/flows/"+rootID) {
+		return reject("source-root-url")
+	}
+	if !exactInventoryURL(version.URL, source.APIOrigin, source.EnvironmentID, "/flows/"+rootID+"/versions/"+strconv.FormatUint(versionNumber, 10)+"/details") {
+		return reject("source-version-url")
 	}
 	if sourceRootID, _ := root.Configuration["id"].(string); sourceRootID != rootID {
-		return nil, candidate
+		return reject("source-root-id")
 	}
 	if sourceName, _ := root.Configuration["name"].(string); sourceName != root.Name {
-		return nil, candidate
+		return reject("source-root-name")
 	}
 	if root.Configuration["enabled"] != true {
-		return nil, candidate
+		return reject("source-root-enabled")
 	}
 	sourceEnvironment, ok := root.Configuration["environment"].(map[string]any)
 	if !ok || sourceEnvironment["id"] != source.EnvironmentID {
-		return nil, candidate
+		return reject("source-root-environment")
 	}
 	sourceCurrent, currentOK := positiveSafeInteger(root.Configuration["currentVersion"])
 	sourcePublished, publishedOK := positiveSafeInteger(root.Configuration["publishedVersion"])
-	if !currentOK || !publishedOK || sourceCurrent != versionNumber || sourcePublished != versionNumber {
-		return nil, candidate
+	if !currentOK || sourceCurrent != versionNumber {
+		return reject("source-root-current-version")
+	}
+	if !publishedOK || sourcePublished != versionNumber {
+		return reject("source-root-published-version")
 	}
 	sourceVersionFlow, ok := version.Configuration["flow"].(map[string]any)
-	if !ok || sourceVersionFlow["id"] != rootID || sourceVersionFlow["name"] != root.Name {
-		return nil, candidate
+	if !ok || sourceVersionFlow["id"] != rootID {
+		return reject("source-version-parent-id")
+	}
+	if sourceVersionFlow["name"] != root.Name {
+		return reject("source-version-parent-name")
 	}
 	if sourceVersion, ok := positiveSafeInteger(version.Configuration["version"]); !ok || sourceVersion != versionNumber {
-		return nil, candidate
+		return reject("source-version-number")
 	}
-	if source.EnvironmentID == "" || target.EnvironmentID == "" || source.EnvironmentID == target.EnvironmentID || source.APIOrigin == "" || target.APIOrigin == "" {
-		return nil, candidate
+	if source.EnvironmentID == "" || target.EnvironmentID == "" || source.EnvironmentID == target.EnvironmentID {
+		return reject("environment-identity")
+	}
+	if source.APIOrigin == "" || target.APIOrigin == "" {
+		return reject("api-origin")
 	}
 	for _, resource := range target.Resources {
-		if resource.Type == "flows" && (resource.ID == rootID || resource.Name == root.Name) {
-			return nil, candidate
+		if resource.Type == "flows" && resource.ID == rootID {
+			return reject("target-root-id-collision")
+		}
+		if resource.Type == "flows" && resource.Name == root.Name {
+			return reject("target-root-name-collision")
 		}
 		if resource.ID == versionID {
-			return nil, candidate
+			return reject("target-version-id-collision")
 		}
 	}
-	if steps[0].Action != "POST" || steps[0].Source.ID != rootID || steps[0].Source.Name != "" || !emptyRef(steps[0].Target) || !exactInventoryURL(steps[0].URL, target.APIOrigin, target.EnvironmentID, "/flows") {
-		return nil, candidate
+	if steps[0].Action != "POST" {
+		return reject("root-step-method")
 	}
-	if steps[1].Action != "PUT" || !emptyRef(steps[1].Source) || !emptyRef(steps[1].Target) || !exactInventoryURL(steps[1].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/enabled") {
-		return nil, candidate
+	if steps[0].Source.ID != rootID {
+		return reject("root-step-source-ref")
 	}
-	if steps[2].Action != "POST" || steps[2].Source.ID != versionID || steps[2].Source.Name != "" || !emptyRef(steps[2].Target) || !exactInventoryURL(steps[2].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/versions") {
-		return nil, candidate
+	if steps[0].Source.Name != "" {
+		if steps[0].Source.Name == root.Name {
+			return reject("root-step-source-ref-name-matches-source")
+		}
+		return reject("root-step-source-ref-name-mismatch")
 	}
-	if steps[3].Action != "POST" || !emptyRef(steps[3].Source) || !emptyRef(steps[3].Target) || !exactInventoryURL(steps[3].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/publishedVersion") {
-		return nil, candidate
+	if !emptyRef(steps[0].Target) {
+		return reject("root-step-target-ref")
+	}
+	if !exactInventoryURL(steps[0].URL, target.APIOrigin, target.EnvironmentID, "/flows") {
+		return reject("root-step-target-url")
+	}
+	if steps[1].Action != "PUT" {
+		return reject("enabled-step-method")
+	}
+	if !emptyRef(steps[1].Source) || !emptyRef(steps[1].Target) {
+		return reject("enabled-step-control-refs")
+	}
+	if !exactInventoryURL(steps[1].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/enabled") {
+		return reject("enabled-step-target-url")
+	}
+	if steps[2].Action != "POST" {
+		return reject("version-step-method")
+	}
+	if steps[2].Source.ID != versionID {
+		return reject("version-step-source-ref")
+	}
+	if steps[2].Source.Name != "" {
+		if steps[2].Source.Name == version.Name {
+			return reject("version-step-source-ref-name-matches-source")
+		}
+		return reject("version-step-source-ref-name-mismatch")
+	}
+	if !emptyRef(steps[2].Target) {
+		return reject("version-step-target-ref")
+	}
+	if !exactInventoryURL(steps[2].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/versions") {
+		return reject("version-step-target-url")
+	}
+	if steps[3].Action != "POST" {
+		return reject("publish-step-method")
+	}
+	if !emptyRef(steps[3].Source) || !emptyRef(steps[3].Target) {
+		return reject("publish-step-control-refs")
+	}
+	if !exactInventoryURL(steps[3].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/publishedVersion") {
+		return reject("publish-step-target-url")
 	}
 	rootPayload, ok := strictJSONObject(steps[0].Payload)
 	if !ok || !exactObjectKeys(rootPayload, "color", "connectors", "currentVersion", "deployedAt", "description", "enabled", "environment", "graphData", "id", "name", "publishedVersion", "settings") {
-		return nil, candidate
+		return reject("root-payload-schema")
 	}
-	if rootPayload["id"] != rootID || rootPayload["name"] != root.Name || rootPayload["enabled"] != true {
-		return nil, candidate
+	if rootPayload["id"] != rootID {
+		return reject("root-payload-id")
+	}
+	if rootPayload["name"] != root.Name {
+		return reject("root-payload-name")
+	}
+	if rootPayload["enabled"] != true {
+		return reject("root-payload-enabled")
 	}
 	currentVersion, currentOK := positiveSafeInteger(rootPayload["currentVersion"])
 	publishedVersion, publishedOK := positiveSafeInteger(rootPayload["publishedVersion"])
-	if !currentOK || !publishedOK || currentVersion != versionNumber || publishedVersion != versionNumber {
-		return nil, candidate
+	if !currentOK || currentVersion != versionNumber {
+		return reject("root-payload-current-version")
+	}
+	if !publishedOK || publishedVersion != versionNumber {
+		return reject("root-payload-published-version")
 	}
 	environment, ok := rootPayload["environment"].(map[string]any)
 	if !ok || !exactObjectKeys(environment, "id") || environment["id"] != target.EnvironmentID {
-		return nil, candidate
+		return reject("root-payload-environment")
 	}
 	enabledPayload, ok := strictJSONObject(steps[1].Payload)
 	if !ok || !exactObjectKeys(enabledPayload, "enabled") || enabledPayload["enabled"] != true {
-		return nil, candidate
+		return reject("enabled-payload-controls")
 	}
 	versionPayload, ok := strictJSONObject(steps[2].Payload)
 	if !ok || !exactObjectKeys(versionPayload, "color", "connectors", "deployedAt", "description", "enabled", "flow", "graphData", "id", "settings", "updates", "version") {
-		return nil, candidate
+		return reject("version-payload-schema")
 	}
 	versionFlow, ok := versionPayload["flow"].(map[string]any)
-	if !ok || !exactObjectKeys(versionFlow, "id", "name") || versionFlow["id"] != rootID || versionFlow["name"] != root.Name || versionPayload["id"] != versionID || versionPayload["enabled"] != true {
-		return nil, candidate
+	if !ok || !exactObjectKeys(versionFlow, "id", "name") {
+		return reject("version-payload-parent-schema")
+	}
+	if versionFlow["id"] != rootID || versionPayload["id"] != versionID {
+		return reject("version-payload-identity")
+	}
+	if versionFlow["name"] != root.Name {
+		return reject("version-payload-parent-name")
+	}
+	if versionPayload["enabled"] != true {
+		return reject("version-payload-enabled")
 	}
 	payloadVersion, ok := positiveSafeInteger(versionPayload["version"])
 	if !ok || payloadVersion != versionNumber {
-		return nil, candidate
+		return reject("version-payload-number")
 	}
 	publishPayload, ok := strictJSONObject(steps[3].Payload)
 	if !ok || !exactObjectKeys(publishPayload, "version") || publishPayload["version"] != strconv.FormatUint(versionNumber, 10) {
-		return nil, candidate
+		return reject("publish-payload-controls")
 	}
-	return &flowVersionLifecycle{rootID: rootID, versionID: versionID}, candidate
+	return &flowVersionLifecycle{rootID: rootID, versionID: versionID}, candidate, ""
 }
 
 func flowVersionResourceIdentity(id string) (string, uint64, bool) {

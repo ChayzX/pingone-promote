@@ -1,6 +1,12 @@
 # Verification and integration status
 
-The local application has been verified with documented API-shaped fixtures. Disposable live PingOne probes have reached ordinary resource APIs, but native promotion access is blocked because the capability is not enabled. No live native promotion or rollback is verified. The application has not been executed on macOS/RHEL in this workspace.
+The local application has been verified with documented API-shaped fixtures. Later live sandbox testing verified native inventory loading and draft creation, but the native plan review remains blocked. No live native execution or rollback is verified. The application has not been executed on macOS/RHEL in this workspace.
+
+## Live sandbox follow-up — 2026-10-29
+
+Visible browser testing verified private GitLab submission, successful one-request merge request validation, and zero-request and two-request rejection before native planning. Fixes address native snapshot identities and supported read expansions, GitLab's existing-branch commit behavior, shell checkout line endings, and the nested pipeline-source field in GitLab job responses. Tenant identities, credentials, request files, pipeline identifiers and raw evidence remain outside this public repository.
+
+Native drafts expose an ordered four-operation flow/version lifecycle. The strict compatibility adapter and destination payload-reference drift checks have passing regression tests, the full Linux Go suite, race detector, vet and the GitLab Playwright fixture suite. A subsequent live review still rejects the sequence. Reconstructed redacted-artifact replay passes but lacks some original native inputs; live compatibility is therefore unresolved. Apply has not been run. See [HANDOFF.md](HANDOFF.md) for the remaining acceptance criteria and observed pre-deployment inventory differences.
 
 ## Acceptance follow-up — 2026-10-27
 

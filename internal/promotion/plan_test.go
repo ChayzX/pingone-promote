@@ -214,6 +214,69 @@ func TestFlowLifecycleExposesAllowedContentAndBindsItToRawDigest(t *testing.T) {
 	}
 }
 
+func TestInspectProvidesDistinctSafeFlowLifecycleReasons(t *testing.T) {
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*pingone.Inventory, *pingone.Inventory, *[]pingone.Step)
+	}{
+		{name: "source ref matching name metadata", want: "root-step-source-ref-name-matches-source", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
+			(*steps)[0].Source.Name = "Flow A"
+		}},
+		{name: "source ref mismatched name metadata", want: "root-step-source-ref-name-mismatch", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
+			(*steps)[0].Source.Name = "Other Flow"
+		}},
+		{name: "version ref matching name metadata", want: "version-step-source-ref-name-matches-source", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
+			(*steps)[2].Source.Name = "Flow A version 1"
+		}},
+		{name: "version ref mismatched name metadata", want: "version-step-source-ref-name-mismatch", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
+			(*steps)[2].Source.Name = "Another version"
+		}},
+		{name: "root destination URL", want: "root-step-target-url", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
+			(*steps)[0].URL = strings.Replace((*steps)[0].URL, "/flows", "/templates", 1)
+		}},
+		{name: "source root URL", want: "source-root-url", mutate: func(source *pingone.Inventory, _ *pingone.Inventory, _ *[]pingone.Step) {
+			source.Resources[0].URL += "/details"
+		}},
+		{name: "source version URL", want: "source-version-url", mutate: func(source *pingone.Inventory, _ *pingone.Inventory, _ *[]pingone.Step) {
+			source.Resources[1].URL += "/extra"
+		}},
+		{name: "target root name collision", want: "target-root-name-collision", mutate: func(_ *pingone.Inventory, target *pingone.Inventory, _ *[]pingone.Step) {
+			target.Resources = append(target.Resources, pingone.Resource{ID: "other-flow", Name: "Flow A", Type: "flows", URL: "https://api.pingone.com/v1/environments/dst/flows/other-flow"})
+		}},
+		{name: "target root id collision", want: "target-root-id-collision", mutate: func(_ *pingone.Inventory, target *pingone.Inventory, _ *[]pingone.Step) {
+			target.Resources = append(target.Resources, pingone.Resource{ID: "flow-a", Name: "Other", Type: "flows", URL: "https://api.pingone.com/v1/environments/dst/flows/flow-a"})
+		}},
+		{name: "target version id collision", want: "target-version-id-collision", mutate: func(_ *pingone.Inventory, target *pingone.Inventory, _ *[]pingone.Step) {
+			target.Resources = append(target.Resources, pingone.Resource{ID: "flowId:flow-a-version:1", Name: "Existing version", Type: "flows / versions / details", URL: "https://api.pingone.com/v1/environments/dst/flows/flow-a/versions/1/details"})
+		}},
+		{name: "root schema", want: "root-payload-schema", mutate: func(_ *pingone.Inventory, _ *pingone.Inventory, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(`{"id":"flow-a"}`)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			source, target, selected, original := flowVersionLifecycleFixture()
+			steps := append([]pingone.Step(nil), original...)
+			tc.mutate(&source, &target, &steps)
+			review := Inspect(source, target, selected, nil, steps, false)
+			want := "selected flow/version create lifecycle is unsupported or mismatched: " + tc.want
+			found := false
+			for _, issue := range review.Issues {
+				if issue == want {
+					found = true
+					if strings.Contains(issue, "flow-a") || strings.Contains(issue, "Flow A") {
+						t.Fatalf("diagnostic disclosed an identifier or name: %q", issue)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("missing safe reason %q in issues: %v", want, review.Issues)
+			}
+		})
+	}
+}
+
 func TestInspectRejectsInvalidSelectedFlowVersionCreateLifecycle(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -2,7 +2,17 @@
 
 This work is on branch `feat/gitlab-production`. The original preparation workspace had no live tenant or private GitLab access. Subsequent disposable acceptance used a private GitLab project and GitLab-hosted Linux runners at the operator's request; this does not verify enterprise or self-managed runner policy. Tenant identities, credentials and raw evidence remain outside this public repository.
 
-## Acceptance status — 2026-10-27
+## Acceptance status — 2026-10-29
+
+Production readiness is **not established**. A subsequently provided sandbox pair supports native inventory snapshots and draft creation. Live browser testing verified complete inventory loading, private GitLab request submission and merge request validation, and rejection of zero-request and two-request changes before planning. GitLab compatibility fixes cover commits to an already-created request branch and job identity responses that report the pipeline source under `pipeline.source`.
+
+Native execution and rollback remain unverified. The service generated a new-flow plan containing flow creation, enablement, an explicitly selected version creation, and publication. The current review still rejects the live sequence, although a replay reconstructed from the redacted artifact passes. That replay omits native reference metadata and the full destination inventory, so it does not establish live compatibility. Preserve the blocked drafts and diagnose the exact rejection before changing any acceptance rule or running apply. Strict lifecycle and destination-dependency drift regressions pass; they do not substitute for a successful live apply.
+
+Before/after inventory hashes and full test evidence are retained privately. Some unrelated form hashes changed between captures before any deployment; their cause is not established. Do not attribute those changes to the tool or claim that every excluded resource remained unchanged. No native execution has run in this continuation.
+
+Disposable acceptance uses GitLab-hosted runners at the operator's request. A reviewed merge performed by the existing project bot creates a pipeline that the signed-in human account can separately approve, with self-approval disabled. This establishes distinct GitLab identities under one operator, not independent human review. Rollback still requires a separately approved web pipeline; do not weaken its source or approval checks to accommodate a single available account.
+
+### Earlier trial capability result — 2026-10-27
 
 Production readiness is **not established**. Live authenticated probes could read ordinary environment, flow and application APIs, but native snapshots returned `403 ACCESS_FAILED` with detail code `LICENSE_EXCEEDED`. Both disposable sandboxes were already opted in to Configuration Management while their effective capability remained false. An independent HTTP reproduction confirmed the denial outside this tool. No successful native promotion or rollback, native mapping compatibility, deployed-version selection, or before/after deployment resource comparison has been established. An eligible disposable environment pair is required to continue the native checklist; do not replace native promotion with a different mutation API to bypass this gate.
 

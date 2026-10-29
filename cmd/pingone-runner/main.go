@@ -9,8 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -34,6 +36,7 @@ type runnerGate interface {
 
 type runnerEngine interface {
 	Plan(context.Context, gitops.Request, gitops.Origin) (gitops.Artifact, error)
+	Refresh(context.Context, gitops.Artifact) (gitops.Artifact, error)
 	Apply(context.Context, gitops.Artifact, string, func(context.Context, gitops.Artifact) error) (pingone.Promotion, error)
 	Status(context.Context, gitops.Artifact) (pingone.Promotion, error)
 	RollbackPlan(context.Context, gitops.Artifact, gitops.Origin) (gitops.Artifact, error)
@@ -85,7 +88,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		return err
 	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|plan|apply|status|rollback-plan> [flags]\n")
+		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|inspect|plan|apply|status|rollback-plan> [flags]\n")
 		return nil
 	}
 	if deps.getenv == nil {
@@ -138,6 +141,59 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		_, err = fmt.Fprintln(stdout, a.Review.Digest)
+		return err
+	case "inspect":
+		fs := flagSet("inspect", stderr)
+		artifactPath := fs.String("artifact", "", "existing artifact JSON file")
+		outPath := fs.String("out", "", "fresh diagnostic artifact output path")
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		if *artifactPath == "" || *outPath == "" {
+			return errors.New("inspect requires --artifact and --out")
+		}
+		if samePath(*artifactPath, *outPath) {
+			return errors.New("diagnostic output must not overwrite the input artifact")
+		}
+		if err := requireAbsent(*outPath); err != nil {
+			return err
+		}
+		a, err := readArtifact(*artifactPath)
+		if err != nil {
+			return err
+		}
+		g, err := deps.gate()
+		if err != nil {
+			return err
+		}
+		if !sameTrustedProject(a.Origin, g.Origin()) {
+			return errors.New("artifact origin does not match the trusted GitLab server and project")
+		}
+		if err = g.VerifyPlan(ctx, a.Request); err != nil {
+			return err
+		}
+		client, err := deps.client(a.Request, deps.getenv)
+		if err != nil {
+			return err
+		}
+		engine := deps.engine(client)
+		refreshed, err := engine.Refresh(ctx, a)
+		if err != nil {
+			return err
+		}
+		if err = validateRefreshIdentity(a, refreshed); err != nil {
+			return err
+		}
+		if err = refreshed.Validate(); err != nil {
+			return fmt.Errorf("refresh returned an invalid diagnostic artifact: %w", err)
+		}
+		if err = writePrivateJSON(*outPath, refreshed); err != nil {
+			return err
+		}
+		if len(refreshed.Review.Issues) > 0 {
+			return errors.New("diagnostic artifact written with review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates")
+		}
+		_, err = io.WriteString(stdout, "diagnostic inspection complete; no review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates\n")
 		return err
 	case "plan":
 		fs := flagSet("plan", stderr)
@@ -549,6 +605,22 @@ func samePath(a, b string) bool {
 	aa, e1 := filepath.Abs(a)
 	bb, e2 := filepath.Abs(b)
 	return e1 == nil && e2 == nil && aa == bb
+}
+
+func sameTrustedProject(artifact, trusted gitops.Origin) bool {
+	artifactURL, artifactErr := url.Parse(artifact.ServerURL)
+	trustedURL, trustedErr := url.Parse(trusted.ServerURL)
+	if artifactErr != nil || trustedErr != nil || artifact.ProjectID != trusted.ProjectID {
+		return false
+	}
+	return strings.EqualFold(artifactURL.Scheme, trustedURL.Scheme) && strings.EqualFold(artifactURL.Host, trustedURL.Host) && strings.TrimSuffix(artifactURL.Path, "/") == strings.TrimSuffix(trustedURL.Path, "/")
+}
+
+func validateRefreshIdentity(original, refreshed gitops.Artifact) error {
+	if original.Version != refreshed.Version || original.Kind != refreshed.Kind || original.NativeID != refreshed.NativeID || original.OriginalNativeID != refreshed.OriginalNativeID || original.CreatedAt != refreshed.CreatedAt || original.TargetSnapshotID != refreshed.TargetSnapshotID || original.Origin != refreshed.Origin || !reflect.DeepEqual(original.Request, refreshed.Request) {
+		return errors.New("refresh changed the original artifact identity or provenance")
+	}
+	return nil
 }
 func isDigest(s string) bool { return regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(s) }
 
