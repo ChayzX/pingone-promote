@@ -25,6 +25,7 @@ The flow never calls the PingOne promotions API, so it cannot deploy or roll bac
 
 ## What the admin sees
 
+0. **Settings check.** Before any API call, the flow checks its flow variables (host environment, origins, environment slots, GitLab URL and project IDs) and, if any is a placeholder or malformed, shows **Settings need attention** naming each one.
 1. **Sign in** (only when sign-in is on). PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or on one of the configured environments. No GitLab account is needed.
 2. **Choose environments.** Two pages with one button per configured environment (up to four): first the source, then the target. The same environment twice, or an empty slot, is refused.
 3. **Choose resources.** The page lists source and target resources by type, ID and name, never configuration. The admin enters resource IDs, optional `sourceId=targetId` mappings, and a description, which becomes the MR title.

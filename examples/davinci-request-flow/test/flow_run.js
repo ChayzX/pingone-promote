@@ -15,6 +15,11 @@ const O = 'https://api.pingone.com';
 const A = 'https://auth.pingone.com';
 const G = 'https://gitlab.example.com/tools';
 const ROLE = 'role-dva';
+// PingOne environment IDs are UUIDs (the settings check enforces it).
+const SRC = '11111111-1111-4111-8111-111111111111';
+const TGT = '22222222-2222-4222-8222-222222222222';
+const HOST = '33333333-3333-4333-8333-333333333333';
+const ADMINS = '44444444-4444-4444-8444-444444444444';
 
 // ---------------- the interpreter ----------------
 const nodes = {};
@@ -152,20 +157,20 @@ function world(overrides) {
   const st = {
     user: o.user || 'alice',
     envs: {
-      src: { org: 'org', resources: [res('src', 'flows/f1', 'f1', { name: 'Login', v: 2, html: '<b>&</b>' }),
-        res('src', 'applications/a1', 'a1', { name: 'App', clientSecret: 's3cr3t', settings: [{ isSensitive: true, value: 'hidden-v' }] }),
-        res('src', 'applications/a2', 'a2', { name: 'New app', ratio: 1e-7 }), res('src', 'applications/a3', 'a3', { name: 'Other' })] },
-      tgt: { org: 'org', resources: [res('tgt', 'flows/tf1', 'tf1', { name: 'Login', v: 1 }), res('tgt', 'applications/ta1', 'ta1', { name: 'App' })] }
+      [SRC]: { org: 'org', resources: [res(SRC, 'flows/f1', 'f1', { name: 'Login', v: 2, html: '<b>&</b>' }),
+        res(SRC, 'applications/a1', 'a1', { name: 'App', clientSecret: 's3cr3t', settings: [{ isSensitive: true, value: 'hidden-v' }] }),
+        res(SRC, 'applications/a2', 'a2', { name: 'New app', ratio: 1e-7 }), res(SRC, 'applications/a3', 'a3', { name: 'Other' })] },
+      [TGT]: { org: 'org', resources: [res(TGT, 'flows/tf1', 'tf1', { name: 'Login', v: 1 }), res(TGT, 'applications/ta1', 'ta1', { name: 'App' })] }
     },
     snaps: {}, polls: {}, n: 0,
     log: [],
     gitlab: { projectId: 42, project: { id: 42, visibility: 'private', archived: false, default_branch: 'main', web_url: G + '/platform/promote' },
       branchInfo: { name: 'main', protected: true }, branches: {}, commits: [], mrs: [], fail: {} }
   };
-  st.vars = { decls: {}, defs: { src: [], tgt: [] }, fail: 0 };
+  st.vars = { decls: {}, defs: { [SRC]: [], [TGT]: [] }, fail: 0 };
   if (o.vars) { o.vars(st.vars); }
   if (o.bigEnv) {
-    for (let i = 0; i < o.bigEnv; i++) { st.envs.src.resources.push(res('src', 'applications/b' + i, 'b' + i, { name: 'Bulk ' + i })); }
+    for (let i = 0; i < o.bigEnv; i++) { st.envs[SRC].resources.push(res(SRC, 'applications/b' + i, 'b' + i, { name: 'Bulk ' + i })); }
   }
   if (o.gitlab) { o.gitlab(st.gitlab); }
   const json = (status, body) => ({ status, body });
@@ -187,25 +192,25 @@ function world(overrides) {
     const p = url.slice(O.length).split('?')[0];
     const q = url.indexOf('?') >= 0 ? url.split('?')[1] : '';
     let m;
-    if ((m = /^\/v1\/environments\/(\w+)$/.exec(p)) && method === 'GET') { return json(200, { id: m[1], organization: { id: st.envs[m[1]].org } }); }
-    if ((m = /^\/v1\/environments\/(\w+)\/snapshots$/.exec(p)) && method === 'POST') {
+    if ((m = /^\/v1\/environments\/([\w-]+)$/.exec(p)) && method === 'GET') { return json(200, { id: m[1], organization: { id: st.envs[m[1]].org } }); }
+    if ((m = /^\/v1\/environments\/([\w-]+)\/snapshots$/.exec(p)) && method === 'POST') {
       assert.strictEqual(q, 'expand=all');
       assert.strictEqual(JSON.parse(body).baseResourceURL, `${O}/v1/environments/${m[1]}`);
       return json(201, snapRecord(snapshot(m[1])));
     }
-    if ((m = /^\/v1\/environments\/\w+\/snapshots\/\w+\/versions\/(\w+)$/.exec(p))) { return json(200, snapRecord(m[1])); }
-    if ((m = /^\/v1\/environments\/\w+\/snapshots\/\w+\/versions\/(\w+)\/embeddedSnapshots$/.exec(p))) { return json(200, pageOf(m[1], q ? Number(q.split('=')[1]) : 0)); }
-    if ((m = /^\/v1\/environments\/admins\/users\/(\w+)\/roleAssignments$/.exec(p))) {
+    if ((m = /^\/v1\/environments\/[\w-]+\/snapshots\/[\w-]+\/versions\/(\w+)$/.exec(p))) { return json(200, snapRecord(m[1])); }
+    if ((m = /^\/v1\/environments\/[\w-]+\/snapshots\/[\w-]+\/versions\/(\w+)\/embeddedSnapshots$/.exec(p))) { return json(200, pageOf(m[1], q ? Number(q.split('=')[1]) : 0)); }
+    if ((m = new RegExp('^/v1/environments/' + ADMINS + '/users/(\\w+)/roleAssignments$').exec(p))) {
       return json(200, { _embedded: { roleAssignments: m[1] === 'outsider' ? [] : [{ role: { id: ROLE }, scope: { type: 'ORGANIZATION', id: 'org' } }] } });
     }
     if (p === '/v1/roles') { return json(200, { _embedded: { roles: [{ id: ROLE, name: 'DaVinci Admin' }] } }); }
-    if ((m = /^\/v1\/environments\/(\w+)\/promotionVariableDeclarations\/(\w+)$/.exec(p)) && method === 'GET') {
+    if ((m = /^\/v1\/environments\/([\w-]+)\/promotionVariableDeclarations\/(\w+)$/.exec(p)) && method === 'GET') {
       assert.ok(st.envs[m[1]].resources.some((x) => x.id === m[2]), 'declarations are read in the environment the resource comes from (the source)');
       if (st.vars.fail) { return json(st.vars.fail, { code: 'ACCESS_FAILED' }); }
       const d = st.vars.decls[m[2]];
-      return d ? json(200, { resource: { id: m[2] }, environment: { id: 'src' }, variables: d }) : json(404, { code: 'NOT_FOUND' });
+      return d ? json(200, { resource: { id: m[2] }, environment: { id: m[1] }, variables: d }) : json(404, { code: 'NOT_FOUND' });
     }
-    if ((m = /^\/v1\/environments\/(\w+)\/promotionVariableDefinitions$/.exec(p)) && method === 'GET') {
+    if ((m = /^\/v1\/environments\/([\w-]+)\/promotionVariableDefinitions$/.exec(p)) && method === 'GET') {
       if (st.vars.fail) { return json(st.vars.fail, { code: 'ACCESS_FAILED' }); }
       const all = st.vars.defs[m[1]];
       const page = q ? Number(q.split('=')[1]) : 0;
@@ -245,11 +250,11 @@ function world(overrides) {
   }
   st.http = (method, url, headers, body) => {
     st.log.push(method + ' ' + url);
-    if (url === `${A}/admins/as/userinfo`) {
+    if (url === `${A}/${ADMINS}/as/userinfo`) {
       assert.strictEqual(headers.Authorization, 'Bearer at-' + st.user);
       return json(200, { sub: st.user, preferred_username: st.user + '@example.com' });
     }
-    if (url === `${A}/host/as/token`) {
+    if (url === `${A}/${HOST}/as/token`) {
       assert.strictEqual(headers.Authorization, 'Basic d29ya2VyOnNlY3JldA==');
       assert.strictEqual(body, 'grant_type=client_credentials');
       return json(200, { access_token: 'worker-token' });
@@ -258,8 +263,8 @@ function world(overrides) {
     if (url.indexOf(G + '/') === 0) { return gitlab(method, url, headers, body); }
     throw new Error('unexpected host: ' + url);
   };
-  st.settings = Object.assign({ apiOrigin: O, authOrigin: A, adminEnvironmentId: 'admins', hostEnvironmentId: 'host',
-    env1Name: 'Dev', env1Id: 'src', env2Name: 'Prod', env2Id: 'tgt', env3Name: '', env3Id: '', env4Name: '', env4Id: '',
+  st.settings = Object.assign({ apiOrigin: O, authOrigin: A, adminEnvironmentId: ADMINS, hostEnvironmentId: HOST,
+    env1Name: 'Dev', env1Id: SRC, env2Name: 'Prod', env2Id: TGT, env3Name: '', env3Id: '', env4Name: '', env4Id: '',
     organizationId: 'org', davinciAdminRoleId: '', sourceRegion: 'us', targetRegion: 'us', gitlabUrl: G,
     gitlabProjectId: '42', gitlabEnvironment: 'production' }, o.settings || {});
   st.secrets = { promoteWorkerBasicAuth: 'd29ya2VyOnNlY3JldA==', promoteGitlabToken: 'glpat-test' };
@@ -301,7 +306,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const mr = gl.mrs[0];
     ok(mr.source_branch === 'promotion/' + id && mr.target_branch === 'main' && mr.remove_source_branch === true && mr.squash === false, 'MR branches and flags as Go' + mode);
     ok(mr.title === 'Fix <login> & "MFA"', 'MR title is the description' + mode);
-    ok(mr.description.indexOf('Promotion request `' + id + '`\n\nSource environment: `src` (snapshot `' + req.source.snapshotId + '`)\nTarget environment: `tgt`\n' +
+    ok(mr.description.indexOf('Promotion request `' + id + '`\n\nSource environment: `' + SRC + '` (snapshot `' + req.source.snapshotId + '`)\nTarget environment: `' + TGT + '`\n' +
       'Selected resources: 3\nGitLab environment: `production`\n\nThis merge request submits configuration for review.') === 0, 'MR description as Go' + mode);
     if (SIGNIN) {
       ok(/Requested in DaVinci by: `alice@example\.com \(PingOne user alice\)`\n\n### Promotion variables/.test(mr.description), 'MR names the signed-in admin' + mode);
@@ -346,7 +351,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   {
     const { review, mr } = await varsRun('a1', (v) => {
       v.decls.a1 = { clientSecret: '${promotionVariable: appSecret}', settings: '${promotionVariable:settingsVal}' };
-      v.defs.tgt = [{ id: 'd1', name: 'appSecret', value: '******', isSensitive: true }, { id: 'd2', name: 'settingsVal', value: '******', variableType: 'ENCRYPTED_STRING' }];
+      v.defs[TGT] = [{ id: 'd1', name: 'appSecret', value: '******', isSensitive: true }, { id: 'd2', name: 'settingsVal', value: '******', variableType: 'ENCRYPTED_STRING' }];
     });
     ok(mr.indexOf('All 2 sensitive value(s) have a sensitive promotion variable.') > 0 && mr.indexOf('ready: sensitive promotion variable `appSecret` is defined') > 0, 'declared and defined: ready');
     ok(review.indexOf('All 2 sensitive value(s)') >= 0 && review.indexOf('settings[0].value: ready') >= 0, 'review page shows the check');
@@ -355,7 +360,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   {
     const { mr } = await varsRun('a1', (v) => {
       v.decls.a1 = { clientSecret: 'appSecret', 'settings[0]': '${promotionVariable: plainVar}' };
-      v.defs.src = [{ id: 'd3', name: 'plainVar', value: 'x' }];
+      v.defs[SRC] = [{ id: 'd3', name: 'plainVar', value: 'x' }];
     });
     ok(mr.indexOf('`clientSecret`: declared as `appSecret`, but no definition was found') > 0, 'declared without a definition');
     ok(mr.indexOf('`settings[0].value`: declared as `plainVar`, but its definition is not marked sensitive') > 0, 'definition not sensitive; ancestor property covers the path');
@@ -373,8 +378,8 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     ok(read.join() === 'a2,f1', 'each selected resource\'s declaration read once, by ID: ' + read.join());
   }
   {
-    const { w } = await varsRun('a1', (v) => { v.defs.tgt = [{ name: 'a', value: '******', isSensitive: true }, { name: 'b', value: 1 }, { name: 'c', value: 2 }]; });
-    ok(w.log.filter((l) => /tgt\/promotionVariableDefinitions/.test(l)).length === 3, 'every definitions page is read');
+    const { w } = await varsRun('a1', (v) => { v.defs[TGT] = [{ name: 'a', value: '******', isSensitive: true }, { name: 'b', value: 1 }, { name: 'c', value: 2 }]; });
+    ok(w.log.filter((l) => l.indexOf(TGT + '/promotionVariableDefinitions') > 0).length === 3, 'every definitions page is read');
   }
 
   // Long work is split across browser requests: big environment, slow snapshot.
@@ -414,13 +419,13 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const tpage = r.pages.find((pg) => pg.title === 'Choose target environment').html;
     ok(tpage.indexOf('Promote from <strong>Dev</strong>') > 0 && tpage.indexOf('var hide = "Dev"') > 0, 'target page names the source and hides it');
     ok(r.pages.find((pg) => pg.title === 'Choose resources').html.indexOf('Source <strong>Dev</strong> &rarr; target <strong>Prod</strong>') > 0, 'resource page shows the chosen pair');
-    ok(JSON.parse(w.gitlab.commits[0].actions[0].content).source.id === 'src', 'request uses the chosen source');
+    ok(JSON.parse(w.gitlab.commits[0].actions[0].content).source.id === SRC, 'request uses the chosen source');
   }
   {
     const w = world();
     const r = await runFlow(w, form('tf1', '', 'reverse', 'SUBMIT', ['ENV2', 'ENV1']));
     const req = JSON.parse(w.gitlab.commits[0].actions[0].content);
-    ok(r.title === 'Merge request opened' && req.source.id === 'tgt' && req.target.id === 'src', 'either direction: Prod to Dev');
+    ok(r.title === 'Merge request opened' && req.source.id === TGT && req.target.id === SRC, 'either direction: Prod to Dev');
   }
   // Each target can have its own GitLab project (the pipeline that deploys to it).
   {
@@ -436,7 +441,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   }
   await noGitLab('target without any project', world({ settings: { gitlabProjectId: '', env2GitlabProjectId: '77' } }),
     form('tf1', '', 'x', 'SUBMIT', ['ENV2', 'ENV1']), 'No GitLab project is set up for Dev');
-  await noGitLab('non-numeric project for the target', world({ settings: { env2GitlabProjectId: 'abc' } }), form('a2'), 'must be numeric');
+  await noGitLab('non-numeric project for the target', world({ settings: { env2GitlabProjectId: 'abc' } }), form('a2'), 'env2GitlabProjectId must be a numeric GitLab project ID');
   {
     const w = world({ settings: { gitlabProjectId: '', env2GitlabProjectId: '42' } });
     const r = await runFlow(w, form('a2'));
@@ -444,7 +449,21 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   }
   await noGitLab('same environment twice', world(), form('a2', '', 'x', 'SUBMIT', ['ENV1', 'ENV1']), 'must be different');
   await noGitLab('empty slot chosen', world(), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not configured');
-  await noGitLab('unsafe ID in a slot', world({ settings: { env3Name: 'Bad', env3Id: '../x' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'not a valid environment ID');
+  await noGitLab('unsafe ID in a slot', world({ settings: { env3Name: 'Bad', env3Id: '../x' } }), form('a2', '', 'x', 'SUBMIT', ['ENV3', 'ENV1']), 'env3Id must be an environment ID');
+  // The settings check runs first and names placeholder or malformed variables.
+  for (const [what, settings, msg] of [
+    ['placeholder host environment', { hostEnvironmentId: 'REPLACE_WITH_HOST_ENVIRONMENT_ID' }, 'hostEnvironmentId must be the ID'],
+    ['auth origin with a path', { authOrigin: A + '/' }, 'authOrigin must be like https://auth.pingone.com'],
+    ['custom domain as api origin', { apiOrigin: 'https://login.example.com' }, 'apiOrigin must be like'],
+    ['only one environment', { env2Name: '', env2Id: '' }, 'Set at least two environments'],
+    ['name missing for a slot', { env3Id: '55555555-5555-4555-8555-555555555555' }, 'env3Name is empty'],
+    ['plain-http GitLab', { gitlabUrl: 'http://gitlab.example.com' }, 'gitlabUrl must be an HTTPS URL']
+  ]) {
+    const w = world({ settings });
+    const r = await runFlow(w, form('a2'));
+    ok(r.title === 'Settings need attention' && (r.text || '').indexOf(msg) >= 0 && w.log.length === 0,
+      'settings check: ' + what + ' is named before any API call: ' + (r.text || r.title));
+  }
   await noGitLab('forged button value', world(), form('a2', '', 'x', 'SUBMIT', ['ENV9', 'ENV1']), 'Choose one of the listed');
   {
     const w = world();

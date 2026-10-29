@@ -444,6 +444,13 @@ def build_request_flow(signin):
     f = Flow("PingOne Promote - Request", "f0d00a7e00000000000000000000aa01",
              "A DaVinci Admin selects resources from live snapshots; the flow builds request.json exactly as the Go app does and "
              "opens a GitLab merge request. Deployment and rollback happen only in the protected GitLab pipeline.")
+    # First: check the admin-set flow variables, naming any placeholder or typo.
+    settings_check = f.fn("Check settings", "check_settings",
+                          [(k, "string", f.fv(k)) for k in ("apiOrigin", "authOrigin", "hostEnvironmentId", "gitlabUrl", "gitlabProjectId")] +
+                          [(f"env{i}{k}", "string", f.fv(f"env{i}{k}")) for i in range(1, 5) for k in ("Name", "Id", "GitlabProjectId")],
+                          {"state": "string", "error": "string"})
+    settings_ok = f.equals("Settings ok?", f.out(settings_check, "state"), "ok")
+    f.link(settings_check, settings_ok)
     if signin:
         start, allow, denied = f.sign_in()
         who = lambda field: ("node", f"local.AUTHZ.payload.output.{field}", field)
@@ -626,6 +633,7 @@ def build_request_flow(signin):
     src_page = f.page("Choose source environment", env_page(
         "Choose the source environment", "Promote configuration from:", ""), ["buttonValue"])
     f.link(src_page, src_res)
+    f.link(settings_ok, start, false_target=f.fail("Settings need attention", settings_check))
     if signin:
         f.link(allow, src_page, false_target=denied)
     else:

@@ -154,6 +154,9 @@ An environment you only promote **from**, often Dev, needs no project. If the re
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| "Settings need attention: Fix these flow variables…" | A flow variable is a placeholder, malformed or empty. The flow checks them first, before any API call | Set each named variable in **Flow → Variables**, deploy, launch again |
+| Token step fails with HTTP 400 `INVALID_REQUEST` (analytics shows validation errors) | The token URL `{authOrigin}/{hostEnvironmentId}/as/token` is wrong: usually `hostEnvironmentId` reset to the file's placeholder by a re-import, or a custom domain/trailing slash in `authOrigin` | Set `hostEnvironmentId` to the worker app's environment and `authOrigin` to `https://auth.pingone.com` (your region's domain) |
+| Token step fails with HTTP 401 `invalid_client` | Worker client ID or secret wrong, or the worker app is in a different environment than `hostEnvironmentId` | Re-paste the worker credentials in the HTTP connector headers / variables |
 | Snapshot step fails with HTTP 403 | Worker roles on source or target | Match the pipeline worker's roles that fixed Configuration Management |
 | "No GitLab project is set up for <name>" | The chosen target has no `envNGitlabProjectId` and `gitlabProjectId` is empty | Set the project for that environment ([Several target environments](#several-target-environments)) |
 | "request destination differs from protected runner target policy" (in GitLab) | The project's pipeline targets another environment | Fix that environment's project ID in the flow, or the project's `PINGONE_TARGET_ENVIRONMENT_ID` |

@@ -85,10 +85,11 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 
 ## 5. First run
 
-1. Launch: pick the source, then the target. **Choose resources** lists both environments' resources.
-2. Pick one low-risk resource and build: **Review request** shows the promotion-variable check and the redacted `request.json`.
-3. Submit: **Merge request opened** links to an MR adding `requests/<id>/request.json`.
-4. In GitLab, `validate_request` passes; after merge, the normal pipeline plans the promotion.
+1. Launch. If a page titled **Settings need attention** appears, it names each flow variable that is still a placeholder or malformed; fix those, deploy and launch again. Re-importing resets flow variables to the file's values, so expect this after every re-import.
+2. Pick the source, then the target. **Choose resources** lists both environments' resources.
+3. Pick one low-risk resource and build: **Review request** shows the promotion-variable check and the redacted `request.json`.
+4. Submit: **Merge request opened** links to an MR adding `requests/<id>/request.json`.
+5. In GitLab, `validate_request` passes; after merge, the normal pipeline plans the promotion.
 
 Errors and fixes are in the runbook's [troubleshooting table](RUNBOOK.md#troubleshooting).
 
