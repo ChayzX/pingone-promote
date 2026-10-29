@@ -17,6 +17,8 @@ type nativeFixture struct {
 	origin                    string
 	client                    *pingone.Client
 	req                       Request
+	sourceInventory           *pingone.Inventory
+	targetInventory           *pingone.Inventory
 	steps                     []pingone.Step
 	native                    pingone.Promotion
 	execute, rollback, create int
@@ -120,6 +122,12 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, "/embeddedSnapshots") {
 		src, dst := testInventories(f.origin)
+		if f.sourceInventory != nil {
+			src = *f.sourceInventory
+		}
+		if f.targetInventory != nil {
+			dst = *f.targetInventory
+		}
 		currentTargetSnapshot := strings.Contains(path, "/versions/target-current/")
 		inv := src
 		if env == "target" {
@@ -141,6 +149,9 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 				res.Configuration["name"] = "Dependency changed after planning"
 			}
 			item := map[string]any{"resource": map[string]string{"id": res.ID}, "resourceUrl": res.URL, "configuration": res.Configuration}
+			if len(res.Dependencies) > 0 {
+				item["referencedResources"] = res.Dependencies
+			}
 			if env == "source" && f.reuseDependency && res.ID == "flow" {
 				item["referencedResources"] = []string{"template"}
 			}
@@ -267,6 +278,129 @@ func TestApplyRequiresFreshAuthorizationDigestAndReadyPlan(t *testing.T) {
 				}
 			} else if err == nil || f.execute != 0 {
 				t.Fatalf("unsafe apply err=%v execute=%d", err, f.execute)
+			}
+		})
+	}
+}
+
+func nativeFlowLifecycleFixture(t *testing.T) *nativeFixture {
+	t.Helper()
+	f := fixture(t)
+	const rootID = "flow-a"
+	const versionID = "flowId:flow-a-version:1"
+	source := pingone.Inventory{APIOrigin: f.origin, EnvironmentID: "source", OrganizationID: "org", SnapshotID: "sourcepin", Resources: []pingone.Resource{
+		{ID: rootID, Name: "Flow A", Type: "flows", URL: f.origin + "/v1/environments/source/flows/flow-a", Dependencies: []string{"source-connector"}, Configuration: map[string]any{"id": rootID, "name": "Flow A", "enabled": true, "currentVersion": 1, "publishedVersion": 1, "environment": map[string]any{"id": "source"}}},
+		{ID: versionID, Name: "Flow A version 1", Type: "flows / versions / details", URL: f.origin + "/v1/environments/source/flows/flow-a/versions/1/details", Configuration: map[string]any{"flow": map[string]any{"id": rootID, "name": "Flow A"}, "version": 1}},
+		{ID: "source-connector", Name: "Source connection", Type: "connections", URL: f.origin + "/v1/environments/source/connections/source-connector", Configuration: map[string]any{"name": "Source connection"}},
+	}}
+	target := pingone.Inventory{APIOrigin: f.origin, EnvironmentID: "target", OrganizationID: "org", SnapshotID: "targetpin", Resources: []pingone.Resource{
+		{ID: "target-connector", Name: "Target connection", Type: "connections", URL: f.origin + "/v1/environments/target/connections/target-connector", Dependencies: []string{"target-dependency"}, Configuration: map[string]any{"name": "Target connection"}},
+		{ID: "target-dependency", Name: "Target credential", Type: "credentials", URL: f.origin + "/v1/environments/target/credentials/target-dependency", Dependencies: []string{"target-leaf"}, Configuration: map[string]any{"name": "Target credential"}},
+		{ID: "target-leaf", Name: "Credential leaf", Type: "credentials", URL: f.origin + "/v1/environments/target/credentials/target-leaf", Configuration: map[string]any{"name": "Credential leaf"}},
+	}}
+	f.sourceInventory, f.targetInventory = &source, &target
+	request, err := NewRequest(source, target, "us", "us", []string{rootID, versionID}, nil, "Review flow lifecycle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.req = request
+	f.native.Mapping = map[string]string{}
+	f.steps = []pingone.Step{
+		{Action: "POST", URL: f.origin + "/v1/environments/target/flows", Source: pingone.Ref{ID: rootID}, Payload: json.RawMessage(`{"color":"blue","connectors":[],"currentVersion":1,"deployedAt":null,"description":"Flow A","enabled":true,"environment":{"id":"target"},"graphData":{"elements":{"nodes":[{"data":{"connectionId":"target-connector"}}]}} ,"id":"flow-a","name":"Flow A","publishedVersion":1,"settings":{}}`)},
+		{Action: "PUT", URL: f.origin + "/v1/environments/target/flows/flow-a/enabled", Payload: json.RawMessage(`{"enabled":true}`)},
+		{Action: "POST", URL: f.origin + "/v1/environments/target/flows/flow-a/versions", Source: pingone.Ref{ID: versionID}, Payload: json.RawMessage(`{"color":"blue","connectors":[],"deployedAt":null,"description":"Flow A","enabled":true,"flow":{"id":"flow-a","name":"Flow A"},"graphData":{"elements":{"nodes":[{"data":{"connectionId":"target-connector"}}]}} ,"id":"flowId:flow-a-version:1","settings":{},"updates":[],"version":1}`)},
+		{Action: "POST", URL: f.origin + "/v1/environments/target/flows/flow-a/publishedVersion", Payload: json.RawMessage(`{"version":"1"}`)},
+	}
+	return f
+}
+
+func TestApplyTracksDestinationDependenciesRewrittenIntoNativePayload(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mutate    func([]pingone.Resource) []pingone.Resource
+		wantDrift bool
+	}{
+		{name: "unchanged permits apply"},
+		{name: "rewritten destination connector changed", wantDrift: true, mutate: func(resources []pingone.Resource) []pingone.Resource {
+			for i := range resources {
+				if resources[i].ID == "target-connector" {
+					resources[i].Configuration = map[string]any{"name": "Changed connection"}
+				}
+			}
+			return resources
+		}},
+		{name: "transitive destination dependency changed", wantDrift: true, mutate: func(resources []pingone.Resource) []pingone.Resource {
+			for i := range resources {
+				if resources[i].ID == "target-dependency" {
+					resources[i].Configuration = map[string]any{"name": "Changed credential"}
+				}
+			}
+			return resources
+		}},
+		{name: "nested destination dependency changed", wantDrift: true, mutate: func(resources []pingone.Resource) []pingone.Resource {
+			for i := range resources {
+				if resources[i].ID == "target-leaf" {
+					resources[i].Configuration = map[string]any{"name": "Changed nested credential"}
+				}
+			}
+			return resources
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := nativeFlowLifecycleFixture(t)
+			e := &Engine{Client: f.client}
+			a, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.mutate != nil {
+				f.liveTarget = tc.mutate
+			}
+			called := false
+			_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error {
+				called = true
+				return nil
+			})
+			if tc.wantDrift {
+				if !errors.Is(err, ErrTargetDrift) || called || f.execute != 0 {
+					t.Fatalf("expected pre-authorization target drift, err=%v authorized=%v execute=%d", err, called, f.execute)
+				}
+			} else if err != nil || !called || f.execute != 1 {
+				t.Fatalf("unchanged destination deps should permit apply: err=%v authorized=%v execute=%d", err, called, f.execute)
+			}
+		})
+	}
+}
+
+func TestApplyBlocksFlowLifecycleRootAndVersionCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		id     string
+		typ    string
+		url    string
+		config map[string]any
+	}{
+		{name: "root flow", id: "flow-a", typ: "flows", url: "/flows/flow-a", config: map[string]any{"name": "Flow A"}},
+		{name: "version child", id: "flowId:flow-a-version:1", typ: "flows / versions / details", url: "/flows/flow-a/versions/1/details", config: map[string]any{"version": 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := nativeFlowLifecycleFixture(t)
+			collision := func(resources []pingone.Resource) []pingone.Resource {
+				return append(resources, pingone.Resource{ID: tc.id, Type: tc.typ, Name: tc.name, URL: f.origin + "/v1/environments/target" + tc.url, Configuration: tc.config})
+			}
+			e := &Engine{Client: f.client}
+			a, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.liveTarget = collision
+			called := false
+			_, err = e.Apply(context.Background(), a, a.Review.Digest, func(context.Context, Artifact) error {
+				called = true
+				return nil
+			})
+			if !errors.Is(err, ErrTargetDrift) || called || f.execute != 0 {
+				t.Fatalf("expected collision drift before authorization, err=%v authorized=%v execute=%d", err, called, f.execute)
 			}
 		})
 	}

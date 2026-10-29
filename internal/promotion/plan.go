@@ -1,12 +1,16 @@
 package promotion
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"pingone-promote/internal/pingone"
@@ -91,12 +95,21 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 		approved[id] = true
 	}
 	add := func(issue string) { r.Issues = append(r.Issues, issue) }
+	flowLifecycle, flowLifecycleCandidate := selectedFlowVersionLifecycle(source, target, selected, mappings, steps, rollback)
+	if flowLifecycleCandidate && flowLifecycle == nil {
+		add("selected flow/version create lifecycle is unsupported or mismatched")
+	}
 	if len(steps) == 0 {
 		add("promotion plan has no steps")
 	}
 	created := map[string]string{}
 	for i, st := range steps {
 		rev := StepReview{Action: st.Action, URL: st.URL, SourceID: st.Source.ID, TargetID: st.Target.ID}
+		if flowLifecycle != nil && (i == 1 || i == 3) {
+			// These native control steps have no sourceResource. Bind them to the
+			// explicitly selected root flow in the user-visible review.
+			rev.SourceID = flowLifecycle.rootID
+		}
 		payload, err := decode(st.Payload)
 		if err != nil {
 			rev.Issue = "malformed step payload"
@@ -122,7 +135,7 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 			continue
 		}
 		if st.Source.ID == "" {
-			if !rollback {
+			if !rollback && !(flowLifecycle != nil && (i == 1 || i == 3)) {
 				rev.Issue = "missing source resource"
 				add(fmt.Sprintf("step %d: missing source resource", i))
 			}
@@ -163,7 +176,10 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 				rev.Issue = "mapping resource type mismatch"
 				add(fmt.Sprintf("step %d: mapping resource type mismatch", i))
 			}
-			if targetID != "" && hasTarget {
+			if flowLifecycle != nil && i == 2 {
+				// The narrowly validated selected-version create is the only
+				// supported child-create operation in this lifecycle.
+			} else if targetID != "" && hasTarget {
 				if st.Target.ID != "" && st.Target.ID != targetID {
 					rev.Issue = "step target does not match mapping"
 					add(fmt.Sprintf("step %d: step target does not match mapping", i))
@@ -173,10 +189,8 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 					add(fmt.Sprintf("step %d: target operation does not match mapped resource", i))
 				}
 			} else if !validCreatePath(u, sr, target, act) {
-				if !validCreatedFlowChild(u, sr, created[st.Source.ID], act) {
-					rev.Issue = "unmapped operation is not a valid collection create"
-					add(fmt.Sprintf("step %d: unmapped operation is not a valid collection create", i))
-				}
+				rev.Issue = "unmapped operation is not a valid collection create"
+				add(fmt.Sprintf("step %d: unmapped operation is not a valid collection create", i))
 			} else {
 				payloadID, _ := payloadObject["id"].(string)
 				if st.Target.ID != "" && payloadID != "" && st.Target.ID != payloadID {
@@ -200,6 +214,231 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 	h := sha256.Sum256(canonical)
 	r.Digest = hex.EncodeToString(h[:])
 	return r
+}
+
+type flowVersionLifecycle struct {
+	rootID    string
+	versionID string
+}
+
+// selectedFlowVersionLifecycle recognizes only the observed native new-flow
+// lifecycle. A selected flow and its explicitly selected version form a
+// candidate; if any detail differs from this exact sequence, the candidate is
+// rejected rather than falling back to generic collection-create rules.
+func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []string, mappings map[string]string, steps []pingone.Step, rollback bool) (*flowVersionLifecycle, bool) {
+	if rollback {
+		return nil, false
+	}
+	src := resourceIndex(source)
+	selectedSet := map[string]bool{}
+	selectedRoots := []string{}
+	selectedVersions := []string{}
+	for _, id := range selected {
+		selectedSet[id] = true
+		if src[id].Type == "flows" {
+			selectedRoots = append(selectedRoots, id)
+		}
+		if src[id].Type == "flows / versions / details" {
+			selectedVersions = append(selectedVersions, id)
+		}
+	}
+	if len(selectedRoots) == 0 || len(selectedVersions) == 0 {
+		return nil, false
+	}
+	candidate := true
+	if len(selectedRoots) != 1 || len(selectedVersions) != 1 {
+		return nil, candidate
+	}
+	rootID, versionID := selectedRoots[0], selectedVersions[0]
+	owner, _, ownerOK := flowVersionResourceIdentity(versionID)
+	if !ownerOK || owner != rootID {
+		return nil, candidate
+	}
+	if len(selected) != 2 || len(selectedSet) != 2 || !selectedSet[rootID] || !selectedSet[versionID] || len(steps) != 4 {
+		return nil, candidate
+	}
+	if _, mapped := mappings[rootID]; mapped {
+		return nil, candidate
+	}
+	if _, mapped := mappings[versionID]; mapped {
+		return nil, candidate
+	}
+	root, rootExists := src[rootID]
+	version, versionExists := src[versionID]
+	if !rootExists || !versionExists || root.Type != "flows" || version.Type != "flows / versions / details" || root.Name == "" || root.Configuration == nil || version.Configuration == nil {
+		return nil, candidate
+	}
+	owner, versionNumber, validVersion := flowVersionResourceIdentity(versionID)
+	if !validVersion || owner != rootID || !exactInventoryURL(root.URL, source.APIOrigin, source.EnvironmentID, "/flows/"+rootID) || !exactInventoryURL(version.URL, source.APIOrigin, source.EnvironmentID, "/flows/"+rootID+"/versions/"+strconv.FormatUint(versionNumber, 10)+"/details") {
+		return nil, candidate
+	}
+	if sourceRootID, _ := root.Configuration["id"].(string); sourceRootID != rootID {
+		return nil, candidate
+	}
+	if sourceName, _ := root.Configuration["name"].(string); sourceName != root.Name {
+		return nil, candidate
+	}
+	if root.Configuration["enabled"] != true {
+		return nil, candidate
+	}
+	sourceEnvironment, ok := root.Configuration["environment"].(map[string]any)
+	if !ok || sourceEnvironment["id"] != source.EnvironmentID {
+		return nil, candidate
+	}
+	sourceCurrent, currentOK := positiveSafeInteger(root.Configuration["currentVersion"])
+	sourcePublished, publishedOK := positiveSafeInteger(root.Configuration["publishedVersion"])
+	if !currentOK || !publishedOK || sourceCurrent != versionNumber || sourcePublished != versionNumber {
+		return nil, candidate
+	}
+	sourceVersionFlow, ok := version.Configuration["flow"].(map[string]any)
+	if !ok || sourceVersionFlow["id"] != rootID || sourceVersionFlow["name"] != root.Name {
+		return nil, candidate
+	}
+	if sourceVersion, ok := positiveSafeInteger(version.Configuration["version"]); !ok || sourceVersion != versionNumber {
+		return nil, candidate
+	}
+	if source.EnvironmentID == "" || target.EnvironmentID == "" || source.EnvironmentID == target.EnvironmentID || source.APIOrigin == "" || target.APIOrigin == "" {
+		return nil, candidate
+	}
+	for _, resource := range target.Resources {
+		if resource.Type == "flows" && (resource.ID == rootID || resource.Name == root.Name) {
+			return nil, candidate
+		}
+		if resource.ID == versionID {
+			return nil, candidate
+		}
+	}
+	if steps[0].Action != "POST" || steps[0].Source.ID != rootID || steps[0].Source.Name != "" || !emptyRef(steps[0].Target) || !exactInventoryURL(steps[0].URL, target.APIOrigin, target.EnvironmentID, "/flows") {
+		return nil, candidate
+	}
+	if steps[1].Action != "PUT" || !emptyRef(steps[1].Source) || !emptyRef(steps[1].Target) || !exactInventoryURL(steps[1].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/enabled") {
+		return nil, candidate
+	}
+	if steps[2].Action != "POST" || steps[2].Source.ID != versionID || steps[2].Source.Name != "" || !emptyRef(steps[2].Target) || !exactInventoryURL(steps[2].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/versions") {
+		return nil, candidate
+	}
+	if steps[3].Action != "POST" || !emptyRef(steps[3].Source) || !emptyRef(steps[3].Target) || !exactInventoryURL(steps[3].URL, target.APIOrigin, target.EnvironmentID, "/flows/"+rootID+"/publishedVersion") {
+		return nil, candidate
+	}
+	rootPayload, ok := strictJSONObject(steps[0].Payload)
+	if !ok || !exactObjectKeys(rootPayload, "color", "connectors", "currentVersion", "deployedAt", "description", "enabled", "environment", "graphData", "id", "name", "publishedVersion", "settings") {
+		return nil, candidate
+	}
+	if rootPayload["id"] != rootID || rootPayload["name"] != root.Name || rootPayload["enabled"] != true {
+		return nil, candidate
+	}
+	currentVersion, currentOK := positiveSafeInteger(rootPayload["currentVersion"])
+	publishedVersion, publishedOK := positiveSafeInteger(rootPayload["publishedVersion"])
+	if !currentOK || !publishedOK || currentVersion != versionNumber || publishedVersion != versionNumber {
+		return nil, candidate
+	}
+	environment, ok := rootPayload["environment"].(map[string]any)
+	if !ok || !exactObjectKeys(environment, "id") || environment["id"] != target.EnvironmentID {
+		return nil, candidate
+	}
+	enabledPayload, ok := strictJSONObject(steps[1].Payload)
+	if !ok || !exactObjectKeys(enabledPayload, "enabled") || enabledPayload["enabled"] != true {
+		return nil, candidate
+	}
+	versionPayload, ok := strictJSONObject(steps[2].Payload)
+	if !ok || !exactObjectKeys(versionPayload, "color", "connectors", "deployedAt", "description", "enabled", "flow", "graphData", "id", "settings", "updates", "version") {
+		return nil, candidate
+	}
+	versionFlow, ok := versionPayload["flow"].(map[string]any)
+	if !ok || !exactObjectKeys(versionFlow, "id", "name") || versionFlow["id"] != rootID || versionFlow["name"] != root.Name || versionPayload["id"] != versionID || versionPayload["enabled"] != true {
+		return nil, candidate
+	}
+	payloadVersion, ok := positiveSafeInteger(versionPayload["version"])
+	if !ok || payloadVersion != versionNumber {
+		return nil, candidate
+	}
+	publishPayload, ok := strictJSONObject(steps[3].Payload)
+	if !ok || !exactObjectKeys(publishPayload, "version") || publishPayload["version"] != strconv.FormatUint(versionNumber, 10) {
+		return nil, candidate
+	}
+	return &flowVersionLifecycle{rootID: rootID, versionID: versionID}, candidate
+}
+
+func flowVersionResourceIdentity(id string) (string, uint64, bool) {
+	if !strings.HasPrefix(id, "flowId:") {
+		return "", 0, false
+	}
+	separator := strings.LastIndex(id, "-version:")
+	if separator <= len("flowId:") {
+		return "", 0, false
+	}
+	owner := id[len("flowId:"):separator]
+	versionText := id[separator+len("-version:"):]
+	version, err := strconv.ParseUint(versionText, 10, 64)
+	if err != nil || version == 0 || version > 9007199254740991 || strconv.FormatUint(version, 10) != versionText || !pingone.ValidResourceID(owner) {
+		return "", 0, false
+	}
+	return owner, version, true
+}
+
+func exactInventoryURL(raw, apiOrigin, environment, resourcePath string) bool {
+	u, err := url.Parse(raw)
+	base, baseErr := url.Parse(apiOrigin)
+	if err != nil || baseErr != nil || u == nil || base == nil || u.User != nil || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" || base.User != nil || base.RawPath != "" || base.RawQuery != "" || base.Fragment != "" {
+		return false
+	}
+	if u.Scheme != "https" || base.Scheme != "https" || base.Host == "" || base.Path != "" && base.Path != "/" || !strings.EqualFold(u.Host, base.Host) || u.Scheme != base.Scheme {
+		return false
+	}
+	return u.Path == pingone.EnvPath(environment)+resourcePath
+}
+
+func emptyRef(ref pingone.Ref) bool { return ref.ID == "" && ref.Name == "" }
+
+func strictJSONObject(raw json.RawMessage) (map[string]any, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var object map[string]any
+	if decoder.Decode(&object) != nil || object == nil {
+		return nil, false
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, false
+	}
+	return object, true
+}
+
+func exactObjectKeys(object map[string]any, keys ...string) bool {
+	if len(object) != len(keys) {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := object[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func positiveSafeInteger(value any) (uint64, bool) {
+	const maxSafeInteger = uint64(9007199254740991)
+	switch number := value.(type) {
+	case json.Number:
+		parsed, err := strconv.ParseUint(number.String(), 10, 64)
+		return parsed, err == nil && parsed > 0 && parsed <= maxSafeInteger
+	case float64:
+		if math.IsNaN(number) || math.IsInf(number, 0) || number < 1 || number > float64(maxSafeInteger) || math.Trunc(number) != number {
+			return 0, false
+		}
+		return uint64(number), true
+	case int:
+		return uint64(number), number > 0 && uint64(number) <= maxSafeInteger
+	case int64:
+		return uint64(number), number > 0 && uint64(number) <= maxSafeInteger
+	case uint64:
+		return number, number > 0 && number <= maxSafeInteger
+	default:
+		return 0, false
+	}
 }
 
 func rollbackTargetMatches(u *url.URL, targetID string, dst map[string]pingone.Resource) bool {
@@ -325,7 +564,7 @@ func validMappedPath(u *url.URL, r pingone.Resource, action string) bool {
 	if got == want {
 		return action == "PUT" || action == "PATCH" || action == "POST"
 	}
-	return r.Type == "flows" && action == "POST" && strings.HasPrefix(got, want+"/versions") && (got == want+"/versions" || strings.HasPrefix(got, want+"/versions/"))
+	return false
 }
 func validCreatePath(u *url.URL, s pingone.Resource, target pingone.Inventory, action string) bool {
 	if action != "POST" {
@@ -364,14 +603,6 @@ func createdRootID(st pingone.Step, payload any) string {
 	}
 	return ""
 }
-func validCreatedFlowChild(u *url.URL, s pingone.Resource, id, action string) bool {
-	if s.Type != "flows" || id == "" || (action != "POST" && action != "PUT" && action != "PATCH") {
-		return false
-	}
-	p := strings.Split(strings.Trim(u.Path, "/"), "/")
-	return len(p) >= 6 && p[0] == "v1" && p[1] == "environments" && p[3] == "flows" && p[4] == id && p[5] == "versions" && (len(p) == 6 || p[6] != "")
-}
-
 func diffFields(before, after map[string]any, prefix string) []string {
 	keys := map[string]bool{}
 	for k := range before {

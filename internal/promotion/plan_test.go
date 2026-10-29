@@ -78,12 +78,39 @@ func TestTemplatesArePromotableOnlyWhenSelected(t *testing.T) {
 		t.Fatal(r.Issues)
 	}
 }
-func TestFlowVersionDescendantsStayInsideMappedFlow(t *testing.T) {
+func TestMappedFlowVersionDescendantsAreUnsupported(t *testing.T) {
 	s, d := inventories()
-	steps := []pingone.Step{{Action: "POST", URL: d.Resources[0].URL + "/versions", Source: pingone.Ref{ID: "f"}, Payload: json.RawMessage(`{"graphData":{}}`)}}
-	r := Inspect(s, d, []string{"f"}, map[string]string{"f": "g"}, steps, false)
-	if len(r.Issues) > 0 {
-		t.Fatal(r.Issues)
+	for _, suffix := range []string{"/versions", "/versions/1/details", "/versions/2/details/extra"} {
+		t.Run(suffix, func(t *testing.T) {
+			steps := []pingone.Step{{Action: "POST", URL: d.Resources[0].URL + suffix, Source: pingone.Ref{ID: "f"}, Payload: json.RawMessage(`{"graphData":{}}`)}}
+			r := Inspect(s, d, []string{"f"}, map[string]string{"f": "g"}, steps, false)
+			if len(r.Issues) == 0 {
+				t.Fatal("mapped flow version descendant allowed without an explicitly selected version lifecycle")
+			}
+		})
+	}
+	s.Resources = append(s.Resources, pingone.Resource{ID: "flowId:f-version:1", Name: "Sign in version 1", Type: "flows / versions / details", URL: "https://api.pingone.com/v1/environments/src/flows/f/versions/1/details"})
+	d.Resources = append(d.Resources, pingone.Resource{ID: "flowId:g-version:1", Name: "Production sign in version 1", Type: "flows / versions / details", URL: "https://api.pingone.com/v1/environments/dst/flows/g/versions/1/details"})
+	unselectedVersion := []pingone.Step{{Action: "PUT", URL: d.Resources[len(d.Resources)-1].URL, Source: pingone.Ref{ID: "flowId:f-version:1"}, Target: pingone.Ref{ID: "flowId:g-version:1"}, Payload: json.RawMessage(`{"version":1}`)}}
+	r := Inspect(s, d, []string{"f"}, map[string]string{"f": "g", "flowId:f-version:1": "flowId:g-version:1"}, unselectedVersion, false)
+	if len(r.Issues) == 0 {
+		t.Fatal("mapped version update was allowed without selecting its source version")
+	}
+}
+
+func TestMappedFlowVersionUpdateMustMatchExplicitResource(t *testing.T) {
+	s, d := inventories()
+	s.Resources = append(s.Resources, pingone.Resource{ID: "flowId:f-version:1", Name: "Sign in version 1", Type: "flows / versions / details", URL: "https://api.pingone.com/v1/environments/src/flows/f/versions/1/details"})
+	d.Resources = append(d.Resources, pingone.Resource{ID: "flowId:g-version:2", Name: "Production sign in version 2", Type: "flows / versions / details", URL: "https://api.pingone.com/v1/environments/dst/flows/g/versions/2/details"})
+	steps := []pingone.Step{{Action: "PUT", URL: d.Resources[len(d.Resources)-1].URL, Source: pingone.Ref{ID: "flowId:f-version:1"}, Target: pingone.Ref{ID: "flowId:g-version:2"}, Payload: json.RawMessage(`{"version":1}`)}}
+	r := Inspect(s, d, []string{"flowId:f-version:1"}, map[string]string{"flowId:f-version:1": "flowId:g-version:2"}, steps, false)
+	if len(r.Issues) != 0 {
+		t.Fatalf("exact explicitly mapped version update rejected: %v", r.Issues)
+	}
+	steps[0].URL = strings.Replace(steps[0].URL, "/versions/2/", "/versions/1/", 1)
+	r = Inspect(s, d, []string{"flowId:f-version:1"}, map[string]string{"flowId:f-version:1": "flowId:g-version:2"}, steps, false)
+	if len(r.Issues) == 0 {
+		t.Fatal("mapped version update accepted URL for a different version")
 	}
 }
 func TestReviewFingerprintChangesWithPayloadAndRedactsSecrets(t *testing.T) {
@@ -120,14 +147,212 @@ func TestUnmappedFlowCreationAndBoundVersionChild(t *testing.T) {
 	d.APIOrigin = "https://api.pingone.com"
 	root := pingone.Step{Action: "POST", URL: "https://api.pingone.com/v1/environments/dst/flows", Source: pingone.Ref{ID: "f"}, Target: pingone.Ref{ID: "new-flow"}, Payload: json.RawMessage(`{"id":"new-flow","name":"Created"}`)}
 	child := pingone.Step{Action: "POST", URL: "https://api.pingone.com/v1/environments/dst/flows/new-flow/versions", Source: pingone.Ref{ID: "f"}, Payload: json.RawMessage(`{"graphData":{}}`)}
-	r := Inspect(s, d, []string{"f"}, nil, []pingone.Step{root, child}, false)
+	r := Inspect(s, d, []string{"f"}, nil, []pingone.Step{root}, false)
 	if len(r.Issues) > 0 {
-		t.Fatal(r.Issues)
+		t.Fatalf("root collection create unexpectedly blocked: %v", r.Issues)
 	}
-	child.URL = "https://api.pingone.com/v1/environments/dst/flows/sibling/versions"
 	r = Inspect(s, d, []string{"f"}, nil, []pingone.Step{root, child}, false)
 	if len(r.Issues) == 0 {
-		t.Fatal("unbound flow child allowed")
+		t.Fatal("root-sourced arbitrary flow-version child allowed without explicit version selection")
+	}
+}
+
+func flowVersionLifecycleFixture() (pingone.Inventory, pingone.Inventory, []string, []pingone.Step) {
+	const origin = "https://api.pingone.com"
+	const rootID = "flow-a"
+	const versionID = "flowId:flow-a-version:1"
+	rootURL := origin + "/v1/environments/src/flows/" + rootID
+	versionURL := origin + "/v1/environments/src/flows/" + rootID + "/versions/1/details"
+	source := pingone.Inventory{APIOrigin: origin, EnvironmentID: "src", SnapshotID: "source-snapshot", OrganizationID: "org", Resources: []pingone.Resource{
+		{ID: rootID, Name: "Flow A", Type: "flows", URL: rootURL, Dependencies: []string{"source-connector"}, Configuration: map[string]any{"id": rootID, "name": "Flow A", "enabled": true, "currentVersion": 1, "publishedVersion": 1, "environment": map[string]any{"id": "src"}, "graphData": map[string]any{"elements": map[string]any{"nodes": []any{map[string]any{"data": map[string]any{"connectionId": "source-connector"}}}}}}},
+		{ID: versionID, Name: "Flow A version 1", Type: "flows / versions / details", URL: versionURL, Configuration: map[string]any{"flow": map[string]any{"id": rootID, "name": "Flow A"}, "version": 1, "graphData": map[string]any{"elements": map[string]any{"nodes": []any{map[string]any{"data": map[string]any{"connectionId": "source-connector"}}}}}}},
+		{ID: "source-connector", Name: "Source connection", Type: "connections", URL: origin + "/v1/environments/src/connections/source-connector", Configuration: map[string]any{"name": "Source connection"}},
+	}}
+	target := pingone.Inventory{APIOrigin: origin, EnvironmentID: "dst", SnapshotID: "target-snapshot", OrganizationID: "org", Resources: []pingone.Resource{
+		{ID: "target-connector", Name: "Target connection", Type: "connections", URL: origin + "/v1/environments/dst/connections/target-connector", Dependencies: []string{"target-dependency"}, Configuration: map[string]any{"name": "Target connection"}},
+		{ID: "target-dependency", Name: "Target credential", Type: "credentials", URL: origin + "/v1/environments/dst/credentials/target-dependency", Configuration: map[string]any{"name": "Target credential"}},
+	}}
+	steps := []pingone.Step{
+		{Action: "POST", URL: origin + "/v1/environments/dst/flows", Source: pingone.Ref{ID: rootID}, Payload: json.RawMessage(`{"color":"blue","connectors":[],"currentVersion":1,"deployedAt":null,"description":"Flow A","enabled":true,"environment":{"id":"dst"},"graphData":{"elements":{"nodes":[{"data":{"connectionId":"target-connector"}}]}},"id":"flow-a","name":"Flow A","publishedVersion":1,"settings":{}}`)},
+		{Action: "PUT", URL: origin + "/v1/environments/dst/flows/flow-a/enabled", Payload: json.RawMessage(`{"enabled":true}`)},
+		{Action: "POST", URL: origin + "/v1/environments/dst/flows/flow-a/versions", Source: pingone.Ref{ID: versionID}, Payload: json.RawMessage(`{"color":"blue","connectors":[],"deployedAt":null,"description":"Flow A","enabled":true,"flow":{"id":"flow-a","name":"Flow A"},"graphData":{"elements":{"nodes":[{"data":{"connectionId":"target-connector"}}]}},"id":"flowId:flow-a-version:1","settings":{},"updates":[],"version":1}`)},
+		{Action: "POST", URL: origin + "/v1/environments/dst/flows/flow-a/publishedVersion", Payload: json.RawMessage(`{"version":"1"}`)},
+	}
+	return source, target, []string{rootID, versionID}, steps
+}
+
+func TestInspectSelectedFlowVersionCreateLifecycle(t *testing.T) {
+	s, d, selected, steps := flowVersionLifecycleFixture()
+	r := Inspect(s, d, selected, nil, steps, false)
+	if len(r.Issues) != 0 {
+		t.Fatalf("selected flow/version lifecycle rejected: %v", r.Issues)
+	}
+	if len(r.Steps) != 4 || r.Digest == "" {
+		t.Fatalf("expected all four operations and a full-step digest: %#v", r)
+	}
+	for i, want := range []string{"flow-a", "flow-a", "flowId:flow-a-version:1", "flow-a"} {
+		if r.Steps[i].SourceID != want {
+			t.Fatalf("step %d owner=%q want %q", i, r.Steps[i].SourceID, want)
+		}
+	}
+}
+
+func TestFlowLifecycleExposesAllowedContentAndBindsItToRawDigest(t *testing.T) {
+	s, d, selected, steps := flowVersionLifecycleFixture()
+	first := Inspect(s, d, selected, nil, steps, false)
+	steps[0].Payload = json.RawMessage(strings.Replace(string(steps[0].Payload), `"description":"Flow A"`, `"description":"Reviewed changed content"`, 1))
+	second := Inspect(s, d, selected, nil, steps, false)
+	if len(second.Issues) != 0 {
+		t.Fatalf("an allowlisted content change should remain explicitly reviewable: %v", second.Issues)
+	}
+	if first.Digest == second.Digest {
+		t.Fatal("canonical raw step digest ignored a changed allowlisted payload field")
+	}
+	after, ok := second.Steps[0].After.(map[string]any)
+	if !ok || after["description"] != "Reviewed changed content" {
+		t.Fatalf("changed allowlisted content is absent from redacted review: %#v", second.Steps[0].After)
+	}
+}
+
+func TestInspectRejectsInvalidSelectedFlowVersionCreateLifecycle(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*pingone.Inventory, *pingone.Inventory, *[]string, *map[string]string, *[]pingone.Step)
+	}{
+		{"unselected version", func(_ *pingone.Inventory, _ *pingone.Inventory, selected *[]string, _ *map[string]string, _ *[]pingone.Step) {
+			*selected = []string{"flow-a"}
+		}},
+		{"malformed selected version cannot fall back", func(s *pingone.Inventory, _ *pingone.Inventory, selected *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			s.Resources[1].ID = "unlinked-version"
+			*selected = []string{"flow-a", "unlinked-version"}
+			*steps = (*steps)[:1]
+		}},
+		{"version selected under a different root cannot fall back", func(s *pingone.Inventory, _ *pingone.Inventory, selected *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			s.Resources[1].ID = "flowId:flow-b-version:1"
+			*selected = []string{"flow-a", "flowId:flow-b-version:1"}
+			*steps = (*steps)[:1]
+		}},
+		{"extra selected resource", func(s *pingone.Inventory, _ *pingone.Inventory, selected *[]string, _ *map[string]string, _ *[]pingone.Step) {
+			s.Resources = append(s.Resources, pingone.Resource{ID: "extra", Name: "Extra", Type: "templates", URL: "https://api.pingone.com/v1/environments/src/templates/extra"})
+			*selected = append(*selected, "extra")
+		}},
+		{"root mapping unsupported", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, mappings *map[string]string, _ *[]pingone.Step) {
+			*mappings = map[string]string{"flow-a": "target-flow"}
+		}},
+		{"version mapping unsupported", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, mappings *map[string]string, _ *[]pingone.Step) {
+			*mappings = map[string]string{"flowId:flow-a-version:1": "target-version"}
+		}},
+		{"wrong root owner", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Source.ID = "flow-b"
+		}},
+		{"source root version mismatch", func(s *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, _ *[]pingone.Step) {
+			s.Resources[0].Configuration["currentVersion"] = 2
+		}},
+		{"source root environment mismatch", func(s *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, _ *[]pingone.Step) {
+			s.Resources[0].Configuration["environment"] = map[string]any{"id": "other"}
+		}},
+		{"root target resource supplied", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Target.ID = "flow-a"
+		}},
+		{"enabled source supplied", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[1].Source.ID = "flow-a"
+		}},
+		{"enabled target supplied", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[1].Target.ID = "flow-a"
+		}},
+		{"publish source supplied", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[3].Source.ID = "flow-a"
+		}},
+		{"publish target supplied", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[3].Target.ID = "flow-a"
+		}},
+		{"wrong destination environment", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[1].URL = strings.Replace((*steps)[1].URL, "/dst/", "/other/", 1)
+		}},
+		{"wrong API origin", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[3].URL = strings.Replace((*steps)[3].URL, "api.pingone.com", "other.example", 1)
+		}},
+		{"extra step", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			*steps = append(*steps, (*steps)[3])
+		}},
+		{"missing lifecycle step does not fall back", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			*steps = (*steps)[:3]
+		}},
+		{"wrong order", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[1], (*steps)[2] = (*steps)[2], (*steps)[1]
+		}},
+		{"sibling version path", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].URL = strings.Replace((*steps)[2].URL, "/flow-a/", "/sibling/", 1)
+		}},
+		{"wrong version source", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Source.ID = "flowId:flow-a-version:2"
+		}},
+		{"version target resource supplied", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Target.ID = "flowId:flow-a-version:1"
+		}},
+		{"enabled false", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[1].Payload = json.RawMessage(`{"enabled":false}`)
+		}},
+		{"extra enabled payload field", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[1].Payload = json.RawMessage(`{"enabled":true,"extra":true}`)
+		}},
+		{"root identity mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(strings.Replace(string((*steps)[0].Payload), `"id":"flow-a"`, `"id":"flow-b"`, 1))
+		}},
+		{"root environment mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(strings.Replace(string((*steps)[0].Payload), `"id":"dst"`, `"id":"other"`, 1))
+		}},
+		{"root disabled", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(strings.Replace(string((*steps)[0].Payload), `"enabled":true`, `"enabled":false`, 1))
+		}},
+		{"root current version mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(strings.Replace(string((*steps)[0].Payload), `"currentVersion":1`, `"currentVersion":2`, 1))
+		}},
+		{"root published version mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(strings.Replace(string((*steps)[0].Payload), `"publishedVersion":1`, `"publishedVersion":2`, 1))
+		}},
+		{"root extra field", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[0].Payload = json.RawMessage(strings.TrimSuffix(string((*steps)[0].Payload), "}") + `,"execute":true}`)
+		}},
+		{"version parent mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Payload = json.RawMessage(strings.Replace(string((*steps)[2].Payload), `"id":"flow-a"`, `"id":"sibling"`, 1))
+		}},
+		{"version value mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Payload = json.RawMessage(strings.Replace(string((*steps)[2].Payload), `"version":1`, `"version":2`, 1))
+		}},
+		{"version value string instead of number", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Payload = json.RawMessage(strings.Replace(string((*steps)[2].Payload), `"version":1`, `"version":"1"`, 1))
+		}},
+		{"version ID mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Payload = json.RawMessage(strings.Replace(string((*steps)[2].Payload), "flowId:flow-a-version:1", "flowId:flow-a-version:2", 1))
+		}},
+		{"version extra field", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[2].Payload = json.RawMessage(strings.TrimSuffix(string((*steps)[2].Payload), "}") + `,"execute":true}`)
+		}},
+		{"publish version mismatch", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[3].Payload = json.RawMessage(`{"version":"2"}`)
+		}},
+		{"extra publish payload field", func(_ *pingone.Inventory, _ *pingone.Inventory, _ *[]string, _ *map[string]string, steps *[]pingone.Step) {
+			(*steps)[3].Payload = json.RawMessage(`{"version":"1","extra":true}`)
+		}},
+		{"target root ID already exists", func(_ *pingone.Inventory, d *pingone.Inventory, _ *[]string, _ *map[string]string, _ *[]pingone.Step) {
+			d.Resources = append(d.Resources, pingone.Resource{ID: "flow-a", Name: "Other", Type: "flows", URL: "https://api.pingone.com/v1/environments/dst/flows/flow-a"})
+		}},
+		{"target root name already exists", func(_ *pingone.Inventory, d *pingone.Inventory, _ *[]string, _ *map[string]string, _ *[]pingone.Step) {
+			d.Resources = append(d.Resources, pingone.Resource{ID: "other-flow", Name: "Flow A", Type: "flows", URL: "https://api.pingone.com/v1/environments/dst/flows/other-flow"})
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, d, selected, original := flowVersionLifecycleFixture()
+			steps := append([]pingone.Step(nil), original...)
+			var mappings map[string]string
+			tc.mutate(&s, &d, &selected, &mappings, &steps)
+			r := Inspect(s, d, selected, mappings, steps, false)
+			if len(r.Issues) == 0 {
+				t.Fatal("invalid flow/version lifecycle was accepted")
+			}
+		})
 	}
 }
 

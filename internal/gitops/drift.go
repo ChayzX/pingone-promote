@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -106,6 +107,48 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 				collections[c] = true
 			}
 		}
+		// Native plans may rewrite a selected resource's dependency IDs to
+		// reuse destination resources. Include only exact IDs found in the
+		// reviewed target snapshots; this creates drift candidates, not write
+		// authorization. Their complete configurations are compared below.
+		var payload any
+		if len(st.Payload) > 0 {
+			if err := json.Unmarshal(st.Payload, &payload); err != nil {
+				return fmt.Errorf("%w: step payload cannot be resolved for comparison", ErrTargetDrift)
+			}
+			if err := collectTargetIDs(payload, before, after, affected); err != nil {
+				return fmt.Errorf("%w: %v", ErrTargetDrift, err)
+			}
+		}
+	}
+	// Follow dependencies from every affected pinned/live target resource.
+	// Considering both snapshots detects a dependency added or removed after
+	// review while remaining cycle-safe.
+	dependencyQueue := make([]string, 0, len(affected))
+	for id := range affected {
+		dependencyQueue = append(dependencyQueue, id)
+	}
+	dependencyVisited := map[string]bool{}
+	for len(dependencyQueue) > 0 {
+		id := dependencyQueue[0]
+		dependencyQueue = dependencyQueue[1:]
+		if dependencyVisited[id] {
+			continue
+		}
+		dependencyVisited[id] = true
+		for _, inventory := range []map[string]pingone.Resource{before, after} {
+			if resource, ok := inventory[id]; ok {
+				for _, dependencyID := range resource.Dependencies {
+					if _, inPinned := before[dependencyID]; inPinned {
+						affected[dependencyID] = true
+						dependencyQueue = append(dependencyQueue, dependencyID)
+					} else if _, inLive := after[dependencyID]; inLive {
+						affected[dependencyID] = true
+						dependencyQueue = append(dependencyQueue, dependencyID)
+					}
+				}
+			}
+		}
 	}
 	ids := make([]string, 0, len(affected))
 	for id := range affected {
@@ -130,6 +173,30 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 	for c := range collections {
 		if !sameMembers(before, after, c) {
 			return fmt.Errorf("%w: membership of %s changed", ErrTargetDrift, c)
+		}
+	}
+	return nil
+}
+
+func collectTargetIDs(value any, before, after map[string]pingone.Resource, affected map[string]bool) error {
+	switch item := value.(type) {
+	case string:
+		if _, ok := before[item]; ok {
+			affected[item] = true
+		} else if _, ok := after[item]; ok {
+			affected[item] = true
+		}
+	case []any:
+		for _, child := range item {
+			if err := collectTargetIDs(child, before, after, affected); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for _, child := range item {
+			if err := collectTargetIDs(child, before, after, affected); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
