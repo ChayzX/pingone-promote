@@ -1,5 +1,7 @@
 # PingOne Promote
 
+> **DaVinci Request flow (this branch):** admins can request promotions from a DaVinci flow instead of this local app. See [examples/davinci-request-flow](examples/davinci-request-flow/README.md) and its [setup runbook](examples/davinci-request-flow/RUNBOOK.md).
+
 > Integration handoff: the GitLab-controlled workflow is on `feat/gitlab-production`. Start with [docs/HANDOFF.md](docs/HANDOFF.md). Local execution is denied by default; live GitLab/PingOne acceptance and a complete production-readiness review remain outstanding. The older `v0.1.0`/`main` build does not contain this new policy.
 
 PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It is written in Go 1.24 or newer and has no third-party runtime dependencies. The API must be enabled for the tenant.

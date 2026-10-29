@@ -17,7 +17,7 @@ Branch promotion/<id> → commit → merge request ──▶
 
 The flow never calls the PingOne promotions API, so it cannot deploy or roll back anything. The flow run test checks that.
 
-**Status: built and tested offline. It has not been imported into a live DaVinci yet,** because the trial tenant has no DaVinci. See [What still needs a live check](#what-still-needs-a-live-check).
+**Status: built and tested offline; the Terraform passes `terraform validate` against the real pingone provider. It has not been imported into a live DaVinci yet,** because the trial tenant has no DaVinci. See [What still needs a live check](#what-still-needs-a-live-check).
 
 ## What the admin sees
 
@@ -82,25 +82,7 @@ Production PingOne write credentials stay in protected GitLab CI variables, as b
 
 ## Setup
 
-1. **Generate the export.** `export/` holds a sample generated from `values.example.json`; its placeholders won't work. Copy `values.example.json` to a private `values.json` and fill in your values. `gitlabUrl` is the base URL of your GitLab instance, including any path prefix. Then run:
-
-   ```sh
-   python3 gen_flows.py out values.json
-   python3 check_flows.py out/*.json
-   ```
-
-2. **Create the sign-in app.** In the environment that holds admin accounts, add an **OIDC Web App** (Authorization Code) that uses the same sign-on policy as the admin console, so admins go through Entra.
-3. **Create the snapshot worker.** In the host environment, add a **Worker** app with the roles above. Store `printf '%s:%s' "$CLIENT_ID" "$CLIENT_SECRET" | base64` in the company secret `promoteWorkerBasicAuth`.
-4. **Create the GitLab token** as described above, and store it in the company secret `promoteGitlabToken`.
-5. **Create the DaVinci connections:** Http, Functions, Error Message, Variables, and **OIDC & OAuth IdP**. Configure the OIDC connection with:
-   - Auth Type: OpenId
-   - Issuer: `https://auth.pingone.com/<adminEnvironmentId>/as`
-   - App ID and secret: from step 2
-   - Scope: `openid profile email`
-
-   Then add the connection's redirect URL to the sign-in app.
-6. **Import** `pingone-promote-request.flow.json` (**Flows → Add Flow → Import from JSON**). Point each node at your connections; the placeholder connection IDs are `a1f0d00a…0001` to `…0005`. Then deploy.
-7. **Network.** DaVinci must be able to reach your GitLab API over HTTPS. A GitLab that is only reachable inside your network needs an allowlisted ingress for DaVinci's egress addresses.
+Follow **[RUNBOOK.md](RUNBOOK.md)**. It covers prerequisites, the GitLab token, setup with Terraform ([`terraform/`](terraform/), pingone provider 1.23+) or by hand in the console, the one console step both paths share, first-run checks, troubleshooting and rotation.
 
 ## What still needs a live check
 

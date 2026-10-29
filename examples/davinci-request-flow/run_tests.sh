@@ -15,6 +15,13 @@ node test/unit.js
 python3 -I gen_flows.py "$work/out" values.example.json >/dev/null
 python3 -I check_flows.py "$work/out"/*.json
 node test/shipped_code.js "$work/out"/*.json
+# The committed Terraform flow must match the generator.
+mkdir "$work/tf" && python3 -I gen_flows.py --terraform "$work/tf" >/dev/null
+cmp -s "$work/tf/flow.tf.json" terraform/flow.tf.json || { echo "terraform/flow.tf.json is stale: run python3 gen_flows.py --terraform terraform"; exit 1; }
+echo "terraform/flow.tf.json matches the generator"
+if command -v terraform >/dev/null; then
+  (cd terraform && TF_DATA_DIR="$work/tfdata" terraform init -backend=false -input=false >/dev/null && TF_DATA_DIR="$work/tfdata" terraform validate -no-color)
+fi
 mkdir "$work/saved"
 node test/flow_run.js "$work/out/pingone-promote-request.flow.json" "$work/saved"
 

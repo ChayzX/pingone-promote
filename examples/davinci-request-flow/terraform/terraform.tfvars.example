@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars (git-ignored) or pass from CI. IDs only; no secrets.
+pingone_domain             = "pingone.com"
+organization_id            = "<organization ID>"
+admin_environment_id       = "<environment holding admin accounts>"
+entra_identity_provider_id = "<ID of the Entra external IdP in the admin environment>"
+host_environment_id        = "<DaVinci environment that runs the flow>"
+source_environment_id      = "<environment to promote from>"
+target_environment_id      = "<environment to promote to>"
+worker_role_names          = ["Promotion Admin"]
+
+gitlab_url         = "https://gitlab.com"
+gitlab_project_id  = "<numeric project ID>"
+gitlab_environment = "production"
+
+# Reuse existing DaVinci connections by ID; leave a key out to create one.
+connection_ids = {
+  http      = "<32-character connection ID>"
+  functions = "<32-character connection ID>"
+  error     = "<32-character connection ID>"
+  variables = "<32-character connection ID>"
+}
+
+# gitlab_token: never here. Set TF_VAR_gitlab_token from CI or your vault.

@@ -5,12 +5,14 @@ resources from live snapshots, and the flow commits request.json to a
 promotion/<id> branch and opens a merge request. Planning, approval, apply and
 rollback stay in the GitLab pipeline (pingone-runner), unchanged.
 
-usage: python3 gen_flows.py OUT_DIR [values.json]
+usage: python3 gen_flows.py OUT_DIR [values.json]       DaVinci import JSON
+       python3 gen_flows.py --terraform TF_DIR         flow.tf.json for terraform/
 
 Each custom function node carries lib/core.js (scoped) plus one step body
 from flows/fn/, exactly as test/load_fn.js wraps them for the Node tests.
 """
 import json
+import re
 import pathlib
 import sys
 
@@ -20,8 +22,13 @@ HERE = pathlib.Path(__file__).parent
 CORE = "\n".join(line.strip() for line in (HERE / "lib" / "core.js").read_text().splitlines()
                  if line.strip() and not line.strip().startswith("//"))
 FN_DIR = HERE / "flows" / "fn"
-OUT = pathlib.Path(sys.argv[1])
-VALUES = json.loads(pathlib.Path(sys.argv[2]).read_text()) if len(sys.argv) > 2 else {}
+TERRAFORM = len(sys.argv) > 1 and sys.argv[1] == "--terraform"
+if TERRAFORM:
+    OUT = pathlib.Path(sys.argv[2])
+    VALUES = {}
+else:
+    OUT = pathlib.Path(sys.argv[1])
+    VALUES = json.loads(pathlib.Path(sys.argv[2]).read_text()) if len(sys.argv) > 2 else {}
 
 VALUE_KEYS = {
     "apiOrigin": "https://api.pingone.com",
@@ -38,7 +45,10 @@ VALUE_KEYS = {
     "gitlabProjectId": "",
     "gitlabEnvironment": "production",
 }
-unknown = set(VALUES) - set(VALUE_KEYS)
+# Optional: your DaVinci connection IDs, so the export is wired to them on import.
+CONNECTION_KEYS = {"oidcConnectionId": "oidc", "httpConnectionId": "http", "functionsConnectionId": "fn",
+                   "errorConnectionId": "err", "variablesConnectionId": "var"}
+unknown = set(VALUES) - set(VALUE_KEYS) - set(CONNECTION_KEYS)
 if unknown:
     sys.exit(f"unknown keys in values file: {sorted(unknown)}")
 SETTINGS = {k: str(VALUES.get(k, v)) for k, v in VALUE_KEYS.items()}
@@ -51,6 +61,12 @@ CONN = {
     "err": ("errorConnector", "a1f0d00a000000000000000000000004", "Error Message"),
     "var": ("variablesConnector", "a1f0d00a000000000000000000000005", "Variables"),
 }
+for key, slot in CONNECTION_KEYS.items():
+    cid = str(VALUES.get(key, "")).strip()
+    if cid:
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", cid):
+            sys.exit(f"{key} must be the 32-character hex DaVinci connection ID, got {cid!r}")
+        CONN[slot] = (CONN[slot][0], cid.lower(), CONN[slot][2])
 
 
 def fn_code(name):
@@ -524,6 +540,68 @@ def resolve_aliases(flow):
     return json.loads(raw)
 
 
+# ---------------- Terraform (pingone provider >= 1.23) ------------------------
+# Settings come from Terraform variables/locals; connections from
+# local.connection_ids; runtime-only flow variables get no managed value.
+TF_SETTING = {
+    "apiOrigin": "${local.api_origin}", "authOrigin": "${local.auth_origin}",
+    "adminEnvironmentId": "${var.admin_environment_id}", "hostEnvironmentId": "${var.host_environment_id}",
+    "sourceEnvironmentId": "${var.source_environment_id}", "targetEnvironmentId": "${var.target_environment_id}",
+    "organizationId": "${var.organization_id}", "davinciAdminRoleId": "${var.davinci_admin_role_id}",
+    "sourceRegion": "${local.region}", "targetRegion": "${local.region}",
+    "gitlabUrl": "${var.gitlab_url}", "gitlabProjectId": "${var.gitlab_project_id}",
+    "gitlabEnvironment": "${var.gitlab_environment}",
+}
+assert set(TF_SETTING) == set(VALUE_KEYS)
+
+
+def tf_literal(s):
+    """A string Terraform must not interpolate."""
+    return s.replace("${", "$${").replace("%{", "%%{")
+
+
+def terraform(flow_data):
+    slot_of = {cid: slot for slot, (_, cid, _) in CONN.items()}
+    nodes = {}
+    for n in flow_data["graphData"]["elements"]["nodes"]:
+        d = n["data"]
+        data = {"node_type": d["nodeType"], "label": d["label"]}
+        if d["nodeType"] == "CONNECTION":
+            data.update({"connection_id": "${local.connection_ids.%s}" % slot_of[d["connectionId"]], "connector_id": d["connectorId"],
+                         "name": d["name"], "status": d["status"], "capability_name": d["capabilityName"], "type": d["type"]})
+        if d.get("properties"):
+            data["properties"] = tf_literal(json.dumps(d["properties"], separators=(",", ":")))
+        nodes[d["id"]] = {"data": data, "position": n["position"], "group": "nodes", "removed": False, "selected": False,
+                          "selectable": True, "locked": False, "grabbable": True, "pannable": False}
+    edges = {e["data"]["id"]: {"data": {"source": e["data"]["source"], "target": e["data"]["target"]}, "position": {"x": 0, "y": 0},
+                               "group": "edges", "removed": False, "selected": False, "selectable": True, "locked": False,
+                               "grabbable": True, "pannable": True}
+             for e in flow_data["graphData"]["elements"]["edges"]}
+    flow = {"environment_id": "${var.host_environment_id}", "name": flow_data["name"], "description": flow_data["description"],
+            "color": flow_data["flowColor"],
+            "graph_data": {"elements": {"nodes": nodes, "edges": edges}, "zooming_enabled": True, "user_zooming_enabled": True, "zoom": 1,
+                           "min_zoom": 1e-50, "max_zoom": 1e50, "panning_enabled": True, "user_panning_enabled": True,
+                           "pan": {"x": 0, "y": 0}, "box_selection_enabled": True, "renderer": '{"name":"null"}'}}
+    variables = {}
+    for v in flow_data["variables"]:
+        if v["context"] != "flow":
+            continue
+        name = v["fields"]["displayName"]
+        res = {"environment_id": "${var.host_environment_id}", "context": "flow", "name": name, "display_name": name,
+               "data_type": v["fields"]["type"], "mutable": True, "flow": {"id": "${pingone_davinci_flow.request.id}"}}
+        if name in TF_SETTING:
+            res["value"] = {"string": TF_SETTING[name]}
+        variables["flow_" + re.sub(r"[^A-Za-z0-9_]", "_", name)] = res
+    return {"resource": {"pingone_davinci_flow": {"request": flow}, "pingone_davinci_variable": variables}}
+
+
+OUT.mkdir(parents=True, exist_ok=True)
+if TERRAFORM:
+    data = resolve_aliases(build_request_flow())
+    (OUT / "flow.tf.json").write_text(json.dumps(terraform(data), indent=1) + "\n")
+    print(f"flow.tf.json: {sum(1 for n in data['graphData']['elements']['nodes'])} nodes, "
+          f"{sum(1 for v in data['variables'] if v['context'] == 'flow')} flow variables")
+    sys.exit(0)
 OUT.mkdir(parents=True, exist_ok=True)
 for builder, fname in [(build_request_flow, "pingone-promote-request.flow.json")]:
     flow = builder()

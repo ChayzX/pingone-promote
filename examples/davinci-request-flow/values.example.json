@@ -11,5 +11,10 @@
   "targetRegion": "us",
   "gitlabUrl": "https://gitlab.example.com",
   "gitlabProjectId": "<numeric ID of the private promotion-requests project>",
-  "gitlabEnvironment": "production"
+  "gitlabEnvironment": "production",
+  "oidcConnectionId": "",
+  "httpConnectionId": "",
+  "functionsConnectionId": "",
+  "errorConnectionId": "",
+  "variablesConnectionId": ""
 }
