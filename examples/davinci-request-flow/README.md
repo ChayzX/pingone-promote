@@ -7,21 +7,23 @@ One DaVinci flow that replaces the Go tool's local app. Everything after the mer
 ```
 DaVinci flow (this kit)                         GitLab (unchanged)
 ─────────────────────────────────────────       ───────────────────────────────────────────
-Admin signs in (Entra SSO via PingOne)          MR pipeline: validate_request
-DaVinci Admin role check                        Merge → plan_promotion (native draft + review)
-Live snapshots of source and target             Deployment approval → apply
-Admin picks resources and mappings              Rollback: separate manual pipeline
+[Sign-in: off for the proof of concept]         MR pipeline: validate_request
+Live snapshots of source and target             Merge → plan_promotion (native draft + review)
+Requester picks resources and mappings          Deployment approval → apply
+Promotion-variable check                        Rollback: separate manual pipeline
 Builds request.json (byte-identical to Go)
 Branch promotion/<id> → commit → merge request ──▶
 ```
 
 The flow never calls the PingOne promotions API, so it cannot deploy or roll back anything. The flow run test checks that.
 
+**Proof of concept: sign-in is off.** The flow starts straight at the resource picker. The admin SSO, the DaVinci Admin check and the requester line in the MR are built and tested but switched off. Turn them on with `"requireSignIn": true` in `values.json`, or `enable_signin = true` plus `gen_flows.py --terraform . --signin`; see the [runbook](RUNBOOK.md#turning-sign-in-back-on). Until then, anyone who can launch the flow can open a merge request. GitLab's MR and deployment approvals still gate every change.
+
 **Status: built and tested offline; the Terraform passes `terraform validate` against the real pingone provider. It has not been imported into a live DaVinci yet,** because the trial tenant has no DaVinci. See [What still needs a live check](#what-still-needs-a-live-check).
 
 ## What the admin sees
 
-1. **Sign in.** PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or the source environment. No GitLab account is needed.
+1. **Sign in** (only when sign-in is on). PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or the source environment. No GitLab account is needed.
 2. **Choose resources.** The page lists source and target resources by type, ID and name, never configuration. The admin enters resource IDs, optional `sourceId=targetId` mappings, and a description, which becomes the MR title.
 3. **Review request.** The page shows the promotion-variable check (below) and `requests/<id>/request.json` exactly as it will be committed, with secrets redacted. The admin chooses **Submit to GitLab** or **Cancel**.
 4. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point.
@@ -90,7 +92,7 @@ These were written from documentation and real export samples, not captured from
 
 1. **REST node fields.** On every Make REST API Call node, confirm the HTTP method and headers, and on the POST nodes, Body = raw. The export uses `httpMethod`, `bodyType` and `rawBody`.
 2. **Redirects.** The Go client refuses GitLab redirects. Check whether the DaVinci HTTP connector follows them. If it does, GitLab must not redirect API calls.
-3. **Sign-on output.** The sign-on capability is exported as `loginFirstFactor`, and its access token is read as `accessToken`.
+3. **Sign-on output (sign-in on only).** The sign-on capability is exported as `loginFirstFactor`. Its `accessToken` output is confirmed by Ping's connector docs.
 4. **Loops.** Snapshot polling and pagination route back to an earlier REST node. DaVinci must allow this cycle.
 5. **Function outputs.** Confirm each function's Output Schema lists the fields downstream nodes read, such as `state`, `requestJson` and `branchBody`.
 6. **Size.** Large selections make `request.json` large. It is held in function output and sent as one commit body, and DaVinci may cap either.
@@ -111,7 +113,7 @@ bash examples/davinci-request-flow/run_tests.sh   # from a clone of this reposit
 The Go cross-checks build the Go tool at commit `537dbf4` from this repository's history, in a temporary clone; nothing in the working tree changes. Outside the repository, set `GO_TOOL` to a checkout. Needs Node 18+, Python 3 and Go 1.24+.
 
 - `test/unit.js` (61 checks): SHA-256 against Node crypto, `apiURL`, GitLab project, branch, status and MR checks, ID and time formats, and byte truncation.
-- `test/flow_run.js` (123 checks): **runs the generated export itself**. It executes each node, evaluator branch, template and flow variable against a fake PingOne and a fake GitLab. Function inputs are fed both as objects and as JSON strings. It covers:
+- `test/flow_run.js` (120 checks with sign-in off, 123 with it on; both run): **runs the generated export itself**. It executes each node, evaluator branch, template and flow variable against a fake PingOne and a fake GitLab. Function inputs are fed both as objects and as JSON strings. It covers:
   - the happy path, including the exact GitLab payloads;
   - title truncation;
   - the promotion-variable check: ready, missing, declared but undefined, not sensitive, API refused, no secrets, and paging of definitions;

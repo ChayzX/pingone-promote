@@ -5,8 +5,11 @@ resources from live snapshots, and the flow commits request.json to a
 promotion/<id> branch and opens a merge request. Planning, approval, apply and
 rollback stay in the GitLab pipeline (pingone-runner), unchanged.
 
-usage: python3 gen_flows.py OUT_DIR [values.json]       DaVinci import JSON
-       python3 gen_flows.py --terraform TF_DIR         flow.tf.json for terraform/
+usage: python3 gen_flows.py OUT_DIR [values.json]          DaVinci import JSON
+       python3 gen_flows.py --terraform TF_DIR [--signin] flow.tf.json for terraform/
+
+Sign-in (admin SSO + DaVinci Admin check) is off by default for the proof of
+concept; "requireSignIn": true in values.json, or --signin, turns it on.
 
 Each custom function node carries lib/core.js (scoped) plus one step body
 from flows/fn/, exactly as test/load_fn.js wraps them for the Node tests.
@@ -25,7 +28,7 @@ FN_DIR = HERE / "flows" / "fn"
 TERRAFORM = len(sys.argv) > 1 and sys.argv[1] == "--terraform"
 if TERRAFORM:
     OUT = pathlib.Path(sys.argv[2])
-    VALUES = {}
+    VALUES = {"requireSignIn": "--signin" in sys.argv[3:]}
 else:
     OUT = pathlib.Path(sys.argv[1])
     VALUES = json.loads(pathlib.Path(sys.argv[2]).read_text()) if len(sys.argv) > 2 else {}
@@ -48,7 +51,10 @@ VALUE_KEYS = {
 # Optional: your DaVinci connection IDs, so the export is wired to them on import.
 CONNECTION_KEYS = {"oidcConnectionId": "oidc", "httpConnectionId": "http", "functionsConnectionId": "fn",
                    "errorConnectionId": "err", "variablesConnectionId": "var"}
-unknown = set(VALUES) - set(VALUE_KEYS) - set(CONNECTION_KEYS)
+# Admin SSO + DaVinci Admin check. Off for the proof of concept; set
+# "requireSignIn": true (or --terraform DIR --signin) to restore it.
+SIGNIN = VALUES.get("requireSignIn", False) is True
+unknown = set(VALUES) - set(VALUE_KEYS) - set(CONNECTION_KEYS) - {"requireSignIn"}
 if unknown:
     sys.exit(f"unknown keys in values file: {sorted(unknown)}")
 SETTINGS = {k: str(VALUES.get(k, v)) for k, v in VALUE_KEYS.items()}
@@ -191,6 +197,13 @@ class Flow:
     # --- composite blocks -----------------------------------------------------
     def bearer(self):
         return [("Authorization", ["Bearer ", self.out(self.token, "rawResponse.body.access_token")])]
+
+    def worker_token(self):
+        """Sign-in off (POC): the flow starts at the worker token."""
+        self.token = self.rest("Promotion worker token", "POST", [self.fv("authOrigin"), "/", self.fv("hostEnvironmentId"), "/as/token"],
+                               [("Authorization", ["Basic ", self.cv("promoteWorkerBasicAuth")]),
+                                ("Content-Type", ["application/x-www-form-urlencoded"])], raw=["grant_type=client_credentials"])
+        return self.token
 
     def sign_in(self):
         """Admin SSO -> userinfo -> worker token -> role checks. Returns (first, last-allow-node)."""
@@ -340,7 +353,7 @@ class Flow:
                                                            "value": "", "mutable": True, "min": 0, "max": 2000},
                           "type": "property", "visibility": "private", "name": "promoteGitlabToken##SK##company", "companyId": COMPANY})
         return {
-            "companyId": COMPANY, "authTokenExpireIds": [], "connectorIds": sorted({c[0] for c in CONN.values()}),
+            "companyId": COMPANY, "authTokenExpireIds": [], "connectorIds": sorted({n["data"]["connectorId"] for n in self.nodes if n["data"]["nodeType"] == "CONNECTION"}),
             "createdDate": 1793232000000, "currentVersion": 1, "description": self.description, "flowStatus": "enabled",
             "isOutputSchemaSaved": False, "name": self.name, "publishedVersion": 1, "timeouts": "null",
             "updatedDate": 1793232000000, "flowId": self.flow_id, "versionId": 1,
@@ -381,11 +394,16 @@ def gitlab_headers(post=False):
     return h + ([("Content-Type", ["application/json"])] if post else [])
 
 
-def build_request_flow():
+def build_request_flow(signin):
     f = Flow("PingOne Promote - Request", "f0d00a7e00000000000000000000aa01",
              "A DaVinci Admin selects resources from live snapshots; the flow builds request.json exactly as the Go app does and "
              "opens a GitLab merge request. Deployment and rollback happen only in the protected GitLab pipeline.")
-    start, allow, denied = f.sign_in()
+    if signin:
+        start, allow, denied = f.sign_in()
+        who = lambda field: ("node", f"local.AUTHZ.payload.output.{field}", field)
+    else:
+        start = f.worker_token()
+        who = lambda field: ""
     api = ("node", "local.BUILD.payload.output.gitlabApi", "gitlabApi")
     # Built back-to-front so each block knows its continuation.
     done = f.page("Merge request opened", page_html(
@@ -429,9 +447,9 @@ def build_request_flow():
         ("statusCode", "number", ("node", "local.BRGET.payload.output.rawResponse.statusCode", "statusCode")),
         ("body", "object", ("node", "local.BRGET.payload.output.rawResponse.body", "body")),
         ("requestJson", "string", ("node", "local.BUILD.payload.output.requestJson", "requestJson")),
-        ("username", "string", ("node", "local.AUTHZ.payload.output.username", "username")),
+        ("username", "string", who("username")),
         ("variablesMd", "string", ("node", "local.VARS.payload.output.variablesMd", "variablesMd")),
-        ("userId", "string", ("node", "local.AUTHZ.payload.output.userId", "userId"))],
+        ("userId", "string", who("userId"))],
         {"state": "string", "error": "string", "branch": "string", "branchBody": "string", "commitBody": "string", "mrBody": "string"})
     bodies_ok = f.equals("Branch protected?", f.out(bodies, "state"), "ok")
     f.link(bodies, bodies_ok)
@@ -466,7 +484,7 @@ def build_request_flow():
         ("source", "object", ("node", "local.INVLIVE.payload.output.source", "source")),
         ("target", "object", ("node", "local.INVLIVE.payload.output.target", "target")),
         ("sourceRegion", "string", Flow.fv("sourceRegion")), ("targetRegion", "string", Flow.fv("targetRegion")),
-        ("userId", "string", f.out(f.authz, "userId"))],
+        ("userId", "string", who("userId"))],
         {"state": "string", "error": "string", "requestId": "string", "requestJson": "string", "gitlabApi": "string",
          "previewText": "string", "summaryText": "string"})
     build_ok = f.equals("Request valid?", f.out(build, "state"), "ok")
@@ -509,7 +527,8 @@ def build_request_flow():
     f.link(build_ok, vstart, false_target=f.fail("Invalid request", build))
     select = f.page("Choose resources", page_html(
         "Request a PingOne promotion",
-        "Signed in as <strong>{{local.AUTHZ.payload.output.usernameText}}</strong>. Source <code>{{global.flow.variables.sourceEnvironmentId}}</code> "
+        ("Signed in as <strong>{{local.AUTHZ.payload.output.usernameText}}</strong>. " if signin else
+         "Proof of concept: sign-in is off, so anyone who can launch this flow can open a request. ") + "Source <code>{{global.flow.variables.sourceEnvironmentId}}</code> "
         "&rarr; target <code>{{global.flow.variables.targetEnvironmentId}}</code>. This opens a GitLab merge request; nothing changes in "
         "PingOne until the protected pipeline deploys it.",
         [("Source resources (type, ID, name)", "{{local.INVLIVE.payload.output.sourceListText}}"),
@@ -526,10 +545,13 @@ def build_request_flow():
     f.link(inv_live_ok, select, false_target=f.fail("Could not read the environments", inv_live))
     live_tgt = f.live_snapshot("liveTgt", None, TGT, inv_live)
     live_src = f.live_snapshot("liveSrc", None, SRC, live_tgt)
-    f.link(allow, live_src, false_target=denied)
+    if signin:
+        f.link(allow, live_src, false_target=denied)
+    else:
+        f.link(start, live_src)
     f.alias = {"VARS": vars_report, "VSTART": vstart, "MR": mr_ok_fn, "MRPOST": mr_post, "COMMIT": commit, "BRANCHPOST": branch_post, "BODIES": bodies, "PROJ": proj,
                "BRGET": br_get, "PROJGET": proj_get, "PREVIEW": preview, "BUILD": build, "SELECT": select, "INVLIVE": inv_live,
-               "AUTHZ": f.authz}
+               **({"AUTHZ": f.authz} if signin else {})}
     return f
 
 
@@ -592,18 +614,19 @@ def terraform(flow_data):
         if name in TF_SETTING:
             res["value"] = {"string": TF_SETTING[name]}
         variables["flow_" + re.sub(r"[^A-Za-z0-9_]", "_", name)] = res
-    return {"resource": {"pingone_davinci_flow": {"request": flow}, "pingone_davinci_variable": variables}}
+    return {"locals": {"flow_has_signin": SIGNIN},
+            "resource": {"pingone_davinci_flow": {"request": flow}, "pingone_davinci_variable": variables}}
 
 
 OUT.mkdir(parents=True, exist_ok=True)
 if TERRAFORM:
-    data = resolve_aliases(build_request_flow())
+    data = resolve_aliases(build_request_flow(SIGNIN))
     (OUT / "flow.tf.json").write_text(json.dumps(terraform(data), indent=1) + "\n")
     print(f"flow.tf.json: {sum(1 for n in data['graphData']['elements']['nodes'])} nodes, "
           f"{sum(1 for v in data['variables'] if v['context'] == 'flow')} flow variables")
     sys.exit(0)
 OUT.mkdir(parents=True, exist_ok=True)
-for builder, fname in [(build_request_flow, "pingone-promote-request.flow.json")]:
+for builder, fname in [(lambda: build_request_flow(SIGNIN), "pingone-promote-request.flow.json")]:
     flow = builder()
     data = resolve_aliases(flow)
     (OUT / fname).write_text(json.dumps(data, separators=(",", ":")) + "\n")

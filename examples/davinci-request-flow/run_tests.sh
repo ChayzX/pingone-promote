@@ -15,6 +15,12 @@ node test/unit.js
 python3 -I gen_flows.py "$work/out" values.example.json >/dev/null
 python3 -I check_flows.py "$work/out"/*.json
 node test/shipped_code.js "$work/out"/*.json
+# The same checks with sign-in on (off is the proof-of-concept default).
+python3 -c 'import json,sys; v=json.load(open("values.example.json")); v["requireSignIn"]=True; json.dump(v,open(sys.argv[1],"w"))' "$work/signin.json"
+python3 -I gen_flows.py "$work/signin" "$work/signin.json" >/dev/null
+python3 -I check_flows.py "$work/signin"/*.json
+node test/shipped_code.js "$work/signin"/*.json
+node test/flow_run.js "$work/signin/pingone-promote-request.flow.json"
 # The committed Terraform flow must match the generator.
 mkdir "$work/tf" && python3 -I gen_flows.py --terraform "$work/tf" >/dev/null
 cmp -s "$work/tf/flow.tf.json" terraform/flow.tf.json || { echo "terraform/flow.tf.json is stale: run python3 gen_flows.py --terraform terraform"; exit 1; }

@@ -23,6 +23,8 @@ const out = {};
 for (const e of FLOW.graphData.elements.edges) { (out[e.data.source] = out[e.data.source] || []).push(e.data.target); }
 const incoming = new Set(FLOW.graphData.elements.edges.map((e) => e.data.target));
 const START = Object.keys(nodes).filter((id) => !incoming.has(id));
+// Sign-in is optional (off for the proof of concept); the checks follow the export.
+const SIGNIN = Object.values(nodes).some((n) => n.capabilityName === 'loginFirstFactor');
 assert.strictEqual(START.length, 1, 'one start node');
 
 function get(obj, dotted) {
@@ -287,13 +289,18 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     ok(mr.title === 'Fix <login> & "MFA"', 'MR title is the description' + mode);
     ok(mr.description.indexOf('Promotion request `' + id + '`\n\nSource environment: `src` (snapshot `' + req.source.snapshotId + '`)\nTarget environment: `tgt`\n' +
       'Selected resources: 3\nGitLab environment: `production`\n\nThis merge request submits configuration for review.') === 0, 'MR description as Go' + mode);
-    ok(/Requested in DaVinci by: `alice@example\.com \(PingOne user alice\)`\n\n### Promotion variables/.test(mr.description), 'MR names the signed-in admin' + mode);
+    if (SIGNIN) {
+      ok(/Requested in DaVinci by: `alice@example\.com \(PingOne user alice\)`\n\n### Promotion variables/.test(mr.description), 'MR names the signed-in admin' + mode);
+    } else {
+      ok(mr.description.indexOf('Requested in DaVinci by') < 0 && /approving deployment\.\n\n### Promotion variables/.test(mr.description), 'sign-in off: MR names no requester' + mode);
+      ok(w.log.every((l) => l.indexOf('userinfo') < 0 && l.indexOf('roleAssignments') < 0), 'sign-in off: no userinfo or role calls' + mode);
+    }
     ok(mr.description.indexOf('2 of 2 sensitive value(s) need attention') > 0 && mr.description.indexOf('- `a1` `clientSecret`: needs a sensitive promotion variable') > 0 &&
       mr.description.indexOf('- `a1` `settings[0].value`: needs') > 0, 'MR lists the missing promotion variables' + mode);
     const preview = r.pages.find((pg) => pg.title === 'Review request').html;
     ok(preview.indexOf('requests/' + id + '/request.json') >= 0 && preview.indexOf('&quot;version&quot;: 1') >= 0 && preview.indexOf('"version"') < 0 && preview.indexOf('s3cr3t') < 0, 'preview shows the escaped, redacted file' + mode);
     const sel = r.pages.find((pg) => pg.title === 'Choose resources').html;
-    ok(sel.indexOf('a1') >= 0 && sel.indexOf('s3cr3t') < 0 && sel.indexOf('alice@example.com') >= 0, 'selection page lists IDs and the admin, never configuration' + mode);
+    ok(sel.indexOf('a1') >= 0 && sel.indexOf('s3cr3t') < 0 && (SIGNIN ? sel.indexOf('alice@example.com') >= 0 : sel.indexOf('sign-in is off') >= 0), 'selection page lists IDs and who (or that sign-in is off), never configuration' + mode);
     ok(w.log.indexOf('GET ' + G + '/api/v4/projects/42') < w.log.indexOf('POST ' + G + '/api/v4/projects/42/repository/branches'), 'project verified before any write' + mode);
     if (SAVE_DIR) { fs.writeFileSync(path.join(SAVE_DIR, 'flow-' + (saved++) + '.json'), content); }
   }
@@ -364,9 +371,9 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     if (expect) { ok((r.text || '').indexOf(expect) >= 0, name + ': says "' + expect + '" (got: ' + r.text + ')'); }
     return r;
   };
-  await noGitLab('non-admin', world({ user: 'outsider' }), form('a1'), 'Access denied');
-  ok(world({ user: 'outsider' }).log.length === 0, 'fresh world has no calls');
-  {
+  if (SIGNIN) {
+    await noGitLab('non-admin', world({ user: 'outsider' }), form('a1'), 'Access denied');
+    ok(world({ user: 'outsider' }).log.length === 0, 'fresh world has no calls');
     const w = world({ user: 'outsider' });
     await runFlow(w, form('a1'));
     ok(w.log.every((l) => l.indexOf('/snapshots') < 0), 'non-admin: no snapshots taken');
@@ -429,5 +436,5 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     const r = await runFlow(w, form('a1'));
     ok(r.title === 'Merge request opened' && w.log.indexOf('GET ' + G + '/api/v4/projects/42') >= 0, 'trailing slash in the GitLab URL is normalised');
   }
-  console.log('flow run: ' + n + ' checks passed' + (SAVE_DIR ? ', ' + saved + ' committed requests saved' : ''));
+  console.log('flow run (sign-in ' + (SIGNIN ? 'on' : 'off') + '): ' + n + ' checks passed' + (SAVE_DIR ? ', ' + saved + ' committed requests saved' : ''));
 })().catch((e) => { console.error('FAILED:', e.stack || e.message); process.exit(1); });

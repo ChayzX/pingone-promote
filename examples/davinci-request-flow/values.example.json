@@ -1,4 +1,5 @@
 {
+  "requireSignIn": false,
   "apiOrigin": "https://api.pingone.com",
   "authOrigin": "https://auth.pingone.com",
   "adminEnvironmentId": "<environment holding admin accounts and the OIDC sign-in app>",

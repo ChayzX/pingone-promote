@@ -1,8 +1,6 @@
 # Copy to terraform.tfvars (git-ignored) or pass from CI. IDs only; no secrets.
 pingone_domain             = "pingone.com"
 organization_id            = "<organization ID>"
-admin_environment_id       = "<environment holding admin accounts>"
-entra_identity_provider_id = "<ID of the Entra external IdP in the admin environment>"
 host_environment_id        = "<DaVinci environment that runs the flow>"
 source_environment_id      = "<environment to promote from>"
 target_environment_id      = "<environment to promote to>"
@@ -19,5 +17,10 @@ connection_ids = {
   error     = "<32-character connection ID>"
   variables = "<32-character connection ID>"
 }
+
+# Sign-in is off for the proof of concept. To turn it on (RUNBOOK "Turning sign-in back on"):
+# enable_signin              = true
+# admin_environment_id       = "<environment holding admin accounts>"
+# entra_identity_provider_id = "<ID of the Entra external IdP in the admin environment>"
 
 # gitlab_token: never here. Set TF_VAR_gitlab_token from CI or your vault.

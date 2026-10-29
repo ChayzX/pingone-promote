@@ -13,14 +13,22 @@ variable "organization_id" {
   type        = string
 }
 
+variable "enable_signin" {
+  description = "Admin SSO + DaVinci Admin check. Off for the proof of concept; turning it on also needs flow.tf.json regenerated with --signin."
+  type        = bool
+  default     = false
+}
+
 variable "admin_environment_id" {
-  description = "Environment holding the admin accounts (they sign in through the Entra external IdP there)."
+  description = "Sign-in only: environment holding the admin accounts (they sign in through the Entra external IdP there)."
   type        = string
+  default     = ""
 }
 
 variable "entra_identity_provider_id" {
-  description = "ID of the existing Entra external identity provider in the admin environment (Integrations > External IdPs)."
+  description = "Sign-in only: ID of the existing Entra external identity provider in the admin environment (Integrations > External IdPs)."
   type        = string
+  default     = ""
 }
 
 variable "host_environment_id" {
@@ -85,13 +93,13 @@ variable "connection_ids" {
 }
 
 variable "oidc_connection_id" {
-  description = "Existing OIDC & OAuth IdP connection to reuse. Leave empty (recommended) to create one dedicated to this flow's sign-in app."
+  description = "Sign-in only: existing OIDC & OAuth IdP connection to reuse. Leave empty (recommended) to create one dedicated to this flow's sign-in app."
   type        = string
   default     = ""
 }
 
 variable "oidc_redirect_uri" {
-  description = "Redirect URL shown on the flow's OIDC & OAuth IdP connection. Empty = https://auth.<domain>/<host env>/rp/callback/genericConnector; confirm it matches the connection."
+  description = "Sign-in only: redirect URL shown on the flow's OIDC & OAuth IdP connection. Empty = https://auth.<domain>/<host env>/rp/callback/genericConnector; confirm it matches the connection."
   type        = string
   default     = ""
 }
