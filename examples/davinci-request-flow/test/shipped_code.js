@@ -4,8 +4,9 @@ const fs = require('fs');
 const { source } = require('./load_fn');
 let n = 0;
 for (const file of process.argv.slice(2)) {
-  const flow = JSON.parse(fs.readFileSync(file, 'utf8'));
-  for (const node of flow.graphData.elements.nodes) {
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // A main flow with its subflows ({"flows": [...]}) or a single flow.
+  for (const node of (data.flows || [data]).flatMap((fl) => fl.graphData.elements.nodes)) {
     if (node.data.capabilityName !== 'customFunction') { continue; }
     const code = node.data.properties.code.value;
     const step = /\/\/ ---- step: ([a-z_]+) ----/.exec(code)[1];

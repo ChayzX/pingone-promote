@@ -23,5 +23,6 @@
   "httpConnectionId": "",
   "functionsConnectionId": "",
   "errorConnectionId": "",
-  "variablesConnectionId": ""
+  "variablesConnectionId": "",
+  "flowConnectionId": ""
 }

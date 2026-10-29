@@ -4,7 +4,17 @@
 
 > Replaces the local app for requesters. It supersedes the [front-door preview](../davinci-front-door/README.md): this flow commits an ordinary `requests/<id>/request.json`, so the pipeline needs no intent support.
 
-One DaVinci flow that replaces the Go tool's local app. Everything after the merge request is unchanged: the same GitLab project, pipeline, `pingone-runner`, approvals and rollback.
+A DaVinci main flow and four subflows that replace the Go tool's local app. Everything after the merge request is unchanged: the same GitLab project, pipeline, `pingone-runner`, approvals and rollback.
+
+| Flow | What it does | Ends with |
+| --- | --- | --- |
+| **PingOne Promote - Request** (main; the one the application launches) | Checks its settings, gets the worker token, invokes the subflows in order, builds both inventories, shows the result | **Merge request opened** |
+| **1 Choose environments** | Source and target buttons from the four slots | Returns the chosen pair |
+| **2 Snapshot environment** (invoked twice) | Live snapshot polled to COMPLETE, every page read | Returns the snapshot and pages |
+| **3 Choose resources and review** | Resource picker, `request.json` build, promotion-variable check, review | Returns the request on **Submit** (Cancel ends here) |
+| **4 Submit to GitLab** | Project and branch checks, branch, commit, merge request | Returns the MR link |
+
+Each step is its own flow in **Analytics**, so a run shows which subflow it reached and the step inside it. All five log at Debug. Admin settings are set once, in the main flow; it passes each subflow what it needs as inputs.
 
 ```
 DaVinci flow (this kit)                         GitLab (unchanged)

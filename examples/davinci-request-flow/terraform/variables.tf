@@ -89,12 +89,13 @@ variable "gitlab_token" {
 }
 
 variable "connection_ids" {
-  description = "IDs of existing DaVinci connections to reuse (http, functions, error, variables). Leave a key empty to create a dedicated connection."
+  description = "IDs of existing DaVinci connections to reuse (http, functions, error, variables, flow). Leave a key empty to create a dedicated connection."
   type = object({
     http      = optional(string, "")
     functions = optional(string, "")
     error     = optional(string, "")
     variables = optional(string, "")
+    flow      = optional(string, "") # Flow Conductor, for the subflows
   })
   default = {}
 }

@@ -18,7 +18,7 @@ After importing, these are the only values the flow needs. Everything else is in
 | Flow variable | `env1GitlabEnvironment` … `env4GitlabEnvironment` | No | GitLab environment that deploys **to** that environment; empty = `gitlabEnvironment` | `dev`, `test` |
 | Flow variable | `gitlabUrl`, `gitlabEnvironment` | Preset | `https://gitlab.com`, `production` | |
 | Flow variable | `apiOrigin`, `authOrigin`, `sourceRegion`, `targetRegion` | Preset | North America: `https://api.pingone.com`, `https://auth.pingone.com`, `us`, `us` | |
-| Each node | Connections | Yes | HTTP, Functions, Error Message and Variables connections ([table](#2-import)) | |
+| Each node | Connections | Yes | HTTP, Functions, Variables and Flow Conductor connections ([table](#2-import)) | |
 | PingOne | Worker app roles | Yes | **Promotion Admin** on every environment in `env1Id` … `env4Id` | |
 | GitLab | One environment per target in the promotion project | Yes | Scoped `PINGONE_TARGET_ENVIRONMENT_ID` per GitLab environment, pipeline from `gitlab/make_pipeline.py` ([details](RUNBOOK.md#one-project-several-environments)) | |
 
@@ -31,28 +31,29 @@ If you imported a previous file, this is what's different:
 3. **One GitLab project.** `env1GitlabProjectId` … `env4GitlabProjectId` are gone; every request goes to `gitlabProjectId`. New and optional: `env1GitlabEnvironment` … `env4GitlabEnvironment`, the GitLab environment in that project that deploys to each target.
 4. **Debug logging is on** (flow settings, log level Debug), so Analytics shows every step's inputs and outputs. Debug logs can include tokens and configuration, so set it back to Info after the proof of concept.
 5. **Every screen is styled, and failures show a named error screen** instead of DaVinci's generic error page.
-6. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
-7. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
-8. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
+6. **The flow is now a main flow plus four subflows** in one import file. Delete the old single flow, import, point the Flow Conductor nodes at your Flow Conductor connection, and deploy all five. Set the flow variables on the **main** flow only; the subflows get their values from it.
+7. **Worker roles:** the worker app needs Promotion Admin on **every** listed environment, not just two.
+8. **Nothing to fix by hand in the REST nodes any more.** The body fix you made on the token node is now in the file for all six POST nodes.
+9. **Expect a few "working" pages** while snapshots are prepared and read. They continue by themselves; click **Continue** if one doesn't.
 
 ## 1. Before importing
 
 1. **Worker app.** In the DaVinci host environment, add a **Worker** application. Give it **Promotion Admin** on each environment you'll list (all four slots), the role set that fixed the pipeline worker's Configuration Management 403s.
 2. **GitLab token.** In the promotion project: **Settings → Access tokens**, role **Developer**, scope **api**. Note its expiry date.
-3. **Connection IDs.** In **DaVinci → Connections**, note the IDs of the HTTP, Functions, Error Message and Variables connections the flow should use.
+3. **Connection IDs.** In **DaVinci → Connections**, note the IDs of the HTTP, Functions, Variables and **Flow Conductor** connections the flows should use.
 
 ## 2. Import
 
-**Flows → Add Flow → Import from JSON**, choose the file.
+**Flows → Add Flow → Import from JSON**, choose the file. It holds five flows, imported together: the main flow **PingOne Promote - Request** and its subflows **1 Choose environments**, **2 Snapshot environment**, **3 Choose resources and review** and **4 Submit to GitLab**.
 
-The flow's nodes point at placeholder connections:
+The flows' nodes point at placeholder connections:
 
 | Placeholder ID | Connection |
 | --- | --- |
 | `a1f0d00a000000000000000000000002` | HTTP |
 | `a1f0d00a000000000000000000000003` | Functions |
-| `a1f0d00a000000000000000000000004` | Error Message |
 | `a1f0d00a000000000000000000000005` | Variables |
+| `a1f0d00a000000000000000000000006` | Flow Conductor (the main flow's four subflow nodes) |
 
 To skip re-pointing nodes after import, generate your own copy with your connection IDs filled in (below).
 
@@ -83,7 +84,7 @@ To skip re-pointing nodes after import, generate your own copy with your connect
 
 ## 4. Deploy and launch
 
-**Deploy** the flow. Then, in **DaVinci → Applications**, add an application with a flow policy that runs it at 100% weight, and launch it the way your team launches other DaVinci flows. Keep that policy limited to POC testers while sign-in is off.
+**Deploy all five flows**, the four subflows first (a subflow node runs the subflow's deployed version). Then, in **DaVinci → Applications**, add an application with a flow policy that runs the **main flow** at 100% weight, and launch it the way your team launches other DaVinci flows. Keep that policy limited to POC testers while sign-in is off.
 
 ## 5. First run
 
@@ -97,7 +98,7 @@ Errors and fixes are in the runbook's [troubleshooting table](RUNBOOK.md#trouble
 
 ## Generate a pre-filled copy (optional)
 
-Copy `values.example.json` to a private `values.json`, outside the repo or uncommitted, and fill in your IDs, including the four `…ConnectionId` keys. Then run:
+Copy `values.example.json` to a private `values.json`, outside the repo or uncommitted, and fill in your IDs, including the `…ConnectionId` keys (`flowConnectionId` is the Flow Conductor connection). Then run:
 
 ```sh
 python3 gen_flows.py out values.json && python3 check_flows.py out/*.json

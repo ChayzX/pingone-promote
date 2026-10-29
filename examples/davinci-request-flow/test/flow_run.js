@@ -22,36 +22,48 @@ const HOST = '33333333-3333-4333-8333-333333333333';
 const ADMINS = '44444444-4444-4444-8444-444444444444';
 
 // ---------------- the interpreter ----------------
+// The import file holds the main flow and its subflows ({"flows": [...]}).
+// Node IDs are unique across the file, so one table serves every flow.
+const FLOWS = FLOW.flows || [FLOW];
+const BY_ID = {};
 const nodes = {};
-for (const n of FLOW.graphData.elements.nodes) { nodes[n.data.id] = n.data; }
 const out = {};
-for (const e of FLOW.graphData.elements.edges) { (out[e.data.source] = out[e.data.source] || []).push(e.data.target); }
-const incoming = new Set(FLOW.graphData.elements.edges.map((e) => e.data.target));
-const START = Object.keys(nodes).filter((id) => !incoming.has(id));
+const START_OF = {};
+for (const fl of FLOWS) {
+  BY_ID[fl.flowId] = fl;
+  for (const n of fl.graphData.elements.nodes) { assert.ok(!(n.data.id in nodes), 'node id repeats across flows: ' + n.data.id); nodes[n.data.id] = n.data; }
+  for (const e of fl.graphData.elements.edges) { (out[e.data.source] = out[e.data.source] || []).push(e.data.target); }
+  const incoming = new Set(fl.graphData.elements.edges.map((e) => e.data.target));
+  const starts = fl.graphData.elements.nodes.map((n) => n.data.id).filter((id) => !incoming.has(id));
+  assert.strictEqual(starts.length, 1, fl.name + ': one start node');
+  START_OF[fl.flowId] = starts[0];
+}
+const MAIN = FLOWS[0];
 // Sign-in is optional (off for the proof of concept); the checks follow the export.
 const SIGNIN = Object.values(nodes).some((n) => n.capabilityName === 'loginFirstFactor');
-assert.strictEqual(START.length, 1, 'one start node');
 
 function get(obj, dotted) {
   return dotted.split('.').reduce((v, k) => (v === undefined || v === null ? undefined : v[k]), obj);
 }
 
-function makeRun(settings, secrets, form, stringMode) {
-  // Flow variables come from the import; the settings stand in for the values the admin sets in DaVinci.
+// One flow instance: its own flow variables, node outputs and (for a subflow) input parameters.
+function makeRun(flow, settings, secrets, params, stringMode) {
+  // Flow variables come from the import; the settings stand in for the values the admin sets in DaVinci (main flow only).
   const flowVars = {};
-  for (const v of FLOW.variables) {
+  for (const v of flow.variables) {
     if (v.context === 'flow') { flowVars[v.fields.displayName] = v.fields.value; }
   }
-  Object.assign(flowVars, settings);
+  if (flow === MAIN) { Object.assign(flowVars, settings); }
   const outputs = {};
   const lookup = (ref) => {
     let m;
     if ((m = /^local\.([a-z0-9]+)\.payload\.output\.(.+)$/.exec(ref))) {
-      assert.ok(m[1] in outputs, 'reference to a node that has not run: ' + ref);
+      assert.ok(m[1] in outputs, 'reference to a node that has not run (in ' + flow.name + '): ' + ref);
       return get(outputs[m[1]], m[2]);
     }
     if ((m = /^global\.flow\.variables\.(.+)$/.exec(ref))) { assert.ok(m[1] in flowVars, 'flow variable read before any node set it: ' + m[1]); return flowVars[m[1]]; }
     if ((m = /^global\.company\.variables\.(.+)$/.exec(ref))) { return secrets[m[1]]; }
+    if ((m = /^global\.parameters\.(.+)$/.exec(ref))) { assert.ok(m[1] in params, flow.name + ' reads parameter it was not given: ' + m[1]); return params[m[1]]; }
     throw new Error('unknown reference ' + ref);
   };
   const asText = (v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
@@ -65,17 +77,27 @@ function makeRun(settings, secrets, form, stringMode) {
     return parts.map((c) => (c.type === 'link' ? asText(lookup(c.data.slice(2, -2))) : c.text)).join('');
   };
   const template = (html) => html.replace(/\{\{([^}]+)\}\}/g, (m, ref) => asText(lookup(ref)));
-  return { flowVars, outputs, slate, template };
+  return { flow, flowVars, outputs, slate, template };
 }
 
 async function runFlow(world, form, opts) {
   opts = opts || {};
-  const r = makeRun(world.settings, world.secrets, form, !!opts.stringMode);
-  const pages = [];
-  // REST calls made within one browser request (between two rendered pages).
-  let calls = 0;
-  r.maxCalls = 0;
-  let id = START[0];
+  // Shared by the main flow and every subflow it invokes: the screens shown and
+  // the REST calls made within one browser request (between two rendered pages).
+  const st = { pages: [], calls: 0, maxCalls: 0, subflows: [] };
+  const main = makeRun(MAIN, world.settings, world.secrets, {}, !!opts.stringMode);
+  const res = await runGraph(MAIN, main, world, form, opts, st);
+  main.maxCalls = st.maxCalls;
+  res.pages = st.pages;
+  res.run = main;
+  res.subflows = st.subflows;
+  return res;
+}
+
+// Runs one flow until it ends: { end: 'page' | 'error' | 'message', ... } stops everything;
+// { end: 'success', claims } returns a subflow's values to its Flow Conductor node.
+async function runGraph(flow, r, world, form, opts, st) {
+  let id = START_OF[flow.flowId];
   for (let steps = 0; steps < 5000; steps++) {
     const n = nodes[id];
     const p = n.properties || {};
@@ -86,8 +108,8 @@ async function runFlow(world, form, opts) {
         r.outputs[id] = { accessToken: 'at-' + world.user };
         break;
       case 'makeRestApiCall': {
-        calls++;
-        r.maxCalls = Math.max(r.maxCalls, calls);
+        st.calls++;
+        st.maxCalls = Math.max(st.maxCalls, st.calls);
         const headers = {};
         for (const h of p.headers.value) { headers[h.key] = r.slate(h.value); }
         const body = p.httpBody && p.httpBody.value === 'raw' ? r.template(p.raw.value) : undefined;
@@ -123,28 +145,52 @@ async function runFlow(world, form, opts) {
         }
         r.outputs[id] = {};
         break;
+      case 'startUiSubFlow': {
+        // Flow Conductor: each input of the subflow's schema is a node property of that name.
+        const sub = BY_ID[p.subFlowId.value.value];
+        assert.ok(sub, title + ': subflow not in the file');
+        const params = {};
+        for (const k of Object.keys(p)) {
+          if (['nodeTitle', 'subFlowId', 'subFlowVersionId'].indexOf(k) < 0) { params[k] = r.slate(p[k].value, true); }
+        }
+        for (const s of sub.inputSchema || []) { assert.ok(s.propertyName in params, title + ' does not pass ' + s.propertyName); }
+        st.subflows.push(sub.name);
+        const subRun = makeRun(sub, {}, world.secrets, params, !!opts.stringMode);
+        const res = await runGraph(sub, subRun, world, form, opts, st);
+        if (res.end !== 'success') { return res; }
+        // As JSON across the response: objects come back as parsed JSON.
+        r.outputs[id] = JSON.parse(JSON.stringify(res.claims));
+        break;
+      }
+      case 'createSuccessResponse': {
+        const claims = {};
+        for (const c of p.claimsNameValuePairs.value) { claims[c.name] = r.slate(c.value, true); }
+        const declared = Object.keys(((flow.outputSchemaCompiled || {}).output || {}).properties || {});
+        for (const k of Object.keys(claims)) { assert.ok(declared.indexOf(k) >= 0, flow.name + ' returns ' + k + ' outside its output schema'); }
+        return { end: 'success', claims };
+      }
       case 'customHTMLTemplate': {
         const html = r.template(p.customHTML.value);
-        calls = 0;
-        pages.push({ title, html });
+        st.calls = 0;
+        st.pages.push({ title, html, flow: flow.name });
         // Final screens (styled error or notice) end the run like DaVinci's error and message nodes did.
         const kind = /data-pp-kind="(error|message)"/.exec(html);
         if (kind) {
           const text = html.replace(/<style>[\s\S]*?<\/style>/, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          return { end: kind[1], title, text, html, pages, run: r };
+          return { end: kind[1], title, text, html };
         }
         const fields = p.formFieldsList.value.map((f) => f.propertyName);
         // Self-continuing "working" pages submit themselves in the browser.
         const answer = html.indexOf('<!-- pp-auto-continue -->') >= 0 ? { buttonValue: 'CONTINUE' } : form[title];
-        if (fields.length === 0 || answer === undefined) { return { end: 'page', title, html, pages, run: r }; }
+        if (fields.length === 0 || answer === undefined) { return { end: 'page', title, html }; }
         r.outputs[id] = {};
         for (const f of fields) { r.outputs[id][f] = answer[f] === undefined ? '' : answer[f]; }
         break;
       }
       case 'customHtmlMessage':
-        return { end: 'message', title, text: r.slate(p.message.value), pages, run: r };
+        return { end: 'message', title, text: r.slate(p.message.value) };
       case 'customErrorMessage':
-        return { end: 'error', title, text: r.slate(p.errorMessage.value), pages, run: r };
+        return { end: 'error', title, text: r.slate(p.errorMessage.value) };
       default:
         throw new Error('unsupported capability ' + n.capabilityName);
     }
@@ -156,7 +202,7 @@ async function runFlow(world, form, opts) {
     assert.strictEqual(targets.length, 1, title + ': exactly one ' + (result ? 'true' : 'false') + ' branch');
     id = targets[0];
   }
-  throw new Error('flow did not finish');
+  throw new Error(flow.name + ' did not finish');
 }
 
 // ---------------- fake PingOne + GitLab ----------------
@@ -515,7 +561,7 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     {
       const w = world(); w.denyEnv = TGT; w.dropFailedOutput = drop;
       const r = await runFlow(w, form('a1'));
-      ok(r.end === 'error' && r.text.indexOf('Target environment: read environment') >= 0 && r.text.indexOf('no role on that environment') >= 0 &&
+      ok(r.end === 'error' && r.text.indexOf('Snapshot: read environment" (Prod environment)') >= 0 && r.text.indexOf('no role on that environment') >= 0 &&
         w.log.every((l) => l.indexOf(TGT + '/snapshots') < 0), 'target environment 403 is named' + sfx + ': ' + (r.text || r.title));
     }
     {
@@ -529,6 +575,24 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
       const r = await runFlow(w, form('a1'));
       ok(r.end === 'error' && r.text.indexOf('create promotion branch') >= 0 && w.gitlab.commits.length === 0, 'GitLab failure still stops at its step' + sfx);
     }
+  }
+  // Main flow + subflows: each step runs in its own subflow, in order; admin settings live only in the main flow.
+  {
+    const w = world();
+    const r = await runFlow(w, form('a1'));
+    ok(r.title === 'Merge request opened' && JSON.stringify(r.subflows) === JSON.stringify([
+      'PingOne Promote - 1 Choose environments', 'PingOne Promote - 2 Snapshot environment', 'PingOne Promote - 2 Snapshot environment',
+      'PingOne Promote - 3 Choose resources and review', 'PingOne Promote - 4 Submit to GitLab']), 'subflows run in order: ' + JSON.stringify(r.subflows));
+    ok(FLOWS.length === 5 && FLOWS.slice(1).every((fl) => fl.variables.every((v) => v.context !== 'flow' || ['apiOrigin', 'gitlabProjectId', 'env1Id', 'hostEnvironmentId'].indexOf(v.fields.displayName) < 0)),
+      'subflows carry no admin settings: those are set once, in the main flow');
+    ok(r.pages.some((pg) => pg.flow === 'PingOne Promote - 2 Snapshot environment' && pg.html.indexOf('Taking a snapshot of the <strong>Prod</strong> environment') >= 0),
+      'the snapshot subflow names the environment it is working on');
+    ok(FLOWS.every((fl) => (fl.settings || {}).logLevel === 3), 'every flow logs at Debug');
+  }
+  {
+    const w = world();
+    const r = await runFlow(w, form('a1', '', 'x', 'CANCEL'));
+    ok(r.end === 'message' && r.subflows.indexOf('PingOne Promote - 4 Submit to GitLab') < 0, 'cancel ends in the review subflow; submit never runs');
   }
   // Partial failures stop at the failed step.
   {

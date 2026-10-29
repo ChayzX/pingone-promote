@@ -27,7 +27,7 @@ Tick each one before you start; every item has bitten a first run.
 - [ ] **Promotion project is private** and its **default branch is protected**. The flow refuses to submit otherwise.
 - [ ] **Configuration Management is enabled** on every environment you'll list, and the pipeline worker can take snapshots. (The worker roles fixed for the 403s are what this flow's worker copies.)
 - [ ] **A DaVinci-enabled host environment** for the flow. Prefer one that is never a promotion source or target.
-- [ ] **Your DaVinci connections to reuse**, if any: HTTP, Functions, Error Message and Variables. Copy each connection's 32-character ID from **DaVinci → Connections**.
+- [ ] **Your DaVinci connections to reuse**, if any: HTTP, Functions, Variables and Flow Conductor. Copy each connection's 32-character ID from **DaVinci → Connections**.
 - [ ] **DaVinci can reach GitLab.** gitlab.com needs nothing extra; a private GitLab needs an allowlisted ingress.
 
 Collect these values (IDs, not secrets) as you go:
@@ -99,7 +99,7 @@ Every name starts with `name_prefix` (default `PingOne Promote`), so the objects
 
 1. **Worker (host environment).** Add a **Worker** app. Give it your worker roles (for example Promotion Admin) on every listed environment.
 2. **Company secrets (DaVinci → Variables).** Create `promoteWorkerBasicAuth` (type secret, context company) with the value from `printf '%s:%s' "$CLIENT_ID" "$CLIENT_SECRET" | base64`, and `promoteGitlabToken` (type secret, company) with the GitLab token.
-3. **Connections.** Reuse your HTTP, Functions, Error Message and Variables connections. Copy the four IDs.
+3. **Connections.** Reuse your HTTP, Functions, Variables and Flow Conductor connections. Copy the four IDs.
 4. **Generate the export** with your IDs and connection IDs in a private `values.json` (copy `values.example.json`; leave `"requireSignIn": false`):
 
    ```sh
@@ -160,6 +160,8 @@ Rollback, preflight and evidence are manual web pipelines as before, plus `PROMO
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| "Failed: 2 Snapshot source environment" (or another numbered step) | That subflow stopped without returning, usually on its own error screen, or it isn't deployed | Open that subflow's run in **Analytics**; deploy every subflow after importing |
+| A subflow node does nothing or errors at once | It still points at the placeholder Flow Conductor connection, or the subflow isn't deployed | Pick your Flow Conductor connection on the main flow's four subflow nodes; deploy the subflows |
 | DaVinci's generic error page (red triangle) | A step failed with nothing to catch it. Since this version every API call has a failure path, so you should see a named error screen instead | Open **Analytics** for the flow (log level is Debug); the last step names where it stopped. Send that step and its response |
 | Last step in analytics is a "…: preparing" or "…: reading" page | The page submitted itself twice (fixed: it now submits once) or the next status call failed | Re-import this version; click **Continue** by hand if a page stays |
 | "Failed: <step>" screen | That API call returned an error; the screen gives the HTTP status and the usual cause | 403 on a PingOne step: give the worker app the pipeline worker's roles on that environment |
