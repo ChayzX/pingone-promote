@@ -349,8 +349,9 @@ def main():
             run([brew, "test", f"{tap_name}/{FORMULA_NAME}"])
             prefix = Path(output([brew, "--prefix", FORMULA_NAME]))
             main_binary = prefix / "bin" / FORMULA_NAME
-            runner_binary = prefix / "bin" / "pingone-runner"
-            for binary, expected in ((main_binary, f"pingone-promote {args.version}\n"), (runner_binary, f"pingone-runner {args.version}\n")):
+            if (prefix / "bin" / "pingone-runner").exists():
+                raise RuntimeError("Homebrew must not install the GitLab runner")
+            for binary, expected in ((main_binary, f"pingone-promote {args.version}\n"),):
                 actual = run([binary, "--version"], capture=True).stdout
                 if actual != expected:
                     raise RuntimeError(f"unexpected --version output from {binary}: {actual!r}")

@@ -47,7 +47,7 @@ class SourceReleaseTests(unittest.TestCase):
         self.assertIn("/releases/download/v0.2.0-rc.1/pingone-promote-v0.2.0-rc.1-source.tar.gz", formula)
         self.assertIn('version "0.2.0-rc.1"', formula)
         self.assertIn('bin/"pingone-promote"', formula)
-        self.assertIn('bin/"pingone-runner"', formula)
+        self.assertNotIn('bin/"pingone-runner"', formula)
         self.assertEqual(self.command("verify", "--directory", str(output)).returncode, 0)
         source.write_bytes(source.read_bytes() + b"tampered")
         bad = self.command("verify", "--directory", str(output))

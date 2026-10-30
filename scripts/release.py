@@ -67,7 +67,6 @@ def formula(version, archive, local=False):
     ENV["GOTOOLCHAIN"] = "local"
     ldflags = "-X pingone-promote/internal/buildinfo.Version=v#{version}"
     system "go", "build", *std_go_args(output: bin/"pingone-promote", ldflags:), "./cmd/pingone-promote"
-    system "go", "build", *std_go_args(output: bin/"pingone-runner", ldflags:), "./cmd/pingone-runner"
     doc.install "README.md"
     pkgshare.install "docs", "examples"
   end
@@ -83,9 +82,6 @@ def formula(version, archive, local=False):
 
   test do
     assert_equal "pingone-promote v#{version}\\n", shell_output("#{bin}/pingone-promote --version")
-    assert_equal "pingone-runner v#{version}\\n", shell_output("#{bin}/pingone-runner --version")
-    (testpath/"request.json").write("{}")
-    assert_match "version", shell_output("#{bin}/pingone-runner validate --request #{testpath}/request.json 2>&1", 1)
   end
 end
 '''.replace("@URL@", url).replace("@VERSION@", version[1:]).replace("@SHA@", digest)

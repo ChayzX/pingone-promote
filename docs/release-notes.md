@@ -1,6 +1,6 @@
 # PingOne Promote v0.2.0-rc.2
 
-This preview fixes profile credential-mode saves and strengthens reviewed GitLab promotions. Homebrew and checksummed macOS/Linux bundles include both the local browser application and runner CLI.
+This preview fixes profile credential-mode saves and strengthens reviewed GitLab promotions. Homebrew installs the local browser application; the checksummed macOS/Linux bundles also include the runner CLI for GitLab setup.
 
 Profile saves now omit inactive credential fields. Switching from an environment variable to session storage no longer submits the hidden variable name, and environment-variable mode omits any previously typed direct secret. Browser regressions cover saves, profile edits and the Keychain request payload; actual Keychain storage requires macOS acceptance.
 

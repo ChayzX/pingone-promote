@@ -16,7 +16,7 @@ The app supports the configuration resource types exposed by PingOne's promotion
 
 ## Build and run
 
-Homebrew preview installation and package lifecycle instructions are in [docs/installation.md](docs/installation.md). The project tap becomes available after the reviewed preview release is published. Both tools support `--version`; reporting the version does not start the app or access credentials.
+Homebrew preview installation and package lifecycle instructions are in [docs/installation.md](docs/installation.md). Homebrew installs the local application; GitLab builds the runner separately. Both tools support `--version`; reporting the version does not start the app or access credentials.
 
 Build the current platform binary:
 

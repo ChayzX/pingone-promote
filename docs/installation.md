@@ -4,14 +4,13 @@ Homebrew packaging is a preview. It does not establish live PingOne promotion or
 
 ## Homebrew
 
-The project tap uses versioned, SHA-256-verified release sources. Homebrew installs Go as a build dependency and compiles both commands; users do not need to configure Go manually. The installed commands have no separate language runtime requirement.
+The project tap uses versioned, SHA-256-verified release sources. Homebrew installs Go as a build dependency and compiles the local application; users do not need to configure Go manually. GitLab builds its runner separately in CI.
 
 After the preview release and project tap are published:
 
 ```sh
 brew install chayzx/tap/pingone-promote
 pingone-promote --version
-pingone-runner --version
 pingone-promote
 ```
 
@@ -43,7 +42,7 @@ Replace the filename with the exact version and platform you downloaded. On Linu
 
 ## Maintainer release process
 
-The read-only Homebrew workflow installs a generated formula through a temporary local tap on each test host. It tests both commands, authenticated local startup, request protections, an actual version upgrade and uninstall, and verifies external profile/history bytes remain unchanged. It refuses existing installations and dirty or mismatched source trees.
+The read-only Homebrew workflow installs a generated formula through a temporary local tap on each test host. It tests the application, authenticated local startup, request protections, an actual version upgrade and uninstall, and verifies external profile/history bytes remain unchanged. It refuses existing installations and dirty or mismatched source trees.
 
 Build from a committed source revision with Python 3.12+, Git, Go and a POSIX shell:
 
