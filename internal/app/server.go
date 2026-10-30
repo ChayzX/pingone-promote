@@ -35,12 +35,16 @@ type planSession struct {
 }
 type clientFactory func(pingone.Profile, string) (*pingone.Client, error)
 type Server struct {
-	store         *store.Store
-	token, csrf   string
-	mu            sync.Mutex
-	inventories   map[string]*inventorySession
-	plans         map[string]*planSession
-	clients       map[string]*pingone.Client
+	store       *store.Store
+	token, csrf string
+	mu          sync.Mutex
+	inventories map[string]*inventorySession
+	plans       map[string]*planSession
+	clients     map[string]*pingone.Client
+	// profileGen increments whenever a profile is saved or deleted. Work that
+	// runs outside mu (inventory loads) records it first and discards its
+	// result if any profile changed while the PingOne calls were in flight.
+	profileGen    uint64
 	clientFactory clientFactory
 	files         http.Handler
 }
@@ -112,15 +116,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		replyError(w, 403, errors.New("invalid request token; reload the app"))
 		return
 	}
+	// Inventory loads spend tens of seconds waiting on PingOne. Running them
+	// under the global lock serialized the source and destination loads the
+	// browser sends together, so they manage the lock themselves.
+	if r.URL.Path == "/api/inventory" && r.Method == "POST" {
+		if err := s.loadInventory(w, r); err != nil {
+			replyRouteError(w, err)
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.route(w, r); err != nil {
-		var e *statusError
-		if errors.As(err, &e) {
-			replyError(w, e.status, e.err)
-		} else {
-			replyError(w, 400, err)
-		}
+		replyRouteError(w, err)
+	}
+}
+
+func replyRouteError(w http.ResponseWriter, err error) {
+	var e *statusError
+	if errors.As(err, &e) {
+		replyError(w, e.status, e.err)
+	} else {
+		replyError(w, 400, err)
 	}
 }
 
@@ -181,6 +198,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		s.clients = map[string]*pingone.Client{}
+		s.profileGen++
 		writeJSON(w, p)
 		return nil
 	case strings.HasPrefix(path, "/api/profiles/") && r.Method == "DELETE":
@@ -188,6 +206,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		s.clients = map[string]*pingone.Client{}
+		s.profileGen++
 		writeJSON(w, map[string]bool{"deleted": true})
 		return nil
 	case path == "/api/history" && r.Method == "GET":
@@ -199,37 +218,6 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		// the latest promotion (the only one PingOne can roll back) is on top.
 		slices.Reverse(records)
 		writeJSON(w, records)
-		return nil
-	case path == "/api/inventory" && r.Method == "POST":
-		var input struct {
-			ProfileID string `json:"profileId"`
-		}
-		if err := decodeBody(w, r, &input); err != nil {
-			return err
-		}
-		p, err := s.profile(input.ProfileID)
-		if err != nil {
-			return err
-		}
-		c, err := s.client(p)
-		if err != nil {
-			return err
-		}
-		inv, err := c.Inventory(r.Context(), p.EnvironmentID)
-		if err != nil {
-			return problem(502, err)
-		}
-		session := &inventorySession{ID: RandomToken(), ProfileID: p.ID, Inventory: inv}
-		s.inventories[session.ID] = session
-		safe := *session
-		safe.Resources = make([]pingone.Resource, len(inv.Resources))
-		for i, res := range inv.Resources {
-			safe.Resources[i] = res
-			if res.Configuration != nil {
-				safe.Resources[i].Configuration = promotion.Redact(res.Configuration).(map[string]any)
-			}
-		}
-		writeJSON(w, safe)
 		return nil
 	case path == "/api/mappings" && r.Method == "POST":
 		var input inventoryPair
@@ -319,4 +307,56 @@ func (s *Server) client(p pingone.Profile) (*pingone.Client, error) {
 		s.clients[p.ID] = c
 	}
 	return c, err
+}
+
+// loadInventory reads one environment's inventory. Profile and client lookup,
+// and recording the result, happen under s.mu; the PingOne calls in between do
+// not, so source and destination loads run concurrently. If a profile was saved
+// or deleted meanwhile, the result is discarded rather than stored.
+func (s *Server) loadInventory(w http.ResponseWriter, r *http.Request) error {
+	var input struct {
+		ProfileID string `json:"profileId"`
+	}
+	if err := decodeBody(w, r, &input); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	gen := s.profileGen
+	p, err := s.profile(input.ProfileID)
+	var c *pingone.Client
+	if err == nil {
+		c, err = s.client(p)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	inv, err := c.Inventory(r.Context(), p.EnvironmentID)
+	if err != nil {
+		return problem(502, err)
+	}
+	session := &inventorySession{ID: RandomToken(), ProfileID: p.ID, Inventory: inv}
+	s.mu.Lock()
+	if s.profileGen != gen {
+		s.mu.Unlock()
+		return problem(409, errors.New("environment profiles changed while resources were loading; load resources again"))
+	}
+	s.inventories[session.ID] = session
+	s.mu.Unlock()
+	writeJSON(w, browserInventory(session))
+	return nil
+}
+
+// browserInventory is the view of an inventory sent to the UI, with secret
+// values redacted.
+func browserInventory(session *inventorySession) inventorySession {
+	safe := *session
+	safe.Resources = make([]pingone.Resource, len(session.Resources))
+	for i, res := range session.Resources {
+		safe.Resources[i] = res
+		if res.Configuration != nil {
+			safe.Resources[i].Configuration = promotion.Redact(res.Configuration).(map[string]any)
+		}
+	}
+	return safe
 }

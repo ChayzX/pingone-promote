@@ -128,6 +128,7 @@ func (f *nativeFixture) metadata(id string) map[string]any {
 
 type harness struct {
 	t              *testing.T
+	app            *Server
 	f              *nativeFixture
 	server         *httptest.Server
 	http           *http.Client
@@ -161,7 +162,7 @@ func setup(t *testing.T) *harness {
 	ts := httptest.NewServer(app)
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
-	h := &harness{t: t, f: f, server: ts, http: &http.Client{Jar: jar}, source: src, target: dst}
+	h := &harness{t: t, app: app, f: f, server: ts, http: &http.Client{Jar: jar}, source: src, target: dst}
 	res, e := h.http.Get(ts.URL + "/?token=bootstrap-token")
 	if e != nil {
 		t.Fatal(e)
