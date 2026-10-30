@@ -215,10 +215,19 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 			}
 		}
 	}
-	rec.Status = native.Status
-	rec.UpdatedAt = now()
-	if err = s.store.SaveRecord(*rec); err != nil {
-		return v, err
+	// A plan is polled every ~2s while it runs. Persisting on every poll
+	// rewrites the whole records file (with fsync) under s.mu even when nothing
+	// changed; at tens of records that lock is busy a large fraction of the
+	// time. Save only when the native status actually moved. Intent changes
+	// (deploy, rollback) are persisted explicitly at those call sites, so the
+	// only field that would change on an unchanged poll is UpdatedAt, which is
+	// cosmetic.
+	if native.Status != rec.Status {
+		rec.Status = native.Status
+		rec.UpdatedAt = now()
+		if err = s.store.SaveRecord(*rec); err != nil {
+			return v, err
+		}
 	}
 	// Reconcile the original record after a completed native rollback so history
 	// cannot continue to offer another rollback of the restored promotion.
@@ -258,9 +267,27 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if native.Source.ID != rec.Source.EnvironmentID || native.Target.ID != rec.Target.EnvironmentID {
 		v.Review.Issues = append(v.Review.Issues, "Native promotion source/destination differs from the approved environment pair.")
 	}
-	for k, val := range rec.Mappings {
-		if actual := native.Mapping[k]; actual != "" && actual != val {
-			v.Review.Issues = append(v.Review.Issues, fmt.Sprintf("Native mapping for %s differs from your selected destination.", k))
+	// Before execution, a native mapping that differs from the approval means
+	// PingOne would write somewhere you did not review, so it blocks deploy.
+	// After execution, PingOne reports the resolved mapping for the whole
+	// promotion: resources created by the run only receive their destination
+	// IDs then, and retained cross-promotion mappings are applied. That mapping
+	// is expected to differ from the pre-execution approval, so comparing them
+	// misreported completed promotions as divergent. Skipping it is only
+	// reachable once deploy is already refused (CanDeploy needs READY and no
+	// recorded intent), and a sent execute is never resent (rec.Intent).
+	//
+	// Rollback records are excluded: they inherit the forward draft's mappings,
+	// but a rollback approves no mappings of its own (it restores the whole
+	// latest promotion), and PingOne's resourceMapping on the rollback
+	// describes that restore. Comparing the two blocked rollback deploy.
+	// Rollback scope is still checked per step by Inspect(rollback=true), and
+	// the snapshot-pin check below skips rollbacks for the same reason.
+	if rec.Kind != "rollback" && !promotionExecuted(rec, native.Status) {
+		for k, val := range rec.Mappings {
+			if actual := native.Mapping[k]; actual != "" && actual != val {
+				v.Review.Issues = append(v.Review.Issues, fmt.Sprintf("Native mapping for %s differs from your selected destination.", k))
+			}
 		}
 	}
 	if native.SourceSnapshot.ID != "" && rec.Kind != "rollback" && native.SourceSnapshot.ID != rec.SourceSnapshotID {
@@ -455,4 +482,27 @@ func nativePreflightCause(err error) error {
 		return statusErr.err
 	}
 	return err
+
+}
+
+// promotionExecuted reports whether this promotion has been sent for execution
+// by this app, or PingOne already reports a post-execution status. From then
+// on PingOne's resourceMapping describes resolved destination IDs rather than
+// the reviewed draft.
+func promotionExecuted(rec *store.Record, status string) bool {
+	// execute_* is set when this app sends an execute. rollback_* replaces it on
+	// the original record and is only allowed after a completed or failed run.
+	if strings.HasPrefix(rec.Intent, "execute_") || strings.HasPrefix(rec.Intent, "rollback_") {
+		return true
+	}
+	// Post-execution statuses from PingOne's promotion lifecycle (covers runs
+	// executed outside this app). Pre-execution statuses (NEW, PREPARING,
+	// ADDITIONAL_SNAPSHOTS_REQUESTED, READY, VALIDATION_FAILED, ROLLBACK_NEW,
+	// ROLLBACK_PREPARING) are deliberately absent.
+	switch strings.ToUpper(status) {
+	case "IN_PROGRESS", "COMPLETED", "ERROR", "ROLLBACK_IN_PROGRESS", "ROLLED_BACK":
+		return true
+	}
+	return false
+
 }

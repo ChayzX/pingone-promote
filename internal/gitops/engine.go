@@ -275,6 +275,9 @@ func (e *Engine) refresh(ctx context.Context, a Artifact, existing bool) (Artifa
 	return a, nil
 }
 func nativeIssues(a Artifact, p pingone.Promotion) []string {
+	return nativeIssuesWithMapping(a, p, true)
+}
+func nativeIssuesWithMapping(a Artifact, p pingone.Promotion, checkMapping bool) []string {
 	issues := []string{}
 	if p.ID != a.NativeID || p.Source.ID != a.Request.Source.ID || p.Target.ID != a.Request.Target.ID {
 		issues = append(issues, "native promotion identity or source/target differs from the approved request")
@@ -288,7 +291,7 @@ func nativeIssues(a Artifact, p pingone.Promotion) []string {
 	if a.Kind == "rollback" && p.TargetSnapshot.ID == "" {
 		issues = append(issues, "native rollback omitted its target snapshot; reconcile its snapshot linkage before execution")
 	}
-	if !sameMappings(p.Mapping, a.Request.Mappings) {
+	if checkMapping && !sameMappings(p.Mapping, a.Request.Mappings) {
 		issues = append(issues, "native resource mappings differ from the approved request")
 	}
 	if a.Kind == "rollback" && p.Previous.ID != a.OriginalNativeID {
@@ -432,7 +435,14 @@ func (e *Engine) Status(ctx context.Context, a Artifact) (pingone.Promotion, err
 	}
 	identity := p
 	identity.Errors = nil // Failed native executions must remain observable and rollback eligible.
-	if issues := nativeIssues(a, identity); len(issues) > 0 {
+	// After execution, PingOne reports resolved resource mappings rather than
+	// the reviewed draft mapping. Pre-execution review remains strict.
+	checkMapping := true
+	switch strings.ToUpper(p.Status) {
+	case "IN_PROGRESS", "COMPLETED", "ERROR", "ROLLBACK_IN_PROGRESS", "ROLLED_BACK":
+		checkMapping = false
+	}
+	if issues := nativeIssuesWithMapping(a, identity, checkMapping); len(issues) > 0 {
 		return p, fmt.Errorf("native status identity check failed: %s", strings.Join(issues, "; "))
 	}
 	return p, nil

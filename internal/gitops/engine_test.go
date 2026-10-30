@@ -860,3 +860,66 @@ func TestApplyBlocksConcurrentCreateIntoPlannedCollection(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusAllowsResolvedMappingsOnlyAfterExecution(t *testing.T) {
+	for _, state := range []string{"IN_PROGRESS", "COMPLETED", "ERROR", "ROLLBACK_IN_PROGRESS", "ROLLED_BACK"} {
+		t.Run(state, func(t *testing.T) {
+			f := fixture(t)
+			e := &Engine{Client: f.client}
+			a, err := e.Plan(context.Background(), f.req, testOrigin())
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.native.Status = state
+			f.native.Mapping = map[string]string{"flow": "resolved", "created": "new"}
+			got, err := e.Status(context.Background(), a)
+			if err != nil {
+				t.Fatalf("resolved mapping in %s: %v", state, err)
+			}
+			if got.Status != state {
+				t.Fatalf("status = %s", got.Status)
+			}
+		})
+	}
+}
+
+func TestStatusRejectsChangedDraftMappingsAndIdentity(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	a, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Mapping = map[string]string{"flow": "wrong"}
+	if _, err := e.Status(context.Background(), a); err == nil {
+		t.Fatal("draft mapping mismatch accepted")
+	}
+	f.native.Status = "COMPLETED"
+	f.native.Target.ID = "other"
+	if _, err := e.Status(context.Background(), a); err == nil {
+		t.Fatal("post-execution target identity mismatch accepted")
+	}
+}
+
+func TestStatusResolvedMappingsKeepRollbackLinkage(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	original, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Status = "COMPLETED"
+	rollback, err := e.RollbackPlan(context.Background(), original, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Status = "ROLLED_BACK"
+	f.native.Mapping = map[string]string{"flow": "resolved"}
+	if _, err = e.Status(context.Background(), rollback); err != nil {
+		t.Fatalf("valid rollback status: %v", err)
+	}
+	f.native.Previous.ID = "wrong"
+	if _, err = e.Status(context.Background(), rollback); err == nil {
+		t.Fatal("wrong rollback linkage accepted")
+	}
+}

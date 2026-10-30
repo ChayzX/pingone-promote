@@ -21,7 +21,6 @@ import (
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/pingone"
-	"pingone-promote/internal/promotion"
 	"pingone-promote/internal/store"
 )
 
@@ -52,6 +51,8 @@ type Server struct {
 	gitlabSessionToken, gitlabTokenBinding string
 	requests                               map[string]gitops.Request
 	submissionAttempts                     map[string]bool
+
+	profileGen uint64
 }
 
 func New(st *store.Store, token string) *Server {
@@ -121,19 +122,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		replyError(w, 403, errors.New("invalid request token; reload the app"))
 		return
 	}
+	// Inventory loads spend tens of seconds waiting on PingOne. Running them
+	// under the global lock serialized the source and destination loads the
+	// browser sends together, so they manage the lock themselves.
+	if r.URL.Path == "/api/inventory" && r.Method == "POST" {
+		if err := s.loadInventory(w, r); err != nil {
+			replyRouteError(w, err)
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.route(w, r); err != nil {
-		var e *statusError
-		if errors.As(err, &e) {
-			replyError(w, e.status, e.err)
+		replyRouteError(w, err)
+	}
+}
+
+func replyRouteError(w http.ResponseWriter, err error) {
+	var e *statusError
+	if errors.As(err, &e) {
+		replyError(w, e.status, e.err)
+	} else {
+		var persistenceErr *store.PersistenceError
+		if errors.As(err, &persistenceErr) {
+			replyError(w, http.StatusInternalServerError, errors.New("Could not access local app storage; check storage permissions and available disk space, then restart the app."))
 		} else {
-			var persistenceErr *store.PersistenceError
-			if errors.As(err, &persistenceErr) {
-				replyError(w, http.StatusInternalServerError, errors.New("Could not access local app storage; check storage permissions and available disk space, then restart the app."))
-			} else {
-				replyError(w, http.StatusBadRequest, err)
-			}
+			replyError(w, http.StatusBadRequest, err)
 		}
 	}
 }
@@ -207,6 +221,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		s.clients = map[string]*pingone.Client{}
+		s.profileGen++
 		writeJSON(w, p)
 		return nil
 	case strings.HasPrefix(path, "/api/profiles/") && r.Method == "DELETE":
@@ -214,6 +229,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		s.clients = map[string]*pingone.Client{}
+		s.profileGen++
 		writeJSON(w, map[string]bool{"deleted": true})
 		return nil
 	case path == "/api/history" && r.Method == "GET":
@@ -224,38 +240,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		// The store appends in creation order; show the newest operation first so
 		// the latest promotion (the only one PingOne can roll back) is on top.
 		slices.Reverse(records)
+		// The history list renders only description/kind/status/source/target.
+		// Each record also embeds every promoted resource ref (both inventories),
+		// which the list never reads but which bloats the response (tens of MB at
+		// a few dozen records). Drop it from the list; the stored record keeps it
+		// for restart scope reconstruction, and createPlan reloads full records.
+		for i := range records {
+			records[i].Resources = nil
+		}
 		writeJSON(w, records)
-		return nil
-	case path == "/api/inventory" && r.Method == "POST":
-		var input struct {
-			ProfileID string `json:"profileId"`
-		}
-		if err := decodeBody(w, r, &input); err != nil {
-			return err
-		}
-		p, err := s.profile(input.ProfileID)
-		if err != nil {
-			return err
-		}
-		c, err := s.client(p)
-		if err != nil {
-			return err
-		}
-		inv, err := c.Inventory(r.Context(), p.EnvironmentID)
-		if err != nil {
-			return problem(502, err)
-		}
-		session := &inventorySession{ID: RandomToken(), ProfileID: p.ID, Inventory: inv}
-		s.inventories[session.ID] = session
-		safe := *session
-		safe.Resources = make([]pingone.Resource, len(inv.Resources))
-		for i, res := range inv.Resources {
-			safe.Resources[i] = res
-			if res.Configuration != nil {
-				safe.Resources[i].Configuration = promotion.Redact(res.Configuration).(map[string]any)
-			}
-		}
-		writeJSON(w, safe)
 		return nil
 	case path == "/api/mappings" && r.Method == "POST":
 		var input inventoryPair
@@ -345,4 +338,57 @@ func (s *Server) client(p pingone.Profile) (*pingone.Client, error) {
 		s.clients[p.ID] = c
 	}
 	return c, err
+}
+
+// loadInventory reads one environment's inventory. Profile and client lookup,
+// and recording the result, happen under s.mu; the PingOne calls in between do
+// not, so source and destination loads run concurrently. If a profile was saved
+// or deleted meanwhile, the result is discarded rather than stored.
+func (s *Server) loadInventory(w http.ResponseWriter, r *http.Request) error {
+	var input struct {
+		ProfileID string `json:"profileId"`
+	}
+	if err := decodeBody(w, r, &input); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	gen := s.profileGen
+	p, err := s.profile(input.ProfileID)
+	var c *pingone.Client
+	if err == nil {
+		c, err = s.client(p)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	inv, err := c.Inventory(r.Context(), p.EnvironmentID)
+	if err != nil {
+		return problem(502, err)
+	}
+	session := &inventorySession{ID: RandomToken(), ProfileID: p.ID, Inventory: inv}
+	s.mu.Lock()
+	if s.profileGen != gen {
+		s.mu.Unlock()
+		return problem(409, errors.New("environment profiles changed while resources were loading; load resources again"))
+	}
+	s.inventories[session.ID] = session
+	s.mu.Unlock()
+	writeJSON(w, browserInventory(session))
+	return nil
+}
+
+// browserInventory is the view of an inventory sent to the UI. The UI needs
+// each resource's identity, name, type and dependencies; the full
+// configuration stays in the server session, where plan inspection uses it.
+// Leaving it out cut the payload ~90% in benchmarks and keeps even redacted
+// configuration out of the browser.
+func browserInventory(session *inventorySession) inventorySession {
+	safe := *session
+	safe.Resources = make([]pingone.Resource, len(session.Resources))
+	for i, res := range session.Resources {
+		res.Configuration = nil
+		safe.Resources[i] = res
+	}
+	return safe
 }

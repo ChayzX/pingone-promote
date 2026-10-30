@@ -45,7 +45,7 @@ func acquireLock(dir string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err = lockFile(f); err != nil {
 		f.Close()
 		return nil, errors.New("another instance is already using this data directory")
 	}

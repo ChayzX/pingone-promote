@@ -6,8 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+
+	"strconv"
+
 	"time"
 )
+
+// embeddedPageLimit is the page size requested for embeddedSnapshots.
+const embeddedPageLimit = 1000
 
 func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 	inv := Inventory{APIOrigin: c.BaseURL, EnvironmentID: env, Resources: []Resource{}}
@@ -54,11 +60,13 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		}
 		snap = polled
 	}
+
 	if snap.Status != "COMPLETE" || snap.SnapshotID != pinnedSnapshotID || snap.Resource.ID != env {
 		return inv, errors.New("completed snapshot identity did not match the requested environment/version")
 	}
 	inv.SnapshotID = pinnedSnapshotID
-	raw, err := c.Pages(ctx, snapshotPath+"/embeddedSnapshots", "referencedResources")
+	raw, err := c.Pages(ctx, snapshotPath+"/embeddedSnapshots?limit="+strconv.Itoa(embeddedPageLimit), "referencedResources")
+
 	if err != nil {
 		return inv, err
 	}
