@@ -204,10 +204,19 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 			}
 		}
 	}
-	rec.Status = native.Status
-	rec.UpdatedAt = now()
-	if err = s.store.SaveRecord(*rec); err != nil {
-		return v, err
+	// A plan is polled every ~2s while it runs. Persisting on every poll
+	// rewrites the whole records file (with fsync) under s.mu even when nothing
+	// changed; at tens of records that lock is busy a large fraction of the
+	// time. Save only when the native status actually moved. Intent changes
+	// (deploy, rollback) are persisted explicitly at those call sites, so the
+	// only field that would change on an unchanged poll is UpdatedAt, which is
+	// cosmetic.
+	if native.Status != rec.Status {
+		rec.Status = native.Status
+		rec.UpdatedAt = now()
+		if err = s.store.SaveRecord(*rec); err != nil {
+			return v, err
+		}
 	}
 	// Reconcile the original record after a completed native rollback so history
 	// cannot continue to offer another rollback of the restored promotion.

@@ -216,6 +216,14 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		// The store appends in creation order; show the newest operation first so
 		// the latest promotion (the only one PingOne can roll back) is on top.
 		slices.Reverse(records)
+		// The history list renders only description/kind/status/source/target.
+		// Each record also embeds every promoted resource ref (both inventories),
+		// which the list never reads but which bloats the response (tens of MB at
+		// a few dozen records). Drop it from the list; the stored record keeps it
+		// for restart scope reconstruction, and createPlan reloads full records.
+		for i := range records {
+			records[i].Resources = nil
+		}
 		writeJSON(w, records)
 		return nil
 	case path == "/api/mappings" && r.Method == "POST":
