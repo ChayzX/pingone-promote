@@ -96,7 +96,7 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 	}
 	add := func(issue string) { r.Issues = append(r.Issues, issue) }
 	flowLifecycle, flowLifecycleCandidate, flowLifecycleReason := selectedFlowVersionLifecycle(source, target, selected, mappings, steps, rollback)
-	if flowLifecycleCandidate && flowLifecycle == nil {
+	if len(steps) > 0 && flowLifecycleCandidate && flowLifecycle == nil {
 		add("selected flow/version create lifecycle is unsupported or mismatched: " + flowLifecycleReason)
 	}
 	if len(steps) == 0 {

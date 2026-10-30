@@ -584,3 +584,14 @@ func TestInspectAllowsRecognizedBodylessFlowActionAndRollbackDelete(t *testing.T
 		t.Fatalf("rollback delete rejected: %v", r.Issues)
 	}
 }
+
+func TestInspectEmptyPlanDoesNotReportUnsupportedFlowLifecycle(t *testing.T) {
+	s, d, selected, _ := flowVersionLifecycleFixture()
+	r := Inspect(s, d, selected, nil, nil, false)
+	if len(r.Issues) != 1 || r.Issues[0] != "promotion plan has no steps" {
+		t.Fatalf("empty plan misclassified: %v", r.Issues)
+	}
+	if len(r.Steps) != 0 {
+		t.Fatal("empty plan gained operations")
+	}
+}
