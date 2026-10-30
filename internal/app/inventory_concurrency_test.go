@@ -156,3 +156,39 @@ func TestInventoryDiscardedWhenProfilesChangeMidLoad(t *testing.T) {
 		t.Fatalf("discarded load still stored %d inventory session(s)", n)
 	}
 }
+
+// The UI only needs identity, name, type and dependencies. Configuration
+// stays server-side for plan inspection and is not sent to the browser.
+func TestInventoryResponseOmitsConfiguration(t *testing.T) {
+	h := setup(t)
+	status, body := h.post("/api/inventory", map[string]string{"profileId": h.source.ID})
+	if status != 200 {
+		t.Fatalf("inventory load: HTTP %d %s", status, body)
+	}
+	var view struct {
+		Resources []map[string]any `json:"resources"`
+	}
+	if err := json.Unmarshal([]byte(body), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Resources) == 0 {
+		t.Fatalf("no resources in inventory response: %s", body)
+	}
+	for _, res := range view.Resources {
+		if _, ok := res["configuration"]; ok {
+			t.Fatalf("inventory response includes configuration for %v", res["id"])
+		}
+		if res["name"] == "" || res["name"] == nil {
+			t.Fatalf("inventory response lost the resource name for %v", res["id"])
+		}
+	}
+	h.app.mu.Lock()
+	defer h.app.mu.Unlock()
+	for _, session := range h.app.inventories {
+		for _, res := range session.Resources {
+			if res.Configuration == nil {
+				t.Fatalf("server session lost configuration for %s; plan inspection needs it", res.ID)
+			}
+		}
+	}
+}
