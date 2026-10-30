@@ -108,7 +108,7 @@
 
   <dialog class="dialog profile-dialog" id="profiles-dialog" aria-labelledby="profiles-dialog-title">
     <form method="dialog" class="dialog-shell" id="profiles-form">
-      <header class="dialog-header"><div><p class="eyebrow">Saved environments</p><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" value="cancel" aria-label="Close environment profiles">×</button></header>
+      <header class="dialog-header"><div><p class="eyebrow">Saved environments</p><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" type="button" id="profiles-close" aria-label="Close environment profiles">×</button></header>
       <div class="dialog-content">
         <div id="profile-list-state" class="inline-state"></div><div id="profile-list" class="profile-list"></div>
         <details class="profile-editor" id="profile-editor" open>
@@ -125,7 +125,7 @@
             <label class="field field-wide secret-value-field">Client secret<input class="control" name="secret" type="password" autocomplete="new-password"><span class="field-help" id="secret-help">Kept in memory for this app session.</span></label>
           </fieldset>
           <p class="form-error" id="profile-error" role="alert" hidden></p>
-          <div class="dialog-actions"><button class="button button-quiet" id="profile-cancel-edit" type="button" hidden>Cancel edit</button><button class="button button-primary" id="profile-save" type="button">Save profile</button></div>
+          <div class="dialog-actions"><button class="button button-quiet" id="profile-cancel-edit" type="button" hidden>Cancel edit</button><button class="button button-primary" id="profile-save" type="submit">Save profile</button></div>
         </details>
       </div>
       <footer class="dialog-footer"><p>Secrets are not included in profile or activity records.</p></footer>

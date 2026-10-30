@@ -886,7 +886,9 @@
 
   $('#profiles-open').addEventListener('click', openProfiles);
   $('#add-first-profile').addEventListener('click', openProfiles);
-  $('#profile-save').addEventListener('click', saveProfile);
+  // Enter inside a field must save (never close the dialog and drop the input).
+  $('#profiles-form').addEventListener('submit', event => { event.preventDefault(); saveProfile(); });
+  $('#profiles-close').addEventListener('click', () => profilesDialog.close());
   $('#profile-cancel-edit').addEventListener('click', resetProfileForm);
   $('#profiles-dialog [name="secretMode"]').addEventListener('change', updateSecretFields);
   $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked; });
