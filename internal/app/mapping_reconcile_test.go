@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -86,5 +87,36 @@ func TestExternallyExecutedStatusesNotFlagged(t *testing.T) {
 				t.Fatalf("%s promotion reported as deployable", status)
 			}
 		})
+	}
+}
+
+// A rollback record inherits the forward draft's mappings, but a rollback
+// approves no mappings of its own: it restores the whole latest promotion.
+// PingOne's resourceMapping on the rollback promotion describes that restore,
+// so comparing it with the forward choices could block rollback deploy when it
+// is needed most.
+func TestRollbackNotBlockedByForwardMappings(t *testing.T) {
+	h := setup(t)
+	v := h.plan()
+	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, nil, 200)
+	// From here PingOne reports mappings that differ from the forward approval,
+	// as it does once promotions have executed.
+	h.f.mu.Lock()
+	h.f.mapping = map[string]string{"f": "resolved-flow", "c": "resolved-connector"}
+	h.f.mu.Unlock()
+	var rb PlanView
+	h.call("POST", "/api/plans/"+v.ID+"/rollback", map[string]bool{"confirm": true}, &rb, 200)
+	if rb.Kind != "rollback" {
+		t.Fatalf("want rollback plan, got %+v", rb)
+	}
+	if issues := mappingIssues(rb); len(issues) > 0 {
+		t.Fatalf("rollback review flagged forward mappings: %v", issues)
+	}
+	if !rb.CanDeploy {
+		t.Fatalf("rollback blocked: %v", rb.Review.Issues)
+	}
+	h.call("POST", "/api/plans/"+rb.ID+"/deploy", map[string]any{"digest": rb.Review.Digest, "confirm": true}, nil, 200)
+	if fmt.Sprint(h.f.executed) != "[p1 rb1]" {
+		t.Fatalf("wrong executed IDs %v", h.f.executed)
 	}
 }

@@ -265,7 +265,14 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	// misreported completed promotions as divergent. Skipping it is only
 	// reachable once deploy is already refused (CanDeploy needs READY and no
 	// recorded intent), and a sent execute is never resent (rec.Intent).
-	if !promotionExecuted(rec, native.Status) {
+	//
+	// Rollback records are excluded: they inherit the forward draft's mappings,
+	// but a rollback approves no mappings of its own (it restores the whole
+	// latest promotion), and PingOne's resourceMapping on the rollback
+	// describes that restore. Comparing the two blocked rollback deploy.
+	// Rollback scope is still checked per step by Inspect(rollback=true), and
+	// the snapshot-pin check below skips rollbacks for the same reason.
+	if rec.Kind != "rollback" && !promotionExecuted(rec, native.Status) {
 		for k, val := range rec.Mappings {
 			if actual := native.Mapping[k]; actual != "" && actual != val {
 				v.Review.Issues = append(v.Review.Issues, fmt.Sprintf("Native mapping for %s differs from your selected destination.", k))
