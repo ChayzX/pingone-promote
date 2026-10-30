@@ -294,6 +294,9 @@ func TestQEFixture(t *testing.T) {
 	defer native.Close()
 	m.url = native.URL
 	srv := New(st, "qe-token")
+	// This loopback-only fixture exercises local deployment controls; real
+	// environments remain GitLab-only unless explicitly allowlisted.
+	srv.localTargets["dst"] = true
 	srv.clientFactory = func(p pingone.Profile, secret string) (*pingone.Client, error) {
 		return &pingone.Client{BaseURL: native.URL, HTTP: native.Client(), AccessToken: "test-token", Profile: p}, nil
 	}

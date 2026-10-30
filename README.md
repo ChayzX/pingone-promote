@@ -1,16 +1,22 @@
 # PingOne Promote
 
-PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It is written in Go 1.24 or newer and has no third-party runtime dependencies. The API must be enabled for the tenant.
+> Integration handoff: the GitLab-controlled workflow is on `feat/gitlab-production`. Start with [docs/HANDOFF.md](docs/HANDOFF.md). Local execution is denied by default; live GitLab/PingOne acceptance and a complete production-readiness review remain outstanding. The older `v0.1.0`/`main` build does not contain this new policy.
+
+PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It requires Go 1.27.3 or newer to build and has no third-party runtime dependencies. The API must be enabled for the tenant.
 
 ## Requirements
 
-- Go 1.24+ to build, or a prebuilt release binary.
-- A PingOne worker OAuth client with Environment Admin authority in **both** the source and destination environments. The environments must belong to the same tenant.
+- Go 1.27.3+ to build, or a prebuilt release binary.
+- A PingOne worker OAuth client with [Promotion Admin](https://docs.pingidentity.com/pingone/directory/p1_roles.html) explicitly assigned in **both** the source and destination environments, plus the read permissions needed for environment and resource discovery. The environments must belong to the same organization. Environment Admin alone does not establish promotion access.
 - The worker client's authentication environment may differ from the managed environment. Set each profile's Authentication environment ID accordingly.
+
+Configuration Management must be opted in and permitted by the environment's license. An opt-in checkbox alone does not prove entitlement. Inventory uses native snapshot creation; a `403` at resource loading can therefore reflect missing snapshot permissions or an unavailable capability. The tool includes safe access-denial detail codes, such as `LICENSE_EXCEEDED`, when PingOne returns them.
 
 The app supports the configuration resource types exposed by PingOne's promotion snapshots. It does not promote users, runtime data, or administrator role assignments. A DaVinci flow promotion uses the latest **deployed** source version under PingOne's native rules, not the latest saved draft.
 
 ## Build and run
+
+Homebrew preview installation and package lifecycle instructions are in [docs/installation.md](docs/installation.md). Homebrew installs the local application; GitLab builds the runner separately. Both tools support `--version`; reporting the version does not start the app or access credentials.
 
 Build the current platform binary:
 
@@ -23,6 +29,10 @@ Start the local UI:
 ```sh
 ./pingone-promote --listen 127.0.0.1:8787
 ```
+
+Destinations use the GitLab submission workflow by default. Configure a **private** GitLab project through the UI and install the reviewed [pipeline template](examples/gitlab/.gitlab-ci.yml) using [the setup guide](docs/gitlab.md). Company configuration is committed only to that private project.
+
+For a disposable or explicitly designated non-production environment only, startup option `--local-target NON_PRODUCTION_ENVIRONMENT_ID` enables the original local deploy/rollback workflow for that exact ID. Repeat the flag for additional non-production IDs. Renaming a profile does not change the execution policy. Never allowlist production. Keeping production write credentials only in protected GitLab variables and enforcing PingOne roles is the actual organization-wide credential boundary; a local application cannot prevent administrators from using credentials they independently hold.
 
 The app prints a one-time bootstrap URL for the current run. Open that URL in your browser; the bootstrap credential is generated again at every start. Keep the server bound to loopback. `--no-browser` disables automatic browser opening, and `--data-dir PATH` selects where local profiles and operation history are stored. Use `--help` to see the available options.
 
@@ -70,7 +80,7 @@ Then open the one-time bootstrap URL using the forwarded local port. The host ca
 
 ## Build release bundles
 
-Run `scripts/build.sh` to cross-build CGO-free binaries for macOS arm64/amd64 and Linux amd64. The script honors `GO` (default `go`) and writes binaries and `.tar.gz` bundles under `dist/`. Each bundle includes its binary and this README.
+Run `scripts/build.sh` to cross-build CGO-free binaries for macOS arm64/amd64 and Linux amd64. The script honors `GO` (default `go`) and `VERSION` (default `dev`), and writes binaries, `.tar.gz` bundles and `SHA256SUMS` under `dist/`. Each bundle includes both commands, documentation and the GitLab template. See [the release process](docs/installation.md#maintainer-release-process) for versioned source exports, Homebrew formula generation and draft prereleases.
 
 ## Validation status
 
@@ -96,6 +106,7 @@ In another terminal, run:
 ```sh
 python3 scripts/test_browser.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_races.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
+python3 scripts/test_browser_gitlab.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 ```
 
 Stop the fixture with Ctrl+C when finished. Screenshots go to `/tmp/pingone-browser-evidence` unless `--output-dir` is supplied. These checks verify local behavior only. See [verification notes](docs/verification.md) for the live acceptance checklist and API limitations.

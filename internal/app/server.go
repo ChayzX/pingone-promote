@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -10,12 +11,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
 
+	"pingone-promote/internal/gitlab"
+	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
 )
@@ -34,23 +38,26 @@ type planSession struct {
 }
 type clientFactory func(pingone.Profile, string) (*pingone.Client, error)
 type Server struct {
-	store       *store.Store
-	token, csrf string
-	mu          sync.Mutex
-	inventories map[string]*inventorySession
-	plans       map[string]*planSession
-	clients     map[string]*pingone.Client
-	// profileGen increments whenever a profile is saved or deleted. Work that
-	// runs outside mu (inventory loads) records it first and discards its
-	// result if any profile changed while the PingOne calls were in flight.
-	profileGen    uint64
-	clientFactory clientFactory
-	files         http.Handler
+	store                                  *store.Store
+	token, csrf                            string
+	mu                                     sync.Mutex
+	inventories                            map[string]*inventorySession
+	plans                                  map[string]*planSession
+	clients                                map[string]*pingone.Client
+	clientFactory                          clientFactory
+	files                                  http.Handler
+	localTargets                           map[string]bool
+	gitlabFactory                          func(gitlab.Config, string) (*gitlab.Client, error)
+	gitlabSessionToken, gitlabTokenBinding string
+	requests                               map[string]gitops.Request
+	submissionAttempts                     map[string]bool
+
+	profileGen uint64
 }
 
 func New(st *store.Store, token string) *Server {
 	root, _ := fs.Sub(assets, "web")
-	return &Server{store: st, token: token, csrf: RandomToken(), inventories: map[string]*inventorySession{}, plans: map[string]*planSession{}, clients: map[string]*pingone.Client{}, clientFactory: pingone.NewClient, files: http.FileServer(http.FS(root))}
+	return &Server{store: st, token: token, csrf: RandomToken(), inventories: map[string]*inventorySession{}, plans: map[string]*planSession{}, clients: map[string]*pingone.Client{}, clientFactory: pingone.NewClient, gitlabFactory: gitlab.NewClient, requests: map[string]gitops.Request{}, submissionAttempts: map[string]bool{}, localTargets: map[string]bool{}, files: http.FileServer(http.FS(root))}
 }
 func RandomToken() string {
 	var b [24]byte
@@ -136,7 +143,12 @@ func replyRouteError(w http.ResponseWriter, err error) {
 	if errors.As(err, &e) {
 		replyError(w, e.status, e.err)
 	} else {
-		replyError(w, 400, err)
+		var persistenceErr *store.PersistenceError
+		if errors.As(err, &persistenceErr) {
+			replyError(w, http.StatusInternalServerError, errors.New("Could not access local app storage; check storage permissions and available disk space, then restart the app."))
+		} else {
+			replyError(w, http.StatusBadRequest, err)
+		}
 	}
 }
 
@@ -157,30 +169,42 @@ func replyError(w http.ResponseWriter, status int, err error) {
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) error {
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "application/json") {
 		return errors.New("request must use application/json")
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(out); err != nil {
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
 		return fmt.Errorf("invalid request JSON: %w", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '{' {
+		return errors.New("request must contain one JSON object")
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF {
 		return errors.New("request must contain one JSON object")
 	}
+	strict := json.NewDecoder(bytes.NewReader(raw))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(out); err != nil {
+		return fmt.Errorf("invalid request JSON: %w", err)
+	}
 	return nil
 }
 func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	path := r.URL.Path
+	if path == "/api/gitlab" || path == "/api/gitlab/submit" || path == "/api/requests/preview" {
+		return s.gitlabRoute(w, r)
+	}
 	switch {
 	case path == "/api/session" && r.Method == "GET":
-		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains})
+		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains, "localTargets": s.localTargetIDs()})
 		return nil
 	case path == "/api/profiles" && r.Method == "GET":
 		p, err := s.store.ListProfiles()
 		if err != nil {
-			return err
+			return problem(http.StatusInternalServerError, errors.New("Could not read saved profiles; check local app storage and restart the app."))
 		}
 		writeJSON(w, p)
 		return nil
@@ -211,7 +235,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	case path == "/api/history" && r.Method == "GET":
 		records, err := s.store.ListRecords()
 		if err != nil {
-			return err
+			return problem(http.StatusInternalServerError, errors.New("Could not read saved history; check local app storage and restart the app."))
 		}
 		// The store appends in creation order; show the newest operation first so
 		// the latest promotion (the only one PingOne can roll back) is on top.
@@ -285,7 +309,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) profile(id string) (pingone.Profile, error) {
 	profiles, err := s.store.ListProfiles()
 	if err != nil {
-		return pingone.Profile{}, err
+		return pingone.Profile{}, problem(http.StatusInternalServerError, errors.New("Could not read saved profiles; check local app storage and restart the app."))
 	}
 	for _, p := range profiles {
 		if p.ID == id {

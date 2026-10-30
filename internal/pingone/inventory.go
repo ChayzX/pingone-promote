@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+
 	"strconv"
-	"strings"
+
 	"time"
 )
 
@@ -34,6 +35,7 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 	if snap.SnapshotID == "" || snap.Resource.ID != env {
 		return inv, errors.New("snapshot response omitted pinned environment/version identity")
 	}
+	pinnedSnapshotID := snap.SnapshotID
 	snapshotPath := EnvPath(env) + "/snapshots/" + url.PathEscape(env) + "/versions/" + url.PathEscape(snap.SnapshotID)
 	for attempts := 0; snap.Status != "COMPLETE"; attempts++ {
 		if snap.Status == "ERROR" {
@@ -49,17 +51,22 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 			case <-time.After(time.Second):
 			}
 		}
-		if err := c.Do(ctx, "GET", snapshotPath, "", nil, &snap); err != nil {
+		var polled Snapshot
+		if err := c.Do(ctx, "GET", snapshotPath, "", nil, &polled); err != nil {
 			return inv, err
 		}
+		if polled.SnapshotID != pinnedSnapshotID || polled.Resource.ID != env {
+			return inv, errors.New("snapshot polling changed or omitted pinned environment/version identity")
+		}
+		snap = polled
 	}
-	inv.SnapshotID = snap.SnapshotID
-	// PingOne's default page is 25 items, and each page costs ~2.3s of server
-	// time regardless of size (measured live: 715 resources took 29 pages and
-	// ~68s). Ask for large pages; PingOne caps a page at roughly 8MB and returns
-	// fewer items with a next link, which Pages follows and checks against the
-	// reported count. Measured: the same 715 resources in 5 pages and ~15s.
+
+	if snap.Status != "COMPLETE" || snap.SnapshotID != pinnedSnapshotID || snap.Resource.ID != env {
+		return inv, errors.New("completed snapshot identity did not match the requested environment/version")
+	}
+	inv.SnapshotID = pinnedSnapshotID
 	raw, err := c.Pages(ctx, snapshotPath+"/embeddedSnapshots?limit="+strconv.Itoa(embeddedPageLimit), "referencedResources")
+
 	if err != nil {
 		return inv, err
 	}
@@ -79,18 +86,12 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		if err != nil {
 			return inv, err
 		}
-		prefix := EnvPath(env) + "/"
-		if !strings.HasPrefix(u.Path, prefix) || s.Resource.ID == "" {
-			return inv, fmt.Errorf("inventory has an invalid resource identity (id=%q url=%q)", s.Resource.ID, s.URL)
+		typ, err := snapshotResourceType(u, env, s.Resource.ID)
+		if err != nil {
+			return inv, err
 		}
-		// PingOne echoes the request's own expansion query (e.g. an
-		// attribute mapping fetched with "?expand=oidcScopes") on the
-		// resource's self URL inside embeddedSnapshots. That query
-		// reflects how the resource was fetched, not its identity, so it
-		// is dropped here; the stored URL is the resource's canonical,
-		// query-free identity and is never reused as an operation target.
-		u.RawQuery = ""
-		u.Fragment = ""
+		// The identity adapter permits only known read-expansion queries.
+		u.RawQuery, u.ForceQuery = "", false
 		if seen[s.Resource.ID] {
 			return inv, fmt.Errorf("ambiguous resource ID %s; this API response needs an explicit adapter", s.Resource.ID)
 		}
@@ -101,16 +102,6 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		}
 		if name == "" {
 			name = s.Resource.ID
-		}
-		relative := strings.TrimPrefix(u.Path, prefix)
-		parts := strings.Split(strings.Trim(relative, "/"), "/")
-		typ := parts[0]
-		if len(parts) > 2 {
-			var kinds []string
-			for i := 0; i < len(parts); i += 2 {
-				kinds = append(kinds, parts[i])
-			}
-			typ = strings.Join(kinds, " / ")
 		}
 		inv.Resources = append(inv.Resources, Resource{ID: s.Resource.ID, URL: u.String(), Name: name, Type: typ, Configuration: s.Configuration, Dependencies: s.Dependencies})
 	}

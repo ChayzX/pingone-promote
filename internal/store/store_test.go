@@ -255,7 +255,7 @@ func TestGetMissingRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = s.GetRecord("missing")
-	if err == nil || errors.Is(err, os.ErrNotExist) {
+	if err == nil || !errors.Is(err, ErrRecordNotFound) || errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("GetRecord error = %v", err)
 	}
 }

@@ -7,9 +7,8 @@
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
     sourceByID: new Map(), targetByType: new Map(), searchTimer: null,
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
-    confirmMode: 'deploy', planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0,
-    pendingDeleteProfile: null
+    confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, planSource: null, planTarget: null, historyBusy: false,
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null
   };
 
   const el = (tag, className, value) => {
@@ -35,6 +34,7 @@
   const isRollbackRecord = record => /rollback/i.test(String(record?.kind || '')) || Boolean(record?.rollbackOf || record?.previousPromotionId);
   const profilesDialog = $('#profiles-dialog');
   const deployDialog = $('#deploy-dialog');
+  const gitlabDialog = $('#gitlab-dialog');
   const deleteProfileDialog = $('#delete-profile-dialog');
 
   async function request(path, options = {}) {
@@ -51,15 +51,22 @@
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
         credentials: 'same-origin'
       });
-    } catch (error) {
-      throw new Error(error?.message || 'The local app could not be reached. Check that it is running, then retry.');
+    } catch (_) {
+      throw new Error('The connection to the local app was interrupted. Check that it is running before trying again.');
     }
-    const raw = await response.text();
-    let data = {};
-    if (raw) {
-      try { data = JSON.parse(raw); } catch (_) { data = { error: raw }; }
+    let data;
+    try {
+      data = JSON.parse(await response.text());
+      if (!data || typeof data !== 'object' || (response.ok && Object.hasOwn(data, 'error'))) throw new Error();
+    } catch (_) {
+      throw new Error(`The local app returned an invalid response (HTTP ${response.status}). Check that it is running and reload the app.`);
     }
-    if (!response.ok) throw new Error(text(data?.error, `Request failed (${response.status}).`));
+    if (!response.ok) {
+      const failure = new Error(typeof data.error === 'string' && data.error ? data.error : `Request failed (HTTP ${response.status}). Check the local app and retry.`);
+      failure.safeToRetry = data.safeToRetry === true;
+      failure.mutationNotStarted = data.mutationStarted === false;
+      throw failure;
+    }
     return data;
   }
 
@@ -163,6 +170,7 @@
   }
 
   function resetProfileForm() {
+    state.profileGeneration += 1;
     const form = $('#profiles-form');
     form.querySelectorAll('.field input').forEach(input => { input.value = ''; });
     const region = form.querySelector('[name="region"]');
@@ -172,6 +180,7 @@
     state.profileEditID = '';
     $('#profile-editor-summary').textContent = 'Add an environment profile';
     $('#profile-save').textContent = 'Save profile';
+    $('#profile-save').disabled = false;
     $('#profile-cancel-edit').hidden = true;
     $('#profile-error').hidden = true;
     $('#secret-help').textContent = 'Kept in memory for this app session.';
@@ -179,6 +188,7 @@
   }
 
   function editProfile(profile) {
+    state.profileGeneration += 1;
     const form = $('#profiles-form');
     state.profileEditID = String(profile.id);
     for (const key of ['name', 'region', 'environmentId', 'authEnvironmentId', 'clientId', 'secretMode', 'secretEnv']) {
@@ -189,6 +199,7 @@
     $('#profile-editor').open = true;
     $('#profile-editor-summary').textContent = `Edit ${text(profile.name, 'environment profile')}`;
     $('#profile-save').textContent = 'Save changes';
+    $('#profile-save').disabled = false;
     $('#profile-cancel-edit').hidden = false;
     $('#profile-error').hidden = true;
     $('#secret-help').textContent = 'Leave blank to keep the stored secret. Enter a new value to replace it.';
@@ -200,10 +211,13 @@
     const mode = $('#profiles-dialog [name="secretMode"]').value;
     const envMode = mode === 'env';
     $('#profiles-dialog .secret-env-field').hidden = !envMode;
-    $('#profiles-dialog [name="secretEnv"]').required = envMode;
+    const secretEnv = $('#profiles-dialog [name="secretEnv"]');
+    secretEnv.required = envMode;
+    secretEnv.disabled = !envMode;
     const secretField = $('#profiles-dialog .secret-value-field');
     secretField.hidden = envMode;
     const secret = $('#profiles-dialog [name="secret"]');
+    secret.disabled = envMode;
     secret.required = !state.profileEditID && !envMode;
     if (mode === 'keychain') $('#secret-help').textContent = 'Stored in macOS Keychain. This option requires the app to run on macOS.';
     if (mode === 'session') $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored secret; a new value replaces it.' : 'Kept in memory for this app session.';
@@ -211,10 +225,13 @@
   }
 
   async function saveProfile() {
+    const generation = state.profileGeneration;
     const form = $('#profiles-form');
     const error = $('#profile-error');
     error.hidden = true;
     const save = $('#profile-save');
+    const editing = Boolean(state.profileEditID);
+    const name = form.querySelector('[name="name"]').value;
     save.disabled = true;
     try {
       if (!form.reportValidity()) return;
@@ -229,24 +246,24 @@
       else state.profiles.push(profile);
       state.profiles.sort((a, b) => text(a.name).localeCompare(text(b.name)));
       renderProfileSelects();
-      // Never move an existing choice: editing a profile must not swap or
-      // reverse the source/destination pair. Only fill empty selections.
-      if (!state.profileEditID) {
-        const sourceSelect = $('#source-profile');
-        const targetSelect = $('#target-profile');
-        if (!sourceSelect.value) sourceSelect.value = String(profile.id);
-        else if (!targetSelect.value && sourceSelect.value !== String(profile.id)) targetSelect.value = String(profile.id);
+      if (!editing && generation === state.profileGeneration) {
+        $('#source-profile').value = String(profile.id);
+        if (!$('#target-profile').value || $('#target-profile').value === String(profile.id)) {
+          $('#target-profile').value = state.profiles.find(item => String(item.id) !== String(profile.id))?.id || '';
+        }
       }
       updateEnvironmentMeta();
       invalidateInventory('Profile details changed. Load resources again to continue.');
       renderProfiles();
-      resetProfileForm();
-      showToast('Profile saved.');
+      if (generation === state.profileGeneration) resetProfileForm();
+      showToast(`Profile “${text(profile.name, name)}” saved.`);
     } catch (failure) {
-      error.textContent = failure.message;
-      error.hidden = false;
+      if (generation === state.profileGeneration) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      } else showToast(`Could not save profile “${name}”: ${failure.message}`, true);
     } finally {
-      save.disabled = false;
+      if (generation === state.profileGeneration) save.disabled = false;
     }
   }
 
@@ -288,6 +305,7 @@
 
   function invalidatePlan(message = 'Choices changed. Build a new review before deploying.') {
     state.planGeneration += 1;
+    state.planPending = false;
     clearTimer();
     state.plan = null;
     state.planSource = null;
@@ -318,7 +336,9 @@
 
   function updateBuildButton() {
     const canBuild = Boolean(state.sourceInventory && state.targetInventory && state.selected.size > 0);
-    $('#build-plan').disabled = !canBuild;
+    const isGitLab = Boolean(selectedProfile('target') && !state.localTargets.includes(String(selectedProfile('target').environmentId)));
+    $('#build-plan').disabled = !canBuild || state.planRequestPending;
+    $('#build-plan').textContent = state.planRequestPending ? 'Building…' : isGitLab ? 'Build submission preview' : 'Build review';
     $('#selection-count').textContent = `${state.selected.size} selected`;
   }
 
@@ -552,10 +572,10 @@
     const button = $('#load-resources'); button.disabled = true; button.textContent = 'Loading…';
     try {
       const [sourceInventory, targetInventory] = await Promise.all([
-        request('/api/inventory', { method: 'POST', body: { profileId: source.id } }),
-        request('/api/inventory', { method: 'POST', body: { profileId: target.id } })
+        request('/api/inventory', { method: 'POST', body: { profileId: source.id } }).catch(failure => { throw new Error(`Source inventory: ${failure.message}`); }),
+        request('/api/inventory', { method: 'POST', body: { profileId: target.id } }).catch(failure => { throw new Error(`Destination inventory: ${failure.message}`); })
       ]);
-      const mappingResult = await request('/api/mappings', { method: 'POST', body: { sourceInventoryId: sourceInventory.id, targetInventoryId: targetInventory.id } });
+      const mappingResult = await request('/api/mappings', { method: 'POST', body: { sourceInventoryId: sourceInventory.id, targetInventoryId: targetInventory.id } }).catch(failure => { throw new Error(`Destination mapping suggestions: ${failure.message}`); });
       if (generation !== state.inventoryGeneration || String(selectedProfile('source')?.id) !== sourceID || String(selectedProfile('target')?.id) !== targetID) return;
       state.sourceInventory = sourceInventory;
       state.targetInventory = targetInventory;
@@ -565,12 +585,16 @@
       state.mappingWarnings = Array.isArray(mappingResult?.warnings) ? mappingResult.warnings : [];
       state.search = ''; state.type = '';
       $('#resource-search').value = '';
+      invalidatePlan('Resources loaded. Select resources and build a review to continue.');
       renderResources();
       const warnings = state.mappingWarnings;
       if (warnings.length) showToast(`${sourceInventory.resources?.length || 0} source resources loaded. ${warnings.length} mapping warning${warnings.length === 1 ? '' : 's'} need review.`);
       else showToast(`${sourceInventory.resources?.length || 0} source resources loaded.`);
     } catch (failure) {
-      if (generation === state.inventoryGeneration) setStateBox($('#resource-state'), { title: 'Could not load resources', message: failure.message, kind: 'error', icon: '!' });
+      if (generation === state.inventoryGeneration) {
+        setStateBox($('#resource-state'), { title: 'Could not load resources', message: failure.message, kind: 'error', icon: '!' });
+        invalidatePlan('Load both inventories successfully before building a review. See the resource error above.');
+      }
     } finally {
       if (generation === state.inventoryGeneration) {
         state.inventoryLoading = false;
@@ -675,6 +699,13 @@
     state.plan = plan;
     $('#plan-state').hidden = true;
     const content = $('#plan-content'); content.replaceChildren(); content.hidden = false;
+    if (plan.gitlabRequired || plan.request) {
+      state.plan.gitlabRequired = true;
+      renderGitLabPreview(plan, content);
+      $('#deploy-bar').hidden = true;
+      clearTimer();
+      return;
+    }
     const overview = el('div', 'plan-overview');
     const summary = el('div', 'plan-summary');
     const status = normalizedStatus(plan.status);
@@ -704,6 +735,91 @@
     $('#deploy-state-label').textContent = complete ? (status === 'ROLLED_BACK' ? 'Promotion rolled back' : state.planMode === 'rollback' ? 'Rollback completed' : 'Promotion completed') : ready ? 'Review is ready' : 'Deployment is blocked';
     $('#deploy-reason').textContent = complete ? 'This operation has finished. Check promotion history for its final status.' : ready ? 'The current review is ready for explicit confirmation.' : errors.length ? 'Resolve the listed issues, then build a new review.' : `PingOne plan status is ${status.replaceAll('_', ' ')}. Refresh or resolve the status before deployment.`;
     schedulePoll(plan, generation);
+  }
+
+  function renderGitLabPreview(plan, content) {
+    const req = plan.request || plan;
+    const box = el('div', 'gitlab-preview');
+    box.append(el('div', 'warning-box', 'Submission preview: final PingOne plan and deployment approval happen in GitLab. No production changes are made from this browser.'));
+    const meta = el('section', 'preview-section');
+    meta.append(el('h3', '', 'Pinned request'));
+    meta.append(el('p', 'mono', `Request ${text(req.id)} · Created ${text(req.createdAt)}`));
+    meta.append(el('p', '', `Source environment ${text(req.source?.id)} · ${text(req.source?.region)} · organization ${text(req.source?.organizationId)} · snapshot ${text(req.source?.snapshotId)}`));
+    meta.append(el('p', '', `Target environment ${text(req.target?.id)} · ${text(req.target?.region)} · organization ${text(req.target?.organizationId)} · snapshot ${text(req.target?.snapshotId)}`));
+    box.append(meta);
+    const selected = el('section', 'preview-section'); selected.append(el('h3', '', 'Selected resources and mappings'));
+    const list = el('ul', 'issues-list');
+    const mappings = req.mappings || {};
+    for (const id of safeArray(req.selected)) list.append(el('li', '', `${id} → ${text(mappings[id], 'automatic / create')}`));
+    selected.append(list); box.append(selected);
+    const exports = req.configurations || {};
+    const configuration = el('details', 'preview-section'); configuration.append(el('summary', '', 'Redacted configuration exports'));
+    configuration.append(el('pre', 'preview-json', stringify(exports))); box.append(configuration);
+    const fingerprints = el('details', 'preview-section'); fingerprints.append(el('summary', '', 'Configuration fingerprints'));
+    fingerprints.append(el('pre', 'preview-json', stringify(req.fingerprints || {}))); box.append(fingerprints);
+    const issues = safeArray(plan.issues);
+    if (issues.length) { const ul = el('ul', 'issues-list'); issues.forEach(issue => ul.append(el('li', '', stringify(issue)))); box.append(ul); }
+    const actions = el('div', 'preview-actions');
+    const submit = el('button', 'button button-primary', 'Submit to GitLab'); submit.type = 'button';
+    submit.disabled = !state.gitlab?.configured || !state.gitlab?.tokenAvailable;
+    submit.title = submit.disabled ? 'Configure GitLab in GitLab settings before submitting.' : '';
+    submit.addEventListener('click', () => openGitLabConfirmation(req));
+    actions.append(submit);
+    if (submit.disabled) actions.append(el('span', 'section-help', 'Configure GitLab settings before submitting this request.'));
+    box.append(actions); content.append(box);
+  }
+
+  function openGitLabConfirmation(req) {
+    state.reviewedRequestId = String(req.id || '');
+    state.confirmGeneration = ++state.planGeneration;
+    state.confirmMode = 'gitlab-submit';
+    state.confirmKey = `gitlab-submit:${state.reviewedRequestId}`;
+    $('#confirm-eyebrow').textContent = 'GitLab submission';
+    $('#deploy-dialog-title').textContent = 'Submit this request to GitLab?';
+    $('#confirm-target-name').textContent = profileLabel(state.planTarget);
+    $('#deploy-warning').hidden = false;
+    $('#deploy-warning').textContent = 'This creates a branch and merge request in the configured private GitLab project. Production planning, approval, deployment and rollback happen through your protected GitLab runner.';
+    $('#deploy-confirm-copy').textContent = `Submit reviewed request ${text(req.id)} with its pinned source snapshot, target environment, resource selection, mappings, redacted exports and fingerprints.`;
+    $('#deploy-confirm-check').checked = false;
+    $('#confirm-deploy').disabled = true;
+    $('#confirm-deploy').textContent = 'Submit to GitLab';
+    $('#deploy-error').hidden = true;
+    restoreConfirmationAttempt();
+    deployDialog.showModal();
+  }
+
+  async function openGitLabSettings() {
+    const generation = ++state.gitlabConfigGeneration;
+    const form = $('#gitlab-form');
+    $('#gitlab-error').hidden = true;
+    try {
+      const result = await request('/api/gitlab');
+      if (generation !== state.gitlabConfigGeneration) return;
+      state.gitlab = result;
+      const config = result.config || {};
+      for (const key of ['baseUrl', 'projectId', 'tokenEnv', 'environment']) form.elements[key].value = config[key] || (key === 'tokenEnv' ? 'GITLAB_TOKEN' : key === 'environment' ? 'production' : '');
+      form.elements.token.value = '';
+      $('#gitlab-config-state').textContent = result.configured ? `Configured · private project verified · token ${result.tokenAvailable ? 'available' : 'unavailable'}` : 'GitLab is not configured.';
+      gitlabDialog.showModal();
+    } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; gitlabDialog.showModal(); } }
+  }
+
+  async function saveGitLabSettings() {
+    const generation = ++state.gitlabConfigGeneration;
+    const form = $('#gitlab-form');
+    if (!form.reportValidity()) return;
+    const body = Object.fromEntries(new FormData(form));
+    $('#gitlab-save').disabled = true; $('#gitlab-error').hidden = true;
+    try {
+      const result = await request('/api/gitlab', { method: 'POST', body });
+      if (generation !== state.gitlabConfigGeneration) return;
+      state.gitlab = result;
+      form.elements.token.value = '';
+      $('#gitlab-config-state').textContent = `Configured · ${text(result.project?.pathWithNamespace || result.project?.name, 'private project verified')} · token ${result.tokenAvailable ? 'available' : 'unavailable'}`;
+      showToast('GitLab settings saved and project verified.');
+      invalidatePlan('GitLab settings changed. Rebuild the request preview before submitting.');
+    } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; } }
+    finally { if (generation === state.gitlabConfigGeneration) $('#gitlab-save').disabled = false; }
   }
 
   function schedulePoll(plan, generation = state.planGeneration) {
@@ -741,8 +857,10 @@
   }
 
   async function buildPlan() {
-    if (!state.sourceInventory || !state.targetInventory || !state.selected.size) return;
+    if (state.planRequestPending || !state.sourceInventory || !state.targetInventory || !state.selected.size) return;
     const generation = ++state.planGeneration;
+    state.planPending = true;
+    state.planRequestPending = true;
     const source = selectedProfile('source');
     const target = selectedProfile('target');
     const sourceInventoryID = String(state.sourceInventory.id);
@@ -753,19 +871,28 @@
     setStateBox($('#plan-state'), { title: 'Building review', message: 'Creating a native plan and collecting its complete operation details.', kind: 'loading', icon: '…' });
     $('#plan-content').hidden = true; $('#deploy-bar').hidden = true;
     try {
-      const plan = await request('/api/plans', { method: 'POST', body });
+      const gitlabRequired = !state.localTargets.includes(String(target?.environmentId || ''));
+      const plan = await request(gitlabRequired ? '/api/requests/preview' : '/api/plans', { method: 'POST', body });
       if (generation !== state.planGeneration || String(state.sourceInventory?.id) !== sourceInventoryID || String(state.targetInventory?.id) !== targetInventoryID || String(selectedProfile('source')?.id) !== String(source?.id) || String(selectedProfile('target')?.id) !== String(target?.id)) return;
       state.planMode = 'promotion';
       state.planSource = source;
       state.planTarget = target;
+      if (plan.request || plan.gitlabRequired) plan.gitlabRequired = true;
       renderPlan(plan, generation);
     } catch (failure) {
       if (generation === state.planGeneration) setStateBox($('#plan-state'), { title: 'Could not build review', message: failure.message, kind: 'error', icon: '!' });
-    } finally {
-      if (generation === state.planGeneration) {
-        button.textContent = 'Build review';
-        updateBuildButton();
+      else {
+        const message = `Earlier request for ${profileLabel(source)} → ${profileLabel(target)}: ${failure.message}`;
+        if (!state.plan && !$('#plan-state').classList.contains('state-loading')) setStateBox($('#plan-state'), { title: 'Previous review request failed', message, kind: 'error', icon: '!' });
+        else showToast(message, true);
       }
+    } finally {
+      state.planRequestPending = false;
+      if (generation === state.planGeneration) {
+        state.planPending = false;
+        button.textContent = 'Build review';
+      }
+      updateBuildButton();
     }
   }
 
@@ -796,6 +923,7 @@
     state.confirmGeneration = ++state.planGeneration;
     clearTimer();
     state.confirmMode = mode;
+    state.confirmKey = `${mode}:${mode === 'rollback-draft' ? state.rollbackRecord?.id : state.plan?.id}`;
     const rollbackDraft = mode === 'rollback-draft';
     const rollbackExecute = mode === 'rollback-execute';
     const target = rollbackDraft ? state.rollbackRecord?.target : state.planTarget || selectedProfile('target');
@@ -809,19 +937,53 @@
     $('#confirm-deploy').disabled = true;
     $('#confirm-deploy').textContent = rollbackDraft ? 'Create rollback review' : rollbackExecute ? 'Execute rollback' : 'Deploy';
     $('#deploy-error').hidden = true;
+    restoreConfirmationAttempt();
     deployDialog.showModal();
+  }
+
+  function restoreConfirmationAttempt() {
+    const attempt = state.confirmAttempts.get(state.confirmKey);
+    if (!attempt) return;
+    $('#deploy-error').textContent = attempt.message;
+    $('#deploy-error').hidden = false;
+    $('#confirm-deploy').disabled = true;
+    $('#confirm-deploy').textContent = attempt.label || (state.confirmMode === 'gitlab-submit' ? 'Check GitLab' : 'Check history');
+  }
+
+  function recordConfirmationAttempt(key, message, label) {
+    state.confirmAttempts.set(key, { message, label });
+    if (key === state.confirmKey && deployDialog.open) restoreConfirmationAttempt();
   }
 
   async function confirmDeployAction() {
     const generation = state.confirmGeneration;
+    const key = state.confirmKey;
+    const mode = state.confirmMode;
+    if (generation !== state.planGeneration || !$('#deploy-confirm-check').checked || state.confirmAttempts.has(key)) return;
+    state.confirmAttempts.set(key, { message: 'This request is in progress. Wait for its result before taking another action.', label: 'Request in progress' });
+    let requestStarted = false;
     const button = $('#confirm-deploy');
     button.disabled = true;
     button.textContent = state.confirmMode === 'rollback-draft' ? 'Creating review…' : 'Submitting…';
     $('#deploy-error').hidden = true;
     try {
-      if (state.confirmMode === 'rollback-draft') {
+      if (state.confirmMode === 'gitlab-submit') {
+        const requestId = state.reviewedRequestId;
+        if (!requestId || !state.plan?.gitlabRequired) throw new Error('The reviewed GitLab request is missing. Build a fresh submission preview.');
+        requestStarted = true;
+        const result = await request('/api/gitlab/submit', { method: 'POST', body: { requestId } });
+        recordConfirmationAttempt(key, 'This request was submitted. Check GitLab for its branch and merge request.');
+        if (generation !== state.planGeneration || requestId !== state.reviewedRequestId) return;
+        deployDialog.close();
+        const toast = el('div', 'toast'); toast.setAttribute('role', 'status'); toast.append(document.createTextNode('Merge request created: '));
+        const link = document.createElement('a'); link.textContent = `${text(result.branch)} !${text(result.iid)}`;
+        try { const url = new URL(result.url); if (url.protocol === 'https:' && url.origin === new URL(state.gitlab?.config?.baseUrl || '').origin) { link.href = url.href; link.target = '_blank'; link.rel = 'noopener'; } else throw new Error(); } catch (_) { toast.textContent = 'GitLab created a merge request, but returned an unsafe or unverified URL.'; }
+        if (link.href) toast.append(link); $('#toast-region').append(toast); window.setTimeout(() => toast.remove(), 12000);
+      } else if (state.confirmMode === 'rollback-draft') {
         const record = state.rollbackRecord;
+        requestStarted = true;
         const rollback = await request(`/api/plans/${encodeURIComponent(record.id)}/rollback`, { method: 'POST', body: { confirm: true } });
+        recordConfirmationAttempt(key, 'This rollback draft was submitted. Check promotion history before making another request.');
         if (generation !== state.planGeneration) return;
         state.planMode = 'rollback';
         state.planSource = record.source || null;
@@ -834,7 +996,9 @@
       } else {
         const plan = state.plan;
         if (!plan?.id || !plan.review?.digest) throw new Error('The reviewed plan or digest is missing. Build a fresh review before continuing.');
+        requestStarted = true;
         const result = await request(`/api/plans/${encodeURIComponent(plan.id)}/deploy`, { method: 'POST', body: { digest: plan.review.digest, confirm: true } });
+        recordConfirmationAttempt(key, 'This execution was submitted. Check promotion history for its current status.');
         if (generation !== state.planGeneration) return;
         state.planMode = state.confirmMode === 'rollback-execute' ? 'rollback' : 'promotion';
         renderPlan(result, generation);
@@ -843,21 +1007,35 @@
         await refreshHistory(false);
       }
     } catch (failure) {
-      if (generation !== state.planGeneration) return;
-      $('#deploy-error').textContent = `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
-      $('#deploy-error').hidden = false;
-      button.disabled = true;
-      button.textContent = 'Check history';
-      // The request may have reached PingOne. Reload the server's view so the
-      // page stops offering a Deploy that the server now blocks.
-      try {
-        const current = state.plan?.id ? await request(`/api/plans/${encodeURIComponent(state.plan.id)}`) : null;
-        if (current && generation === state.planGeneration) renderPlan(current, generation);
-      } catch (_) { /* keep the error shown above */ }
+      if (failure.safeToRetry === true) {
+        state.confirmAttempts.delete(key);
+        if (key === state.confirmKey && deployDialog.open) {
+          $('#deploy-error').textContent = failure.message;
+          $('#deploy-error').hidden = false;
+          button.textContent = mode === 'gitlab-submit' ? 'Retry submission' : 'Retry request';
+          button.disabled = !$('#deploy-confirm-check').checked || state.confirmGeneration !== state.planGeneration;
+        }
+        return;
+      }
+      const notStarted = !requestStarted || failure.mutationNotStarted;
+      const message = notStarted ? failure.message : mode === 'gitlab-submit' ? `${failure.message} Check GitLab for the request before submitting again.` : `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
+      recordConfirmationAttempt(key, message, notStarted ? 'Review required' : undefined);
+      if (!notStarted && mode !== 'gitlab-submit' && mode !== 'rollback-draft' && generation === state.planGeneration) {
+        $('#deploy-button').disabled = true;
+        try {
+          const current = state.plan?.id ? await request(`/api/plans/${encodeURIComponent(state.plan.id)}`) : null;
+          if (current && generation === state.planGeneration) renderPlan(current, generation);
+        } catch (_) { /* Keep the deployment disabled until the user reconciles history. */ }
+      }
     }
   }
 
+  function recordRequiresGitLab(record) {
+    return Boolean(record?.gitlabRequired || !state.localTargets.includes(String(record?.target?.environmentId || '')));
+  }
+
   function canOfferRollback(record) {
+    if (recordRequiresGitLab(record)) return false;
     const status = normalizedStatus(record.status);
     return !isRollbackRecord(record) && ['COMPLETED', 'ERROR'].includes(status);
   }
@@ -868,6 +1046,10 @@
     review.type = 'button'; review.dataset.reviewId = String(record.id);
     review.addEventListener('click', () => reviewHistory(record));
     actions.append(review);
+    if (recordRequiresGitLab(record)) {
+      actions.append(el('span', 'history-sub', 'Use the GitLab pipeline for production plan, deployment, and rollback.'));
+      return actions;
+    }
     const rollback = el('button', 'history-action', 'Rollback');
     rollback.type = 'button'; rollback.disabled = !canOfferRollback(record);
     rollback.title = rollback.disabled ? (isRollbackRecord(record) ? 'Rollback records cannot be rolled back again.' : 'Only completed or failed promotions can be offered for rollback; PingOne checks latest-only eligibility.') : 'Create a reviewable rollback draft.';
@@ -940,11 +1122,13 @@
     try {
       const session = await request('/api/session');
       state.csrf = session.csrf || '';
+      state.localTargets = safeArray(session.localTargets).map(String);
       state.regions = session.regions || {};
       const [profiles, history] = await Promise.all([request('/api/profiles'), request('/api/history')]);
       state.profiles = Array.isArray(profiles) ? profiles : profiles?.profiles || [];
       state.history = Array.isArray(history) ? history : history?.records || [];
       renderProfileSelects(); renderProfiles(); renderHistory();
+      try { state.gitlab = await request('/api/gitlab'); } catch (_) { state.gitlab = null; }
       if (!state.csrf) showToast('The local session did not provide a CSRF token. Reload the app before saving or deploying.', true);
     } catch (failure) {
       renderProfileSelects(); renderHistory();
@@ -956,18 +1140,21 @@
   }
 
   $('#profiles-open').addEventListener('click', openProfiles);
+  $('#gitlab-open').addEventListener('click', openGitLabSettings);
+  $('#gitlab-save').addEventListener('click', saveGitLabSettings);
   $('#add-first-profile').addEventListener('click', openProfiles);
   // Enter inside a field must save (never close the dialog and drop the input).
   $('#profiles-form').addEventListener('submit', event => { event.preventDefault(); saveProfile(); });
   $('#profiles-close').addEventListener('click', () => profilesDialog.close());
   $('#profile-cancel-edit').addEventListener('click', resetProfileForm);
   $('#profiles-dialog [name="secretMode"]').addEventListener('change', updateSecretFields);
-  $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked; });
+  $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked || state.confirmAttempts.has(state.confirmKey) || state.confirmGeneration !== state.planGeneration; });
   $('#confirm-deploy').addEventListener('click', confirmDeployAction);
   $('#load-resources').addEventListener('click', loadResources);
   $('#resource-search').addEventListener('input', onSearchInput);
   $('#type-filter').addEventListener('change', updateFilterValues);
   $('#build-plan').addEventListener('click', buildPlan);
+  $('#plan-description').addEventListener('input', () => { if (state.plan || state.planPending) invalidatePlan('Promotion description changed. Build a new review before continuing.'); });
   $('#deploy-button').addEventListener('click', () => openDeployConfirmation(state.planMode === 'rollback' ? 'rollback-execute' : 'deploy'));
   $('#refresh-history').addEventListener('click', () => refreshHistory());
   $('#clear-selection').addEventListener('click', () => {

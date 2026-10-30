@@ -3,6 +3,7 @@ package pingone
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,21 +116,15 @@ func TestInventoryUsesOriginalIDsAndPinnedVersion(t *testing.T) {
 	}
 }
 
-// PingOne echoes the request's own expansion query (observed live: an
-// application attribute mapping fetched with "?expand=oidcScopes") on a
-// referenced resource's self URL inside embeddedSnapshots. That must not be
-// rejected as an invalid identity, and must not leak into the stored,
-// canonical resource URL that promotion plans later build operations from.
-func TestInventoryStripsExpansionQueryFromResourceURL(t *testing.T) {
+func TestInventoryRejectsResourceURLWhoseFinalIDDiffers(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/environments/src":
-			w.Write([]byte(`{"id":"src","organization":{"id":"tenant"}}`))
+			fmt.Fprint(w, `{"id":"src","organization":{"id":"tenant"}}`)
 		case r.Method == "POST" && r.URL.Path == "/v1/environments/src/snapshots":
-			w.WriteHeader(201)
-			w.Write([]byte(`{"resource":{"id":"src"},"snapshotId":"version1","status":"COMPLETE"}`))
+			fmt.Fprint(w, `{"resource":{"id":"src"},"snapshotId":"version1","status":"COMPLETE"}`)
 		case strings.HasSuffix(r.URL.Path, "/versions/version1/embeddedSnapshots"):
-			w.Write([]byte(`{"_embedded":{"referencedResources":[{"resource":{"id":"attr1"},"resourceUrl":"` + "http://" + r.Host + `/v1/environments/src/applications/app1/attributes/attr1?expand=oidcScopes","configuration":{"name":"email"},"status":"COMPLETE"}]},"count":1}`))
+			fmt.Fprintf(w, `{"_embedded":{"referencedResources":[{"resource":{"id":"approved-flow"},"resourceUrl":%q,"configuration":{"name":"Customer sign in"}}]}}`, "http://"+r.Host+"/v1/environments/src/flows/different-flow")
 		default:
 			t.Errorf("unexpected API path %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -137,14 +132,140 @@ func TestInventoryStripsExpansionQueryFromResourceURL(t *testing.T) {
 	}))
 	defer ts.Close()
 	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "t"}
-	inv, err := c.Inventory(context.Background(), "src")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := c.Inventory(context.Background(), "src"); err == nil {
+		t.Fatal("inventory accepted a resource URL that names a different resource ID")
 	}
-	if len(inv.Resources) != 1 || inv.Resources[0].ID != "attr1" {
-		t.Fatalf("expected the attribute mapping resource to be included: %+v", inv)
+}
+
+func TestInventoryRejectsChangedIdentityWhileSnapshotIsPreparing(t *testing.T) {
+	gets := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/environments/src":
+			fmt.Fprint(w, `{"id":"src","organization":{"id":"tenant"}}`)
+		case r.Method == "POST" && r.URL.Path == "/v1/environments/src/snapshots":
+			fmt.Fprint(w, `{"resource":{"id":"src"},"snapshotId":"version1","status":"WAITING"}`)
+		case r.Method == "GET" && r.URL.Path == "/v1/environments/src/snapshots/src/versions/version1":
+			gets++
+			fmt.Fprint(w, `{"resource":{"id":"other-env"},"snapshotId":"version2","status":"COMPLETE"}`)
+		case strings.HasSuffix(r.URL.Path, "/versions/version1/embeddedSnapshots"):
+			fmt.Fprint(w, `{"_embedded":{"referencedResources":[]}}`)
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "t"}
+	if _, err := c.Inventory(context.Background(), "src"); err == nil || gets != 1 {
+		t.Fatalf("accepted changed asynchronous snapshot identity: err=%v GETs=%d", err, gets)
 	}
-	if strings.Contains(inv.Resources[0].URL, "?") {
-		t.Fatalf("stored resource URL must not carry a query string: %s", inv.Resources[0].URL)
+}
+
+func TestInventoryRejectsPollMissingPinnedIdentity(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/environments/src":
+			fmt.Fprint(w, `{"id":"src","organization":{"id":"tenant"}}`)
+		case r.Method == "POST" && r.URL.Path == "/v1/environments/src/snapshots":
+			fmt.Fprint(w, `{"resource":{"id":"src"},"snapshotId":"version1","status":"WAITING"}`)
+		case r.Method == "GET" && r.URL.Path == "/v1/environments/src/snapshots/src/versions/version1":
+			fmt.Fprint(w, `{"status":"COMPLETE"}`)
+		case strings.HasSuffix(r.URL.Path, "/versions/version1/embeddedSnapshots"):
+			fmt.Fprint(w, `{"_embedded":{"referencedResources":[]}}`)
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "t"}
+	if _, err := c.Inventory(context.Background(), "src"); err == nil {
+		t.Fatal("accepted a completed poll that omitted its environment and snapshot identities")
+	}
+}
+
+// Live acceptance finding: the PingOne API gateway answers unknown routes with a
+// message that reflects a SHA-256 hash of the Authorization header. Runner errors
+// are printed to CI job logs, so credential-derived material must not be relayed.
+func TestGatewayAuthorizationReflectionIsNotRelayed(t *testing.T) {
+	const hash = "rz05vny4b9Gv0kuFUimjEYoQ0123456789abcdefXYZ="
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"message":"Invalid key=value pair (missing equal-sign) in Authorization header (hashed with SHA-256 and encoded with Base64): '` + hash + `'."}`))
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "token"}
+	err := c.Do(context.Background(), "GET", "/v1/environments/env/unknownRoute", "", nil, nil)
+	if err == nil {
+		t.Fatal("gateway rejection was accepted")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, hash) || strings.Contains(msg, "rz05") || strings.Contains(strings.ToLower(msg), "authorization header") {
+		t.Fatalf("credential-derived gateway text relayed: %q", msg)
+	}
+	if !strings.Contains(msg, "403") {
+		t.Fatalf("status lost: %q", msg)
+	}
+}
+
+func TestErrorCodeDoesNotRelayAccessToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"code":"access-token-value","message":"request rejected"}`)
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "access-token-value"}
+	err := c.Do(context.Background(), "GET", "/v1/environments/env", "", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("status diagnostic lost: %v", err)
+	}
+	if strings.Contains(err.Error(), "access-token-value") {
+		t.Fatalf("server error code relayed the access token: %v", err)
+	}
+}
+
+func TestErrorCodeRemainsReadableWithoutConfiguredSecret(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"code":"ACCESS_FAILED","message":"request rejected"}`)
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "access"}
+	err := c.Do(context.Background(), "GET", "/v1/environments/env", "", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "ACCESS_FAILED") {
+		t.Fatalf("safe API error code was corrupted: %v", err)
+	}
+}
+
+// PingOne distinguishes entitlement denial from role denial in details[].code.
+// Dropping those codes makes snapshot discovery failures impossible to diagnose
+// even when the worker has the documented roles.
+func TestInventoryRetainsSafeAccessFailureDetailCodes(t *testing.T) {
+	for _, detail := range []string{"LICENSE_EXCEEDED", "INSUFFICIENT_PERMISSIONS"} {
+		t.Run(detail, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" && r.URL.Path == "/v1/environments/env" {
+					fmt.Fprint(w, `{"id":"env","organization":{"id":"org"}}`)
+					return
+				}
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprintf(w, `{"code":"ACCESS_FAILED","message":"The request could not be completed.","details":[{"code":%q,"message":"secret-value token-value private-environment"},{"code":"token-value"},{"code":%q}]}`, detail, detail)
+			}))
+			defer ts.Close()
+			client := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "token-value", Secret: "secret-value"}
+			_, err := client.Inventory(context.Background(), "env")
+			if err == nil || !strings.Contains(err.Error(), detail) || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "inventory snapshot") {
+				t.Fatalf("snapshot denial lost its safe diagnostic code: %v", err)
+			}
+			if strings.Count(err.Error(), detail) != 1 {
+				t.Fatalf("duplicate detail codes were not bounded: %v", err)
+			}
+			for _, sensitive := range []string{"secret-value", "token-value", "private-environment"} {
+				if strings.Contains(err.Error(), sensitive) {
+					t.Fatalf("detail message exposed sensitive response content: %v", err)
+				}
+			}
+		})
 	}
 }

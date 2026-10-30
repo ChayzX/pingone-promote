@@ -139,8 +139,27 @@ func (c *Client) Do(ctx context.Context, method, path, contentType string, body,
 		var e struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
+			Details []struct {
+				Code string `json:"code"`
+			} `json:"details"`
 		}
 		_ = json.Unmarshal(raw, &e)
+		codes := []string{}
+		if e.Code != "" {
+			codes = append(codes, e.Code)
+		}
+		seen := map[string]bool{e.Code: true}
+		for _, detail := range e.Details {
+			// Only known access-denial codes cross the diagnostic boundary. Raw
+			// messages, targets and arbitrary codes may contain tenant or credential data.
+			switch detail.Code {
+			case "LICENSE_EXCEEDED", "INSUFFICIENT_PERMISSIONS", "INSUFFICIENT_SCOPE":
+				if !seen[detail.Code] {
+					codes = append(codes, detail.Code)
+					seen[detail.Code] = true
+				}
+			}
+		}
 		message := strings.ReplaceAll(e.Message, c.Secret, "[redacted]")
 		if c.Secret == "" {
 			message = e.Message
@@ -148,10 +167,27 @@ func (c *Client) Do(ctx context.Context, method, path, contentType string, body,
 		if tok != "" {
 			message = strings.ReplaceAll(message, tok, "[redacted]")
 		}
+		// The API gateway answers unknown routes by reflecting a hash of the
+		// Authorization header. Never relay credential-derived text into logs.
+		if strings.Contains(strings.ToLower(message), "authorization") {
+			message = "request rejected by the PingOne API gateway (unknown route or unsupported method); details withheld because they reference request credentials"
+		}
+		code := e.Code
+		if c.Secret != "" {
+			code = strings.ReplaceAll(code, c.Secret, "[redacted]")
+		}
+		if tok != "" {
+			code = strings.ReplaceAll(code, tok, "[redacted]")
+		}
 		if len(message) > 700 {
 			message = message[:700]
 		}
-		return fmt.Errorf("PingOne HTTP %d (%s): %s", res.StatusCode, e.Code, message)
+		// The top-level code is also untrusted response text and can reflect
+		// credentials, so sanitize it just like the human-readable message.
+		if e.Code != "" {
+			codes[0] = code
+		}
+		return fmt.Errorf("PingOne HTTP %d (%s): %s", res.StatusCode, strings.Join(codes, ", "), message)
 	}
 	if output != nil && len(bytes.TrimSpace(raw)) > 0 {
 		if err = json.Unmarshal(raw, output); err != nil {

@@ -1,6 +1,24 @@
 # Verification and integration status
 
-The local application has been verified with documented API-shaped fixtures. It has **not** been tested against a live PingOne tenant or executed on macOS/RHEL in this workspace.
+The local application has been verified with documented API-shaped fixtures. Later live sandbox testing verified native inventory loading and draft creation, but the native plan review remains blocked. No live native execution or rollback is verified. The application has not been executed on macOS/RHEL in this workspace.
+
+## Live sandbox follow-up — 2026-10-29
+
+Visible browser testing verified private GitLab submission, successful one-request merge request validation, and zero-request and two-request rejection before native planning. Fixes address native snapshot identities and supported read expansions, GitLab's existing-branch commit behavior, shell checkout line endings, and the nested pipeline-source field in GitLab job responses. Tenant identities, credentials, request files, pipeline identifiers and raw evidence remain outside this public repository.
+
+Native drafts expose an ordered four-operation flow/version lifecycle. The strict compatibility adapter and destination payload-reference drift checks have passing regression tests, the full Linux Go suite, race detector, vet and the GitLab Playwright fixture suite. A subsequent live review still rejects the sequence. Reconstructed redacted-artifact replay passes but lacks some original native inputs; live compatibility is therefore unresolved. Apply has not been run. See [HANDOFF.md](HANDOFF.md) for the remaining acceptance criteria and observed pre-deployment inventory differences.
+
+## Acceptance follow-up — 2026-10-27
+
+The revised template passed the private project's GitLab CI lint without errors or warnings. An isolated GitLab-hosted Linux job passed the Go suite, race detector, vet, JavaScript syntax check, ten selector regressions and Linux/macOS cross-builds for its captured source manifest. Later source changes require another manifest-bound run before completion. Windows full-suite failures concern Unix file-lock and permission semantics; they are not a successful Windows compatibility test.
+
+Additional regressions cover changed live destination configuration and reused dependencies, create collisions, unavailable/ambiguous inventory, exact native mapping changes, original rollback job provenance, and missing or changed native rollback linkage. Red/green outputs and live job traces are retained privately with the source state they tested.
+
+Native snapshot probes returned `403 ACCESS_FAILED` with detail code `LICENSE_EXCEEDED`, despite Configuration Management already being opted in. An independent HTTP reproduction confirmed the denial. Successful probe-job status means diagnostics completed; it does not mean deployment succeeded. Live GitLab approval blocking, separate approval, retry rejection and merge request isolation were tested independently without native writes. Native resource/version before-and-after evidence and separately approved native rollback remain outstanding. See [HANDOFF.md](HANDOFF.md) for the acceptance gate and vendor sandbox-only support limitation.
+
+## Offline QE follow-up
+
+Additional regression tests cover non-object JSON request bodies, missing GitLab job metadata, encoded GitLab path traversal, incomplete merge request responses, mismatched native resource and step identities, credential reflection in API error codes, and browser review invalidation while a request is pending. These are fixture tests; they do not establish live service compatibility. Private evidence retains the failing reproductions and subsequent verification results, bound to the tested source manifest.
 
 ## Automated checks
 

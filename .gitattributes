@@ -1,0 +1,2 @@
+# Shell scripts must run unchanged after checkout on any operating system.
+*.sh text eol=lf

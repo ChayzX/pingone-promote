@@ -19,14 +19,15 @@ type inventoryPair struct {
 	TargetID string `json:"targetInventoryId"`
 }
 type PlanView struct {
-	ID          string           `json:"id"`
-	NativeID    string           `json:"nativeId"`
-	Kind        string           `json:"kind"`
-	Description string           `json:"description"`
-	Status      string           `json:"status"`
-	Errors      any              `json:"errors,omitempty"`
-	Review      promotion.Review `json:"review"`
-	CanDeploy   bool             `json:"canDeploy"`
+	ID             string           `json:"id"`
+	NativeID       string           `json:"nativeId"`
+	Kind           string           `json:"kind"`
+	Description    string           `json:"description"`
+	Status         string           `json:"status"`
+	Errors         any              `json:"errors,omitempty"`
+	Review         promotion.Review `json:"review"`
+	CanDeploy      bool             `json:"canDeploy"`
+	GitLabRequired bool             `json:"gitlabRequired"`
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -87,6 +88,9 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if !s.localTargets[target.EnvironmentID] {
+		return problem(403, errors.New(gitlabOnlyMessage))
+	}
 	body, err := promotion.BuildRequest(source.Inventory, target.Inventory, input.Selected, input.Mappings, input.Description)
 	if err != nil {
 		return err
@@ -118,17 +122,21 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) error {
 		record.Intent = "create_uncertain"
 		record.UpdatedAt = now()
 		_ = s.store.SaveRecord(record)
-		return problem(502, err)
+		return problem(http.StatusBadGateway, fmt.Errorf("PingOne may have created a draft; reconcile promotions in PingOne before trying again. Nothing has been deployed. %w", err))
 	}
 	if native.ID == "" {
-		return problem(502, errors.New("PingOne omitted the created promotion identity; nothing has been deployed"))
+		record.Status = "DRAFT_CREATION_UNCERTAIN"
+		record.Intent = "create_uncertain"
+		record.UpdatedAt = now()
+		_ = s.store.SaveRecord(record)
+		return problem(502, errors.New("PingOne may have created a draft but omitted its identity; reconcile promotions in PingOne before creating another draft. Nothing has been deployed."))
 	}
 	record.NativeID = native.ID
 	record.Status = native.Status
 	record.Intent = ""
 	record.UpdatedAt = now()
 	if err = s.store.SaveRecord(record); err != nil {
-		return err
+		return problem(http.StatusInternalServerError, fmt.Errorf("PingOne created draft %q, but the local app could not save its history. Reconcile promotions in PingOne before trying again. Nothing has been deployed.", native.ID))
 	}
 	ps := &planSession{Record: record, Source: source.Inventory, Target: target.Inventory}
 	s.plans[record.ID] = ps
@@ -145,7 +153,10 @@ func (s *Server) loadPlan(id string) (*planSession, error) {
 	}
 	record, err := s.store.GetRecord(id)
 	if err != nil {
-		return nil, problem(404, err)
+		if errors.Is(err, store.ErrRecordNotFound) {
+			return nil, problem(http.StatusNotFound, err)
+		}
+		return nil, problem(http.StatusInternalServerError, errors.New("Could not read saved history; check local app storage and restart the app."))
 	}
 	a := pingone.Inventory{APIOrigin: record.SourceAPIOrigin, EnvironmentID: record.Source.EnvironmentID, OrganizationID: record.SourceOrganizationID, SnapshotID: record.SourceSnapshotID, Resources: []pingone.Resource{}}
 	b := pingone.Inventory{APIOrigin: record.TargetAPIOrigin, EnvironmentID: record.Target.EnvironmentID, OrganizationID: record.TargetOrganizationID, SnapshotID: record.TargetSnapshotID, Resources: []pingone.Resource{}}
@@ -285,10 +296,18 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if rec.Intent != "" && native.Status == "READY" {
 		v.Review.Issues = append(v.Review.Issues, "An execution or rollback request was already sent or its outcome is uncertain. Refresh status; this app will not automatically resend it.")
 	}
+	if !s.localAllowed(rec.Target) {
+		v.GitLabRequired = true
+		v.Review.Issues = append(v.Review.Issues, gitlabOnlyMessage)
+	}
 	v.CanDeploy = native.Status == "READY" && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
 	return v, nil
 }
 func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession) error {
+	if !s.localAllowed(ps.Record.Target) {
+		replyNativeNoWrite(w, http.StatusForbidden, gitlabOnlyMessage, false)
+		return nil
+	}
 	var input struct {
 		Digest  string `json:"digest"`
 		Confirm bool   `json:"confirm"`
@@ -297,27 +316,40 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession)
 		return err
 	}
 	if !input.Confirm || input.Digest == "" {
-		return problem(409, errors.New("review the complete plan and confirm deployment first"))
+		replyNativeNoWrite(w, http.StatusConflict, "review the complete plan and confirm deployment first", false)
+		return nil
 	}
+	priorIntent := ps.Record.Intent
 	fresh, err := s.refresh(r, ps)
 	if err != nil {
-		return err
+		if priorIntent != "" {
+			replyNativeNoWrite(w, http.StatusBadGateway, "No new execution write was sent by this request. A previous execution attempt remains recorded; reconcile its PingOne status before taking another action.", false)
+		} else {
+			replyNativePreflightFailure(w, nativePreflightMessage("refresh the PingOne plan", err), err)
+		}
+		return nil
 	}
 	if !fresh.CanDeploy {
-		return problem(409, errors.New("deployment blocked: native status, selection checks, or previous execution prevents it; refresh the plan"))
+		replyNativeNoWrite(w, http.StatusConflict, "deployment blocked: native status, selection checks, or previous execution prevents it; refresh the plan", false)
+		return nil
 	}
 	if !equal(fresh.Review.Digest, input.Digest) {
-		return problem(409, errors.New("the native plan changed after review; refresh and review the updated operations"))
-	}
-	ps.Record.Intent = "execute_requested"
-	ps.Record.UpdatedAt = now()
-	if err = s.store.SaveRecord(ps.Record); err != nil {
-		return err
+		replyNativeNoWrite(w, http.StatusConflict, "the native plan changed after review; refresh and review the updated operations", false)
+		return nil
 	}
 	c, err := s.client(ps.Record.Source)
 	if err != nil {
-		return err
+		replyNativePreflightFailure(w, nativePreflightMessage("prepare the PingOne client", err), err)
+		return nil
 	}
+	attempt := ps.Record
+	attempt.Intent = "execute_requested"
+	attempt.UpdatedAt = now()
+	if err = s.store.SaveRecord(attempt); err != nil {
+		replyNativeNoWrite(w, http.StatusInternalServerError, "Could not save the execution attempt marker in local history; no PingOne write was sent. Check local app storage and retry.", true)
+		return nil
+	}
+	ps.Record = attempt
 	var native pingone.Promotion
 	if err = c.Do(r.Context(), "POST", pingone.EnvPath(ps.Record.Source.EnvironmentID)+"/promotions/"+ps.Record.NativeID, pingone.ExecuteType, nil, &native); err != nil {
 		return problem(502, err)
@@ -341,6 +373,10 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession)
 	return nil
 }
 func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSession) error {
+	if !s.localAllowed(ps.Record.Target) {
+		replyNativeNoWrite(w, http.StatusForbidden, gitlabOnlyMessage, false)
+		return nil
+	}
 	var input struct {
 		Confirm bool `json:"confirm"`
 	}
@@ -348,24 +384,36 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 		return err
 	}
 	if !input.Confirm {
-		return problem(409, errors.New("confirm that rollback restores the entire latest promotion and may overwrite later changes"))
+		replyNativeNoWrite(w, http.StatusConflict, "confirm that rollback restores the entire latest promotion and may overwrite later changes", false)
+		return nil
 	}
+	priorRollbackIntent := strings.HasPrefix(ps.Record.Intent, "rollback")
 	view, err := s.refresh(r, ps)
 	if err != nil {
-		return err
+		if priorRollbackIntent {
+			replyNativeNoWrite(w, http.StatusBadGateway, "No new rollback write was sent by this request. A previous rollback attempt remains recorded; reconcile its PingOne status before taking another action.", false)
+		} else {
+			replyNativePreflightFailure(w, nativePreflightMessage("refresh the PingOne plan", err), err)
+		}
+		return nil
 	}
 	if ps.Record.Kind == "rollback" || (view.Status != "COMPLETED" && view.Status != "ERROR") || strings.HasPrefix(ps.Record.Intent, "rollback") {
-		return problem(409, errors.New("only a completed or failed forward promotion can request rollback; PingOne enforces latest-promotion eligibility"))
-	}
-	ps.Record.Intent = "rollback_requested"
-	ps.Record.UpdatedAt = now()
-	if err = s.store.SaveRecord(ps.Record); err != nil {
-		return err
+		replyNativeNoWrite(w, http.StatusConflict, "only a completed or failed forward promotion can request rollback; PingOne enforces latest-promotion eligibility", false)
+		return nil
 	}
 	c, err := s.client(ps.Record.Source)
 	if err != nil {
-		return err
+		replyNativePreflightFailure(w, nativePreflightMessage("prepare the PingOne client", err), err)
+		return nil
 	}
+	attempt := ps.Record
+	attempt.Intent = "rollback_requested"
+	attempt.UpdatedAt = now()
+	if err = s.store.SaveRecord(attempt); err != nil {
+		replyNativeNoWrite(w, http.StatusInternalServerError, "Could not save the rollback attempt marker in local history; no PingOne write was sent. Check local app storage and retry.", true)
+		return nil
+	}
+	ps.Record = attempt
 	var native pingone.Promotion
 	if err = c.Do(r.Context(), "POST", pingone.EnvPath(ps.Record.Source.EnvironmentID)+"/promotions/"+ps.Record.NativeID, pingone.RollbackType, nil, &native); err != nil {
 		return problem(502, err)
@@ -396,6 +444,47 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 	return nil
 }
 
+func replyNativePreflightFailure(w http.ResponseWriter, message string, err error) {
+	replyNativeNoWrite(w, nativePreflightStatus(err), message, true)
+}
+
+func replyNativeNoWrite(w http.ResponseWriter, status int, message string, safeToRetry bool) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body := map[string]any{"error": message, "mutationStarted": false}
+	if safeToRetry {
+		body["safeToRetry"] = true
+	}
+	writeJSON(w, body)
+}
+
+func nativePreflightMessage(action string, err error) string {
+	err = nativePreflightCause(err)
+	var persistenceErr *store.PersistenceError
+	if errors.As(err, &persistenceErr) {
+		return "Could not access local app storage while attempting to " + action + "; no PingOne write was sent. Check local app storage and restart the app."
+	}
+	return fmt.Sprintf("Could not %s; no PingOne write was sent: %v", action, err)
+}
+
+func nativePreflightStatus(err error) int {
+	err = nativePreflightCause(err)
+	var persistenceErr *store.PersistenceError
+	if errors.As(err, &persistenceErr) {
+		return http.StatusInternalServerError
+	}
+	return http.StatusBadGateway
+}
+
+func nativePreflightCause(err error) error {
+	var statusErr *statusError
+	if errors.As(err, &statusErr) {
+		return statusErr.err
+	}
+	return err
+
+}
+
 // promotionExecuted reports whether this promotion has been sent for execution
 // by this app, or PingOne already reports a post-execution status. From then
 // on PingOne's resourceMapping describes resolved destination IDs rather than
@@ -415,4 +504,5 @@ func promotionExecuted(rec *store.Record, status string) bool {
 		return true
 	}
 	return false
+
 }
