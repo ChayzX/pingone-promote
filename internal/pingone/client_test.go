@@ -111,3 +111,37 @@ func TestInventoryUsesOriginalIDsAndPinnedVersion(t *testing.T) {
 		t.Fatalf("wrong inventory: %+v", inv)
 	}
 }
+
+// PingOne echoes the request's own expansion query (observed live: an
+// application attribute mapping fetched with "?expand=oidcScopes") on a
+// referenced resource's self URL inside embeddedSnapshots. That must not be
+// rejected as an invalid identity, and must not leak into the stored,
+// canonical resource URL that promotion plans later build operations from.
+func TestInventoryStripsExpansionQueryFromResourceURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/environments/src":
+			w.Write([]byte(`{"id":"src","organization":{"id":"tenant"}}`))
+		case r.Method == "POST" && r.URL.Path == "/v1/environments/src/snapshots":
+			w.WriteHeader(201)
+			w.Write([]byte(`{"resource":{"id":"src"},"snapshotId":"version1","status":"COMPLETE"}`))
+		case strings.HasSuffix(r.URL.Path, "/versions/version1/embeddedSnapshots"):
+			w.Write([]byte(`{"_embedded":{"referencedResources":[{"resource":{"id":"attr1"},"resourceUrl":"` + "http://" + r.Host + `/v1/environments/src/applications/app1/attributes/attr1?expand=oidcScopes","configuration":{"name":"email"},"status":"COMPLETE"}]},"count":1}`))
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	c := &Client{BaseURL: ts.URL, HTTP: ts.Client(), AccessToken: "t"}
+	inv, err := c.Inventory(context.Background(), "src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Resources) != 1 || inv.Resources[0].ID != "attr1" {
+		t.Fatalf("expected the attribute mapping resource to be included: %+v", inv)
+	}
+	if strings.Contains(inv.Resources[0].URL, "?") {
+		t.Fatalf("stored resource URL must not carry a query string: %s", inv.Resources[0].URL)
+	}
+}

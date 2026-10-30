@@ -71,9 +71,17 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 			return inv, err
 		}
 		prefix := EnvPath(env) + "/"
-		if !strings.HasPrefix(u.Path, prefix) || s.Resource.ID == "" || u.RawQuery != "" {
-			return inv, errors.New("inventory has an invalid resource identity")
+		if !strings.HasPrefix(u.Path, prefix) || s.Resource.ID == "" {
+			return inv, fmt.Errorf("inventory has an invalid resource identity (id=%q url=%q)", s.Resource.ID, s.URL)
 		}
+		// PingOne echoes the request's own expansion query (e.g. an
+		// attribute mapping fetched with "?expand=oidcScopes") on the
+		// resource's self URL inside embeddedSnapshots. That query
+		// reflects how the resource was fetched, not its identity, so it
+		// is dropped here; the stored URL is the resource's canonical,
+		// query-free identity and is never reused as an operation target.
+		u.RawQuery = ""
+		u.Fragment = ""
 		if seen[s.Resource.ID] {
 			return inv, fmt.Errorf("ambiguous resource ID %s; this API response needs an explicit adapter", s.Resource.ID)
 		}
