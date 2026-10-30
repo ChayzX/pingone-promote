@@ -339,3 +339,14 @@ func TestRestartReconstructsPinnedScopeWithoutReplayingExecution(t *testing.T) {
 		t.Fatal("restart replayed an execution")
 	}
 }
+
+func TestHistoryListsNewestOperationFirst(t *testing.T) {
+	h := setup(t)
+	first := h.plan()
+	second := h.plan()
+	var records []store.Record
+	h.call("GET", "/api/history", nil, &records, 200)
+	if len(records) != 2 || records[0].ID != second.ID || records[1].ID != first.ID {
+		t.Fatalf("history is not newest first: %+v", records)
+	}
+}
