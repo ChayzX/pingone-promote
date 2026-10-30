@@ -40,6 +40,14 @@ def fill_profile(page, name, env, secret='s3cret'):
     form.locator('[name=secret]').fill(secret)
 
 
+def create_profile(page, name, env):
+    page.get_by_role('button', name='Environment profiles').click()
+    fill_profile(page, name, env)
+    page.locator('#profile-save').click()
+    expect(page.locator('#profile-list')).to_contain_text(name)
+    page.locator('#profiles-close').click()
+
+
 @check
 def enter_key_saves_profile_instead_of_closing_dialog(page):
     page.get_by_role('button', name='Environment profiles').click()
@@ -47,6 +55,22 @@ def enter_key_saves_profile_instead_of_closing_dialog(page):
     page.locator('#profiles-form [name=name]').press('Enter')
     expect(page.locator('#profile-list')).to_contain_text('Enter key profile')
     assert page.locator('#profiles-dialog').evaluate('d => d.open'), 'dialog closed by Enter'
+
+
+@check
+def editing_destination_profile_keeps_source_and_destination(page):
+    create_profile(page, 'Edit Dev', 'src')
+    create_profile(page, 'Edit Prod', 'dst')
+    page.locator('#source-profile').select_option(label='Edit Dev · src')
+    page.locator('#target-profile').select_option(label='Edit Prod · dst')
+    page.get_by_role('button', name='Environment profiles').click()
+    page.locator('.profile-list-item', has_text='Edit Prod').get_by_role('button', name='Edit').click()
+    page.locator('#profiles-form [name=name]').fill('Edit Prod renamed')
+    page.locator('#profile-save').click()
+    expect(page.locator('#profile-list')).to_contain_text('Edit Prod renamed')
+    page.locator('#profiles-close').click()
+    expect(page.locator('#source-profile option:checked')).to_have_text('Edit Dev · src')
+    expect(page.locator('#target-profile option:checked')).to_have_text('Edit Prod renamed · dst')
 
 
 def main():

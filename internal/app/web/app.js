@@ -226,10 +226,15 @@
       else state.profiles.push(profile);
       state.profiles.sort((a, b) => text(a.name).localeCompare(text(b.name)));
       renderProfileSelects();
-      $('#source-profile').value = String(profile.id);
-      if (!$('#target-profile').value || $('#target-profile').value === String(profile.id)) {
-        $('#target-profile').value = state.profiles.find(item => String(item.id) !== String(profile.id))?.id || '';
+      // Never move an existing choice: editing a profile must not swap or
+      // reverse the source/destination pair. Only fill empty selections.
+      if (!state.profileEditID) {
+        const sourceSelect = $('#source-profile');
+        const targetSelect = $('#target-profile');
+        if (!sourceSelect.value) sourceSelect.value = String(profile.id);
+        else if (!targetSelect.value && sourceSelect.value !== String(profile.id)) targetSelect.value = String(profile.id);
       }
+      updateEnvironmentMeta();
       invalidateInventory('Profile details changed. Load resources again to continue.');
       renderProfiles();
       resetProfileForm();
