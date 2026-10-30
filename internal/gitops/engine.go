@@ -401,7 +401,7 @@ func (e *Engine) RollbackPlan(ctx context.Context, original Artifact, origin Ori
 	}
 	var native pingone.Promotion
 	if err = e.Client.Do(ctx, "POST", pingone.EnvPath(original.Request.Source.ID)+"/promotions/"+original.NativeID, pingone.RollbackType, nil, &native); err != nil {
-		return a, err
+		return a, fmt.Errorf("could not create native rollback draft; reconcile native status before retry: %w", err)
 	}
 	if !safeID.MatchString(native.ID) || native.ID == original.NativeID || native.Previous.ID != original.NativeID {
 		return a, errors.New("rollback did not create a distinct linked plan; reconcile native status before retrying")

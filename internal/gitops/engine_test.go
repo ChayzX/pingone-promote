@@ -30,6 +30,7 @@ type nativeFixture struct {
 	targetUnavailable         bool
 	targetDuplicate           bool
 	rollbackLinkMode          string
+	rollbackRequestFails      bool
 	page2                     bool
 	omitTarget                bool
 	omitTargetSnapshot        bool
@@ -86,6 +87,10 @@ func (f *nativeFixture) serve(w http.ResponseWriter, r *http.Request) {
 					f.native.Status = "IN_PROGRESS"
 				}
 			case pingone.RollbackType:
+				if f.rollbackRequestFails {
+					http.Error(w, "rejected", http.StatusBadRequest)
+					return
+				}
 				f.rollback++
 				f.native.ID = "rollback"
 				f.native.Previous.ID = "native"
@@ -921,5 +926,20 @@ func TestStatusResolvedMappingsKeepRollbackLinkage(t *testing.T) {
 	f.native.Previous.ID = "wrong"
 	if _, err = e.Status(context.Background(), rollback); err == nil {
 		t.Fatal("wrong rollback linkage accepted")
+	}
+}
+
+func TestRollbackPlanIdentifiesNativeDraftFailure(t *testing.T) {
+	f := fixture(t)
+	e := &Engine{Client: f.client}
+	original, err := e.Plan(context.Background(), f.req, testOrigin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.native.Status = "COMPLETED"
+	f.rollbackRequestFails = true
+	_, err = e.RollbackPlan(context.Background(), original, testOrigin())
+	if err == nil || !strings.Contains(err.Error(), "create native rollback draft") {
+		t.Fatalf("missing rollback draft context: %v", err)
 	}
 }
