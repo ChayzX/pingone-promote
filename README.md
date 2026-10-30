@@ -36,6 +36,14 @@ For a disposable or explicitly designated non-production environment only, start
 
 The app prints a one-time bootstrap URL for the current run. Open that URL in your browser; the bootstrap credential is generated again at every start. Keep the server bound to loopback. `--no-browser` disables automatic browser opening, and `--data-dir PATH` selects where local profiles and operation history are stored. Use `--help` to see the available options.
 
+### Structured logs
+
+The UI server writes newline-delimited JSON events to stderr by default. Set `--log-level debug|info|warn|error` and `--log-format json|text` to adjust output. On macOS and Linux, use `--log-file PATH` to append logs to a file; the app creates parent directories with owner-only permissions and secures the file as `0600`. File write failures fall back to stderr, and a file that cannot be opened or secured prevents startup. Operators are responsible for log rotation and retention. File logging is disabled on Windows because the standard library cannot establish a private ACL; use stderr or configure a private ACL outside the application before redirecting stderr.
+
+The same settings can be supplied as `PINGONE_PROMOTE_LOG_LEVEL`, `PINGONE_PROMOTE_LOG_FORMAT`, and `PINGONE_PROMOTE_LOG_FILE`; CLI flags override these values. `pingone-runner` uses these environment settings and writes its existing result JSON/stdout unchanged; its failure event goes to stderr or the configured log file.
+
+Events contain severity, a fixed event and stage, an allowlisted route name, standard HTTP method, status, duration, and a generated request correlation ID. Request IDs are returned in the `X-Request-ID` response header; application failure events carry the same ID as the request completion event. Route names never include path segments; URLs, query strings, hosts, headers, cookies, request bodies, native PingOne payloads, tenant/environment identifiers, profile configuration, credentials, bootstrap/CSRF tokens, and personal data are excluded. Error strings and stack traces are never serialized. Treat logs as operational records, but still protect and retain them according to local policy.
+
 Session-only client secrets must be entered again after each app restart. To use a process environment variable, set it before starting the app, then save a profile with the `Environment variable` credential option and that variable's name:
 
 ```sh

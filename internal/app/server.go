@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/gitops"
+	"pingone-promote/internal/logging"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
 )
@@ -46,6 +48,7 @@ type Server struct {
 	clients                                map[string]*pingone.Client
 	clientFactory                          clientFactory
 	files                                  http.Handler
+	logger                                 *logging.Logger
 	localTargets                           map[string]bool
 	gitlabFactory                          func(gitlab.Config, string) (*gitlab.Client, error)
 	gitlabSessionToken, gitlabTokenBinding string
@@ -127,6 +130,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// browser sends together, so they manage the lock themselves.
 	if r.URL.Path == "/api/inventory" && r.Method == "POST" {
 		if err := s.loadInventory(w, r); err != nil {
+			s.logFailure(r, err)
 			replyRouteError(w, err)
 		}
 		return
@@ -134,8 +138,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.route(w, r); err != nil {
+		s.logFailure(r, err)
 		replyRouteError(w, err)
 	}
+}
+
+func (s *Server) logFailure(r *http.Request, err error) {
+	if s.logger == nil {
+		return
+	}
+	status := http.StatusBadRequest
+	var statusErr *statusError
+	if errors.As(err, &statusErr) {
+		status = statusErr.status
+	} else {
+		var persistenceErr *store.PersistenceError
+		if errors.As(err, &persistenceErr) {
+			status = http.StatusInternalServerError
+		}
+	}
+	level, stage, class := slog.LevelWarn, "application", "request_rejected"
+	if status >= 500 {
+		level, stage, class = slog.LevelError, "operation", "request_failed"
+	}
+	s.logger.Event(r.Context(), level, "app.failure", stage, "", "", logging.RequestID(r.Context()), class, status, 0)
 }
 
 func replyRouteError(w http.ResponseWriter, err error) {

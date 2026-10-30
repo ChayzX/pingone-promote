@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"pingone-promote/internal/logging"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
 	"regexp"
@@ -14,7 +15,14 @@ import (
 type Policy struct{ LocalTargets []string }
 
 func NewWithPolicy(st *store.Store, token string, policy Policy) (*Server, error) {
+	return NewWithPolicyAndLogger(st, token, policy, nil)
+}
+
+// NewWithPolicyAndLogger wires structured, redacted application failures to
+// the caller's logger while preserving request correlation from HTTP context.
+func NewWithPolicyAndLogger(st *store.Store, token string, policy Policy, logger *logging.Logger) (*Server, error) {
 	s := New(st, token)
+	s.logger = logger
 	safe := regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 	for _, id := range policy.LocalTargets {
 		if !safe.MatchString(id) {

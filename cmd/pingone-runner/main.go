@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"pingone-promote/internal/buildinfo"
 	"pingone-promote/internal/cigate"
 	"pingone-promote/internal/gitops"
+	"pingone-promote/internal/logging"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
 	"pingone-promote/internal/strictjson"
@@ -69,8 +71,29 @@ func defaultDeps(getenv func(string) string) runnerDeps {
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
+		if err := run(args, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, safeError(err, os.Getenv))
+			os.Exit(1)
+		}
+		return
+	}
+	logger, closeLog, err := logging.Open(logging.Config{
+		Level: os.Getenv("PINGONE_PROMOTE_LOG_LEVEL"), Format: os.Getenv("PINGONE_PROMOTE_LOG_FORMAT"), File: os.Getenv("PINGONE_PROMOTE_LOG_FILE"),
+	}, os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pingone-runner: could not initialize structured logging")
+		os.Exit(1)
+	}
+	if err := run(args, os.Stdout, os.Stderr); err != nil {
+		logger.Event(context.Background(), slog.LevelError, "cli.failure", "command", "", "", "", "command_failed", 0, 0)
 		fmt.Fprintln(os.Stderr, safeError(err, os.Getenv))
+		_ = closeLog()
+		os.Exit(1)
+	}
+	if err := closeLog(); err != nil {
+		fmt.Fprintln(os.Stderr, "pingone-runner: could not close structured log output")
 		os.Exit(1)
 	}
 }
