@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// embeddedPageLimit is the page size requested for embeddedSnapshots.
+const embeddedPageLimit = 1000
 
 func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 	inv := Inventory{APIOrigin: c.BaseURL, EnvironmentID: env, Resources: []Resource{}}
@@ -50,7 +54,12 @@ func (c *Client) Inventory(ctx context.Context, env string) (Inventory, error) {
 		}
 	}
 	inv.SnapshotID = snap.SnapshotID
-	raw, err := c.Pages(ctx, snapshotPath+"/embeddedSnapshots", "referencedResources")
+	// PingOne's default page is 25 items, and each page costs ~2.3s of server
+	// time regardless of size (measured live: 715 resources took 29 pages and
+	// ~68s). Ask for large pages; PingOne caps a page at roughly 8MB and returns
+	// fewer items with a next link, which Pages follows and checks against the
+	// reported count. Measured: the same 715 resources in 5 pages and ~15s.
+	raw, err := c.Pages(ctx, snapshotPath+"/embeddedSnapshots?limit="+strconv.Itoa(embeddedPageLimit), "referencedResources")
 	if err != nil {
 		return inv, err
 	}

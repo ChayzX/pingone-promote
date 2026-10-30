@@ -95,6 +95,9 @@ func TestInventoryUsesOriginalIDsAndPinnedVersion(t *testing.T) {
 		case r.URL.Path == "/v1/environments/src/snapshots/src/versions/version1":
 			w.Write([]byte(`{"resource":{"id":"src"},"snapshotId":"version1","status":"COMPLETE"}`))
 		case strings.HasSuffix(r.URL.Path, "/versions/version1/embeddedSnapshots"):
+			if r.URL.Query().Get("limit") != "1000" {
+				t.Errorf("embeddedSnapshots requested with limit %q; want large pages (1000)", r.URL.Query().Get("limit"))
+			}
 			w.Write([]byte(`{"_embedded":{"referencedResources":[{"id":"record-not-resource","snapshotId":"child-version","resource":{"id":"flow1"},"resourceUrl":"` + "http://" + r.Host + `/v1/environments/src/flows/flow1","configuration":{"id":"flow1","name":"Customer sign in"},"referencedResources":["connection1"],"status":"COMPLETE"}]},"count":1}`))
 		default:
 			t.Errorf("unexpected API path %s", r.URL.Path)
