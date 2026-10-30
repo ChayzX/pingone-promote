@@ -259,3 +259,29 @@ func TestGetMissingRecord(t *testing.T) {
 		t.Fatalf("GetRecord error = %v", err)
 	}
 }
+
+func TestSaveProfileRejectsOversizedAndControlCharacterNames(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, bad := range map[string]string{"too long": strings.Repeat("A", 81), "newline": "Prod\nDest", "tab": "Prod\tDest", "nul": "Prod\x00"} {
+		p := validProfile()
+		p.Name = bad
+		if _, err := s.SaveProfile(p, "secret"); err == nil {
+			t.Errorf("%s name was accepted", name)
+		}
+	}
+	p := validProfile()
+	p.Name = "  " + strings.Repeat("é", 80) + "  "
+	saved, err := s.SaveProfile(p, "secret")
+	if err != nil {
+		t.Fatalf("80-character name rejected: %v", err)
+	}
+	if saved.Name != strings.Repeat("é", 80) {
+		t.Fatalf("name was not trimmed: %q", saved.Name)
+	}
+	if profiles, _ := s.ListProfiles(); len(profiles) != 1 {
+		t.Fatalf("rejected profiles were persisted: %v", profiles)
+	}
+}

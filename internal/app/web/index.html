@@ -113,7 +113,7 @@
 
   <dialog class="dialog profile-dialog" id="profiles-dialog" aria-labelledby="profiles-dialog-title">
     <form method="dialog" class="dialog-shell" id="profiles-form">
-      <header class="dialog-header"><div><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Close environment profiles">×</button></header>
+      <header class="dialog-header"><div><h2 id="profiles-dialog-title">Environment profiles</h2></div><button class="icon-button" type="button" id="profiles-close" aria-label="Close environment profiles">×</button></header>
       <div class="dialog-content">
         <div id="profile-list-state" class="inline-state"></div><div id="profile-list" class="profile-list"></div>
         <details class="profile-editor" id="profile-editor" open>
@@ -130,7 +130,7 @@
             <label class="field field-wide secret-value-field">Client secret<input class="control" name="secret" type="password" autocomplete="new-password"><span class="field-help" id="secret-help">Kept in memory for this app session.</span></label>
           </fieldset>
           <p class="form-error" id="profile-error" role="alert" hidden></p>
-          <div class="dialog-actions"><button class="button button-quiet" id="profile-cancel-edit" type="button" hidden>Cancel edit</button><button class="button button-primary" id="profile-save" type="button">Save profile</button></div>
+          <div class="dialog-actions"><button class="button button-quiet" id="profile-cancel-edit" type="button" hidden>Cancel edit</button><button class="button button-primary" id="profile-save" type="submit">Save profile</button></div>
         </details>
       </div>
       <footer class="dialog-footer"><p>Secrets are not included in profile or activity records.</p></footer>
@@ -161,6 +161,13 @@
       <header class="dialog-header"><div><p class="eyebrow" id="confirm-eyebrow">Final check</p><h2 id="deploy-dialog-title">Deploy this promotion?</h2></div><button class="icon-button" value="cancel" aria-label="Close deployment confirmation">×</button></header>
       <div class="dialog-content"><div id="deploy-warning" class="warning-box" hidden></div><p id="deploy-confirm-copy" class="dialog-copy"></p><div class="confirm-target"><span>Destination</span><strong id="confirm-target-name"></strong></div><div class="confirm-check"><input id="deploy-confirm-check" type="checkbox"><label for="deploy-confirm-check">I reviewed the operations and want to continue.</label></div><p class="form-error" id="deploy-error" role="alert" hidden></p></div>
       <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary" id="confirm-deploy" type="button" disabled>Deploy</button></footer>
+    </form>
+  </dialog>
+  <dialog class="dialog confirm-dialog" id="delete-profile-dialog" aria-labelledby="delete-profile-dialog-title">
+    <form method="dialog" class="dialog-shell" id="delete-profile-form">
+      <header class="dialog-header"><div><p class="eyebrow">Remove profile</p><h2 id="delete-profile-dialog-title">Delete this profile?</h2></div><button class="icon-button" value="cancel" aria-label="Close delete profile confirmation">×</button></header>
+      <div class="dialog-content"><p id="delete-profile-copy" class="dialog-copy"></p><p class="form-error" id="delete-profile-error" role="alert" hidden></p></div>
+      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary button-danger" id="confirm-delete-profile" type="button">Delete</button></footer>
     </form>
   </dialog>
   <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>

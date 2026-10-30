@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -220,6 +221,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return problem(http.StatusInternalServerError, errors.New("Could not read saved history; check local app storage and restart the app."))
 		}
+		// The store appends in creation order; show the newest operation first so
+		// the latest promotion (the only one PingOne can roll back) is on top.
+		slices.Reverse(records)
 		writeJSON(w, records)
 		return nil
 	case path == "/api/inventory" && r.Method == "POST":

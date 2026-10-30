@@ -164,7 +164,7 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 		case !inPinned && inLive:
 			return fmt.Errorf("%w: affected resource %s appeared after review", ErrTargetDrift, id)
 		case inPinned && inLive:
-			bf, lf := fingerprint(b.Configuration), fingerprint(l.Configuration)
+			bf, lf := driftConfigurationFingerprint(b), driftConfigurationFingerprint(l)
 			if bf == "" || lf == "" || b.Type != l.Type || bf != lf || fingerprint(b.Dependencies) != fingerprint(l.Dependencies) {
 				return fmt.Errorf("%w: affected resource %s changed", ErrTargetDrift, id)
 			}
@@ -176,6 +176,38 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 		}
 	}
 	return nil
+}
+
+// PingOne documents form fieldTypes as read-only, and its provider describes it
+// as a set: https://registry.terraform.io/providers/pingidentity/pingone/latest/docs/resources/form
+// Snapshot responses can return the same set in different orders. Normalize only that
+// field for drift comparison; all editable fields and other arrays stay exact.
+func driftConfigurationFingerprint(r pingone.Resource) string {
+	if r.Type != "forms" || r.Configuration == nil {
+		return fingerprint(r.Configuration)
+	}
+	raw, exists := r.Configuration["fieldTypes"]
+	if !exists {
+		return fingerprint(r.Configuration)
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return ""
+	}
+	types := make([]string, len(values))
+	for i, value := range values {
+		types[i], ok = value.(string)
+		if !ok {
+			return ""
+		}
+	}
+	sort.Strings(types)
+	copyConfig := make(map[string]any, len(r.Configuration))
+	for k, value := range r.Configuration {
+		copyConfig[k] = value
+	}
+	copyConfig["fieldTypes"] = types
+	return fingerprint(copyConfig)
 }
 
 func collectTargetIDs(value any, before, after map[string]pingone.Resource, affected map[string]bool) error {

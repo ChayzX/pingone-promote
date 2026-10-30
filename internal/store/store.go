@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"pingone-promote/internal/pingone"
@@ -198,6 +199,10 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 			return p, err
 		}
 		p.ID = id
+	}
+	p.Name = strings.TrimSpace(p.Name)
+	if err := validateProfileName(p.Name); err != nil {
+		return p, err
 	}
 	if err := validateProfile(p); err != nil {
 		return p, err

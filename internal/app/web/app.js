@@ -7,7 +7,7 @@
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
     confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null
   };
 
   const el = (tag, className, value) => {
@@ -34,6 +34,7 @@
   const profilesDialog = $('#profiles-dialog');
   const deployDialog = $('#deploy-dialog');
   const gitlabDialog = $('#gitlab-dialog');
+  const deleteProfileDialog = $('#delete-profile-dialog');
 
   async function request(path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
@@ -160,7 +161,7 @@
       edit.addEventListener('click', () => editProfile(profile));
       const remove = el('button', 'delete-profile', 'Delete');
       remove.type = 'button';
-      remove.addEventListener('click', () => deleteProfile(profile));
+      remove.addEventListener('click', () => openDeleteProfileConfirmation(profile));
       actions.append(edit, remove);
       row.append(main, actions);
       list.append(row);
@@ -250,6 +251,7 @@
           $('#target-profile').value = state.profiles.find(item => String(item.id) !== String(profile.id))?.id || '';
         }
       }
+      updateEnvironmentMeta();
       invalidateInventory('Profile details changed. Load resources again to continue.');
       renderProfiles();
       if (generation === state.profileGeneration) resetProfileForm();
@@ -264,8 +266,21 @@
     }
   }
 
-  async function deleteProfile(profile) {
-    if (!window.confirm(`Delete the saved profile “${text(profile.name)}”?`)) return;
+  function openDeleteProfileConfirmation(profile) {
+    state.pendingDeleteProfile = profile;
+    $('#delete-profile-copy').textContent = `Delete the saved profile “${text(profile.name)}”? This cannot be undone.`;
+    $('#delete-profile-error').hidden = true;
+    $('#confirm-delete-profile').disabled = false;
+    $('#confirm-delete-profile').textContent = 'Delete';
+    deleteProfileDialog.showModal();
+  }
+
+  async function performDeleteProfile() {
+    const profile = state.pendingDeleteProfile;
+    if (!profile) return;
+    const button = $('#confirm-delete-profile');
+    button.disabled = true;
+    button.textContent = 'Deleting…';
     try {
       await request(`/api/profiles/${encodeURIComponent(profile.id)}`, { method: 'DELETE' });
       state.profiles = state.profiles.filter(item => String(item.id) !== String(profile.id));
@@ -277,9 +292,13 @@
       invalidateInventory('A profile was removed. Choose profiles and load resources again.');
       renderProfiles();
       showToast('Profile deleted.');
+      state.pendingDeleteProfile = null;
+      deleteProfileDialog.close();
     } catch (failure) {
-      $('#profile-list-state').textContent = failure.message;
-      $('#profile-list-state').className = 'inline-state is-error';
+      $('#delete-profile-error').textContent = failure.message;
+      $('#delete-profile-error').hidden = false;
+      button.disabled = false;
+      button.textContent = 'Delete';
     }
   }
 
@@ -960,6 +979,13 @@
       const notStarted = !requestStarted || failure.mutationNotStarted;
       const message = notStarted ? failure.message : mode === 'gitlab-submit' ? `${failure.message} Check GitLab for the request before submitting again.` : `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
       recordConfirmationAttempt(key, message, notStarted ? 'Review required' : undefined);
+      if (!notStarted && mode !== 'gitlab-submit' && mode !== 'rollback-draft' && generation === state.planGeneration) {
+        $('#deploy-button').disabled = true;
+        try {
+          const current = state.plan?.id ? await request(`/api/plans/${encodeURIComponent(state.plan.id)}`) : null;
+          if (current && generation === state.planGeneration) renderPlan(current, generation);
+        } catch (_) { /* Keep the deployment disabled until the user reconciles history. */ }
+      }
     }
   }
 
@@ -1076,7 +1102,9 @@
   $('#gitlab-open').addEventListener('click', openGitLabSettings);
   $('#gitlab-save').addEventListener('click', saveGitLabSettings);
   $('#add-first-profile').addEventListener('click', openProfiles);
-  $('#profile-save').addEventListener('click', saveProfile);
+  // Enter inside a field must save (never close the dialog and drop the input).
+  $('#profiles-form').addEventListener('submit', event => { event.preventDefault(); saveProfile(); });
+  $('#profiles-close').addEventListener('click', () => profilesDialog.close());
   $('#profile-cancel-edit').addEventListener('click', resetProfileForm);
   $('#profiles-dialog [name="secretMode"]').addEventListener('change', updateSecretFields);
   $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked || state.confirmAttempts.has(state.confirmKey) || state.confirmGeneration !== state.planGeneration; });
@@ -1099,5 +1127,7 @@
   }
   deployDialog.addEventListener('close', () => { $('#deploy-confirm-check').checked = false; });
   profilesDialog.addEventListener('close', () => { resetProfileForm(); });
+  $('#confirm-delete-profile').addEventListener('click', performDeleteProfile);
+  deleteProfileDialog.addEventListener('close', () => { state.pendingDeleteProfile = null; });
   initialize();
 })();

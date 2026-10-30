@@ -170,7 +170,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .step-identity { min-width: 0; }
 .step-identity > span:first-child, .change-label { display: block; margin-bottom: var(--s1); color: var(--muted); font-size: 11px; line-height: 17px; font-weight: 500; }
 .step-identity strong { display: block; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
-.step-url { display: block; margin-top: var(--s1); }
+.step-url { display: block; margin-top: var(--s1); text-transform: none; }
 .changes-list { display: grid; gap: var(--s2); margin-top: var(--s3); }
 .change-row { min-width: 0; padding: var(--s2) var(--s3); border: 1px solid var(--border-soft); border-radius: var(--radius); }
 .change-path { color: var(--ink); font: 11px/18px var(--font-mono); overflow-wrap: anywhere; }
