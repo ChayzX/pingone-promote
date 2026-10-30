@@ -788,6 +788,12 @@
       $('#deploy-error').hidden = false;
       button.disabled = true;
       button.textContent = 'Check history';
+      // The request may have reached PingOne. Reload the server's view so the
+      // page stops offering a Deploy that the server now blocks.
+      try {
+        const current = state.plan?.id ? await request(`/api/plans/${encodeURIComponent(state.plan.id)}`) : null;
+        if (current && generation === state.planGeneration) renderPlan(current, generation);
+      } catch (_) { /* keep the error shown above */ }
     }
   }
 

@@ -48,6 +48,13 @@ type qeProm struct {
 	polls            int
 }
 
+// qeMatch reports whether key ("substring" or "METHOD substring") matches the request.
+func qeMatch(key string, r *http.Request) bool {
+	if method, rest, ok := strings.Cut(key, " "); ok {
+		return r.Method == method && strings.Contains(r.URL.Path, rest)
+	}
+	return strings.Contains(r.URL.Path, key)
+}
 func (m *qeMock) name(env string, i int) string {
 	if i < len(m.cfg.Names) {
 		return m.cfg.Names[i]
@@ -95,12 +102,12 @@ func (m *qeMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.log = append(m.log, r.Method+" "+p+" "+r.Header.Get("Content-Type"))
 	var delay time.Duration
 	for k, v := range m.cfg.DelayMS {
-		if strings.Contains(p, k) {
+		if qeMatch(k, r) {
 			delay = time.Duration(v) * time.Millisecond
 		}
 	}
 	for k, code := range m.cfg.FailOnce {
-		if strings.Contains(p, k) {
+		if qeMatch(k, r) {
 			delete(m.cfg.FailOnce, k)
 			m.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
@@ -110,7 +117,7 @@ func (m *qeMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for k, code := range m.cfg.Fail {
-		if strings.Contains(p, k) {
+		if qeMatch(k, r) {
 			m.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(code)
@@ -119,7 +126,7 @@ func (m *qeMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for k, bad := range m.cfg.Malformed {
-		if bad && strings.Contains(p, k) {
+		if bad && qeMatch(k, r) {
 			m.mu.Unlock()
 			w.Write([]byte(`{"oops": [`))
 			return

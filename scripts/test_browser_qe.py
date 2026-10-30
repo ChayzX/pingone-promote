@@ -105,6 +105,25 @@ def review_step_urls_are_shown_verbatim_not_uppercased(page):
     page.screenshot(path=str(out / 'step-url.png'), full_page=True)
 
 
+@check
+def failed_execute_blocks_deploy_button_in_the_page(page):
+    names = ['Customer login']
+    cfg(names=names, count=3)
+    setup_pair(page)
+    load_resources(page)
+    page.get_by_role('checkbox', name='Select Customer login for promotion').check()
+    build_plan(page)
+    expect(page.locator('#deploy-button')).to_be_enabled()
+    cfg(names=names, count=3, failOnce={'POST /promotions/': 500})
+    page.locator('#deploy-button').click()
+    page.get_by_label('I reviewed the operations and want to continue.').check()
+    page.locator('#confirm-deploy').click()
+    expect(page.locator('#deploy-error')).to_contain_text('may have received it')
+    page.keyboard.press('Escape')
+    expect(page.locator('#deploy-button')).to_be_disabled()
+    expect(page.locator('#plan-content')).to_contain_text('already sent or its outcome is uncertain')
+
+
 def main():
     failed = 0
     with sync_playwright() as p:
