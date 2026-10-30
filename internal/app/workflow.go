@@ -262,9 +262,9 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	// promotion: resources created by the run only receive their destination
 	// IDs then, and retained cross-promotion mappings are applied. That mapping
 	// is expected to differ from the pre-execution approval, so comparing them
-	// misreported completed promotions as divergent. Execution-time scope is
-	// still enforced by the per-step checks in promotion.Inspect, and a sent
-	// execute is never resent (rec.Intent).
+	// misreported completed promotions as divergent. Skipping it is only
+	// reachable once deploy is already refused (CanDeploy needs READY and no
+	// recorded intent), and a sent execute is never resent (rec.Intent).
 	if !promotionExecuted(rec, native.Status) {
 		for k, val := range rec.Mappings {
 			if actual := native.Mapping[k]; actual != "" && actual != val {
@@ -394,11 +394,17 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 // on PingOne's resourceMapping describes resolved destination IDs rather than
 // the reviewed draft.
 func promotionExecuted(rec *store.Record, status string) bool {
-	if strings.HasPrefix(rec.Intent, "execute_") {
+	// execute_* is set when this app sends an execute. rollback_* replaces it on
+	// the original record and is only allowed after a completed or failed run.
+	if strings.HasPrefix(rec.Intent, "execute_") || strings.HasPrefix(rec.Intent, "rollback_") {
 		return true
 	}
+	// Post-execution statuses from PingOne's promotion lifecycle (covers runs
+	// executed outside this app). Pre-execution statuses (NEW, PREPARING,
+	// ADDITIONAL_SNAPSHOTS_REQUESTED, READY, VALIDATION_FAILED, ROLLBACK_NEW,
+	// ROLLBACK_PREPARING) are deliberately absent.
 	switch strings.ToUpper(status) {
-	case "EXECUTING", "COMPLETED", "ROLLED_BACK":
+	case "IN_PROGRESS", "COMPLETED", "ERROR", "ROLLBACK_IN_PROGRESS", "ROLLED_BACK":
 		return true
 	}
 	return false

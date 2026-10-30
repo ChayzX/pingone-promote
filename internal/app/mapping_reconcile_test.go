@@ -65,3 +65,26 @@ func TestPreExecutionMappingDivergenceStillBlocksDeploy(t *testing.T) {
 		t.Fatal("divergent draft was executed")
 	}
 }
+
+// A promotion executed outside this app has no recorded intent; PingOne's
+// post-execution statuses alone must stop the false divergence report.
+func TestExternallyExecutedStatusesNotFlagged(t *testing.T) {
+	for _, status := range []string{"IN_PROGRESS", "COMPLETED", "ERROR", "ROLLED_BACK"} {
+		t.Run(status, func(t *testing.T) {
+			h := setup(t)
+			v := h.plan()
+			h.f.mu.Lock()
+			h.f.statuses[v.NativeID] = status
+			h.f.mapping = map[string]string{"f": "resolved-flow", "c": "resolved-connector"}
+			h.f.mu.Unlock()
+			var polled PlanView
+			h.call("GET", "/api/plans/"+v.ID, nil, &polled, 200)
+			if issues := mappingIssues(polled); len(issues) > 0 {
+				t.Fatalf("%s promotion flagged for post-execution mapping: %v", status, issues)
+			}
+			if polled.CanDeploy {
+				t.Fatalf("%s promotion reported as deployable", status)
+			}
+		})
+	}
+}
