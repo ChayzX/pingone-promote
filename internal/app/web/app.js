@@ -7,7 +7,8 @@
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
     confirmMode: 'deploy', planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0,
+    pendingDeleteProfile: null
   };
 
   const el = (tag, className, value) => {
@@ -33,6 +34,7 @@
   const isRollbackRecord = record => /rollback/i.test(String(record?.kind || '')) || Boolean(record?.rollbackOf || record?.previousPromotionId);
   const profilesDialog = $('#profiles-dialog');
   const deployDialog = $('#deploy-dialog');
+  const deleteProfileDialog = $('#delete-profile-dialog');
 
   async function request(path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
@@ -152,7 +154,7 @@
       edit.addEventListener('click', () => editProfile(profile));
       const remove = el('button', 'delete-profile', 'Delete');
       remove.type = 'button';
-      remove.addEventListener('click', () => deleteProfile(profile));
+      remove.addEventListener('click', () => openDeleteProfileConfirmation(profile));
       actions.append(edit, remove);
       row.append(main, actions);
       list.append(row);
@@ -247,8 +249,21 @@
     }
   }
 
-  async function deleteProfile(profile) {
-    if (!window.confirm(`Delete the saved profile “${text(profile.name)}”?`)) return;
+  function openDeleteProfileConfirmation(profile) {
+    state.pendingDeleteProfile = profile;
+    $('#delete-profile-copy').textContent = `Delete the saved profile “${text(profile.name)}”? This cannot be undone.`;
+    $('#delete-profile-error').hidden = true;
+    $('#confirm-delete-profile').disabled = false;
+    $('#confirm-delete-profile').textContent = 'Delete';
+    deleteProfileDialog.showModal();
+  }
+
+  async function performDeleteProfile() {
+    const profile = state.pendingDeleteProfile;
+    if (!profile) return;
+    const button = $('#confirm-delete-profile');
+    button.disabled = true;
+    button.textContent = 'Deleting…';
     try {
       await request(`/api/profiles/${encodeURIComponent(profile.id)}`, { method: 'DELETE' });
       state.profiles = state.profiles.filter(item => String(item.id) !== String(profile.id));
@@ -260,9 +275,13 @@
       invalidateInventory('A profile was removed. Choose profiles and load resources again.');
       renderProfiles();
       showToast('Profile deleted.');
+      state.pendingDeleteProfile = null;
+      deleteProfileDialog.close();
     } catch (failure) {
-      $('#profile-list-state').textContent = failure.message;
-      $('#profile-list-state').className = 'inline-state is-error';
+      $('#delete-profile-error').textContent = failure.message;
+      $('#delete-profile-error').hidden = false;
+      button.disabled = false;
+      button.textContent = 'Delete';
     }
   }
 
@@ -921,5 +940,7 @@
   }
   deployDialog.addEventListener('close', () => { $('#deploy-confirm-check').checked = false; });
   profilesDialog.addEventListener('close', () => { resetProfileForm(); });
+  $('#confirm-delete-profile').addEventListener('click', performDeleteProfile);
+  deleteProfileDialog.addEventListener('close', () => { state.pendingDeleteProfile = null; });
   initialize();
 })();

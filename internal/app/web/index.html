@@ -139,6 +139,13 @@
       <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary" id="confirm-deploy" type="button" disabled>Deploy</button></footer>
     </form>
   </dialog>
+  <dialog class="dialog confirm-dialog" id="delete-profile-dialog" aria-labelledby="delete-profile-dialog-title">
+    <form method="dialog" class="dialog-shell" id="delete-profile-form">
+      <header class="dialog-header"><div><p class="eyebrow">Remove profile</p><h2 id="delete-profile-dialog-title">Delete this profile?</h2></div><button class="icon-button" value="cancel" aria-label="Close delete profile confirmation">×</button></header>
+      <div class="dialog-content"><p id="delete-profile-copy" class="dialog-copy"></p><p class="form-error" id="delete-profile-error" role="alert" hidden></p></div>
+      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary button-danger" id="confirm-delete-profile" type="button">Delete</button></footer>
+    </form>
+  </dialog>
   <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>

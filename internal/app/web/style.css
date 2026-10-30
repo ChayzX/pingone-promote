@@ -67,6 +67,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -.02em; font
 .button:disabled { opacity: 1; color: #69778a; background: #e7ebf0; border-color: #d3d9e2; cursor: not-allowed; }
 .button-primary { color: #fff; background: var(--accent); border-color: var(--accent); }
 .button-primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+.button-danger { background: var(--danger); border-color: var(--danger); }
+.button-danger:hover:not(:disabled) { background: #841d1a; border-color: #841d1a; }
 .button-secondary { color: var(--ink); background: var(--surface); border-color: var(--border); }
 .button-secondary:hover:not(:disabled), .button-quiet:hover:not(:disabled) { background: var(--surface-subtle); }
 .button-quiet { min-height: 36px; padding: 7px 10px; background: transparent; color: var(--accent-strong); border-color: transparent; }
