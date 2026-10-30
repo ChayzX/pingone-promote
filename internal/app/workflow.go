@@ -256,9 +256,20 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if native.Source.ID != rec.Source.EnvironmentID || native.Target.ID != rec.Target.EnvironmentID {
 		v.Review.Issues = append(v.Review.Issues, "Native promotion source/destination differs from the approved environment pair.")
 	}
-	for k, val := range rec.Mappings {
-		if actual := native.Mapping[k]; actual != "" && actual != val {
-			v.Review.Issues = append(v.Review.Issues, fmt.Sprintf("Native mapping for %s differs from your selected destination.", k))
+	// Before execution, a native mapping that differs from the approval means
+	// PingOne would write somewhere you did not review, so it blocks deploy.
+	// After execution, PingOne reports the resolved mapping for the whole
+	// promotion: resources created by the run only receive their destination
+	// IDs then, and retained cross-promotion mappings are applied. That mapping
+	// is expected to differ from the pre-execution approval, so comparing them
+	// misreported completed promotions as divergent. Execution-time scope is
+	// still enforced by the per-step checks in promotion.Inspect, and a sent
+	// execute is never resent (rec.Intent).
+	if !promotionExecuted(rec, native.Status) {
+		for k, val := range rec.Mappings {
+			if actual := native.Mapping[k]; actual != "" && actual != val {
+				v.Review.Issues = append(v.Review.Issues, fmt.Sprintf("Native mapping for %s differs from your selected destination.", k))
+			}
 		}
 	}
 	if native.SourceSnapshot.ID != "" && rec.Kind != "rollback" && native.SourceSnapshot.ID != rec.SourceSnapshotID {
@@ -376,4 +387,19 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 	}
 	writeJSON(w, result)
 	return nil
+}
+
+// promotionExecuted reports whether this promotion has been sent for execution
+// by this app, or PingOne already reports a post-execution status. From then
+// on PingOne's resourceMapping describes resolved destination IDs rather than
+// the reviewed draft.
+func promotionExecuted(rec *store.Record, status string) bool {
+	if strings.HasPrefix(rec.Intent, "execute_") {
+		return true
+	}
+	switch strings.ToUpper(status) {
+	case "EXECUTING", "COMPLETED", "ROLLED_BACK":
+		return true
+	}
+	return false
 }

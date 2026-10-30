@@ -23,6 +23,9 @@ type nativeFixture struct {
 	executed        []string
 	statuses        map[string]string
 	created         map[string]any
+	// mapping, when set, replaces the resourceMapping the fixture reports for
+	// promotions, e.g. to model PingOne reporting resolved destination IDs.
+	mapping map[string]string
 }
 
 func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +123,9 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 func (f *nativeFixture) metadata(id string) map[string]any {
 	p := map[string]any{"errors": []any{}, "id": id, "status": f.statuses[id], "sourceEnvironment": map[string]string{"id": "src"}, "targetEnvironment": map[string]string{"id": "dst"}, "sourceSnapshot": map[string]string{"id": "v1"}, "resourceMapping": map[string]string{"f": "g", "c": "d"}}
+	if f.mapping != nil {
+		p["resourceMapping"] = f.mapping
+	}
 	if id == "rb1" {
 		p["previousPromotion"] = map[string]string{"id": "p1"}
 	}
