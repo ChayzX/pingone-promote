@@ -5,6 +5,7 @@
   const state = {
     csrf: '', regions: {}, profiles: [], history: [], sourceInventory: null, targetInventory: null,
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
+    sourceByID: new Map(), targetByType: new Map(), searchTimer: null,
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
     confirmMode: 'deploy', planSource: null, planTarget: null, historyBusy: false,
     inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0,
@@ -332,19 +333,28 @@
     });
   }
 
-  function resourceMapByID(inventory) {
-    return new Map((inventory?.resources || []).map(resource => [String(resource.id), resource]));
+  // Build the lookups the table needs once per inventory load, instead of
+  // rebuilding a full-inventory Map on every dependency lookup and filtering
+  // the whole destination list once per row. Cleared when inventories reset.
+  function buildIndexes() {
+    state.sourceByID = new Map((state.sourceInventory?.resources || []).map(resource => [String(resource.id), resource]));
+    const byType = new Map();
+    for (const target of state.targetInventory?.resources || []) {
+      const type = resourceType(target);
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(target);
+    }
+    state.targetByType = byType;
   }
 
   function targetOptionsFor(resource) {
-    const type = resourceType(resource);
-    return (state.targetInventory?.resources || []).filter(target => resourceType(target) === type);
+    return state.targetByType.get(resourceType(resource)) || [];
   }
 
   function dependencyResource(dep) {
     if (dep && typeof dep === 'object') return dep;
     const id = String(dep);
-    return resourceMapByID(state.sourceInventory).get(id) || { id, name: id, type: 'Dependency' };
+    return state.sourceByID.get(id) || { id, name: id, type: 'Dependency' };
   }
 
   function makeDependencyCell(resource) {
@@ -391,6 +401,13 @@
     return td;
   }
 
+  function mappingOption(target) {
+    const option = document.createElement('option');
+    option.value = String(target.id);
+    option.textContent = `${resourceName(target)} · ${resourceID(target)}`;
+    return option;
+  }
+
   function mappingObjectFor(resource) {
     const targets = targetOptionsFor(resource);
     const td = el('td');
@@ -400,18 +417,30 @@
     automatic.value = '';
     automatic.textContent = 'Automatic / create if unmatched';
     select.append(automatic);
-    for (const target of targets) {
-      const option = document.createElement('option');
-      option.value = String(target.id);
-      option.textContent = `${resourceName(target)} · ${resourceID(target)}`;
-      select.append(option);
-    }
-    const mapped = state.mappings[String(resource.id)] ?? state.suggestions[String(resource.id)] ?? '';
-    if (targets.some(target => String(target.id) === String(mapped))) select.value = String(mapped);
+    const mapped = String(state.mappings[String(resource.id)] ?? state.suggestions[String(resource.id)] ?? '');
+    const current = mapped && targets.find(target => String(target.id) === mapped);
+    // Pre-filling every row's select with the full compatible-destination list
+    // (often 100+ options) dominates render time at a few hundred rows. Start
+    // with just the current selection, and populate the rest on first focus.
+    if (current) { select.append(mappingOption(current)); select.value = mapped; }
     else select.value = '';
+    select.dataset.filled = targets.length ? 'pending' : 'done';
+    const fill = () => {
+      if (select.dataset.filled !== 'pending') return;
+      const chosen = select.value;
+      const frag = document.createDocumentFragment();
+      for (const target of targets) {
+        if (current && String(target.id) === mapped) continue;
+        frag.append(mappingOption(target));
+      }
+      select.append(frag);
+      select.value = chosen;
+      select.dataset.filled = 'done';
+    };
+    select.addEventListener('pointerdown', fill);
+    select.addEventListener('focus', fill);
     select.addEventListener('change', () => {
-      const id = String(resource.id);
-      state.mappings[id] = select.value;
+      state.mappings[String(resource.id)] = select.value;
       invalidatePlan('Destination mapping changed. Build a new review.');
     });
     const note = el('p', 'mapping-note', targets.length ? `${targets.length} compatible destination ${targets.length === 1 ? 'resource' : 'resources'} · unselected resources can still be reused.` : 'No loaded destination match of this type. Automatic mapping may create a new resource.');
@@ -480,8 +509,11 @@
       check.type = 'checkbox'; check.checked = state.selected.has(id); check.setAttribute('aria-label', `Select ${resourceName(resource)} for promotion`);
       check.addEventListener('change', () => {
         if (check.checked) state.selected.add(id); else state.selected.delete(id);
+        // Update only this row rather than rebuilding the whole table (every
+        // other row's cells, dependency state and mapping select are unchanged).
+        tr.classList.toggle('is-selected', check.checked);
         invalidatePlan('Resource selection changed. Build a new review.');
-        renderResources();
+        updateBuildButton();
       });
       checkCell.append(check);
       const sourceCell = el('td');
@@ -513,6 +545,7 @@
     state.inventoryLoading = true;
     clearTimer();
     state.sourceInventory = null; state.targetInventory = null; state.selected.clear(); state.mappings = {}; state.suggestions = {};
+    state.sourceByID = new Map(); state.targetByType = new Map();
     state.mappingWarnings = [];
     invalidatePlan('Loading new inventories.');
     renderInventoryLoading();
@@ -526,6 +559,7 @@
       if (generation !== state.inventoryGeneration || String(selectedProfile('source')?.id) !== sourceID || String(selectedProfile('target')?.id) !== targetID) return;
       state.sourceInventory = sourceInventory;
       state.targetInventory = targetInventory;
+      buildIndexes();
       state.suggestions = mappingResult?.mappings || {};
       state.mappings = { ...state.suggestions };
       state.mappingWarnings = Array.isArray(mappingResult?.warnings) ? mappingResult.warnings : [];
@@ -547,9 +581,16 @@
   }
 
   function updateFilterValues() {
-    state.search = $('#resource-search').value;
     state.type = $('#type-filter').value;
     renderResources();
+  }
+
+  // Debounce search: re-rendering the table on every keystroke is wasted work
+  // while the user is still typing. The type filter stays immediate.
+  function onSearchInput() {
+    state.search = $('#resource-search').value;
+    if (state.searchTimer) clearTimeout(state.searchTimer);
+    state.searchTimer = setTimeout(() => { state.searchTimer = null; renderResources(); }, 150);
   }
 
   function safeArray(value) { return Array.isArray(value) ? value : value == null ? [] : [value]; }
@@ -924,7 +965,7 @@
   $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked; });
   $('#confirm-deploy').addEventListener('click', confirmDeployAction);
   $('#load-resources').addEventListener('click', loadResources);
-  $('#resource-search').addEventListener('input', updateFilterValues);
+  $('#resource-search').addEventListener('input', onSearchInput);
   $('#type-filter').addEventListener('change', updateFilterValues);
   $('#build-plan').addEventListener('click', buildPlan);
   $('#deploy-button').addEventListener('click', () => openDeployConfirmation(state.planMode === 'rollback' ? 'rollback-execute' : 'deploy'));
