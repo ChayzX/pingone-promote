@@ -7,7 +7,7 @@ Start the loopback fixture (never contacts PingOne) from the repository root:
 
 then run:  python3 scripts/test_browser_qe.py --fixture-file /tmp/pingone-qe.json
 """
-import argparse, json, sys, urllib.request
+import argparse, json, ssl, sys, urllib.request, uuid
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
@@ -19,6 +19,7 @@ args = parser.parse_args()
 info = json.load(open(args.fixture_file))
 out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
 CHECKS = []
+RUN = uuid.uuid4().hex[:6]  # profiles persist in the fixture store; keep names unique per run
 
 
 def check(fn):
@@ -28,7 +29,7 @@ def check(fn):
 
 def cfg(**kw):
     req = urllib.request.Request(info['native'] + '/__fixture/config', data=json.dumps(kw).encode(), method='POST')
-    urllib.request.urlopen(req).read()
+    urllib.request.urlopen(req, context=ssl._create_unverified_context()).read()  # loopback fixture only
 
 
 def fill_profile(page, name, env, secret='s3cret'):
@@ -48,6 +49,24 @@ def create_profile(page, name, env):
     page.locator('#profiles-close').click()
 
 
+def setup_pair(page):
+    suffix = ' ' + RUN
+    create_profile(page, 'Dev' + suffix, 'src')
+    create_profile(page, 'Prod' + suffix, 'dst')
+    page.locator('#source-profile').select_option(label='Dev%s · src' % suffix)
+    page.locator('#target-profile').select_option(label='Prod%s · dst' % suffix)
+
+
+def load_resources(page):
+    page.get_by_role('button', name='Load resources', exact=True).click()
+    expect(page.locator('#resource-rows tr').first).to_be_visible()
+
+
+def build_plan(page):
+    page.get_by_role('button', name='Build review', exact=True).click()
+    expect(page.locator('#plan-content')).to_be_visible()
+
+
 @check
 def enter_key_saves_profile_instead_of_closing_dialog(page):
     page.get_by_role('button', name='Environment profiles').click()
@@ -59,18 +78,31 @@ def enter_key_saves_profile_instead_of_closing_dialog(page):
 
 @check
 def editing_destination_profile_keeps_source_and_destination(page):
-    create_profile(page, 'Edit Dev', 'src')
-    create_profile(page, 'Edit Prod', 'dst')
-    page.locator('#source-profile').select_option(label='Edit Dev · src')
-    page.locator('#target-profile').select_option(label='Edit Prod · dst')
+    create_profile(page, 'Edit Dev ' + RUN, 'src')
+    create_profile(page, 'Edit Prod ' + RUN, 'dst')
+    page.locator('#source-profile').select_option(label='Edit Dev %s · src' % RUN)
+    page.locator('#target-profile').select_option(label='Edit Prod %s · dst' % RUN)
     page.get_by_role('button', name='Environment profiles').click()
-    page.locator('.profile-list-item', has_text='Edit Prod').get_by_role('button', name='Edit').click()
-    page.locator('#profiles-form [name=name]').fill('Edit Prod renamed')
+    page.locator('.profile-list-item', has_text='Edit Prod ' + RUN).get_by_role('button', name='Edit').click()
+    page.locator('#profiles-form [name=name]').fill('Edit Prod renamed ' + RUN)
     page.locator('#profile-save').click()
-    expect(page.locator('#profile-list')).to_contain_text('Edit Prod renamed')
+    expect(page.locator('#profile-list')).to_contain_text('Edit Prod renamed ' + RUN)
     page.locator('#profiles-close').click()
-    expect(page.locator('#source-profile option:checked')).to_have_text('Edit Dev · src')
-    expect(page.locator('#target-profile option:checked')).to_have_text('Edit Prod renamed · dst')
+    expect(page.locator('#source-profile option:checked')).to_have_text('Edit Dev %s · src' % RUN)
+    expect(page.locator('#target-profile option:checked')).to_have_text('Edit Prod renamed %s · dst' % RUN)
+
+
+@check
+def review_step_urls_are_shown_verbatim_not_uppercased(page):
+    cfg(names=['Customer login'], count=3)
+    setup_pair(page)
+    load_resources(page)
+    page.get_by_role('checkbox', name='Select Customer login for promotion').check()
+    build_plan(page)
+    url = page.locator('.step-url').last
+    expect(url).to_contain_text('/v1/environments/dst/flows/d000')
+    assert url.evaluate('e => getComputedStyle(e).textTransform') == 'none', 'URL is rendered with text-transform'
+    page.screenshot(path=str(out / 'step-url.png'), full_page=True)
 
 
 def main():

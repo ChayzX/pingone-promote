@@ -145,9 +145,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .step-body { padding: 12px 13px; }
 .step-identities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
 .step-identity { min-width: 0; }
-.step-identity span, .change-label { display: block; margin-bottom: 3px; color: var(--muted); font-size: 10px; line-height: 15px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+.step-identity > span:first-child, .change-label { display: block; margin-bottom: 3px; color: var(--muted); font-size: 10px; line-height: 15px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
 .step-identity strong { display: block; font-size: 12px; line-height: 17px; overflow-wrap: anywhere; }
-.step-url { display: block; margin-top: 4px; }
+.step-url { display: block; margin-top: 4px; text-transform: none; }
 .changes-list { display: grid; gap: 8px; margin-top: 10px; }
 .change-row { min-width: 0; padding: 9px 10px; border: 1px solid var(--border-soft); border-radius: 5px; background: var(--surface); }
 .change-path { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }

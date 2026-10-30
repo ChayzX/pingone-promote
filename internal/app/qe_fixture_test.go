@@ -283,7 +283,7 @@ func TestQEFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &qeMock{proms: map[string]*qeProm{}}
-	native := httptest.NewServer(m)
+	native := httptest.NewTLSServer(m)
 	defer native.Close()
 	m.url = native.URL
 	srv := New(st, "qe-token")
