@@ -361,7 +361,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		result, pollErr := waitForTerminal(ctx, func(c context.Context) (pingone.Promotion, error) { return engine.Status(c, a) }, result, deps.pollTimeout, deps.pollInterval)
-		res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: result.Status, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Errors: redactNativeErrors(result.Errors, result.PromotionErrors)}
+		res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: result.Status, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Errors: pingone.SummarizePromotionErrors(result.Errors, result.PromotionErrors)}
 		if pollErr != nil {
 			res.Status = "IN_PROGRESS"
 			res.Errors = append(res.Errors, safeError(pollErr, deps.getenv))
@@ -408,7 +408,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err != nil {
 			return err
 		}
-		out := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: p.Status, Errors: redactNativeErrors(p.Errors, p.PromotionErrors)}
+		out := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: p.Status, Errors: pingone.SummarizePromotionErrors(p.Errors, p.PromotionErrors)}
 		return json.NewEncoder(stdout).Encode(out)
 	case "rollback-plan":
 		fs := flagSet("rollback-plan", stderr)
@@ -687,101 +687,4 @@ func safeError(err error, getenv func(string) string) string {
 		s = s[:1000]
 	}
 	return s
-}
-func redactNativeErrors(legacy, promotionErrors json.RawMessage) []string {
-	if !hasNativeErrors(legacy) && !hasNativeErrors(promotionErrors) {
-		return nil
-	}
-	var entries []string
-	for _, raw := range []json.RawMessage{legacy, promotionErrors} {
-		if !hasNativeErrors(raw) {
-			continue
-		}
-		var value any
-		if json.Unmarshal(raw, &value) != nil {
-			entries = append(entries, "PingOne reported a promotion error; inspect status in PingOne.")
-			continue
-		}
-		switch values := value.(type) {
-		case []any:
-			for _, value := range values {
-				entries = append(entries, summarizeNativeError(value))
-			}
-		default:
-			entries = append(entries, summarizeNativeError(value))
-		}
-	}
-	seen := map[string]bool{}
-	result := make([]string, 0, min(len(entries), 5))
-	for _, entry := range entries {
-		if seen[entry] {
-			continue
-		}
-		seen[entry] = true
-		result = append(result, entry)
-		if len(result) == 5 {
-			break
-		}
-	}
-	return result
-}
-
-func hasNativeErrors(raw json.RawMessage) bool {
-	if len(raw) == 0 || string(raw) == "null" {
-		return false
-	}
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		return true
-	}
-	switch value := value.(type) {
-	case nil:
-		return false
-	case []any:
-		return len(value) > 0
-	case map[string]any:
-		return len(value) > 0
-	case string:
-		return value != ""
-	default:
-		return true
-	}
-}
-
-func summarizeNativeError(value any) string {
-	const generic = "PingOne reported a promotion error; inspect status in PingOne."
-	var raw string
-	switch value := value.(type) {
-	case string:
-		raw = value
-	case map[string]any:
-		if code, ok := value["code"].(string); ok {
-			return summarizeNativeCode(code)
-		}
-		return generic
-	default:
-		return generic
-	}
-	// PingOne may wrap a JSON object in an HTTP status prefix. Decode only the
-	// final object and use its code as a category; never relay message or IDs.
-	start := strings.Index(raw, "{")
-	if start < 0 {
-		return generic
-	}
-	var detail struct {
-		Code string `json:"code"`
-	}
-	if json.NewDecoder(strings.NewReader(raw[start:])).Decode(&detail) != nil {
-		return generic
-	}
-	return summarizeNativeCode(detail.Code)
-}
-
-func summarizeNativeCode(code string) string {
-	switch code {
-	case "UNEXPECTED_ERROR":
-		return "PingOne reported an unexpected promotion error; inspect status in PingOne."
-	default:
-		return "PingOne reported a promotion error; inspect status in PingOne."
-	}
 }
