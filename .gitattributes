@@ -1,2 +1,5 @@
 # Shell scripts must run unchanged after checkout on any operating system.
 *.sh text eol=lf
+examples/davinci-request-flow/export/*.json text eol=lf
+examples/davinci-request-flow/gitlab/example.gitlab-ci.yml text eol=lf
+examples/davinci-request-flow/terraform/flow.tf.json text eol=lf
