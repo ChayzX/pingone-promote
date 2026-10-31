@@ -1,6 +1,6 @@
 # PingOne Promote
 
-> Integration handoff: the GitLab-controlled workflow is on `feat/gitlab-production`. Start with [docs/HANDOFF.md](docs/HANDOFF.md). Local execution is denied by default; live GitLab/PingOne acceptance and a complete production-readiness review remain outstanding. The older `v0.1.0`/`main` build does not contain this new policy.
+> Production promotions are GitLab-only. The current standard tool is integrated on `main`; `feat/davinci-request-flow` is an alternate maintained design. See [docs/HANDOFF.md](docs/HANDOFF.md) for current verification status and remaining acceptance work. Local execution is limited to explicitly allowlisted non-production environments.
 
 PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It requires Go 1.27.3 or newer to build and has no third-party runtime dependencies. The API must be enabled for the tenant.
 
@@ -96,7 +96,7 @@ Run `scripts/build.sh` to cross-build CGO-free binaries for macOS arm64/amd64 an
 
 ## Validation status
 
-The app has not been accepted against a live PingOne tenant, and macOS Keychain behavior has not been runtime-tested in this environment. Perform the acceptance check above, including snapshot completeness, exclusions, dependency reuse, flow mapping, and rollback, before treating those wire behaviors as verified.
+Live non-production checks have verified snapshot inventory loading, request validation, and a promotion with one variable. A selected sandbox native-flow apply partially progressed before PingOne returned HTTP 500; its complete outcome was not verified. Full live acceptance and rollback remain unverified. macOS Keychain and Linux Secret Service runtime behavior have not been verified. See [the handoff](docs/HANDOFF.md) for the remaining checks.
 
 ## PingOne API references
 

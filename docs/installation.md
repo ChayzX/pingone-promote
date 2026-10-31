@@ -6,7 +6,7 @@ Homebrew packaging is a preview. It does not establish live PingOne promotion or
 
 The project tap uses versioned, SHA-256-verified release sources. Homebrew installs Go as a build dependency and compiles the local application; users do not need to configure Go manually. GitLab builds its runner separately in CI.
 
-After the preview release and project tap are published:
+With the published preview release and project tap:
 
 ```sh
 brew install chayzx/tap/pingone-promote
@@ -35,7 +35,7 @@ The uninstall command removes all installed versions of this package, including 
 Each preview also includes versioned macOS arm64/amd64 and Linux amd64 bundles. Download the matching archive and `SHA256SUMS` from the same release and verify the checksum before extracting it:
 
 ```sh
-awk '$2 == "pingone-promote-v0.2.0-rc.2-darwin-arm64.tar.gz"' SHA256SUMS | shasum -a 256 -c -
+awk '$2 == "pingone-promote-v0.2.0-rc.4-darwin-arm64.tar.gz"' SHA256SUMS | shasum -a 256 -c -
 ```
 
 Replace the filename with the exact version and platform you downloaded. On Linux, use `sha256sum -c -` after the same `awk` selection. Verify that the selected archive is explicitly reported `OK`. Bundles include both commands, the GitLab setup documentation and pipeline template. These archives do not install or manage services.
@@ -44,11 +44,12 @@ Replace the filename with the exact version and platform you downloaded. On Linu
 
 The read-only Homebrew workflow installs a generated formula through a temporary local tap on each test host. It tests the application, authenticated local startup, request protections, an actual version upgrade and uninstall, and verifies external profile/history bytes remain unchanged. It refuses existing installations and dirty or mismatched source trees.
 
-Build from a committed source revision with Python 3.12+, Git, Go and a POSIX shell:
+Build each publication from a committed source revision with Python 3.12+, Git, Go and a POSIX shell. Use a new, unique version for each prerelease; never replace assets published under an existing version. For example, set `NEW_VERSION` to the next unused version before running:
 
 ```sh
-python3 scripts/release.py release --version v0.2.0-rc.2 --ref HEAD --output dist/release-v0.2.0-rc.2
-python3 scripts/release.py verify --directory dist/release-v0.2.0-rc.2
+NEW_VERSION=v0.2.0-rc.5
+python3 scripts/release.py release --version "$NEW_VERSION" --ref HEAD --output "dist/release-$NEW_VERSION"
+python3 scripts/release.py verify --directory "dist/release-$NEW_VERSION"
 ```
 
 The source archive is exported from the requested Git object, including when the module is a subdirectory. Untracked or uncommitted working files cannot enter it. Platform binaries are built from that exported source with the release version stamped into both commands. The formula pins the source archive URL and checksum; it never downloads a moving branch at install time.
