@@ -42,16 +42,15 @@ type Snapshot struct {
 	Error         json.RawMessage `json:"error"`
 }
 type Promotion struct {
-	ID              string            `json:"id"`
-	Status          string            `json:"status"`
-	Source          Ref               `json:"sourceEnvironment"`
-	Target          Ref               `json:"targetEnvironment"`
-	SourceSnapshot  Ref               `json:"sourceSnapshot"`
-	TargetSnapshot  Ref               `json:"targetSnapshot"`
-	Previous        Ref               `json:"previousPromotion"`
-	Mapping         map[string]string `json:"resourceMapping"`
-	Errors          json.RawMessage   `json:"errors,omitempty"`
-	PromotionErrors json.RawMessage   `json:"promotionErrors,omitempty"`
+	ID             string            `json:"id"`
+	Status         string            `json:"status"`
+	Source         Ref               `json:"sourceEnvironment"`
+	Target         Ref               `json:"targetEnvironment"`
+	SourceSnapshot Ref               `json:"sourceSnapshot"`
+	TargetSnapshot Ref               `json:"targetSnapshot"`
+	Previous       Ref               `json:"previousPromotion"`
+	Mapping        map[string]string `json:"resourceMapping"`
+	Errors         json.RawMessage   `json:"errors,omitempty"`
 }
 type Step struct {
 	Action  string          `json:"action"`

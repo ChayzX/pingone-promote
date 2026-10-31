@@ -33,9 +33,7 @@ type nativeFixture struct {
 	statuses              map[string]string
 	created               map[string]any
 
-	mapping         map[string]string
-	legacyErrors    []any
-	promotionErrors []string
+	mapping map[string]string
 }
 
 func TestReplyRouteErrorSurfacesCredentialStateInconsistency(t *testing.T) {
@@ -186,14 +184,7 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "unexpected fixture request "+r.Method+" "+p, 404)
 }
 func (f *nativeFixture) metadata(id string) map[string]any {
-	errors := f.legacyErrors
-	if errors == nil {
-		errors = []any{}
-	}
-	p := map[string]any{"errors": errors, "id": id, "status": f.statuses[id], "sourceEnvironment": map[string]string{"id": "src"}, "targetEnvironment": map[string]string{"id": "dst"}, "sourceSnapshot": map[string]string{"id": "v1"}, "resourceMapping": map[string]string{"f": "g", "c": "d"}}
-	if f.promotionErrors != nil {
-		p["promotionErrors"] = f.promotionErrors
-	}
+	p := map[string]any{"errors": []any{}, "id": id, "status": f.statuses[id], "sourceEnvironment": map[string]string{"id": "src"}, "targetEnvironment": map[string]string{"id": "dst"}, "sourceSnapshot": map[string]string{"id": "v1"}, "resourceMapping": map[string]string{"f": "g", "c": "d"}}
 	if f.mapping != nil {
 		p["resourceMapping"] = f.mapping
 	}
@@ -334,29 +325,6 @@ func TestWorkflowSelectionAndDuplicateDeployment(t *testing.T) {
 	}
 	if len(h.f.executed) != 1 {
 		t.Fatal("execute was replayed")
-	}
-}
-
-func TestPromotionErrorsBlockLocalDeploymentWithoutLeakingNativeText(t *testing.T) {
-	h := setup(t)
-	h.f.legacyErrors = []any{map[string]string{"code": "LEGACY_PRIVATE", "message": "legacy private secret=legacy-secret"}}
-	h.f.promotionErrors = []string{`500 Internal Server Error: "{"id":"synthetic-id","code":"PRIVATE_CODE","message":"private tenant secret=synthetic-secret"}"`}
-	v := h.plan()
-	if v.CanDeploy || v.Errors == nil {
-		t.Fatalf("native promotionErrors did not block local deployment: %+v", v)
-	}
-	serialized, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, secret := range []string{"synthetic-id", "PRIVATE_CODE", "private tenant", "synthetic-secret", "LEGACY_PRIVATE", "legacy private", "legacy-secret"} {
-		if strings.Contains(string(serialized), secret) {
-			t.Fatalf("local plan view leaked promotion error detail %q: %s", secret, serialized)
-		}
-	}
-	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": v.Review.Digest, "confirm": true}, nil, 409)
-	if len(h.f.executed) != 0 {
-		t.Fatal("native promotionErrors plan was executed")
 	}
 }
 

@@ -614,7 +614,7 @@ func TestArtifactOriginAndTargetSnapshotAreDigestBound(t *testing.T) {
 	}
 }
 func TestNativeErrorsAndTerminalStatusNeverExecute(t *testing.T) {
-	for _, mode := range []string{"errors", "promotion-errors", "terminal"} {
+	for _, mode := range []string{"errors", "terminal"} {
 		t.Run(mode, func(t *testing.T) {
 			f := fixture(t)
 			e := &Engine{Client: f.client}
@@ -624,8 +624,6 @@ func TestNativeErrorsAndTerminalStatusNeverExecute(t *testing.T) {
 			}
 			if mode == "errors" {
 				f.native.Errors = json.RawMessage(`[{"message":"server sensitive error"}]`)
-			} else if mode == "promotion-errors" {
-				f.native.PromotionErrors = json.RawMessage(`["opaque promotion failure"]`)
 			} else {
 				f.native.Status = "COMPLETED"
 			}
@@ -669,28 +667,6 @@ func TestFailedPromotionCanProduceReviewedRollback(t *testing.T) {
 	}
 	if rb.NativeID == a.NativeID || f.execute != 0 {
 		t.Fatal("rollback executed during planning")
-	}
-}
-
-func TestFailedPromotionErrorsFieldCanBeReconciledAndRollback(t *testing.T) {
-	f := fixture(t)
-	e := &Engine{Client: f.client}
-	a, err := e.Plan(context.Background(), f.req, testOrigin())
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.native.Status = "ERROR"
-	f.native.PromotionErrors = json.RawMessage(`["synthetic failed execution"]`)
-	status, err := e.Status(context.Background(), a)
-	if err != nil || status.PromotionErrors == nil {
-		t.Fatalf("promotionErrors status was not reconciled: status=%+v err=%v", status, err)
-	}
-	rb, err := e.RollbackPlan(context.Background(), a, testOrigin())
-	if err != nil {
-		t.Fatalf("cannot plan rollback after failed promotionErrors execution: %v", err)
-	}
-	if rb.NativeID == a.NativeID || f.execute != 0 {
-		t.Fatal("rollback planning did not remain separate from execution")
 	}
 }
 

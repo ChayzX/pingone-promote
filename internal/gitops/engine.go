@@ -297,7 +297,7 @@ func nativeIssuesWithMapping(a Artifact, p pingone.Promotion, checkMapping bool)
 	if a.Kind == "rollback" && p.Previous.ID != a.OriginalNativeID {
 		issues = append(issues, "native rollback is not linked to the approved original promotion")
 	}
-	if nativeErrors(p.Errors, p.PromotionErrors) {
+	if nativeErrors(p.Errors) {
 		issues = append(issues, "native promotion reports errors; inspect PingOne before proceeding")
 	}
 	return issues
@@ -323,34 +323,25 @@ func sameGitLabProject(a, b Origin) bool {
 	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host) && strings.TrimSuffix(ua.Path, "/") == strings.TrimSuffix(ub.Path, "/")
 }
 
-func nativeErrors(raws ...json.RawMessage) bool {
-	for _, raw := range raws {
-		if len(raw) == 0 {
-			continue
-		}
-		var v any
-		if json.Unmarshal(raw, &v) != nil {
-			return true
-		}
-		switch x := v.(type) {
-		case nil:
-		case []any:
-			if len(x) > 0 {
-				return true
-			}
-		case map[string]any:
-			if len(x) > 0 {
-				return true
-			}
-		case string:
-			if x != "" {
-				return true
-			}
-		default:
-			return true
-		}
+func nativeErrors(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
 	}
-	return false
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return true
+	}
+	switch x := v.(type) {
+	case nil:
+		return false
+	case []any:
+		return len(x) > 0
+	case map[string]any:
+		return len(x) > 0
+	case string:
+		return x != ""
+	}
+	return true
 }
 func (e *Engine) Apply(ctx context.Context, a Artifact, approvedDigest string, authorize func(context.Context, Artifact) error) (pingone.Promotion, error) {
 	var result pingone.Promotion
@@ -443,9 +434,7 @@ func (e *Engine) Status(ctx context.Context, a Artifact) (pingone.Promotion, err
 		return p, err
 	}
 	identity := p
-	// Failed native executions must remain observable and rollback eligible.
-	identity.Errors = nil
-	identity.PromotionErrors = nil
+	identity.Errors = nil // Failed native executions must remain observable and rollback eligible.
 	// After execution, PingOne reports resolved resource mappings rather than
 	// the reviewed draft mapping. Pre-execution review remains strict.
 	checkMapping := true

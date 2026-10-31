@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -196,8 +197,23 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 		return v, problem(502, err)
 	}
 	v.Status = native.Status
-	if nativeErrors := pingone.SummarizePromotionErrors(native.Errors, native.PromotionErrors); len(nativeErrors) > 0 {
-		v.Errors = nativeErrors
+	if len(native.Errors) > 0 {
+		var raw any
+		if jsonError := json.Unmarshal(native.Errors, &raw); jsonError == nil {
+			switch value := raw.(type) {
+			case nil:
+			case []any:
+				if len(value) > 0 {
+					v.Errors = promotion.Redact(value)
+				}
+			case map[string]any:
+				if len(value) > 0 {
+					v.Errors = promotion.Redact(value)
+				}
+			default:
+				v.Errors = promotion.Redact(raw)
+			}
+		}
 	}
 	// A plan is polled every ~2s while it runs. Persisting on every poll
 	// rewrites the whole records file (with fsync) under s.mu even when nothing
@@ -287,7 +303,6 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	v.CanDeploy = native.Status == "READY" && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
 	return v, nil
 }
-
 func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession) error {
 	if !s.localAllowed(ps.Record.Target) {
 		replyNativeNoWrite(w, http.StatusForbidden, gitlabOnlyMessage, false)

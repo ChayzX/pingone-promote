@@ -443,7 +443,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		result, pollErr := waitForTerminal(ctx, func(c context.Context) (pingone.Promotion, error) { return engine.Status(c, a) }, result, deps.pollTimeout, deps.pollInterval)
-		res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: result.Status, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Errors: pingone.SummarizePromotionErrors(result.Errors, result.PromotionErrors)}
+		res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: result.Status, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Errors: redactNativeErrors(result.Errors, deps.getenv)}
 		if pollErr != nil {
 			res.Status = "IN_PROGRESS"
 			res.Errors = append(res.Errors, safeError(pollErr, deps.getenv))
@@ -455,11 +455,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return fmt.Errorf("execution status is uncertain; intent retained at %s; reconcile native status before any retry: %s", marker, safeError(pollErr, deps.getenv))
 		}
 		if result.Status == "ERROR" {
-			detail := strings.Join(res.Errors, "; ")
-			if detail != "" {
-				detail = ": " + detail
-			}
-			return fmt.Errorf("native execution ended in ERROR%s; intent retained at %s; inspect status and plan rollback if needed", detail, marker)
+			return fmt.Errorf("native execution ended in ERROR; intent retained at %s; inspect status and plan rollback if needed", marker)
 		}
 		return nil
 	case "status":
@@ -490,7 +486,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err != nil {
 			return err
 		}
-		out := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: p.Status, Errors: pingone.SummarizePromotionErrors(p.Errors, p.PromotionErrors)}
+		out := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: p.Status, Errors: redactNativeErrors(p.Errors, deps.getenv)}
 		return json.NewEncoder(stdout).Encode(out)
 	case "rollback-plan":
 		fs := flagSet("rollback-plan", stderr)
@@ -821,4 +817,16 @@ func safeError(err error, getenv func(string) string) string {
 		s = s[:1000]
 	}
 	return s
+}
+func redactNativeErrors(raw json.RawMessage, getenv func(string) string) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return []string{"native service reported an error; inspect status in PingOne"}
+	}
+	b, _ := json.Marshal(promotion.Redact(value))
+	s := safeError(errors.New(string(b)), getenv)
+	return []string{s}
 }
