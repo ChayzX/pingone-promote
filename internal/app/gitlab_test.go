@@ -17,6 +17,7 @@ func TestGitLabPreviewSubmitsOnlyReviewedRequestToPrivateProject(t *testing.T) {
 	s := h.server.Config.Handler.(*Server)
 	s.localTargets = map[string]bool{}
 	var committed map[string]any
+	var createdBranch map[string]string
 	gl := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Header.Get("PRIVATE-TOKEN") != "fixture-gitlab-token" {
@@ -28,6 +29,7 @@ func TestGitLabPreviewSubmitsOnlyReviewedRequestToPrivateProject(t *testing.T) {
 		case "/api/v4/projects/7/repository/branches/main":
 			w.Write([]byte(`{"name":"main","protected":true}`))
 		case "/api/v4/projects/7/repository/branches":
+			_ = json.NewDecoder(r.Body).Decode(&createdBranch)
 			w.Write([]byte(`{}`))
 		case "/api/v4/projects/7/repository/commits":
 			json.NewDecoder(r.Body).Decode(&committed)
@@ -74,11 +76,14 @@ func TestGitLabPreviewSubmitsOnlyReviewedRequestToPrivateProject(t *testing.T) {
 		ID  string `json:"requestId"`
 		URL string `json:"url"`
 	}
-	h.call("POST", "/api/gitlab/submit", map[string]string{"requestId": preview.Request.ID}, &result, 200)
+	h.call("POST", "/api/gitlab/submit", map[string]string{"requestId": preview.Request.ID, "branchName": "requests/custom-review", "commitMessage": "Review promotion request"}, &result, 200)
 	if result.ID != preview.Request.ID || !strings.Contains(result.URL, "/merge_requests/1") {
 		t.Fatalf("bad submission %+v", result)
 	}
 	actions := committed["actions"].([]any)
+	if createdBranch["branch"] != "requests/custom-review" || committed["commit_message"] != "Review promotion request" {
+		t.Fatalf("custom branch/message ignored: branch=%#v commit=%#v", createdBranch, committed["commit_message"])
+	}
 	action := actions[0].(map[string]any)
 	if action["file_path"] != "requests/"+preview.Request.ID+"/request.json" {
 		t.Fatal("unexpected commit path")

@@ -780,6 +780,11 @@
     $('#deploy-warning').hidden = false;
     $('#deploy-warning').textContent = 'This creates a branch and merge request in the configured private GitLab project. Production planning, approval, deployment and rollback happen through your protected GitLab runner.';
     $('#deploy-confirm-copy').textContent = `Submit reviewed request ${text(req.id)} with its pinned source snapshot, target environment, resource selection, mappings, redacted exports and fingerprints.`;
+    $('#gitlab-submit-options').hidden = false;
+    $('#gitlab-branch-name').value = '';
+    $('#gitlab-branch-name').placeholder = `promotion/${text(req.id, '')}`;
+    $('#gitlab-commit-message').value = '';
+    $('#gitlab-commit-message').placeholder = `Add promotion request ${text(req.id, '')}`;
     $('#deploy-confirm-check').checked = false;
     $('#confirm-deploy').disabled = true;
     $('#confirm-deploy').textContent = 'Submit to GitLab';
@@ -923,6 +928,7 @@
     state.confirmGeneration = ++state.planGeneration;
     clearTimer();
     state.confirmMode = mode;
+    $('#gitlab-submit-options').hidden = true;
     state.confirmKey = `${mode}:${mode === 'rollback-draft' ? state.rollbackRecord?.id : state.plan?.id}`;
     const rollbackDraft = mode === 'rollback-draft';
     const rollbackExecute = mode === 'rollback-execute';
@@ -971,7 +977,12 @@
         const requestId = state.reviewedRequestId;
         if (!requestId || !state.plan?.gitlabRequired) throw new Error('The reviewed GitLab request is missing. Build a fresh submission preview.');
         requestStarted = true;
-        const result = await request('/api/gitlab/submit', { method: 'POST', body: { requestId } });
+        const submission = { requestId };
+        const branchName = $('#gitlab-branch-name').value;
+        const commitMessage = $('#gitlab-commit-message').value;
+        if (branchName !== '') submission.branchName = branchName;
+        if (commitMessage !== '') submission.commitMessage = commitMessage;
+        const result = await request('/api/gitlab/submit', { method: 'POST', body: submission });
         recordConfirmationAttempt(key, 'This request was submitted. Check GitLab for its branch and merge request.');
         if (generation !== state.planGeneration || requestId !== state.reviewedRequestId) return;
         deployDialog.close();

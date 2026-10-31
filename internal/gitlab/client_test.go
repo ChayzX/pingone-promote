@@ -143,6 +143,9 @@ func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 			if b["branch"] != "promotion/req-1" {
 				t.Errorf("commit refs: %#v", b)
 			}
+			if b["commit_message"] != "Add promotion request req-1" {
+				t.Errorf("default commit message changed: %#v", b["commit_message"])
+			}
 			if _, ok := b["start_branch"]; ok || b["force"] == true {
 				// GitLab's create-commit API treats start_branch/force as branch
 				// creation or replacement controls; this branch already exists.
@@ -228,6 +231,34 @@ func TestSubmitBranchCollisionStopsBeforeCommitOrMergeRequest(t *testing.T) {
 	}
 	if gotCommit || gotMR {
 		t.Fatalf("branch collision did not abort before later writes: commit=%v merge_request=%v", gotCommit, gotMR)
+	}
+}
+
+func TestSubmitRejectsUnsafeCustomBranchBeforeNetwork(t *testing.T) {
+	for _, branch := range []string{"../main", "topic//child", "topic/.hidden", "topic/name.lock", "topic name", "-option"} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("unsafe branch made network request %s %s", r.Method, r.URL.Path)
+		}))
+		c, err := NewClient(testConfig(srv.URL), "token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.HTTP = srv.Client()
+		if _, err = c.SubmitWithOptions(context.Background(), "req", map[string]string{"request.json": "{}"}, "title", "description", SubmissionOptions{BranchName: branch}); err == nil {
+			t.Errorf("accepted unsafe branch %q", branch)
+		}
+		srv.Close()
+	}
+}
+
+func TestValidateSubmissionOptionsRejectsInvalidCommitMessages(t *testing.T) {
+	for _, message := range []string{"   ", strings.Repeat("x", 501), "bad\x00message"} {
+		if err := ValidateSubmissionOptions(SubmissionOptions{CommitMessage: message}); err == nil {
+			t.Errorf("accepted invalid commit message %q", message)
+		}
+	}
+	if err := ValidateSubmissionOptions(SubmissionOptions{BranchName: "feature/issue-3", CommitMessage: "Update promotion"}); err != nil {
+		t.Fatalf("rejected valid custom options: %v", err)
 	}
 }
 

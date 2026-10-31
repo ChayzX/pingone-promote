@@ -43,8 +43,8 @@ async def test_preview_submit(browser):
         await route.fulfill(json={"gitlabRequired":True,"issues":[],"request":{"version":1,"id":"0123456789abcdef0123456789abcdef","createdAt":"2026-10-27T00:00:00Z","source":{"id":"src-env","region":"us","organizationId":"org-s","snapshotId":"snap-src"},"target":{"id":"prod-env","region":"us","organizationId":"org-p","snapshotId":"snap-prod"},"selected":body['selected'],"mappings":body['mappings'],"configurations":{"f":{"name":"Customer login","secret":"[REDACTED]"}},"fingerprints":{"f":"sha256:abc"}}})
     async def submit(route):
         calls['submit'] += 1
-        assert json.loads(route.request.post_data) == {'requestId':'0123456789abcdef0123456789abcdef'}
-        await route.fulfill(json={"requestId":"req-1","url":"https://gitlab.example.test/group/project/-/merge_requests/7","branch":"promote/0123456789abcdef0123456789abcdef","iid":7})
+        assert json.loads(route.request.post_data) == {'requestId':'0123456789abcdef0123456789abcdef','branchName':'requests/custom-review','commitMessage':'Review promotion request'}
+        await route.fulfill(json={"requestId":"req-1","url":"https://gitlab.example.test/group/project/-/merge_requests/7","branch":"requests/custom-review","iid":7})
     await page.route('**/api/plans', plans)
     await page.route('**/api/requests/preview', preview)
     await page.route('**/api/gitlab/submit', submit)
@@ -54,9 +54,11 @@ async def test_preview_submit(browser):
     assert await page.locator('#deploy-bar').is_hidden()
     assert await page.locator('#plan-content').inner_text() and 'snap-src' in await page.locator('#plan-content').inner_text()
     await page.get_by_role('button', name='Submit to GitLab').click()
+    await page.get_by_label('Branch name').fill('requests/custom-review')
+    await page.get_by_label('Commit message').fill('Review promotion request')
     await page.get_by_label('I reviewed the operations and want to continue.').check()
     await page.locator('#confirm-deploy').click()
-    await page.get_by_role('link', name='promote/0123456789abcdef0123456789abcdef !7').wait_for()
+    await page.get_by_role('link', name='requests/custom-review !7').wait_for()
     assert calls['submit']==1 and calls['plans']==0
     await page.close()
 

@@ -109,7 +109,9 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	case r.URL.Path == "/api/gitlab/submit" && r.Method == "POST":
 		var input struct {
-			RequestID string `json:"requestId"`
+			RequestID     string `json:"requestId"`
+			BranchName    string `json:"branchName"`
+			CommitMessage string `json:"commitMessage"`
 		}
 		if err := decodeBody(w, r, &input); err != nil {
 			return err
@@ -117,6 +119,10 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		req, ok := s.requests[input.RequestID]
 		if !ok {
 			return errors.New("request preview expired or unknown; build and review it before submission")
+		}
+		submissionOptions := gitlab.SubmissionOptions{BranchName: input.BranchName, CommitMessage: input.CommitMessage}
+		if err := gitlab.ValidateSubmissionOptions(submissionOptions); err != nil {
+			return err
 		}
 		if s.submissionAttempts[req.ID] {
 			return problem(409, errors.New("a submission was already attempted; inspect the GitLab branch before creating another request"))
@@ -146,7 +152,7 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 			title = title[:180]
 		}
 		description := fmt.Sprintf("Promotion request `%s`\n\nSource environment: `%s` (snapshot `%s`)\nTarget environment: `%s`\nSelected resources: %d\nGitLab environment: `%s`\n\nThis merge request submits configuration for review. Actual deployment and rollback must execute through protected GitLab jobs. Review the configuration exports and final native plan before approving deployment.", req.ID, req.Source.ID, req.Source.SnapshotID, req.Target.ID, len(req.Selected), config.Environment)
-		mr, err := client.Submit(r.Context(), req.ID, map[string]string{"request.json": string(raw) + "\n"}, title, description)
+		mr, err := client.SubmitWithOptions(r.Context(), req.ID, map[string]string{"request.json": string(raw) + "\n"}, title, description, submissionOptions)
 		if err != nil {
 			var preflightErr *gitlab.SubmissionPreflightError
 			if errors.As(err, &preflightErr) {
