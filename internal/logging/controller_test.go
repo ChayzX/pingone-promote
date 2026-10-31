@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,6 +33,18 @@ func TestControllerDebugLevelFiltersBoundedEvents(t *testing.T) {
 	controller.Event(context.Background(), slog.LevelDebug, "http.dispatch", "http", "api.session", "GET", "0011223344556678", "", 0, 0)
 	if !strings.Contains(output.String(), `"event":"http.dispatch"`) {
 		t.Fatalf("debug event not emitted after enabling debug: %s", output.String())
+	}
+}
+
+func TestControllerCanonicalizesInitialSettings(t *testing.T) {
+	controller, err := NewController(Config{Level: "DEBUG", Format: "TEXT"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	settings := controller.Settings()
+	if settings.Level != "debug" || !settings.Debug || settings.Format != "text" {
+		t.Fatalf("initial settings were not canonicalized: %+v", settings)
 	}
 }
 

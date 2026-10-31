@@ -60,6 +60,8 @@ type EventLogger interface {
 }
 
 func NewController(cfg Config, stderr io.Writer) (*Controller, error) {
+	cfg.Level = strings.ToLower(cfg.Level)
+	cfg.Format = strings.ToLower(cfg.Format)
 	if cfg.Level == "" {
 		cfg.Level = "info"
 	}
