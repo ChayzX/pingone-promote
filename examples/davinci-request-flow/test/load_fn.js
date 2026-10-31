@@ -7,8 +7,9 @@ const root = path.join(__dirname, '..');
 const core = fs.readFileSync(path.join(root, 'lib', 'core.js'), 'utf8').split('\n').map((l) => l.trim())
   .filter((l) => l && !l.startsWith('//')).join('\n');
 
-function source(name) {
-  const body = fs.readFileSync(path.join(root, 'flows', 'fn', name + '.js'), 'utf8');
+function source(name, bodyOverride) {
+  const body = (bodyOverride === undefined ? fs.readFileSync(path.join(root, 'flows', 'fn', name + '.js'), 'utf8') : bodyOverride)
+    .replace(/\r\n/g, '\n');
   // The library runs in its own scope so step code can never collide with it.
   return 'module.exports = a = async ({params}) => {\nconst core = (() => {\n' + core + '\nreturn core;\n})();\n// ---- step: ' + name + ' ----\n' + body + '\n};\n';
 }

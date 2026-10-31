@@ -18,6 +18,10 @@ for (const file of process.argv.slice(2)) {
     const code = node.data.properties.code.value;
     const step = /\/\/ ---- step: ([a-z_]+) ----/.exec(code)[1];
     if (code !== source(step)) { console.error('MISMATCH ' + file + ' ' + node.data.id + ' ' + step); process.exit(1); }
+    const body = require('fs').readFileSync(require('path').join(__dirname, '..', 'flows', 'fn', step + '.js'), 'utf8');
+    if (source(step, body.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')) !== source(step)) {
+      console.error('LINE ENDING MISMATCH ' + step); process.exit(1);
+    }
     n++;
   }
 }
