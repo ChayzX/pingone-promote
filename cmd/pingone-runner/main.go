@@ -165,7 +165,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err != nil {
 			return err
 		}
-		_, err := io.WriteString(stdout, "valid\n")
+		_, err = io.WriteString(stdout, "valid\n")
 		return err
 	case "build-request":
 		fs := flagSet("build-request", stderr)

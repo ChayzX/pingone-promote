@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -147,6 +148,14 @@ func TestVersionRejectsExtraArguments(t *testing.T) {
 	}
 	if got := out.String(); got != "" {
 		t.Fatalf("printed version despite extra arguments: %q", got)
+	}
+}
+
+func TestRemovedLegacyCheckCommandsStayUnavailable(t *testing.T) {
+	for _, command := range [][]string{{"preflight"}, {"plan-check"}, {"evidence", "compare"}} {
+		if err := runWith(command, io.Discard, io.Discard, runnerDeps{}); err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("legacy command %q was not rejected as unavailable: %v", command[0], err)
+		}
 	}
 }
 
