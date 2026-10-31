@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"net/http"
+	"net/http/httptest"
 	"pingone-promote/internal/pingone"
 )
 
@@ -93,6 +95,79 @@ func TestRefreshClientSetupFailureUsesSafeFailureProjection(t *testing.T) {
 	}
 	if got.Error != got.Message || got.CorrelationID == "" || strings.Contains(got.Error, "private-client-data") || strings.Contains(got.Message, "fixture client setup failed") {
 		t.Fatalf("client setup response was unsafe or incomplete: %+v", got)
+	}
+}
+
+func TestGenericClientFailureDoesNotExposeDiagnostic(t *testing.T) {
+	w := httptest.NewRecorder()
+	response := `C:\private\app-data\profiles.json access token=private-diagnostic`
+	replyError(w, http.StatusBadRequest, errors.New(response))
+
+	var got failureEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.Error, response) || strings.Contains(got.Message, "private-diagnostic") || strings.Contains(got.Message, "profiles.json") {
+		t.Fatalf("generic client failure exposed diagnostic: %+v", got)
+	}
+	if got.Code != "request_rejected" || got.Error == "" || got.Error != got.Message {
+		t.Fatalf("generic failure did not use stable safe projection: %+v", got)
+	}
+}
+
+func TestDecodeBodyDoesNotEchoUnknownJSONField(t *testing.T) {
+	h := setup(t)
+	var got failureEnvelope
+	h.call(http.MethodPost, "/api/inventory", map[string]string{
+		"profileId":                      h.source.ID,
+		"private-token=synthetic-secret": "value",
+	}, &got, http.StatusBadRequest)
+	if strings.Contains(got.Error, "private-token") || strings.Contains(got.Error, "synthetic-secret") {
+		t.Fatalf("JSON decoder echoed an untrusted field name: %+v", got)
+	}
+	if !strings.Contains(strings.ToLower(got.Error), "json") {
+		t.Fatalf("JSON validation guidance is not actionable: %+v", got)
+	}
+}
+
+func TestMissingProfileCredentialReturnsSafePreDispatchGuidance(t *testing.T) {
+	h := setup(t)
+	t.Setenv("TEST_PING_SECRET", "")
+	var got failureEnvelope
+	h.call(http.MethodPost, "/api/inventory", map[string]string{"profileId": h.source.ID}, &got, http.StatusBadRequest)
+	if got.Code != "credential_unavailable" || got.Phase != "preflight" || got.RecoveryAction != "retry_pre_dispatch" {
+		t.Fatalf("missing credential was not classified as pre-dispatch: %+v", got)
+	}
+	if !strings.Contains(strings.ToLower(got.Message), "no pingone write was sent") || strings.Contains(got.Message, "secret") {
+		t.Fatalf("missing credential guidance is unsafe or incomplete: %+v", got)
+	}
+}
+
+func TestMappingWarningDoesNotExposePingOneDiagnostic(t *testing.T) {
+	h := setup(t)
+	h.f.mu.Lock()
+	h.f.mappingFailureBody = `{"code":"PRIVATE_VENDOR_CODE","message":"tenant private token=synthetic-secret"}`
+	h.f.mu.Unlock()
+	var source, target struct {
+		ID string `json:"id"`
+	}
+	h.call(http.MethodPost, "/api/inventory", map[string]string{"profileId": h.source.ID}, &source, http.StatusOK)
+	h.call(http.MethodPost, "/api/inventory", map[string]string{"profileId": h.target.ID}, &target, http.StatusOK)
+	var got struct {
+		Warnings []string `json:"warnings"`
+	}
+	h.call(http.MethodPost, "/api/mappings", map[string]string{"sourceInventoryId": source.ID, "targetInventoryId": target.ID}, &got, http.StatusOK)
+	serialized, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range []string{"PRIVATE_VENDOR_CODE", "tenant private", "synthetic-secret"} {
+		if strings.Contains(string(serialized), diagnostic) {
+			t.Fatalf("mapping warning exposed PingOne diagnostic %q: %s", diagnostic, serialized)
+		}
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "Saved PingOne mappings could not be read") {
+		t.Fatalf("mapping warning lost actionable application guidance: %+v", got.Warnings)
 	}
 }
 

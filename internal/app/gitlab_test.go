@@ -186,12 +186,19 @@ func TestGitLabPreflightFailureCanBeRetriedWithoutRebuildingPreview(t *testing.T
 
 	rejectProjectReads = true
 	var failure struct {
-		Error       string `json:"error"`
-		SafeToRetry bool   `json:"safeToRetry"`
+		Error          string `json:"error"`
+		SafeToRetry    bool   `json:"safeToRetry"`
+		Code           string `json:"code"`
+		Phase          string `json:"phase"`
+		RecoveryAction string `json:"recoveryAction"`
+		CorrelationID  string `json:"correlationId"`
 	}
 	h.call("POST", "/api/gitlab/submit", map[string]string{"requestId": preview.Request.ID}, &failure, 502)
 	if !failure.SafeToRetry || !strings.Contains(strings.ToLower(failure.Error), "no gitlab writes occurred") {
 		t.Fatalf("preflight failure did not explain that no writes occurred: %q", failure.Error)
+	}
+	if failure.Code != "gitlab_pre_dispatch_failure" || failure.Phase != "preflight" || failure.RecoveryAction != "retry_pre_dispatch" || failure.CorrelationID == "" {
+		t.Fatalf("GitLab preflight omitted classified failure: %+v", failure)
 	}
 	if branchWrites != 0 {
 		t.Fatalf("preflight failure made %d branch writes", branchWrites)

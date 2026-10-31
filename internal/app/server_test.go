@@ -36,9 +36,10 @@ type nativeFixture struct {
 	statuses              map[string]string
 	created               map[string]any
 
-	mapping         map[string]string
-	legacyErrors    []any
-	promotionErrors []string
+	mapping            map[string]string
+	mappingFailureBody string
+	legacyErrors       []any
+	promotionErrors    []string
 }
 
 func TestReplyRouteErrorSurfacesCredentialStateInconsistency(t *testing.T) {
@@ -91,6 +92,10 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	write := func(v any) { w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(v) }
 	if strings.HasSuffix(p, "/promotionMappings/dst") {
+		if f.mappingFailureBody != "" {
+			http.Error(w, f.mappingFailureBody, http.StatusForbidden)
+			return
+		}
 		write(map[string]any{"resourceMappings": map[string]string{"f": "g", "c": "d"}})
 		return
 	}
@@ -326,6 +331,67 @@ func (h *harness) plan() PlanView {
 	h.call("POST", "/api/plans", map[string]any{"sourceInventoryId": s.ID, "targetInventoryId": d.ID, "selected": []string{"f"}, "mappings": map[string]string{"f": "g", "c": "d"}, "description": "release"}, &v, 200)
 	return v
 }
+
+func TestCreatePlanDoesNotEchoUnknownSelectedResourceID(t *testing.T) {
+	h := setup(t)
+	var source, target struct {
+		ID string `json:"id"`
+	}
+	h.call("POST", "/api/inventory", map[string]string{"profileId": h.source.ID}, &source, 200)
+	h.call("POST", "/api/inventory", map[string]string{"profileId": h.target.ID}, &target, 200)
+	const sentinel = "private-token=synthetic-secret"
+	body, _ := json.Marshal(map[string]any{
+		"sourceInventoryId": source.ID, "targetInventoryId": target.ID,
+		"selected": []string{sentinel}, "mappings": map[string]string{}, "description": "release",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/api/plans", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", h.csrf)
+	req.Header.Set("Origin", h.server.URL)
+	res, err := h.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	data, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("HTTP %d, want %d: %s", res.StatusCode, http.StatusBadRequest, data)
+	}
+	if strings.Contains(string(data), sentinel) {
+		t.Fatalf("unknown selected resource ID leaked in response: %s", data)
+	}
+}
+
+func TestCreatePlanDoesNotEchoUnknownMappingTargetID(t *testing.T) {
+	h := setup(t)
+	var source, target struct {
+		ID string `json:"id"`
+	}
+	h.call("POST", "/api/inventory", map[string]string{"profileId": h.source.ID}, &source, 200)
+	h.call("POST", "/api/inventory", map[string]string{"profileId": h.target.ID}, &target, 200)
+	const sentinel = "private-token=synthetic-secret"
+	body, _ := json.Marshal(map[string]any{
+		"sourceInventoryId": source.ID, "targetInventoryId": target.ID,
+		"selected": []string{"f"}, "mappings": map[string]string{"f": sentinel}, "description": "release",
+	})
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/api/plans", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", h.csrf)
+	req.Header.Set("Origin", h.server.URL)
+	res, err := h.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	data, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("HTTP %d, want %d: %s", res.StatusCode, http.StatusBadRequest, data)
+	}
+	if strings.Contains(string(data), sentinel) {
+		t.Fatalf("unknown mapping target ID leaked in response: %s", data)
+	}
+}
+
 func TestWorkflowSelectionAndDuplicateDeployment(t *testing.T) {
 	h := setup(t)
 	v := h.plan()

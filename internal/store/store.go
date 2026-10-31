@@ -268,18 +268,18 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 	changesCredential := p.SecretMode == "keychain" && secret != ""
 	removesCredential := profileExists && existingMode == "keychain" && p.SecretMode != "keychain"
 	if removesCredential && p.SecretMode == "session" && secret == "" {
-		return p, errors.New("enter the PingOne client secret for the new session before switching away from the OS credential vault")
+		return p, profileValidation("enter the PingOne client secret for the new session before switching away from the OS credential vault")
 	}
 	if p.SecretMode == "keychain" && secret == "" {
 		if !profileExists || existingMode != "keychain" {
-			return p, errors.New("enter the PingOne client secret before saving this profile to the OS credential vault")
+			return p, profileValidation("enter the PingOne client secret before saving this profile to the OS credential vault")
 		}
 		_, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
 		if err != nil {
 			return p, err
 		}
 		if !hadPriorCredential {
-			return p, errors.New("no OS credential is stored for this profile; enter the PingOne client secret and save again")
+			return p, profileValidation("no OS credential is stored for this profile; enter the PingOne client secret and save again")
 		}
 	}
 	if changesCredential {
@@ -351,7 +351,7 @@ func (s *Store) DeleteProfile(id string) error {
 		kept = append(kept, p)
 	}
 	if !found {
-		return fmt.Errorf("profile %q not found", id)
+		return profileValidation("profile not found; refresh saved profiles and select an existing profile")
 	}
 	var priorCredential string
 	var hadPriorCredential bool
@@ -388,26 +388,26 @@ func (s *Store) Secret(p pingone.Profile) (string, error) {
 	case "session":
 		v, ok := s.session[p.ID]
 		if !ok || v == "" {
-			return "", fmt.Errorf("no session secret for profile %q", p.ID)
+			return "", profileValidation("no session secret is available; enter the PingOne client secret and save the profile again")
 		}
 		return v, nil
 	case "env":
 		v := os.Getenv(p.SecretEnv)
 		if v == "" {
-			return "", fmt.Errorf("environment variable %s is empty", p.SecretEnv)
+			return "", profileValidation(fmt.Sprintf("environment variable %s is empty", p.SecretEnv))
 		}
 		return v, nil
 	case "keychain":
 		secret, err := s.credentials.Get(p.ID)
 		if errors.Is(err, errCredentialNotFound) {
-			return "", fmt.Errorf("no OS credential is stored for profile %q; edit the profile, enter the PingOne client secret, and save", p.ID)
+			return "", profileValidation("no OS credential is stored for this profile; edit the profile, enter the PingOne client secret, and save")
 		}
 		if err != nil {
 			return "", safeCredentialProviderFailure("OS credential vault", "access", "Unlock the OS credential vault and retry.", err)
 		}
 		return secret, nil
 	default:
-		return "", fmt.Errorf("unsupported secret mode %q", p.SecretMode)
+		return "", profileValidation("secret mode must be session, env, or keychain")
 	}
 }
 

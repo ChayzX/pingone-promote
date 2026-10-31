@@ -31,17 +31,19 @@ type PlanView struct {
 	GitLabRequired bool             `json:"gitlabRequired"`
 }
 
+const invalidPromotionInputMessage = "Selection or destination mappings are invalid. Reload resources, review the selected items and mappings, then retry."
+
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 func (s *Server) pair(p inventoryPair) (*inventorySession, *inventorySession, error) {
 	a, b := s.inventories[p.SourceID], s.inventories[p.TargetID]
 	if a == nil || b == nil {
-		return nil, nil, errors.New("load both source and destination resources first")
+		return nil, nil, knownValidationFailure("load both source and destination resources first")
 	}
 	if a.EnvironmentID == b.EnvironmentID {
-		return nil, nil, errors.New("choose different source and destination environments")
+		return nil, nil, knownValidationFailure("choose different source and destination environments")
 	}
 	if a.OrganizationID != b.OrganizationID {
-		return nil, nil, errors.New("both environments must belong to the same PingOne tenant")
+		return nil, nil, knownValidationFailure("both environments must belong to the same PingOne tenant")
 	}
 	return a, b, nil
 }
@@ -90,11 +92,11 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !s.localTargets[target.EnvironmentID] {
-		return problem(403, errors.New(gitlabOnlyMessage))
+		return problem(403, knownValidationFailure(gitlabOnlyMessage))
 	}
 	body, err := promotion.BuildRequest(source.Inventory, target.Inventory, input.Selected, input.Mappings, input.Description)
 	if err != nil {
-		return err
+		return knownValidationFailure(invalidPromotionInputMessage)
 	}
 	sp, err := s.profile(source.ProfileID)
 	if err != nil {
@@ -155,7 +157,7 @@ func (s *Server) loadPlan(id string) (*planSession, error) {
 	record, err := s.store.GetRecord(id)
 	if err != nil {
 		if errors.Is(err, store.ErrRecordNotFound) {
-			return nil, problem(http.StatusNotFound, err)
+			return nil, problem(http.StatusNotFound, operation.NewFailure("record_not_found", "validation", "Saved operation was not found. Refresh history and select an existing operation.", "refresh_history", "", nil))
 		}
 		return nil, problem(http.StatusInternalServerError, localStorageReadFailure("Could not read saved history; check local app storage and restart the app."))
 	}

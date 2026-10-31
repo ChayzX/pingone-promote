@@ -3,7 +3,6 @@ package store
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -16,6 +15,14 @@ import (
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var safeEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// ValidationError carries application-authored profile guidance that is safe
+// to present to the local operator. Do not wrap storage or provider failures.
+type ValidationError struct{ message string }
+
+func (e *ValidationError) Error() string { return e.message }
+
+func profileValidation(message string) error { return &ValidationError{message: message} }
+
 func randomID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -26,33 +33,33 @@ func randomID() (string, error) {
 
 func validateProfile(p pingone.Profile) error {
 	if strings.TrimSpace(p.Name) == "" {
-		return errors.New("profile name is required")
+		return profileValidation("profile name is required")
 	}
 	if _, ok := pingone.RegionDomains[p.Region]; !ok {
-		return fmt.Errorf("unknown PingOne region %q", p.Region)
+		return profileValidation("unknown PingOne region; choose a supported PingOne region")
 	}
 	if !safeID.MatchString(p.ID) {
-		return errors.New("profile ID must contain 1-128 letters, digits, underscores, or hyphens")
+		return profileValidation("profile ID must contain 1-128 letters, digits, underscores, or hyphens")
 	}
 	for name, value := range map[string]string{"environment ID": p.EnvironmentID, "client ID": p.ClientID} {
 		if !safeID.MatchString(value) {
-			return fmt.Errorf("%s must contain 1-128 letters, digits, underscores, or hyphens", name)
+			return profileValidation(fmt.Sprintf("%s must contain 1-128 letters, digits, underscores, or hyphens", name))
 		}
 	}
 	if p.AuthEnvironmentID != "" && !safeID.MatchString(p.AuthEnvironmentID) {
-		return errors.New("authentication environment ID must contain 1-128 letters, digits, underscores, or hyphens")
+		return profileValidation("authentication environment ID must contain 1-128 letters, digits, underscores, or hyphens")
 	}
 	switch p.SecretMode {
 	case "session", "keychain":
 		if p.SecretEnv != "" {
-			return errors.New("secret environment variable is only valid in env mode")
+			return profileValidation("secret environment variable is only valid in env mode")
 		}
 	case "env":
 		if !safeEnvName.MatchString(p.SecretEnv) {
-			return errors.New("a valid secret environment variable name is required in env mode")
+			return profileValidation("a valid secret environment variable name is required in env mode")
 		}
 	default:
-		return fmt.Errorf("secret mode must be session, env, or keychain")
+		return profileValidation("secret mode must be session, env, or keychain")
 	}
 	return nil
 }
@@ -64,14 +71,14 @@ const maxProfileNameRunes = 80
 // remain usable.
 func validateProfileName(name string) error {
 	if strings.TrimSpace(name) == "" {
-		return errors.New("profile name is required")
+		return profileValidation("profile name is required")
 	}
 	if utf8.RuneCountInString(name) > maxProfileNameRunes {
-		return fmt.Errorf("profile name must be at most %d characters", maxProfileNameRunes)
+		return profileValidation(fmt.Sprintf("profile name must be at most %d characters", maxProfileNameRunes))
 	}
 	for _, r := range name {
 		if unicode.IsControl(r) {
-			return errors.New("profile name must not contain control characters")
+			return profileValidation("profile name must not contain control characters")
 		}
 	}
 	return nil

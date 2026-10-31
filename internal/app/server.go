@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -90,20 +89,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	if !localHost(r.Host) {
-		replyError(w, 403, errors.New("this application only accepts localhost requests"))
+		replyError(w, 403, knownValidationFailure("this application only accepts localhost requests"))
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
-		replyError(w, 403, errors.New("cross-origin requests are not allowed"))
+		replyError(w, 403, knownValidationFailure("cross-origin requests are not allowed"))
 		return
 	}
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		replyError(w, 403, errors.New("cross-site requests are not allowed"))
+		replyError(w, 403, knownValidationFailure("cross-site requests are not allowed"))
 		return
 	}
 	if r.URL.Path == "/" && r.Method == "GET" && r.URL.Query().Has("token") {
 		if !equal(r.URL.Query().Get("token"), s.token) {
-			replyError(w, 401, errors.New("invalid startup link; use the URL printed by the application"))
+			replyError(w, 401, knownValidationFailure("invalid startup link; use the URL printed by the application"))
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "pingone_local", Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
@@ -112,7 +111,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie, err := r.Cookie("pingone_local")
 	if err != nil || !equal(cookie.Value, s.token) {
-		replyError(w, 401, errors.New("open the startup URL printed in your terminal to unlock this local app"))
+		replyError(w, 401, knownValidationFailure("open the startup URL printed in your terminal to unlock this local app"))
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -124,7 +123,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != "GET" && !equal(r.Header.Get("X-CSRF-Token"), s.csrf) {
-		replyError(w, 403, errors.New("invalid request token; reload the app"))
+		replyError(w, 403, knownValidationFailure("invalid request token; reload the app"))
 		return
 	}
 	// Inventory loads spend tens of seconds waiting on PingOne. Running them
@@ -246,6 +245,12 @@ func failureFields(failure *operation.Failure) map[string]any {
 	}
 }
 
+// knownValidationFailure is used only at boundaries whose message is authored
+// by this application or a validator that returns application-owned text.
+func knownValidationFailure(message string) *operation.Failure {
+	return operation.NewFailure("request_rejected", "validation", message, "correct_request", "", nil)
+}
+
 func localStorageReadFailure(message string) *operation.Failure {
 	return operation.NewFailure("local_storage_read_failed", "persistence", message, "repair_local_storage", "", nil)
 }
@@ -264,7 +269,15 @@ func responseFailure(w http.ResponseWriter, status int, err error) *operation.Fa
 		return &copy
 	}
 	if errors.Is(err, store.ErrCredentialStateInconsistent) {
-		return operation.NewFailure("credential_state_inconsistent", "persistence", err.Error(), "inspect_local_credential_state", correlationID, err)
+		return operation.NewFailure("credential_state_inconsistent", "persistence", "The profile metadata and OS credential state may be inconsistent. Inspect both before continuing.", "inspect_local_credential_state", correlationID, err)
+	}
+	var validationErr *store.ValidationError
+	if errors.As(err, &validationErr) {
+		return knownValidationFailure(validationErr.Error())
+	}
+	var gitlabValidationErr *gitlab.ValidationError
+	if errors.As(err, &gitlabValidationErr) {
+		return knownValidationFailure(gitlabValidationErr.Error())
 	}
 	var persistenceErr *store.PersistenceError
 	if errors.As(err, &persistenceErr) {
@@ -273,29 +286,29 @@ func responseFailure(w http.ResponseWriter, status int, err error) *operation.Fa
 	if status >= 500 {
 		return operation.NewFailure("request_failed", "request", "The request could not be completed. Check operation status before retrying.", "inspect_operation_status", correlationID, err)
 	}
-	return operation.NewFailure("request_rejected", "validation", err.Error(), "correct_request", correlationID, nil)
+	return operation.NewFailure("request_rejected", "request", "The request could not be completed. Review the supplied values and retry.", "review_request", correlationID, err)
 }
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.EqualFold(mediaType, "application/json") {
-		return errors.New("request must use application/json")
+		return knownValidationFailure("request must use application/json")
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
 	var raw json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
-		return fmt.Errorf("invalid request JSON: %w", err)
+		return knownValidationFailure("invalid request JSON; check the syntax and use supported fields")
 	}
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '{' {
-		return errors.New("request must contain one JSON object")
+		return knownValidationFailure("request must contain one JSON object")
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF {
-		return errors.New("request must contain one JSON object")
+		return knownValidationFailure("request must contain one JSON object")
 	}
 	strict := json.NewDecoder(bytes.NewReader(raw))
 	strict.DisallowUnknownFields()
 	if err := strict.Decode(out); err != nil {
-		return fmt.Errorf("invalid request JSON: %w", err)
+		return knownValidationFailure("invalid request JSON or unsupported field")
 	}
 	return nil
 }
@@ -383,7 +396,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		err = c.Do(r.Context(), "GET", pingone.EnvPath(source.EnvironmentID)+"/promotionMappings/"+target.EnvironmentID, "", nil, &native)
 		warnings := []string{}
 		if err != nil {
-			warnings = append(warnings, "Saved PingOne mappings could not be read. Review suggestions and the final native plan: "+err.Error())
+			warnings = append(warnings, "Saved PingOne mappings could not be read. Check the connection and permissions; review suggestions and the final native plan.")
 		}
 		mappings := suggestMappings(source.Inventory, target.Inventory, native.Mappings)
 		writeJSON(w, map[string]any{"mappings": mappings, "warnings": warnings})
@@ -393,7 +406,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	case strings.HasPrefix(path, "/api/plans/"):
 		parts := strings.Split(strings.TrimPrefix(path, "/api/plans/"), "/")
 		if parts[0] == "" {
-			return errors.New("plan ID required")
+			return knownValidationFailure("plan ID required")
 		}
 		ps, err := s.loadPlan(parts[0])
 		if err != nil {
@@ -414,19 +427,19 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 			return s.rollback(w, r, ps)
 		}
 	}
-	return problem(404, errors.New("unknown application endpoint"))
+	return problem(404, knownValidationFailure("unknown application endpoint"))
 }
 
 func (s *Server) loggingRoute(w http.ResponseWriter, r *http.Request) error {
 	if s.logger == nil {
-		return problem(http.StatusServiceUnavailable, errors.New("logging settings are unavailable in this server"))
+		return problem(http.StatusServiceUnavailable, knownValidationFailure("logging settings are unavailable in this server"))
 	}
 	if r.Method == http.MethodGet {
 		writeJSON(w, s.logger.Settings())
 		return nil
 	}
 	if r.Method != http.MethodPut {
-		return problem(http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		return problem(http.StatusMethodNotAllowed, knownValidationFailure("method not allowed"))
 	}
 	var input struct {
 		Level       string `json:"level"`
@@ -440,7 +453,7 @@ func (s *Server) loggingRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	settings := logging.RuntimeSettings{Level: input.Level, Debug: input.Debug, Format: input.Format, Destination: input.Destination, File: input.File}
 	if err := s.logger.Configure(settings); err != nil {
-		return problem(http.StatusBadRequest, err)
+		return problem(http.StatusBadRequest, knownValidationFailure(err.Error()))
 	}
 	writeJSON(w, s.logger.Settings())
 	return nil
@@ -455,7 +468,7 @@ func (s *Server) profile(id string) (pingone.Profile, error) {
 			return p, nil
 		}
 	}
-	return pingone.Profile{}, errors.New("environment profile not found; restore it or create a new promotion")
+	return pingone.Profile{}, knownValidationFailure("environment profile not found; restore it or create a new promotion")
 }
 func (s *Server) client(p pingone.Profile) (*pingone.Client, error) {
 	current, err := s.profile(p.ID)
@@ -463,14 +476,14 @@ func (s *Server) client(p pingone.Profile) (*pingone.Client, error) {
 		return nil, err
 	}
 	if current.EnvironmentID != p.EnvironmentID || current.Region != p.Region {
-		return nil, errors.New("profile environment identity changed; load resources and build a new plan")
+		return nil, knownValidationFailure("profile environment identity changed; load resources and build a new plan")
 	}
 	if c := s.clients[p.ID]; c != nil {
 		return c, nil
 	}
 	secret, err := s.store.Secret(current)
 	if err != nil {
-		return nil, err
+		return nil, problem(http.StatusBadRequest, operation.NewFailure("credential_unavailable", "preflight", "Could not access the PingOne credential. Check the profile credential source, unlock the OS credential vault, or set its configured environment variable. No PingOne write was sent; retry after correcting the profile.", "retry_pre_dispatch", "", err))
 	}
 	c, err := s.clientFactory(current, secret)
 	if err != nil {
@@ -511,7 +524,7 @@ func (s *Server) loadInventory(w http.ResponseWriter, r *http.Request) error {
 	s.mu.Lock()
 	if s.profileGen != gen {
 		s.mu.Unlock()
-		return problem(409, errors.New("environment profiles changed while resources were loading; load resources again"))
+		return problem(409, knownValidationFailure("environment profiles changed while resources were loading; load resources again"))
 	}
 	s.inventories[session.ID] = session
 	s.mu.Unlock()

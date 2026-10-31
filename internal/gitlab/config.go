@@ -18,11 +18,22 @@ type Config struct {
 	Environment string `json:"environment"`
 }
 
+// ValidationError marks configuration messages authored by this package and
+// safe to present. Filesystem errors remain untyped for private diagnostics.
+type ValidationError struct{ message string }
+
+func (e *ValidationError) Error() string { return e.message }
+
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var numericID = regexp.MustCompile(`^[0-9]+$`)
 var safeEnvironment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
 
-func (c Config) Validate() error {
+func (c Config) Validate() (validationErr error) {
+	defer func() {
+		if validationErr != nil {
+			validationErr = &ValidationError{message: validationErr.Error()}
+		}
+	}()
 	if strings.TrimSpace(c.BaseURL) == "" {
 		return errors.New("GitLab base URL is required")
 	}
@@ -77,11 +88,11 @@ func LoadConfig(dir string) (Config, error) {
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
-		return Config{}, errors.New("GitLab configuration is malformed")
+		return Config{}, &ValidationError{message: "GitLab configuration is malformed"}
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		return Config{}, errors.New("GitLab configuration is malformed")
+		return Config{}, &ValidationError{message: "GitLab configuration is malformed"}
 	}
 	if err = c.Validate(); err != nil {
 		return Config{}, err
