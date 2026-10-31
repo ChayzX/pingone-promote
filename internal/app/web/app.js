@@ -79,6 +79,23 @@
     return data;
   }
 
+  function supportReference(failure) {
+    const id = failure?.correlationId;
+    return typeof id === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(id) ? ` Support reference: ${id}.` : '';
+  }
+
+  function uncertainMutationMessage(failure, mode) {
+    const reference = supportReference(failure);
+    if (mode === 'gitlab-submit') return `GitLab may have received the request. Do not submit it again. Check GitLab for the branch and merge request before retrying.${reference}`;
+    const recovery = failure?.recoveryAction;
+    const guidance = recovery === 'reconcile_native_status'
+      ? 'Refresh promotion history and review the matching operation before taking another action.'
+      : recovery === 'refresh_native_status'
+        ? 'Refresh the current operation status and review promotion history before taking another action.'
+        : 'Refresh promotion history and review the operation status before taking another action.';
+    return `PingOne may have received the request. Do not submit it again. ${guidance}${reference}`;
+  }
+
   function clearTimer() {
     if (state.pollTimer) window.clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -802,7 +819,7 @@
     $('#deploy-button').disabled = !ready;
     $('#deploy-button').textContent = complete ? (state.planMode === 'rollback' ? 'Rollback complete' : 'Promotion complete') : state.planMode === 'rollback' ? 'Execute rollback' : 'Deploy';
     $('#deploy-state-label').textContent = complete ? (status === 'ROLLED_BACK' ? 'Promotion rolled back' : state.planMode === 'rollback' ? 'Rollback completed' : 'Promotion completed') : ready ? 'Review is ready' : 'Deployment is blocked';
-    $('#deploy-reason').textContent = complete ? 'This operation has finished. Check promotion history for its final status.' : ready ? 'The current review is ready for explicit confirmation.' : errors.length ? 'Resolve the listed issues, then build a new review.' : `PingOne plan status is ${status.replaceAll('_', ' ')}. Refresh or resolve the status before deployment.`;
+    $('#deploy-reason').textContent = complete ? 'PingOne reports that the native operation completed. Resource effects have not been independently verified; reconcile the destination before treating the changes as confirmed.' : ready ? 'The current review is ready for explicit confirmation.' : errors.length ? 'Resolve the listed issues, then build a new review.' : `PingOne plan status is ${status.replaceAll('_', ' ')}. Refresh or resolve the status before deployment.`;
     schedulePoll(plan, generation);
   }
 
@@ -1055,7 +1072,16 @@
     $('#plan-content').hidden = true; $('#deploy-bar').hidden = true;
     try {
       const plan = await request(gitlabRequired ? '/api/requests/preview' : '/api/plans', { method: 'POST', body });
-      if (generation !== state.planGeneration || String(state.sourceInventory?.id) !== sourceInventoryID || String(state.targetInventory?.id) !== targetInventoryID || String(selectedProfile('source')?.id) !== String(source?.id) || String(selectedProfile('target')?.id) !== String(target?.id)) return;
+      if (generation !== state.planGeneration || String(state.sourceInventory?.id) !== sourceInventoryID || String(state.targetInventory?.id) !== targetInventoryID || String(selectedProfile('source')?.id) !== String(source?.id) || String(selectedProfile('target')?.id) !== String(target?.id)) {
+        if (!gitlabRequired) {
+          const message = 'A PingOne draft for earlier selections may have been created. Refresh promotion history and review it before continuing.';
+          if (!state.plan && $('#plan-state h3')?.textContent === 'Review needs to be rebuilt') {
+            setStateBox($('#plan-state'), { title: 'Earlier draft may exist', message, kind: 'error', icon: '!' });
+          } else showToast(message, true);
+          await refreshHistory(false);
+        }
+        return;
+      }
       state.planMode = 'promotion';
       state.planSource = source;
       state.planTarget = target;
@@ -1198,7 +1224,10 @@
       if (failure.safeToRetry === true) {
         state.confirmAttempts.delete(key);
         if (key === state.confirmKey && deployDialog.open) {
-          $('#deploy-error').textContent = failure.message;
+          const retryMessage = failure.recoveryAction === 'retry_pre_dispatch'
+            ? `${mode === 'gitlab-submit' ? 'No GitLab write was sent. You can explicitly retry this submission.' : 'No PingOne mutation was sent. You can explicitly retry this request.'}${supportReference(failure)}`
+            : `${failure.message}${supportReference(failure)}`;
+          $('#deploy-error').textContent = retryMessage;
           $('#deploy-error').hidden = false;
           button.textContent = mode === 'gitlab-submit' ? 'Retry submission' : 'Retry request';
           button.disabled = !$('#deploy-confirm-check').checked || state.confirmGeneration !== state.planGeneration;
@@ -1206,7 +1235,9 @@
         return;
       }
       const notStarted = !requestStarted || failure.mutationNotStarted;
-      const message = notStarted ? failure.message : mode === 'gitlab-submit' ? `${failure.message} Check GitLab for the request before submitting again.` : `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
+      const message = notStarted
+        ? `${failure.message}${supportReference(failure)}`
+        : uncertainMutationMessage(failure, mode);
       recordConfirmationAttempt(key, message, notStarted ? 'Review required' : undefined);
       if (!notStarted && mode !== 'gitlab-submit' && mode !== 'rollback-draft' && generation === state.planGeneration) {
         $('#deploy-button').disabled = true;

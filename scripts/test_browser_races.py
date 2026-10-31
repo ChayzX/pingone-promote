@@ -10,6 +10,7 @@ import argparse,ipaddress,urllib.parse
 parser=argparse.ArgumentParser(description='Check local fixture UI stale-response and mapping regressions.')
 parser.add_argument('--fixture-file',required=True)
 parser.add_argument('--chromium',default='/usr/bin/chromium')
+parser.add_argument('--case',action='append',help='Run only the named case label (repeatable).')
 args=parser.parse_args()
 FIXTURE=Path(args.fixture_file)
 
@@ -29,29 +30,63 @@ async def loaded_page(browser, fixture):
 
 async def test_plan_response_is_discarded(browser, fixture):
     page = await loaded_page(browser, fixture)
-    entered, release, fulfilled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    entered, release = asyncio.Event(), asyncio.Event()
+    old_history_entered, release_old_history, new_history_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    plan_posts, history_reads = 0, 0
+    history_snapshots = []
+    description = 'Stale draft history race'
     async def hold_plan(route):
+        nonlocal plan_posts
+        plan_posts += 1
         response = await route.fetch()
         entered.set()
         await release.wait()
         await route.fulfill(response=response)
-        fulfilled.set()
-    await page.route('**/api/plans', hold_plan)
-    await page.locator('#resource-rows .resource-check').nth(0).check()
-    await page.locator('#build-plan').click()
-    await asyncio.wait_for(entered.wait(), timeout=8000)
-    # A different selection invalidates the plan while its request is in flight.
-    await page.locator('#resource-rows .resource-check').nth(1).check()
-    pending_disabled = await page.locator('#build-plan').is_disabled()
-    release.set()
-    await asyncio.wait_for(fulfilled.wait(), timeout=8000)
-    await page.wait_for_load_state('networkidle')
-    deploy = page.locator('#deploy-button')
-    assert await page.locator('#plan-content').is_hidden(), 'stale plan response replaced the invalidated review state'
-    assert await deploy.is_disabled(), 'stale plan response re-enabled Deploy after the selection changed'
-    assert pending_disabled, 'changed selection allowed a second draft while its first request was pending'
-    await expect(page.locator('#build-plan')).to_be_enabled()
-    await page.close()
+    async def hold_old_history(route):
+        nonlocal history_reads
+        history_reads += 1
+        response = await route.fetch()
+        history_snapshots.append(await response.json())
+        if history_reads == 1:
+            old_history_entered.set()
+            await release_old_history.wait()
+        else:
+            new_history_entered.set()
+        await route.fulfill(response=response)
+    try:
+        await page.route('**/api/plans', hold_plan)
+        await page.route('**/api/history', hold_old_history)
+        await page.locator('#refresh-history').click()
+        await asyncio.wait_for(old_history_entered.wait(), timeout=8000)
+        await page.locator('#plan-description').fill(description)
+        await page.locator('#resource-rows .resource-check').nth(0).check()
+        await page.locator('#build-plan').click()
+        await asyncio.wait_for(entered.wait(), timeout=8000)
+        # A different selection invalidates the plan while its request is in flight.
+        await page.locator('#resource-rows .resource-check').nth(1).check()
+        pending_disabled = await page.locator('#build-plan').is_disabled()
+        release.set()
+        old_records = history_snapshots[0] if isinstance(history_snapshots[0], list) else history_snapshots[0].get('records', [])
+        assert not any(record.get('description') == description for record in old_records), 'held history response must predate the stale draft'
+        release_old_history.set()
+        await asyncio.wait_for(new_history_entered.wait(), timeout=8000)
+        await page.wait_for_load_state('networkidle')
+        new_records = history_snapshots[-1] if isinstance(history_snapshots[-1], list) else history_snapshots[-1].get('records', [])
+        assert any(record.get('description') == description for record in new_records), 'follow-up history read did not include the stale draft'
+        assert history_reads == 2, f'expected one queued read after the stale history snapshot, got {history_reads}'
+        await expect(page.locator('#plan-state')).to_contain_text('earlier selection')
+        await expect(page.locator('#plan-state')).to_contain_text('history')
+        deploy = page.locator('#deploy-button')
+        assert await page.locator('#plan-content').is_hidden(), 'stale plan response replaced the invalidated review state'
+        assert await deploy.is_disabled(), 'stale plan response re-enabled Deploy after the selection changed'
+        assert pending_disabled, 'changed selection allowed a second draft while its first request was pending'
+        assert plan_posts == 1, 'stale draft recovery sent another plan request'
+        await expect(page.locator('#history-rows')).to_contain_text(description)
+        await expect(page.locator('#build-plan')).to_be_enabled()
+    finally:
+        release.set()
+        release_old_history.set()
+        await page.close()
 
 async def test_inventory_response_is_discarded(browser, fixture):
     page = await start_page(browser, fixture)
@@ -288,7 +323,11 @@ async def test_uncertain_deploy_cannot_be_reenabled(browser, fixture):
         attempts.append(route.request.url)
         entered.set()
         await release.wait()
-        await route.fulfill(status=502, json={'error': 'fixture response lost'})
+        await route.fulfill(status=502, json={
+            'message': 'NATIVE_RAW_PAYLOAD_SECRET_SENTINEL',
+            'recoveryAction': 'reconcile_native_status',
+            'correlationId': 'fixture-corr-uncertain-123',
+        })
     await page.route('**/api/plans/*/deploy', lose_response)
     check = page.locator('#deploy-confirm-check')
     await check.check()
@@ -299,7 +338,10 @@ async def test_uncertain_deploy_cannot_be_reenabled(browser, fixture):
     await check.check()
     pending_disabled = await page.locator('#confirm-deploy').is_disabled()
     release.set()
-    await expect(page.locator('#deploy-error')).to_contain_text('PingOne may have received it')
+    await expect(page.locator('#deploy-error')).to_contain_text('PingOne may have received the request')
+    await expect(page.locator('#deploy-error')).to_contain_text('promotion history')
+    await expect(page.locator('#deploy-error')).to_contain_text('fixture-corr-uncertain-123')
+    await expect(page.locator('#deploy-error')).not_to_contain_text('NATIVE_RAW_PAYLOAD_SECRET_SENTINEL')
     await check.uncheck()
     await check.check()
     await expect(page.locator('#confirm-deploy')).to_be_disabled()
@@ -309,7 +351,144 @@ async def test_uncertain_deploy_cannot_be_reenabled(browser, fixture):
     await page.locator('#deploy-button').click()
     await check.check()
     await expect(page.locator('#confirm-deploy')).to_be_disabled()
-    await expect(page.locator('#deploy-error')).to_contain_text('PingOne may have received it')
+    await expect(page.locator('#deploy-error')).to_contain_text('PingOne may have received the request')
+    await page.close()
+
+async def test_refresh_native_status_guidance_is_read_only(browser, fixture):
+    page = await loaded_page(browser, fixture)
+    await page.locator('#resource-rows .resource-check').nth(0).check()
+    await page.locator('#build-plan').click()
+    await expect(page.locator('#deploy-button')).to_be_enabled()
+    await page.locator('#deploy-button').click()
+    attempts = []
+    async def fail_status_refresh(route):
+        await route.fulfill(status=502, json={'message': 'status read failed'})
+    await page.route('**/api/plans/*', lambda route: fail_status_refresh(route) if route.request.method == 'GET' else route.continue_())
+    async def fail_after_dispatch(route):
+        attempts.append(route.request.url)
+        await route.fulfill(status=502, json={
+            'message': 'NATIVE_STATUS_PAYLOAD_SENTINEL',
+            'recoveryAction': 'refresh_native_status',
+            'correlationId': 'fixture-corr-status-456',
+        })
+    await page.route('**/api/plans/*/deploy', fail_after_dispatch)
+    await page.locator('#deploy-confirm-check').check()
+    await page.locator('#confirm-deploy').click()
+    await expect(page.locator('#deploy-error')).to_contain_text('Refresh the current operation status')
+    await expect(page.locator('#deploy-error')).not_to_contain_text('status was refreshed')
+    await expect(page.locator('#deploy-error')).to_contain_text('fixture-corr-status-456')
+    await expect(page.locator('#deploy-error')).not_to_contain_text('NATIVE_STATUS_PAYLOAD_SENTINEL')
+    await page.locator('#deploy-confirm-check').uncheck()
+    await page.locator('#deploy-confirm-check').check()
+    await expect(page.locator('#confirm-deploy')).to_be_disabled()
+    assert len(attempts) == 1, 'status refresh guidance allowed a second execution POST'
+    await page.close()
+
+async def test_gitlab_retry_guidance_names_the_write_boundary(browser, fixture):
+    page = await browser.new_page()
+    async def production_session(route):
+        response = await route.fetch()
+        data = await response.json()
+        data['localTargets'] = []
+        await route.fulfill(response=response, json=data)
+    await page.route('**/api/session', production_session)
+    await page.route('**/api/gitlab', lambda route: route.fulfill(json={
+        'config': {'baseUrl': 'https://gitlab.example.test', 'projectId': '42'},
+        'configured': True,
+        'tokenAvailable': True,
+    }))
+    await page.goto(fixture['url'])
+    await page.locator('#source-profile option').nth(1).wait_for(state='attached')
+    await page.locator('#source-profile').select_option(fixture['source'])
+    await page.locator('#target-profile').select_option(fixture['target'])
+    await page.locator('#load-resources').click()
+    await page.locator('#resource-rows tr').nth(2).wait_for(state='attached')
+    async def preview(route):
+        body = route.request.post_data_json
+        await route.fulfill(json={
+            'gitlabRequired': True,
+            'issues': [],
+            'request': {
+                'version': 1,
+                'id': '0123456789abcdef0123456789abcdef',
+                'createdAt': '2026-10-27T00:00:00Z',
+                'source': {'id': 'src-env', 'region': 'us', 'organizationId': 'org-s', 'snapshotId': 'snap-src'},
+                'target': {'id': 'prod-env', 'region': 'us', 'organizationId': 'org-p', 'snapshotId': 'snap-prod'},
+                'selected': body['selected'],
+                'mappings': body['mappings'],
+                'configurations': {},
+                'fingerprints': {},
+            },
+        })
+    await page.route('**/api/requests/preview', preview)
+    submit_calls = []
+    async def fail_before_gitlab_write(route):
+        submit_calls.append(route.request.url)
+        await route.fulfill(status=502, json={
+            'message': 'GITLAB_RAW_PAYLOAD_SENTINEL',
+            'recoveryAction': 'retry_pre_dispatch',
+            'correlationId': 'fixture-corr-gitlab-321',
+        })
+    await page.route('**/api/gitlab/submit', fail_before_gitlab_write)
+    await page.locator('#resource-rows .resource-check').nth(0).check()
+    await page.locator('#build-plan').click()
+    await page.get_by_role('button', name='Submit to GitLab').wait_for()
+    await page.get_by_role('button', name='Submit to GitLab').click()
+    await page.locator('#deploy-confirm-check').check()
+    await page.locator('#confirm-deploy').click()
+    await expect(page.locator('#deploy-error')).to_contain_text('No GitLab write was sent')
+    await expect(page.locator('#deploy-error')).to_contain_text('fixture-corr-gitlab-321')
+    await expect(page.locator('#deploy-error')).not_to_contain_text('GITLAB_RAW_PAYLOAD_SENTINEL')
+    await expect(page.locator('#confirm-deploy')).to_be_enabled()
+    assert len(submit_calls) == 1, 'pre-dispatch GitLab recovery automatically retried submission'
+    await page.close()
+
+async def test_native_completion_does_not_claim_verified_effects(browser, fixture):
+    page = await loaded_page(browser, fixture)
+    async def completed_plan(route):
+        await route.fulfill(json={
+            'id': 'fixture-completed-plan',
+            'status': 'COMPLETED',
+            'canDeploy': False,
+            'review': {
+                'digest': 'sha256:fixture',
+                'steps': [],
+                'summary': {'create': 0, 'change': 0, 'destroy': 0, 'unsupported': 0},
+            },
+            'errors': [],
+        })
+    await page.route('**/api/plans', completed_plan)
+    await page.locator('#resource-rows .resource-check').nth(0).check()
+    await page.locator('#build-plan').click()
+    await expect(page.locator('#deploy-state-label')).to_contain_text('completed')
+    await expect(page.locator('#deploy-reason')).to_contain_text('not been independently verified')
+    await page.close()
+
+async def test_unknown_recovery_action_fails_closed(browser, fixture):
+    page = await loaded_page(browser, fixture)
+    await page.locator('#resource-rows .resource-check').nth(0).check()
+    await page.locator('#build-plan').click()
+    await expect(page.locator('#deploy-button')).to_be_enabled()
+    await page.locator('#deploy-button').click()
+    attempts = []
+    async def fail_with_unknown_action(route):
+        attempts.append(route.request.url)
+        await route.fulfill(status=502, json={
+            'message': 'UNKNOWN_ACTION_RAW_PAYLOAD_SENTINEL',
+            'recoveryAction': 'future_vendor_action',
+            'correlationId': 'fixture-corr-unknown-789',
+        })
+    await page.route('**/api/plans/*/deploy', fail_with_unknown_action)
+    await page.locator('#deploy-confirm-check').check()
+    await page.locator('#confirm-deploy').click()
+    await expect(page.locator('#deploy-error')).to_contain_text('Do not submit it again')
+    await expect(page.locator('#deploy-error')).to_contain_text('promotion history')
+    await expect(page.locator('#deploy-error')).to_contain_text('fixture-corr-unknown-789')
+    await expect(page.locator('#deploy-error')).not_to_contain_text('UNKNOWN_ACTION_RAW_PAYLOAD_SENTINEL')
+    await page.locator('#deploy-confirm-check').uncheck()
+    await page.locator('#deploy-confirm-check').check()
+    await expect(page.locator('#confirm-deploy')).to_be_disabled()
+    assert len(attempts) == 1, 'unknown recovery action allowed a second execution POST'
     await page.close()
 
 async def test_invalid_response_is_not_an_empty_inventory(browser, fixture):
@@ -394,7 +573,7 @@ async def main():
     outcomes = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, executable_path=args.chromium, args=['--no-sandbox'])
-        for name, test in [
+        tests = [
             ('plan response generation', test_plan_response_is_discarded),
             ('inventory response generation', test_inventory_response_is_discarded),
             ('automatic mapping request body', test_automatic_mapping_override_is_sent),
@@ -408,10 +587,17 @@ async def main():
             ('edited profile role preservation', test_editing_target_profile_preserves_environment_roles),
             ('profile error edit-session isolation', test_profile_failure_does_not_escape_edit_session),
             ('uncertain deploy remains locked', test_uncertain_deploy_cannot_be_reenabled),
+            ('native status recovery guidance', test_refresh_native_status_guidance_is_read_only),
+            ('GitLab retry names write boundary', test_gitlab_retry_guidance_names_the_write_boundary),
+            ('native completion verification boundary', test_native_completion_does_not_claim_verified_effects),
+            ('unknown recovery action fails closed', test_unknown_recovery_action_fails_closed),
             ('invalid API response errors', test_invalid_response_is_not_an_empty_inventory),
             ('native preflight permits explicit retry', test_native_preflight_failure_allows_explicit_retry),
             ('stale draft errors retain reconciliation', test_stale_draft_error_keeps_reconciliation_guidance),
-        ]:
+        ]
+        for name, test in tests:
+            if args.case and name not in args.case:
+                continue
             try:
                 await test(browser, fixture)
                 outcomes.append((name, 'PASS'))
