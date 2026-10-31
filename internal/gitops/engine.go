@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
 )
@@ -202,11 +203,7 @@ func (e *Engine) Plan(ctx context.Context, r Request, origin Origin) (Artifact, 
 	return e.refresh(ctx, a, false)
 }
 func pending(status string) bool {
-	switch status {
-	case "NEW", "PREPARING", "ADDITIONAL_SNAPSHOTS_REQUESTED", "ROLLBACK_NEW", "ROLLBACK_PREPARING":
-		return true
-	}
-	return false
+	return operation.Classify(status) == operation.Preparing
 }
 func (e *Engine) wait(ctx context.Context, env, id string) (pingone.Promotion, error) {
 	var last pingone.Promotion
@@ -272,7 +269,7 @@ func (e *Engine) refresh(ctx context.Context, a Artifact, existing bool) (Artifa
 	for _, issue := range nativeIssues(a, p) {
 		a.Review.Issues = append(a.Review.Issues, issue)
 	}
-	if p.Status != "READY" {
+	if operation.Classify(p.Status) != operation.Ready {
 		a.Review.Issues = append(a.Review.Issues, "native promotion is not READY; inspect status before any execution")
 	}
 	// Bind full unredacted native step digest to all execution identities. Only the
@@ -416,7 +413,7 @@ func (e *Engine) RollbackPlan(ctx context.Context, original Artifact, origin Ori
 	if err != nil {
 		return a, err
 	}
-	if p.Status != "COMPLETED" && p.Status != "ERROR" {
+	if operation.Classify(p.Status) != operation.Completed && operation.Classify(p.Status) != operation.Failed {
 		return a, errors.New("only a completed or failed promotion can produce a rollback plan")
 	}
 	attempt := newDraftAttempt(original.Request, origin, "rollback", original.NativeID, original.TargetSnapshotID)
@@ -468,8 +465,8 @@ func (e *Engine) Status(ctx context.Context, a Artifact) (pingone.Promotion, err
 	// After execution, PingOne reports resolved resource mappings rather than
 	// the reviewed draft mapping. Pre-execution review remains strict.
 	checkMapping := true
-	switch strings.ToUpper(p.Status) {
-	case "IN_PROGRESS", "COMPLETED", "ERROR", "ROLLBACK_IN_PROGRESS", "ROLLED_BACK":
+	switch operation.Classify(p.Status) {
+	case operation.Running, operation.Completed, operation.Failed, operation.RolledBack:
 		checkMapping = false
 	}
 	if issues := nativeIssuesWithMapping(a, identity, checkMapping); len(issues) > 0 {

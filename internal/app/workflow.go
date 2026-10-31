@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
 	"pingone-promote/internal/store"
@@ -215,7 +216,7 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	}
 	// Reconcile the original record after a completed native rollback so history
 	// cannot continue to offer another rollback of the restored promotion.
-	if rec.Kind == "rollback" && native.Status == "COMPLETED" && rec.ParentID != "" {
+	if rec.Kind == "rollback" && operation.Classify(native.Status) == operation.Completed && rec.ParentID != "" {
 		original, readErr := s.store.GetRecord(rec.ParentID)
 		if readErr == nil {
 			state, stateErr := c.GetPromotion(r.Context(), original.Source.EnvironmentID, original.NativeID)
@@ -231,7 +232,7 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 			}
 		}
 	}
-	pending := native.Status == "NEW" || native.Status == "PREPARING" || native.Status == "ADDITIONAL_SNAPSHOTS_REQUESTED" || native.Status == "ROLLBACK_NEW" || native.Status == "ROLLBACK_PREPARING"
+	pending := operation.Classify(native.Status) == operation.Preparing
 	if pending {
 		v.Review.Issues = append(v.Review.Issues, "PingOne is preparing the plan. Refresh to load the complete operation preview.")
 		return v, nil
@@ -277,14 +278,14 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if native.SourceSnapshot.ID != "" && rec.Kind != "rollback" && native.SourceSnapshot.ID != rec.SourceSnapshotID {
 		v.Review.Issues = append(v.Review.Issues, "Native source snapshot differs from the pinned inventory.")
 	}
-	if rec.Intent != "" && native.Status == "READY" {
+	if rec.Intent != "" && operation.Classify(native.Status) == operation.Ready {
 		v.Review.Issues = append(v.Review.Issues, "An execution or rollback request was already sent or its outcome is uncertain. Refresh status; this app will not automatically resend it.")
 	}
 	if !s.localAllowed(rec.Target) {
 		v.GitLabRequired = true
 		v.Review.Issues = append(v.Review.Issues, gitlabOnlyMessage)
 	}
-	v.CanDeploy = native.Status == "READY" && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
+	v.CanDeploy = operation.Classify(native.Status) == operation.Ready && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
 	return v, nil
 }
 
@@ -382,7 +383,7 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 		}
 		return nil
 	}
-	if ps.Record.Kind == "rollback" || (view.Status != "COMPLETED" && view.Status != "ERROR") || strings.HasPrefix(ps.Record.Intent, "rollback") {
+	if ps.Record.Kind == "rollback" || (operation.Classify(view.Status) != operation.Completed && operation.Classify(view.Status) != operation.Failed) || strings.HasPrefix(ps.Record.Intent, "rollback") {
 		replyNativeNoWrite(w, http.StatusConflict, "only a completed or failed forward promotion can request rollback; PingOne enforces latest-promotion eligibility", false)
 		return nil
 	}
@@ -484,8 +485,8 @@ func promotionExecuted(rec *store.Record, status string) bool {
 	// executed outside this app). Pre-execution statuses (NEW, PREPARING,
 	// ADDITIONAL_SNAPSHOTS_REQUESTED, READY, VALIDATION_FAILED, ROLLBACK_NEW,
 	// ROLLBACK_PREPARING) are deliberately absent.
-	switch strings.ToUpper(status) {
-	case "IN_PROGRESS", "COMPLETED", "ERROR", "ROLLBACK_IN_PROGRESS", "ROLLED_BACK":
+	switch operation.Classify(status) {
+	case operation.Running, operation.Completed, operation.Failed, operation.RolledBack:
 		return true
 	}
 	return false

@@ -22,6 +22,7 @@ import (
 	"pingone-promote/internal/cigate"
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/logging"
+	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
 	"pingone-promote/internal/strictjson"
@@ -377,7 +378,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if pollErr != nil {
 			return fmt.Errorf("execution status is uncertain; intent retained at %s; reconcile native status before any retry: %s", marker, safeError(pollErr, deps.getenv))
 		}
-		if result.Status == "ERROR" {
+		if operation.Classify(result.Status) == operation.Failed {
 			detail := strings.Join(res.Errors, "; ")
 			if detail != "" {
 				detail = ": " + detail
@@ -514,7 +515,7 @@ type resultOutput struct {
 }
 
 func waitForTerminal(ctx context.Context, status func(context.Context) (pingone.Promotion, error), current pingone.Promotion, timeout, interval time.Duration) (pingone.Promotion, error) {
-	if current.Status == "COMPLETED" || current.Status == "ERROR" {
+	if operation.Classify(current.Status) == operation.Completed || operation.Classify(current.Status) == operation.Failed {
 		return current, nil
 	}
 	if timeout <= 0 {
@@ -537,7 +538,7 @@ func waitForTerminal(ctx context.Context, status func(context.Context) (pingone.
 				return current, fmt.Errorf("could not confirm native execution status: %w", err)
 			}
 			current = p
-			if current.Status == "COMPLETED" || current.Status == "ERROR" {
+			if operation.Classify(current.Status) == operation.Completed || operation.Classify(current.Status) == operation.Failed {
 				return current, nil
 			}
 		}
