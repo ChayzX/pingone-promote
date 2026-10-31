@@ -7,7 +7,7 @@
 const fs = require('fs');
 const assert = require('assert');
 let chromium;
-try { ({ chromium } = require('playwright')); } catch (e) { console.log('picker ui: playwright not installed, skipped'); process.exit(0); }
+try { ({ chromium } = require(process.env.PINGONE_TEST_PLAYWRIGHT_MODULE || 'playwright')); } catch (e) { console.log('picker ui: playwright not installed, skipped'); process.exit(0); }
 const core = require('./load_core');
 
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -32,7 +32,7 @@ const html = p.customHTML.value.replace(/\{\{([^}]+)\}\}/g, (m, ref) => { const 
 let n = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); n++; };
 (async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ executablePath: process.env.PINGONE_TEST_CHROMIUM || undefined });
   const page = await browser.newPage({ viewport: { width: 1360, height: 1000 } });
   await page.setContent('<!doctype html><html><head><style>' + p.customCSS.value + '</style></head><body style="margin:0">' + html + '</body></html>');
   // DaVinci may run a script more than once; the picker must build only one table.
