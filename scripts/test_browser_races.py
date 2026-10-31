@@ -2,6 +2,7 @@
 Run against the local test fixture whose URL is stored in browser-fixture.json.
 """
 import asyncio
+import uuid
 import json
 from pathlib import Path
 from playwright.async_api import async_playwright, expect
@@ -34,7 +35,7 @@ async def test_plan_response_is_discarded(browser, fixture):
     old_history_entered, release_old_history, new_history_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
     plan_posts, history_reads = 0, 0
     history_snapshots = []
-    description = 'Stale draft history race'
+    description = 'Stale draft history race ' + uuid.uuid4().hex[:8]
     async def hold_plan(route):
         nonlocal plan_posts
         plan_posts += 1
@@ -57,19 +58,23 @@ async def test_plan_response_is_discarded(browser, fixture):
         await page.route('**/api/plans', hold_plan)
         await page.route('**/api/history', hold_old_history)
         await page.locator('#refresh-history').click()
-        await asyncio.wait_for(old_history_entered.wait(), timeout=8000)
+        await asyncio.wait_for(old_history_entered.wait(), timeout=8)
         await page.locator('#plan-description').fill(description)
         await page.locator('#resource-rows .resource-check').nth(0).check()
         await page.locator('#build-plan').click()
-        await asyncio.wait_for(entered.wait(), timeout=8000)
+        await asyncio.wait_for(entered.wait(), timeout=8)
         # A different selection invalidates the plan while its request is in flight.
         await page.locator('#resource-rows .resource-check').nth(1).check()
         pending_disabled = await page.locator('#build-plan').is_disabled()
         release.set()
+        await expect(page.locator('#plan-state')).to_contain_text('earlier selection')
         old_records = history_snapshots[0] if isinstance(history_snapshots[0], list) else history_snapshots[0].get('records', [])
         assert not any(record.get('description') == description for record in old_records), 'held history response must predate the stale draft'
         release_old_history.set()
-        await asyncio.wait_for(new_history_entered.wait(), timeout=8000)
+        try:
+            await asyncio.wait_for(new_history_entered.wait(), timeout=8)
+        except asyncio.TimeoutError as error:
+            raise AssertionError('No fresh history read followed the stale draft while the prior history read was busy') from error
         await page.wait_for_load_state('networkidle')
         new_records = history_snapshots[-1] if isinstance(history_snapshots[-1], list) else history_snapshots[-1].get('records', [])
         assert any(record.get('description') == description for record in new_records), 'follow-up history read did not include the stale draft'

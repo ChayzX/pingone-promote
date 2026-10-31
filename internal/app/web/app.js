@@ -7,7 +7,7 @@
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
     sourceByID: new Map(), targetByType: new Map(), searchTimer: null,
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
-    confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, profileEditSecretMode: '', planSource: null, planTarget: null, historyBusy: false,
+    confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, profileEditSecretMode: '', planSource: null, planTarget: null, historyBusy: false, historyRefreshQueued: false,
     inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], credentialStorage: null, gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null,
     loggingSettings: null, loggingSettingsGeneration: 0, loggingSettingsBusy: false
   };
@@ -1321,7 +1321,10 @@
   }
 
   async function refreshHistory(showMessage = true) {
-    if (state.historyBusy) return;
+    if (state.historyBusy) {
+      state.historyRefreshQueued = true;
+      return;
+    }
     state.historyBusy = true;
     const button = $('#refresh-history');
     button.disabled = true;
@@ -1334,6 +1337,10 @@
       setStateBox($('#history-state'), { title: 'Could not load history', message: failure.message, kind: 'error', icon: '!' });
     } finally {
       state.historyBusy = false; button.disabled = false;
+      if (state.historyRefreshQueued) {
+        state.historyRefreshQueued = false;
+        await refreshHistory(false);
+      }
     }
   }
 
