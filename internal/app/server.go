@@ -23,6 +23,7 @@ import (
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/logging"
+	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
 )
@@ -174,7 +175,7 @@ func replyRouteError(w http.ResponseWriter, err error) {
 	} else {
 		var persistenceErr *store.PersistenceError
 		if errors.As(err, &persistenceErr) {
-			replyError(w, http.StatusInternalServerError, errors.New("Could not access local app storage; check storage permissions and available disk space, then restart the app."))
+			replyError(w, http.StatusInternalServerError, err)
 		} else {
 			replyError(w, http.StatusBadRequest, err)
 		}
@@ -185,6 +186,8 @@ type statusError struct {
 	status int
 	err    error
 }
+
+func (e *statusError) Unwrap() error { return e.err }
 
 type profileCredentialStorageCapability struct {
 	Mode         string `json:"mode"`
@@ -223,9 +226,54 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 func replyError(w http.ResponseWriter, status int, err error) {
+	failure := responseFailure(w, status, err)
+	if w.Header().Get("X-Request-ID") == "" {
+		w.Header().Set("X-Request-ID", failure.CorrelationID)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	json.NewEncoder(w).Encode(failureFields(failure))
+}
+
+func failureFields(failure *operation.Failure) map[string]any {
+	return map[string]any{
+		"error":          failure.Message,
+		"code":           failure.Code,
+		"phase":          failure.Phase,
+		"message":        failure.Message,
+		"recoveryAction": failure.RecoveryAction,
+		"correlationId":  failure.CorrelationID,
+	}
+}
+
+func localStorageReadFailure(message string) *operation.Failure {
+	return operation.NewFailure("local_storage_read_failed", "persistence", message, "repair_local_storage", "", nil)
+}
+
+func responseFailure(w http.ResponseWriter, status int, err error) *operation.Failure {
+	correlationID := w.Header().Get("X-Request-ID")
+	var existing *operation.Failure
+	if errors.As(err, &existing) {
+		copy := *existing
+		if copy.CorrelationID == "" {
+			copy.CorrelationID = correlationID
+			if copy.CorrelationID == "" {
+				copy.CorrelationID = operation.NewCorrelationID()
+			}
+		}
+		return &copy
+	}
+	if errors.Is(err, store.ErrCredentialStateInconsistent) {
+		return operation.NewFailure("credential_state_inconsistent", "persistence", err.Error(), "inspect_local_credential_state", correlationID, err)
+	}
+	var persistenceErr *store.PersistenceError
+	if errors.As(err, &persistenceErr) {
+		return operation.NewFailure("local_storage_failure", "persistence", "Could not access local app storage. Check storage permissions and available disk space, then restart the app.", "repair_local_storage", correlationID, err)
+	}
+	if status >= 500 {
+		return operation.NewFailure("request_failed", "request", "The request could not be completed. Check operation status before retrying.", "inspect_operation_status", correlationID, err)
+	}
+	return operation.NewFailure("request_rejected", "validation", err.Error(), "correct_request", correlationID, nil)
 }
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -266,7 +314,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	case path == "/api/profiles" && r.Method == "GET":
 		p, err := s.store.ListProfiles()
 		if err != nil {
-			return problem(http.StatusInternalServerError, errors.New("Could not read saved profiles; check local app storage and restart the app."))
+			return problem(http.StatusInternalServerError, localStorageReadFailure("Could not read saved profiles; check local app storage and restart the app."))
 		}
 		writeJSON(w, p)
 		return nil
@@ -297,7 +345,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	case path == "/api/history" && r.Method == "GET":
 		records, err := s.store.ListRecords()
 		if err != nil {
-			return problem(http.StatusInternalServerError, errors.New("Could not read saved history; check local app storage and restart the app."))
+			return problem(http.StatusInternalServerError, localStorageReadFailure("Could not read saved history; check local app storage and restart the app."))
 		}
 		// The store appends in creation order; show the newest operation first so
 		// the latest promotion (the only one PingOne can roll back) is on top.
@@ -400,7 +448,7 @@ func (s *Server) loggingRoute(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) profile(id string) (pingone.Profile, error) {
 	profiles, err := s.store.ListProfiles()
 	if err != nil {
-		return pingone.Profile{}, problem(http.StatusInternalServerError, errors.New("Could not read saved profiles; check local app storage and restart the app."))
+		return pingone.Profile{}, problem(http.StatusInternalServerError, localStorageReadFailure("Could not read saved profiles; check local app storage and restart the app."))
 	}
 	for _, p := range profiles {
 		if p.ID == id {
@@ -425,9 +473,11 @@ func (s *Server) client(p pingone.Profile) (*pingone.Client, error) {
 		return nil, err
 	}
 	c, err := s.clientFactory(current, secret)
-	if err == nil {
-		s.clients[p.ID] = c
+	if err != nil {
+		failure := operation.NewFailure("client_setup_failed", "preflight", "Could not prepare the PingOne client. Verify local profile and credential settings, then retry; no PingOne write was sent.", "retry_pre_dispatch", "", err)
+		return nil, problem(http.StatusBadGateway, failure)
 	}
+	s.clients[p.ID] = c
 	return c, err
 }
 

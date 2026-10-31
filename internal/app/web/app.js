@@ -64,9 +64,16 @@
       throw new Error(`The local app returned an invalid response (HTTP ${response.status}). Check that it is running and reload the app.`);
     }
     if (!response.ok) {
-      const failure = new Error(typeof data.error === 'string' && data.error ? data.error : `Request failed (HTTP ${response.status}). Check the local app and retry.`);
-      failure.safeToRetry = data.safeToRetry === true;
-      failure.mutationNotStarted = data.mutationStarted === false;
+      const message = typeof data.message === 'string' && data.message
+        ? data.message
+        : typeof data.error === 'string' && data.error ? data.error : `Request failed (HTTP ${response.status}). Check the local app and retry.`;
+      const failure = new Error(message);
+      failure.code = typeof data.code === 'string' ? data.code : '';
+      failure.phase = typeof data.phase === 'string' ? data.phase : '';
+      failure.recoveryAction = typeof data.recoveryAction === 'string' ? data.recoveryAction : '';
+      failure.correlationId = typeof data.correlationId === 'string' ? data.correlationId : '';
+      failure.safeToRetry = data.safeToRetry === true || failure.recoveryAction === 'retry_pre_dispatch';
+      failure.mutationNotStarted = data.mutationStarted === false || failure.recoveryAction === 'retry_pre_dispatch';
       throw failure;
     }
     return data;

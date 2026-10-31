@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"pingone-promote/internal/gitops"
+	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
 )
@@ -446,6 +447,40 @@ func TestApplyPollsAcceptedExecutionToCompletedOrError(t *testing.T) {
 				t.Fatal("execute intent was not retained")
 			}
 		})
+	}
+}
+
+func TestApplyAuthorizationRefusalReturnsClassifiedPreDispatchFailure(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
+	putJSON(t, ap, a)
+	g := &fakeGate{authErr: errors.New("private authorization detail token=private-token")}
+	e := &fakeEngine{}
+	dd := deps(g)
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", outp}, &out, &errOut, dd)
+	if err == nil {
+		t.Fatal("authorization refusal returned success")
+	}
+	var failure *operation.Failure
+	if !errors.As(err, &failure) || failure.Code != "execution_pre_dispatch_refused" || failure.Phase != "preflight" || failure.RecoveryAction != "verify_review_and_authorization" || failure.CorrelationID == "" {
+		t.Fatalf("authorization refusal was not classified: %v", err)
+	}
+	message := safeError(err, dd.getenv)
+	if strings.Contains(message, "private authorization detail") || strings.Contains(message, "private-token") {
+		t.Fatalf("CLI failure exposed authorization detail: %s", message)
+	}
+	if e.applyCalls != 1 {
+		t.Fatalf("apply calls=%d want 1", e.applyCalls)
+	}
+	if _, err := os.Stat(ap + ".execute-intent"); !os.IsNotExist(err) {
+		t.Fatalf("pre-dispatch refusal left an execute intent: %v", err)
+	}
+	if _, err := os.Stat(outp); !os.IsNotExist(err) {
+		t.Fatalf("pre-dispatch refusal wrote a result: %v", err)
 	}
 }
 

@@ -75,7 +75,7 @@ func main() {
 	args := os.Args[1:]
 	if len(args) > 0 && (args[0] == "--version" || args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		if err := run(args, os.Stdout, os.Stderr); err != nil {
-			fmt.Fprintln(os.Stderr, safeError(err, os.Getenv))
+			fmt.Fprintln(os.Stderr, cliFailure(err, os.Getenv))
 			os.Exit(1)
 		}
 		return
@@ -89,7 +89,7 @@ func main() {
 	}
 	if err := run(args, os.Stdout, os.Stderr); err != nil {
 		logger.Event(context.Background(), slog.LevelError, "cli.failure", "command", "", "", "", "command_failed", 0, 0)
-		fmt.Fprintln(os.Stderr, safeError(err, os.Getenv))
+		fmt.Fprintln(os.Stderr, cliFailure(err, os.Getenv))
 		_ = closeLog()
 		os.Exit(1)
 	}
@@ -337,14 +337,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		g, err := deps.gate()
 		if err != nil {
-			return err
+			return operation.NewFailure("execution_pre_dispatch_refused", "authorization", "Protected GitLab authorization could not be initialized. Verify runner configuration before retrying.", "verify_gitlab_authorization", "", err)
 		}
 		if err = g.VerifyPlan(ctx, a.Request); err != nil {
-			return err
+			return operation.NewFailure("execution_pre_dispatch_refused", "authorization", "The plan could not be verified against this GitLab job. Use a fresh plan from the trusted project before retrying.", "verify_gitlab_provenance", "", err)
 		}
 		client, err := deps.client(a.Request, deps.getenv)
 		if err != nil {
-			return err
+			return operation.NewFailure("client_setup_failed", "preflight", "The PingOne client could not be prepared. Verify runner credentials and retry before dispatch.", "retry_pre_dispatch", "", err)
 		}
 		engine := deps.engine(client)
 		markerWritten := false
@@ -362,9 +362,12 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			if markerWritten {
 				res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: "IN_PROGRESS", Errors: []string{safeError(err, deps.getenv)}, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 				_ = writePrivateJSON(*outPath, res)
-				return fmt.Errorf("%s; execute intent retained at %s; reconcile native status before any retry", safeError(err, deps.getenv), marker)
+				return operation.NewFailure("execution_outcome_uncertain", "execution", "PingOne may have received the execution request. The execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", err)
 			}
-			return err
+			if _, markerErr := os.Lstat(marker); markerErr == nil {
+				return operation.NewFailure("execute_intent_checkpoint_failed", "persistence", "Execution was not dispatched, but an execute intent file exists. Inspect it and reconcile operation status before retrying.", "inspect_execute_intent", "", err)
+			}
+			return operation.NewFailure("execution_pre_dispatch_refused", "preflight", "Execution was not dispatched. Resolve the review, target drift, authorization, or local intent issue before retrying.", "verify_review_and_authorization", "", err)
 		}
 		result, pollErr := waitForTerminal(ctx, func(c context.Context) (pingone.Promotion, error) { return engine.Status(c, a) }, result, deps.pollTimeout, deps.pollInterval)
 		res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: result.Status, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Errors: pingone.SummarizePromotionErrors(result.Errors, result.PromotionErrors)}
@@ -373,17 +376,13 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			res.Errors = append(res.Errors, safeError(pollErr, deps.getenv))
 		}
 		if err = writePrivateJSON(*outPath, res); err != nil {
-			return fmt.Errorf("execution returned; result output failed, intent retained at %s; reconcile native status before any retry", marker)
+			return operation.NewFailure("execution_result_checkpoint_failed", "persistence", "Execution returned, but result output could not be saved. The execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", err)
 		}
 		if pollErr != nil {
-			return fmt.Errorf("execution status is uncertain; intent retained at %s; reconcile native status before any retry: %s", marker, safeError(pollErr, deps.getenv))
+			return operation.NewFailure("execution_outcome_uncertain", "reconciliation", "Execution was submitted, but its native status could not be confirmed. The execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", pollErr)
 		}
 		if operation.Classify(result.Status) == operation.Failed {
-			detail := strings.Join(res.Errors, "; ")
-			if detail != "" {
-				detail = ": " + detail
-			}
-			return fmt.Errorf("native execution ended in ERROR%s; intent retained at %s; inspect status and plan rollback if needed", detail, marker)
+			return operation.NewFailure("native_execution_failed", "execution", "Native execution failed with an unexpected promotion error and may have partial effects; inspect status and plan a separately approved rollback if needed.", "inspect_status_and_plan_rollback", "", nil)
 		}
 		return nil
 	case "status":
@@ -685,7 +684,14 @@ func isDigest(s string) bool { return regexp.MustCompile(`^[a-f0-9]{64}$`).Match
 var credentialPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*|((?:client[_ -]?secret|password|access[_ -]?token|api[_ -]?key)["'=: ]+)[^\s,;"']+`)
 
 func safeError(err error, getenv func(string) string) string {
+	var failure *operation.Failure
+	if errors.As(err, &failure) {
+		return failure.Error()
+	}
 	s := err.Error()
+	if strings.Contains(s, "PingOne HTTP ") {
+		return "PingOne returned an error. Check native operation status before retrying."
+	}
 	for _, name := range []string{"PINGONE_CLIENT_SECRET", "CI_JOB_TOKEN", "GITLAB_READ_API_TOKEN"} {
 		if v := getenv(name); v != "" {
 			s = strings.ReplaceAll(s, v, "[redacted]")
@@ -696,4 +702,12 @@ func safeError(err error, getenv func(string) string) string {
 		s = s[:1000]
 	}
 	return s
+}
+
+func cliFailure(err error, getenv func(string) string) string {
+	var failure *operation.Failure
+	if !errors.As(err, &failure) {
+		return safeError(err, getenv)
+	}
+	return fmt.Sprintf("%s [code=%s phase=%s recovery=%s correlation=%s]", failure.Error(), failure.Code, failure.Phase, failure.RecoveryAction, failure.CorrelationID)
 }

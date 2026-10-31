@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/logging"
 	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
@@ -122,21 +123,21 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) error {
 		record.Intent = "create_uncertain"
 		record.UpdatedAt = now()
 		_ = s.store.SaveRecord(record)
-		return problem(http.StatusBadGateway, fmt.Errorf("PingOne may have created a draft; reconcile promotions in PingOne before trying again. Nothing has been deployed. %w", err))
+		return problem(http.StatusBadGateway, operation.NewFailure("draft_creation_outcome_uncertain", "draft_creation", "PingOne may have created a draft; reconcile promotions in PingOne before trying again. Nothing has been deployed. PingOne request did not return a response.", "reconcile_native_drafts", w.Header().Get("X-Request-ID"), err))
 	}
 	if native.ID == "" {
 		record.Status = "DRAFT_CREATION_UNCERTAIN"
 		record.Intent = "create_uncertain"
 		record.UpdatedAt = now()
 		_ = s.store.SaveRecord(record)
-		return problem(502, errors.New("PingOne may have created a draft but omitted its identity; reconcile promotions in PingOne before creating another draft. Nothing has been deployed."))
+		return problem(502, operation.NewFailure("draft_identity_missing", "draft_creation", "PingOne may have created a draft but omitted its identity; reconcile promotions in PingOne before creating another draft. Nothing has been deployed.", "reconcile_native_drafts", w.Header().Get("X-Request-ID"), nil))
 	}
 	record.NativeID = native.ID
 	record.Status = native.Status
 	record.Intent = ""
 	record.UpdatedAt = now()
 	if err = s.store.SaveRecord(record); err != nil {
-		return problem(http.StatusInternalServerError, fmt.Errorf("PingOne created draft %q, but the local app could not save its history. Reconcile promotions in PingOne before trying again. Nothing has been deployed.", native.ID))
+		return problem(http.StatusInternalServerError, operation.NewFailure("draft_checkpoint_failed", "persistence", fmt.Sprintf("PingOne created draft %q, but the local app could not save its history. reconcile promotions in PingOne before trying again. Nothing has been deployed.", native.ID), "reconcile_native_drafts", w.Header().Get("X-Request-ID"), err))
 	}
 	ps := &planSession{Record: record, Source: source.Inventory, Target: target.Inventory}
 	s.plans[record.ID] = ps
@@ -156,7 +157,7 @@ func (s *Server) loadPlan(id string) (*planSession, error) {
 		if errors.Is(err, store.ErrRecordNotFound) {
 			return nil, problem(http.StatusNotFound, err)
 		}
-		return nil, problem(http.StatusInternalServerError, errors.New("Could not read saved history; check local app storage and restart the app."))
+		return nil, problem(http.StatusInternalServerError, localStorageReadFailure("Could not read saved history; check local app storage and restart the app."))
 	}
 	a := pingone.Inventory{APIOrigin: record.SourceAPIOrigin, EnvironmentID: record.Source.EnvironmentID, OrganizationID: record.SourceOrganizationID, SnapshotID: record.SourceSnapshotID, Resources: []pingone.Resource{}}
 	b := pingone.Inventory{APIOrigin: record.TargetAPIOrigin, EnvironmentID: record.Target.EnvironmentID, OrganizationID: record.TargetOrganizationID, SnapshotID: record.TargetSnapshotID, Resources: []pingone.Resource{}}
@@ -218,18 +219,20 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	// cannot continue to offer another rollback of the restored promotion.
 	if rec.Kind == "rollback" && operation.Classify(native.Status) == operation.Completed && rec.ParentID != "" {
 		original, readErr := s.store.GetRecord(rec.ParentID)
-		if readErr == nil {
-			state, stateErr := c.GetPromotion(r.Context(), original.Source.EnvironmentID, original.NativeID)
-			if stateErr == nil {
-				original.Status = state.Status
-				original.UpdatedAt = now()
-				if err = s.store.SaveRecord(original); err != nil {
-					return v, err
-				}
-				if cached := s.plans[original.ID]; cached != nil {
-					cached.Record = original
-				}
-			}
+		if readErr != nil {
+			return v, problem(http.StatusBadGateway, operation.NewFailure("rollback_reconciliation_incomplete", "reconciliation", "The rollback operation completed, but the original promotion status could not be reconciled. Refresh native status; resource restoration is not verified.", "refresh_native_status", logging.RequestID(r.Context()), readErr))
+		}
+		state, stateErr := c.GetPromotion(r.Context(), original.Source.EnvironmentID, original.NativeID)
+		if stateErr != nil {
+			return v, problem(http.StatusBadGateway, operation.NewFailure("rollback_reconciliation_incomplete", "reconciliation", "The rollback operation completed, but the original promotion status could not be reconciled. Refresh native status; resource restoration is not verified.", "refresh_native_status", logging.RequestID(r.Context()), stateErr))
+		}
+		original.Status = state.Status
+		original.UpdatedAt = now()
+		if err = s.store.SaveRecord(original); err != nil {
+			return v, problem(http.StatusInternalServerError, operation.NewFailure("rollback_reconciliation_incomplete", "reconciliation", "The rollback operation completed, but the original promotion status could not be reconciled locally. Refresh native status; resource restoration is not verified.", "refresh_native_status", logging.RequestID(r.Context()), err))
+		}
+		if cached := s.plans[original.ID]; cached != nil {
+			cached.Record = original
 		}
 	}
 	pending := operation.Classify(native.Status) == operation.Preparing
@@ -338,7 +341,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession)
 	ps.Record = attempt
 	var native pingone.Promotion
 	if err = c.Do(r.Context(), "POST", pingone.EnvPath(ps.Record.Source.EnvironmentID)+"/promotions/"+ps.Record.NativeID, pingone.ExecuteType, nil, &native); err != nil {
-		return problem(502, err)
+		return problem(502, operation.NewFailure("execution_outcome_uncertain", "execution", "PingOne may have received the execution request. Reconcile native status before any retry.", "reconcile_native_status", w.Header().Get("X-Request-ID"), err))
 	}
 	if native.ID != "" && native.ID != ps.Record.NativeID {
 		return problem(502, errors.New("execute returned an unexpected promotion identity; refresh native status"))
@@ -402,7 +405,7 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 	ps.Record = attempt
 	var native pingone.Promotion
 	if err = c.Do(r.Context(), "POST", pingone.EnvPath(ps.Record.Source.EnvironmentID)+"/promotions/"+ps.Record.NativeID, pingone.RollbackType, nil, &native); err != nil {
-		return problem(502, err)
+		return problem(502, operation.NewFailure("rollback_outcome_uncertain", "rollback", "PingOne may have received the rollback request. Reconcile native status before any retry.", "reconcile_native_status", w.Header().Get("X-Request-ID"), err))
 	}
 	if native.ID == "" || native.ID == ps.Record.NativeID || native.Previous.ID != ps.Record.NativeID {
 		return problem(502, errors.New("rollback did not return a distinct plan linked to the original; inspect native status before another request"))
@@ -431,13 +434,28 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 }
 
 func replyNativePreflightFailure(w http.ResponseWriter, message string, err error) {
-	replyNativeNoWrite(w, nativePreflightStatus(err), message, true)
+	status := nativePreflightStatus(err)
+	failure := operation.NewFailure("pre_dispatch_failure", "preflight", message, "retry_pre_dispatch", w.Header().Get("X-Request-ID"), err)
+	replyNativeFailure(w, status, failure, true)
 }
 
 func replyNativeNoWrite(w http.ResponseWriter, status int, message string, safeToRetry bool) {
+	code, phase, action := "operation_blocked", "validation", "review_or_reconcile"
+	if safeToRetry {
+		code, phase, action = "pre_dispatch_failure", "preflight", "retry_pre_dispatch"
+	}
+	failure := operation.NewFailure(code, phase, message, action, w.Header().Get("X-Request-ID"), nil)
+	replyNativeFailure(w, status, failure, safeToRetry)
+}
+
+func replyNativeFailure(w http.ResponseWriter, status int, failure *operation.Failure, safeToRetry bool) {
+	if w.Header().Get("X-Request-ID") == "" {
+		w.Header().Set("X-Request-ID", failure.CorrelationID)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	body := map[string]any{"error": message, "mutationStarted": false}
+	body := failureFields(failure)
+	body["mutationStarted"] = false
 	if safeToRetry {
 		body["safeToRetry"] = true
 	}
@@ -450,7 +468,7 @@ func nativePreflightMessage(action string, err error) string {
 	if errors.As(err, &persistenceErr) {
 		return "Could not access local app storage while attempting to " + action + "; no PingOne write was sent. Check local app storage and restart the app."
 	}
-	return fmt.Sprintf("Could not %s; no PingOne write was sent: %v", action, err)
+	return "Could not " + action + "; no PingOne write was sent. Check the connection and local configuration, then retry."
 }
 
 func nativePreflightStatus(err error) int {

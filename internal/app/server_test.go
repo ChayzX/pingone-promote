@@ -26,6 +26,9 @@ type nativeFixture struct {
 	hidden, changed       bool
 	omitPromotionID       bool
 	failExecuteAfterWrite bool
+	executeFailureBody    string
+	failParentStatusRead  bool
+	afterParentStatus     func()
 	afterSteps            func()
 	afterStepsCalls       int
 	executed              []string
@@ -159,13 +162,21 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.Contains(p, "/promotions/") {
+		if r.Method == "GET" && f.failParentStatusRead && strings.HasSuffix(p, "/promotions/p1") {
+			http.Error(w, `{"code":"PRIVATE_VENDOR_CODE","message":"private tenant secret=vendor-secret"}`, http.StatusBadGateway)
+			return
+		}
 		if r.Method == "POST" {
 			switch r.Header.Get("Content-Type") {
 			case pingone.ExecuteType:
 				f.executed = append(f.executed, id)
 				f.statuses[id] = "COMPLETED"
 				if f.failExecuteAfterWrite {
-					http.Error(w, "fixture response lost after native write", http.StatusBadGateway)
+					body := f.executeFailureBody
+					if body == "" {
+						body = "fixture response lost after native write"
+					}
+					http.Error(w, body, http.StatusBadGateway)
 					return
 				}
 				if id == "rb1" {
@@ -181,6 +192,11 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		write(f.metadata(id))
+		if r.Method == http.MethodGet && id == "p1" && f.afterParentStatus != nil {
+			after := f.afterParentStatus
+			f.afterParentStatus = nil
+			after()
+		}
 		return
 	}
 	http.Error(w, "unexpected fixture request "+r.Method+" "+p, 404)
@@ -433,7 +449,7 @@ func TestDeployPreflightFailuresAreSafeAndRetryable(t *testing.T) {
 		path := "/api/plans/" + v.ID + "/deploy"
 		body := map[string]any{"digest": v.Review.Digest, "confirm": true}
 		h.call("POST", path, body, &failure, http.StatusBadGateway)
-		if failure.MutationStarted == nil || *failure.MutationStarted || !failure.SafeToRetry || !strings.Contains(failure.Error, "fixture client setup failed") {
+		if failure.MutationStarted == nil || *failure.MutationStarted || !failure.SafeToRetry || !strings.Contains(failure.Error, "no PingOne write was sent") || strings.Contains(failure.Error, "fixture client setup failed") {
 			t.Fatalf("client setup failure was not identified as a no-write preflight error: %+v", failure)
 		}
 		if got := len(executedIDs(h.f)); got != 0 {
