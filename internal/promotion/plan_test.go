@@ -197,6 +197,24 @@ func TestInspectSelectedFlowVersionCreateLifecycle(t *testing.T) {
 	}
 }
 
+func TestInspectFlowLifecyclePreservesNewerCurrentAndSelectedPublishedVersion(t *testing.T) {
+	source, target, selected, steps := flowVersionLifecycleFixture()
+	source.Resources[0].Configuration["currentVersion"] = 2
+	steps[0].Payload = json.RawMessage(strings.Replace(string(steps[0].Payload), `"currentVersion":1`, `"currentVersion":2`, 1))
+	review := Inspect(source, target, selected, nil, steps, false)
+	if len(review.Issues) != 0 {
+		t.Fatalf("reviewed newer current version with selected published version rejected: %v", review.Issues)
+	}
+	if len(review.Steps) != 4 || review.Digest == "" {
+		t.Fatal("complete lifecycle and digest required")
+	}
+	// A newer saved version is metadata, never permission to publish it.
+	steps[3].Payload = json.RawMessage(`{"version":"2"}`)
+	if changed := Inspect(source, target, selected, nil, steps, false); len(changed.Issues) == 0 {
+		t.Fatal("publishing an unselected saved version must remain blocked")
+	}
+}
+
 func TestFlowLifecycleExposesAllowedContentAndBindsItToRawDigest(t *testing.T) {
 	s, d, selected, steps := flowVersionLifecycleFixture()
 	first := Inspect(s, d, selected, nil, steps, false)

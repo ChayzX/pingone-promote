@@ -300,7 +300,10 @@ func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []s
 	}
 	sourceCurrent, currentOK := positiveSafeInteger(root.Configuration["currentVersion"])
 	sourcePublished, publishedOK := positiveSafeInteger(root.Configuration["publishedVersion"])
-	if !currentOK || sourceCurrent != versionNumber {
+	// A newer saved version can coexist with the selected published version.
+	// Preserve that reviewed metadata; only the selected published version may
+	// appear in the version-create and publish operations below.
+	if !currentOK || sourceCurrent < versionNumber {
 		return reject("source-root-current-version")
 	}
 	if !publishedOK || sourcePublished != versionNumber {
@@ -392,7 +395,7 @@ func selectedFlowVersionLifecycle(source, target pingone.Inventory, selected []s
 	}
 	currentVersion, currentOK := positiveSafeInteger(rootPayload["currentVersion"])
 	publishedVersion, publishedOK := positiveSafeInteger(rootPayload["publishedVersion"])
-	if !currentOK || currentVersion != versionNumber {
+	if !currentOK || currentVersion != sourceCurrent {
 		return reject("root-payload-current-version")
 	}
 	if !publishedOK || publishedVersion != versionNumber {
