@@ -55,7 +55,7 @@ export PINGONE_CLIENT_SECRET='your-worker-client-secret'
 
 The variable value is read when the app needs the credential. To keep a PingOne secret long term, choose the OS credential vault in the profile's **Client secret storage** menu, enter the client secret, and click **Save profile**. The app uses the vault belonging to the computer where the app server runs: macOS Keychain, Windows Credential Manager, or Linux Secret Service (such as GNOME Keyring or KWallet). Linux requires a running, unlocked Secret Service provider; availability is checked only when saving or using the credential. If the vault is locked or unavailable, the app explains what to unlock or configure and does not save the secret in a profile file. Existing macOS Keychain entries continue to use the same service and profile account.
 
-The profile menu also offers **Session only**, which keeps the secret in memory until the app exits, and **Environment variable**, which reads a named variable set before app startup and stores only its name. Profile and activity JSON do not contain client secrets or API tokens.
+The profile menu also offers **Session only**, which keeps the secret in memory until the app exits, and **Environment variable**, which reads a named variable set before app startup and stores only its name. Switching away from an OS vault removes its stored copy; switching to Session only requires entering the secret again, and switching to an environment variable stores only the variable name. Profile and activity JSON do not contain client secrets or API tokens.
 
 ## Promotion workflow and safety
 

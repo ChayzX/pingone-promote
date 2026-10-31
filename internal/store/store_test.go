@@ -19,6 +19,7 @@ type fakeCredentialProvider struct {
 	delErr       error
 	beforeSet    func() error
 	beforeDelete func() error
+	deleteCalls  int
 }
 
 func (f *fakeCredentialProvider) Set(id, secret string) error {
@@ -45,6 +46,7 @@ func (f *fakeCredentialProvider) Get(id string) (string, error) {
 	return value, nil
 }
 func (f *fakeCredentialProvider) Delete(id string) error {
+	f.deleteCalls++
 	if f.delErr != nil {
 		return f.delErr
 	}
@@ -223,6 +225,142 @@ func TestExistingKeyringProfileBlankSecretPreservesStoredCredential(t *testing.T
 	}
 	if provider.values[p.ID] != "stored-secret" {
 		t.Fatal("blank-secret edit changed the existing keyring credential")
+	}
+}
+
+func TestSwitchingAwayFromKeyringRemovesCredentialWithoutReusingIt(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "old-keyring-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.deleteCalls = 0
+	updated := p
+	updated.SecretMode = "session"
+	if _, err := s.SaveProfile(updated, "new-session-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := provider.values[p.ID]; ok {
+		t.Fatal("switching to session left a keyring credential behind")
+	}
+	if got, err := s.Secret(updated); err != nil || got != "new-session-secret" {
+		t.Fatalf("session secret after switch = %q, %v", got, err)
+	}
+	if provider.deleteCalls != 1 {
+		t.Fatalf("credential delete calls after switch = %d, want 1", provider.deleteCalls)
+	}
+	if err := s.DeleteProfile(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if provider.deleteCalls != 1 {
+		t.Fatalf("deleting the session profile touched the keyring again: %d calls", provider.deleteCalls)
+	}
+}
+
+func TestSwitchingFromKeyringToSessionRequiresANewSecret(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "old-keyring-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := p
+	updated.SecretMode = "session"
+	if _, err := s.SaveProfile(updated, ""); err == nil || !strings.Contains(err.Error(), "enter the PingOne client secret") {
+		t.Fatalf("SaveProfile error = %v, want a new session secret prompt", err)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].SecretMode != "keychain" || provider.values[p.ID] != "old-keyring-secret" {
+		t.Fatalf("failed keychain-to-session switch changed profile or credential: profiles=%+v values=%+v", profiles, provider.values)
+	}
+}
+
+func TestSwitchingAwayFromKeyringRestoresCredentialWhenMetadataWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "preserved-keyring-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restore func()
+	provider.beforeDelete = func() error {
+		provider.beforeDelete = nil
+		restore = blockProfilesWrite(t, dir)
+		return nil
+	}
+	updated := p
+	updated.SecretMode = "env"
+	updated.SecretEnv = "PINGONE_SWITCHED_SECRET"
+	if _, err := s.SaveProfile(updated, ""); err == nil {
+		t.Fatal("SaveProfile unexpectedly succeeded with a profiles.json write failure")
+	}
+	if restore != nil {
+		restore()
+	}
+	if got := provider.values[p.ID]; got != "preserved-keyring-secret" {
+		t.Fatalf("keyring credential after failed mode switch = %q", got)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].SecretMode != "keychain" {
+		t.Fatalf("profile metadata after failed mode switch = %+v", profiles)
+	}
+}
+
+func TestSwitchingAwayDeleteFailurePreservesKeyringProfile(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "preserved-keyring-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.delErr = errors.New("raw provider diagnostic with secret-canary")
+	updated := p
+	updated.SecretMode = "env"
+	updated.SecretEnv = "PINGONE_SWITCHED_SECRET"
+	if _, err := s.SaveProfile(updated, ""); err == nil || strings.Contains(err.Error(), "secret-canary") {
+		t.Fatalf("SaveProfile error = %v, want sanitized delete failure", err)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].SecretMode != "keychain" {
+		t.Fatalf("profile metadata after failed keyring deletion = %+v", profiles)
+	}
+	if provider.values[p.ID] != "preserved-keyring-secret" {
+		t.Fatal("failed mode switch did not preserve the existing keyring credential")
 	}
 }
 

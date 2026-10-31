@@ -85,6 +85,24 @@ def main():
                 created.append(saved.value.json()['id'])
             page.get_by_role('button', name='Close environment profiles', exact=True).click()
 
+        # Switching away from an OS vault must tell the user the old entry is
+        # removed and require a new direct secret for Session only.
+        page.locator('#profiles-open').click()
+        page.locator('.profile-list-item').filter(has_text=f'{prefix} mode keychain fixture').get_by_role('button', name='Edit', exact=True).click()
+        form = page.locator('#profiles-form')
+        form.locator('[name="secretMode"]').select_option('session')
+        if not form.locator('[name="secret"]').evaluate('(node) => node.required'):
+            failures.append('switching from keyring to session did not require a new secret')
+        if 'removes the old vault copy' not in page.locator('#secret-storage-help').inner_text():
+            failures.append('switching away from keyring did not explain that its old copy is removed')
+        form.locator('[name="secret"]').fill('synthetic-session-after-keyring')
+        with page.expect_response(lambda response: response.url.endswith('/api/profiles') and response.request.method == 'POST') as migrated:
+            page.locator('#profile-save').click()
+        if migrated.value.status == 200:
+            created.append(migrated.value.json()['id'])
+        else:
+            failures.append('keyring-to-session save failed')
+
         # Editing an existing env profile must not carry its variable name into
         # the new session-mode payload or persisted profile metadata.
         page.locator('#profiles-open').click()

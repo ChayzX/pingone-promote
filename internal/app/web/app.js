@@ -231,7 +231,9 @@
     const secret = $('#profiles-dialog [name="secret"]');
     secret.disabled = envMode;
     const enteringKeyring = Boolean(state.profileEditID) && mode === 'keychain' && state.profileEditSecretMode !== 'keychain';
-    secret.required = !envMode && (!state.profileEditID || enteringKeyring);
+    const leavingKeyringForSession = Boolean(state.profileEditID) && mode === 'session' && state.profileEditSecretMode === 'keychain';
+    const leavingKeyringForEnv = Boolean(state.profileEditID) && mode === 'env' && state.profileEditSecretMode === 'keychain';
+    secret.required = !envMode && (!state.profileEditID || enteringKeyring || leavingKeyringForSession);
     if (mode === 'keychain') {
       if (!capability?.supported) {
         storageHelp.textContent = `${provider} storage is not supported by the app server. Choose Session only or Environment variable.`;
@@ -249,11 +251,18 @@
       }
     }
     if (mode === 'session') {
-      storageHelp.textContent = 'Enter the client secret below. It stays in memory until this app closes, so enter it again after a restart.';
-      $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored session credential; a new value replaces it.' : 'Kept in memory for this app session.';
+      if (leavingKeyringForSession) {
+        storageHelp.textContent = `Switching away from ${provider} removes the old vault copy. Enter a new client secret below for Session only; it stays in memory until this app closes.`;
+        $('#secret-help').textContent = `Enter the new session secret. The existing ${provider} credential will be removed when you save.`;
+      } else {
+        storageHelp.textContent = 'Enter the client secret below. It stays in memory until this app closes, so enter it again after a restart.';
+        $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored session credential; a new value replaces it.' : 'Kept in memory for this app session.';
+      }
     }
     if (mode === 'env') {
-      storageHelp.textContent = 'Set the named environment variable before starting the app. Save profile stores only its name; it does not save the variable value.';
+      storageHelp.textContent = leavingKeyringForEnv
+        ? `Switching away from ${provider} removes the old vault copy. Set the named environment variable before app startup; Save profile stores only its name.`
+        : 'Set the named environment variable before starting the app. Save profile stores only its name; it does not save the variable value.';
       $('#secret-help').textContent = '';
     }
   }

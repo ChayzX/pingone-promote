@@ -266,6 +266,10 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 	var priorCredential string
 	var hadPriorCredential bool
 	changesCredential := p.SecretMode == "keychain" && secret != ""
+	removesCredential := profileExists && existingMode == "keychain" && p.SecretMode != "keychain"
+	if removesCredential && p.SecretMode == "session" && secret == "" {
+		return p, errors.New("enter the PingOne client secret for the new session before switching away from the OS credential vault")
+	}
 	if p.SecretMode == "keychain" && secret == "" {
 		if !profileExists || existingMode != "keychain" {
 			return p, errors.New("enter the PingOne client secret before saving this profile to the OS credential vault")
@@ -286,6 +290,14 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 		if err := s.credentials.Set(p.ID, secret); err != nil {
 			return p, compensationFailure(restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential), "could not store credential in the OS keyring")
 		}
+	} else if removesCredential {
+		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
+		if err != nil {
+			return p, err
+		}
+		if err := s.credentials.Delete(p.ID); err != nil {
+			return p, compensationFailure(restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential), "could not remove the previous OS keyring credential")
+		}
 	}
 	found := false
 	for i := range profiles {
@@ -299,7 +311,7 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 		profiles = append(profiles, p)
 	}
 	if err := s.write("profiles.json", profiles); err != nil {
-		if changesCredential {
+		if changesCredential || removesCredential {
 			if restoreErr := restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential); restoreErr != nil {
 				return p, errors.Join(err, compensationFailure(restoreErr, "profile metadata was not saved"))
 			}
