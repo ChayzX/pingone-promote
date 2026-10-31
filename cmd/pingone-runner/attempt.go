@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"pingone-promote/internal/gitops"
 	"pingone-promote/internal/strictjson"
+	"reflect"
 )
 
 const maxDraftAttemptBytes = 16 << 10
@@ -149,4 +151,112 @@ func bindDraftAttempts(engine runnerEngine, out string) runnerEngine {
 		e.DraftAttempts = &draftAttemptStore{path: out + ".draft-attempt"}
 	}
 	return engine
+}
+
+type draftAttemptVerifier interface {
+	VerifyDraftAttempt(context.Context, gitops.DraftAttempt, string) error
+}
+type draftReconciler interface {
+	ReconcileDraft(context.Context, gitops.DraftAttempt, gitops.Request, gitops.Origin) (gitops.Artifact, error)
+}
+
+func reconcilePlan(ctx context.Context, args []string, stdout, stderr io.Writer, deps runnerDeps) error {
+	fs := flagSet("reconcile-plan", stderr)
+	attemptPath := fs.String("attempt", "", "retained attempt JSON")
+	jobID := fs.String("attempt-job-id", "", "originating planning job")
+	requestPath := fs.String("request", "", "request JSON")
+	out := fs.String("out", "", "new diagnostic artifact")
+	originalPath := fs.String("original-artifact", "", "rollback original artifact")
+	originalJob := fs.String("original-job-id", "", "rollback original plan job")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *attemptPath == "" || *jobID == "" || *requestPath == "" || *out == "" {
+		return errors.New("reconcile-plan requires --attempt, --attempt-job-id, --request and --out")
+	}
+	for _, p := range []string{*attemptPath, *requestPath, *originalPath} {
+		if p != "" && pathsAlias(*out, p) {
+			return errors.New("diagnostic output must not alias inputs")
+		}
+	}
+	if err := requireAbsent(*out); err != nil {
+		return err
+	}
+	a, err := readDraftAttempt(*attemptPath)
+	if err != nil {
+		return err
+	}
+	if a.NativeID == "" {
+		return errors.New("draft identity unavailable; blocked investigation required; do not guess candidates or retry draft creation")
+	}
+	r, err := readRequest(*requestPath)
+	if err != nil {
+		return err
+	}
+	if err = a.ValidateRequest(r); err != nil {
+		return err
+	}
+	var original gitops.Artifact
+	if a.Kind == "rollback" {
+		if *originalPath == "" || *originalJob == "" {
+			return errors.New("rollback reconciliation requires --original-artifact and --original-job-id")
+		}
+		original, err = readArtifact(*originalPath)
+		if err != nil {
+			return err
+		}
+		if original.Kind != "promotion" || original.NativeID != a.OriginalNativeID || !reflect.DeepEqual(original.Request, r) || !sameTrustedProject(original.Origin, a.Origin) || original.TargetSnapshotID != a.TargetSnapshotID {
+			return errors.New("rollback original artifact linkage mismatch")
+		}
+	} else if *originalPath != "" || *originalJob != "" {
+		return errors.New("forward reconciliation rejects rollback-only flags")
+	}
+	g, err := deps.gate()
+	if err != nil {
+		return err
+	}
+	if !sameTrustedProject(a.Origin, g.Origin()) {
+		return errors.New("draft attempt trusted project mismatch")
+	}
+	if err = g.VerifyPlan(ctx, r); err != nil {
+		return err
+	}
+	verifier, ok := g.(draftAttemptVerifier)
+	if !ok {
+		return errors.New("draft provenance verification unavailable; reconciliation blocked")
+	}
+	if err = verifier.VerifyDraftAttempt(ctx, a, *jobID); err != nil {
+		return err
+	}
+	if a.Kind == "rollback" {
+		if err = g.VerifyOriginalPlan(ctx, original, *originalJob); err != nil {
+			return err
+		}
+	}
+	client, err := deps.client(r, deps.getenv)
+	if err != nil {
+		return err
+	}
+	engine, ok := deps.engine(client).(draftReconciler)
+	if !ok {
+		return errors.New("read-only draft reconciliation unavailable")
+	}
+	fresh, err := engine.ReconcileDraft(ctx, a, r, g.Origin())
+	if err != nil {
+		return err
+	}
+	if fresh.Origin != a.Origin || fresh.CreatedAt != a.CreatedAt || fresh.NativeID != a.NativeID || fresh.Kind != a.Kind || fresh.OriginalNativeID != a.OriginalNativeID || !reflect.DeepEqual(fresh.Request, r) {
+		return errors.New("reconciliation changed identity or provenance")
+	}
+	if err = fresh.Validate(); err != nil {
+		return err
+	}
+	if err = writePrivateJSON(*out, fresh); err != nil {
+		return err
+	}
+	if len(fresh.Review.Issues) > 0 {
+		return errors.New("diagnostic artifact written with review issues; reconciliation did not approve, authorize, or execute; output remains subject to all normal apply gates")
+	}
+	_, err = io.WriteString(stdout, "diagnostic reconciliation complete; reconciliation did not approve, authorize, or execute; output remains subject to all normal apply gates\n")
+	return err
 }

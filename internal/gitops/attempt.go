@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"pingone-promote/internal/pingone"
+	"strings"
 	"time"
 )
 
@@ -76,6 +77,61 @@ func (e *Engine) checkpointDraft(ctx context.Context, a DraftAttempt) error {
 		if err := e.DraftAttempts.Checkpoint(ctx, a); err != nil {
 			return fmt.Errorf("could not checkpoint accepted draft identity %s; retained attempt may contain intent only; preserve this returned identity and reconcile before retry", a.NativeID)
 		}
+	}
+	return nil
+}
+
+// ReconcileDraft reconstructs diagnostic evidence without creating or executing a draft.
+func (e *Engine) ReconcileDraft(ctx context.Context, attempt DraftAttempt, request Request, origin Origin) (Artifact, error) {
+	var a Artifact
+	if err := attempt.ValidateRequest(request); err != nil {
+		return a, err
+	}
+	if err := attempt.Validate(); err != nil {
+		return a, err
+	}
+	if err := origin.Validate(); err != nil {
+		return a, err
+	}
+	if !sameGitLabProject(attempt.Origin, origin) || attempt.RequestID != request.ID || attempt.RequestDigest != fingerprint(request) || attempt.Source != request.Source || attempt.Target != request.Target {
+		return a, errors.New("draft attempt does not match request or trusted project")
+	}
+	if attempt.NativeID == "" {
+		return a, errors.New("draft identity unavailable; blocked investigation required; do not guess candidates or retry draft creation")
+	}
+	if err := e.check(request); err != nil {
+		return a, err
+	}
+	a = Artifact{Version: 1, Kind: attempt.Kind, NativeID: attempt.NativeID, OriginalNativeID: attempt.OriginalNativeID, CreatedAt: attempt.CreatedAt, Request: request, Origin: attempt.Origin, TargetSnapshotID: attempt.TargetSnapshotID}
+	p, err := e.Client.GetPromotion(ctx, request.Source.ID, attempt.NativeID)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if p.TargetSnapshot.ID != "" {
+		if !safeID.MatchString(p.TargetSnapshot.ID) {
+			return Artifact{}, errors.New("invalid native target snapshot identity")
+		}
+		a.TargetSnapshotID = p.TargetSnapshot.ID
+	}
+	identity := p
+	identity.Errors = nil
+	identity.PromotionErrors = nil
+	if issues := nativeIssues(a, identity); len(issues) > 0 {
+		return Artifact{}, fmt.Errorf("draft identity mismatch: %s", strings.Join(issues, "; "))
+	}
+	return e.refresh(ctx, a, false)
+}
+
+// ValidateRequest binds a retained attempt to the complete supplied request.
+func (a DraftAttempt) ValidateRequest(r Request) error {
+	if err := Validate(r); err != nil {
+		return err
+	}
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	if a.RequestID != r.ID || a.RequestDigest != fingerprint(r) || a.Source != r.Source || a.Target != r.Target {
+		return errors.New("draft attempt request binding mismatch")
 	}
 	return nil
 }

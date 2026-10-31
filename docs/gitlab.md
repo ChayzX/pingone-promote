@@ -75,3 +75,43 @@ Draft creation recovery evidence: `plan` and `rollback-plan` retain a private me
 The template uploads `plan.json.draft-attempt` and `rollback.json.draft-attempt` with `artifacts: when: always`. Preserve these artifacts even when final plan output is absent. They contain request ID, a deterministic SHA-256 fingerprint of the complete validated request encoded by Go JSON (including its configuration fingerprints), origin, environment/snapshot identities and creation time, without request descriptions or configuration payloads. Existing artifact review and approval digest semantics are unchanged. Sidecars do not authorize execution or automatically resume planning.
 
 Persistence is local to the runner until artifact upload. Loss of an ephemeral runner before upload can lose the recovery handle; independent pipelines or a different output path are not coordinated by this file. This does not provide exactly-once draft creation across lost hosts. The store syncs files before replacement, but does not promise directory-fsync durability or protection against a malicious process running as the same OS user. Supported product platforms remain macOS and Linux.
+
+## Recover a retained draft identity (diagnostic only)
+
+Use `reconcile-plan` in a protected default-branch GitLab job with the normal
+protected runner credentials. Preserve the exact sidecar downloaded from the
+originating planning job; its fixed retained name must be
+`plan.json.draft-attempt` (forward) or `rollback.json.draft-attempt` (rollback).
+A terminal success, failed, or canceled originating job can supply evidence.
+The command verifies the current job and original job, then fetches and strictly
+compares the retained sidecar. Missing artifacts, redirects, altered metadata,
+and unknown identity block recovery; an editable local file is no substitute.
+
+```sh
+pingone-runner reconcile-plan \
+  --attempt plan.json.draft-attempt --attempt-job-id 123 \
+  --request requests/REQUEST_ID/request.json --out recovered-plan.json
+
+pingone-runner reconcile-plan \
+  --attempt rollback.json.draft-attempt --attempt-job-id 456 \
+  --request requests/REQUEST_ID/request.json --out recovered-rollback.json \
+  --original-artifact original-plan.json --original-job-id 123
+```
+
+The request must be the exact original request, with its matching request ID
+in the path. Outputs must be new files and cannot alias inputs. Rollback also
+requires the original forward artifact and its successful planning job, verified
+by the existing original-plan provenance gate. No native POST, inventory capture,
+new draft, or execution occurs. The command reads pinned inventories and the
+known native ID and writes a version 1 diagnostic review with a fresh digest.
+Review issues produce a retained diagnostic output and a blocked exit status.
+Original evidence remains untouched.
+
+The output does not approve, authorize, or execute. It retains the originating
+pipeline and commit, so the exact-origin apply gate prevents a newer pipeline
+from executing it. Cross-pipeline execution recovery needs a separately reviewed
+policy; do not rewrite origin or blindly create a replacement native draft.
+Existing version 1 artifacts and execution gates retain their semantics.
+If the sidecar has no native ID, or the runner disappeared before uploading it,
+stop for investigation: this command never lists or guesses candidate operations
+and does not provide exactly-once recovery across lost runners.

@@ -111,7 +111,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		return err
 	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|inspect|plan|apply|status|rollback-plan> [flags]\n")
+		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|inspect|reconcile-plan|plan|apply|status|rollback-plan> [flags]\n")
 		return nil
 	}
 	if deps.getenv == nil {
@@ -136,6 +136,8 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	}
 	ctx := context.Background()
 	switch args[0] {
+	case "reconcile-plan":
+		return reconcilePlan(ctx, args[1:], stdout, stderr, deps)
 	case "validate":
 		fs := flagSet("validate", stderr)
 		requestPath := fs.String("request", "", "request JSON file")
