@@ -449,6 +449,52 @@ func TestApplyPollsAcceptedExecutionToCompletedOrError(t *testing.T) {
 	}
 }
 
+func TestApplyReportsSanitizedPromotionErrorsAndRetainsIntent(t *testing.T) {
+	// A terminal response using PingOne's promotionErrors string array must be
+	// surfaced safely; ignoring that field loses the only useful failure signal.
+	const response = `{"id":"native-1","status":"ERROR","errors":[{"code":"LEGACY_PRIVATE","message":"legacy private detail"}],"promotionErrors":["500 Internal Server Error: \"{\"id\":\"synthetic-id\",\"code\":\"UNEXPECTED_ERROR\",\"message\":\"private tenant message secret=synthetic-secret\"}\"","opaque token=synthetic-token code=PRIVATE_CODE"]}`
+	var terminal pingone.Promotion
+	if err := json.Unmarshal([]byte(response), &terminal); err != nil {
+		t.Fatal(err)
+	}
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{initial: pingone.Promotion{Status: "IN_PROGRESS"}, statuses: []pingone.Promotion{terminal}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	dd.pollInterval, dd.pollTimeout = time.Millisecond, time.Second
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", outp}, &out, &errOut, dd)
+	if err == nil || !strings.Contains(err.Error(), "unexpected promotion error") || !strings.Contains(err.Error(), "inspect") {
+		t.Fatalf("ERROR did not include safe actionable detail: %v", err)
+	}
+	b, readErr := os.ReadFile(outp)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var res resultOutput
+	if json.Unmarshal(b, &res) != nil || res.Status != "ERROR" || len(res.Errors) < 2 {
+		t.Fatalf("sanitized promotion error missing from result: %s", b)
+	}
+	if !strings.Contains(strings.Join(res.Errors, " "), "promotion error; inspect") {
+		t.Fatalf("legacy errors field was not combined safely: %#v", res.Errors)
+	}
+	for _, secret := range []string{"synthetic-id", "synthetic-secret", "synthetic-token", "private tenant message", "PRIVATE_CODE"} {
+		if strings.Contains(string(b), secret) || strings.Contains(err.Error(), secret) {
+			t.Fatalf("promotion error leaked %q", secret)
+		}
+	}
+	if e.applyCalls != 1 || e.statusCalls != 1 {
+		t.Fatalf("apply=%d status=%d; failed execution must not retry", e.applyCalls, e.statusCalls)
+	}
+	if _, statErr := os.Stat(ap + ".execute-intent"); statErr != nil {
+		t.Fatalf("execute intent was not retained: %v", statErr)
+	}
+}
+
 func TestExistingApplyOutputStopsBeforeAuthorizationOrExecute(t *testing.T) {
 	d := t.TempDir()
 	_, a := fixture(t)
