@@ -48,7 +48,7 @@ type Server struct {
 	clients                                map[string]*pingone.Client
 	clientFactory                          clientFactory
 	files                                  http.Handler
-	logger                                 *logging.Logger
+	logger                                 *logging.Controller
 	localTargets                           map[string]bool
 	gitlabFactory                          func(gitlab.Config, string) (*gitlab.Client, error)
 	gitlabSessionToken, gitlabTokenBinding string
@@ -225,6 +225,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	if path == "/api/gitlab" || path == "/api/gitlab/submit" || path == "/api/requests/preview" {
 		return s.gitlabRoute(w, r)
 	}
+	if path == "/api/logging" {
+		return s.loggingRoute(w, r)
+	}
 	switch {
 	case path == "/api/session" && r.Method == "GET":
 		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains, "localTargets": s.localTargetIDs()})
@@ -333,6 +336,35 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	return problem(404, errors.New("unknown application endpoint"))
+}
+
+func (s *Server) loggingRoute(w http.ResponseWriter, r *http.Request) error {
+	if s.logger == nil {
+		return problem(http.StatusServiceUnavailable, errors.New("logging settings are unavailable in this server"))
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, s.logger.Settings())
+		return nil
+	}
+	if r.Method != http.MethodPut {
+		return problem(http.StatusMethodNotAllowed, errors.New("method not allowed"))
+	}
+	var input struct {
+		Level       string `json:"level"`
+		Debug       bool   `json:"debug"`
+		Format      string `json:"format"`
+		Destination string `json:"destination"`
+		File        string `json:"file"`
+	}
+	if err := decodeBody(w, r, &input); err != nil {
+		return err
+	}
+	settings := logging.RuntimeSettings{Level: input.Level, Debug: input.Debug, Format: input.Format, Destination: input.Destination, File: input.File}
+	if err := s.logger.Configure(settings); err != nil {
+		return problem(http.StatusBadRequest, err)
+	}
+	writeJSON(w, s.logger.Settings())
+	return nil
 }
 func (s *Server) profile(id string) (pingone.Profile, error) {
 	profiles, err := s.store.ListProfiles()

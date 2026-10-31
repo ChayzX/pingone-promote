@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"pingone-promote/internal/logging"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
 	"strings"
@@ -712,7 +713,14 @@ func TestBrowserFixture(t *testing.T) {
 		t.Skip("development-only browser fixture")
 	}
 	h := setup(t)
-	h.server.Config.Handler.(*Server).files = http.FileServer(http.Dir("web"))
+	server := h.server.Config.Handler.(*Server)
+	server.files = http.FileServer(http.Dir("web"))
+	controller, err := logging.NewController(logging.Config{}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	server.logger = controller
 	raw, _ := json.Marshal(map[string]string{"url": h.server.URL + "/?token=bootstrap-token", "native": h.f.url, "source": h.source.ID, "target": h.target.ID})
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)

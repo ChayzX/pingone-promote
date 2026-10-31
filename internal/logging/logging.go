@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -27,6 +28,154 @@ type Config struct {
 }
 
 type Logger struct{ inner *slog.Logger }
+
+// RuntimeSettings are the effective per-process settings exposed to the
+// authenticated local UI. A file path is returned only to that UI caller.
+type RuntimeSettings struct {
+	Level                 string `json:"level"`
+	Debug                 bool   `json:"debug"`
+	Format                string `json:"format"`
+	Destination           string `json:"destination"`
+	File                  string `json:"file"`
+	FileSupported         bool   `json:"fileSupported"`
+	FileUnavailableReason string `json:"fileUnavailableReason,omitempty"`
+	Warning               string `json:"warning,omitempty"`
+}
+
+// Controller changes the active sink only after a replacement is ready. The
+// RW lock lets settings changes wait for in-flight writes before closing the
+// old sink, while readers never observe a partially updated logger.
+type Controller struct {
+	mu             sync.RWMutex
+	configureMu    sync.Mutex
+	logger         *Logger
+	closeSink      func() error
+	config         Config
+	stderr         io.Writer
+	cleanupWarning bool
+}
+
+type EventLogger interface {
+	Event(context.Context, slog.Level, string, string, string, string, string, string, int, time.Duration)
+}
+
+func NewController(cfg Config, stderr io.Writer) (*Controller, error) {
+	if cfg.Level == "" {
+		cfg.Level = "info"
+	}
+	if cfg.Level == "warning" {
+		cfg.Level = "warn"
+	}
+	if cfg.Format == "" {
+		cfg.Format = "json"
+	}
+	if cfg.File != "" {
+		absolute, err := filepath.Abs(cfg.File)
+		if err != nil {
+			return nil, errors.New("log file path must be absolute")
+		}
+		cfg.File = absolute
+	}
+	logger, closeSink, err := Open(cfg, stderr)
+	if err != nil {
+		return nil, err
+	}
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	return &Controller{logger: logger, closeSink: closeSink, config: cfg, stderr: stderr}, nil
+}
+
+func FileLoggingSupport() (bool, string) {
+	if runtime.GOOS == "windows" {
+		return false, "File output is unavailable on Windows because the app cannot set a private file ACL. Choose stderr or redirect stderr through an ACL-controlled path."
+	}
+	return true, ""
+}
+
+func (c *Controller) Settings() RuntimeSettings {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	settings := RuntimeSettings{Level: c.config.Level, Debug: c.config.Level == "debug", Format: c.config.Format, Destination: "stderr"}
+	if c.config.File != "" {
+		settings.Destination, settings.File = "file", c.config.File
+	}
+	settings.FileSupported, settings.FileUnavailableReason = FileLoggingSupport()
+	if c.cleanupWarning {
+		settings.Warning = "The previous log destination did not close cleanly; current settings are active."
+	}
+	return settings
+}
+
+func (c *Controller) Configure(settings RuntimeSettings) error {
+	c.configureMu.Lock()
+	defer c.configureMu.Unlock()
+	if settings.Debug {
+		if settings.Level != "debug" {
+			return errors.New("debug mode requires the debug log level")
+		}
+	} else if settings.Level != "info" && settings.Level != "warn" && settings.Level != "error" {
+		return errors.New("minimum level must be info, warn, or error when debug is off")
+	}
+	if settings.Format != "json" && settings.Format != "text" {
+		return errors.New("format must be json or text")
+	}
+	cfg := Config{Level: settings.Level, Format: settings.Format}
+	switch settings.Destination {
+	case "stderr":
+		if settings.File != "" {
+			return errors.New("clear the file path when stderr is selected")
+		}
+	case "file":
+		if supported, reason := FileLoggingSupport(); !supported {
+			return errors.New(reason)
+		}
+		if settings.File == "" || len(settings.File) > 4096 || strings.TrimSpace(settings.File) != settings.File || strings.ContainsAny(settings.File, "\r\n\x00") || !filepath.IsAbs(settings.File) {
+			return errors.New("file destination requires an absolute path without newlines")
+		}
+		cfg.File = settings.File
+	default:
+		return errors.New("destination must be stderr or file")
+	}
+	newLogger, newClose, err := Open(cfg, c.stderr)
+	if err != nil {
+		return errors.New("could not open the requested destination; choose a writable regular file and retry. Current settings are unchanged.")
+	}
+	c.mu.Lock()
+	oldClose := c.closeSink
+	c.logger, c.closeSink, c.config = newLogger, newClose, cfg
+	c.cleanupWarning = false
+	c.mu.Unlock()
+	if oldClose != nil {
+		if err := oldClose(); err != nil {
+			c.mu.Lock()
+			c.cleanupWarning = true
+			c.mu.Unlock()
+		}
+	}
+	return nil
+}
+
+func (c *Controller) Event(ctx context.Context, level slog.Level, event, stage, route, method, requestID, errorClass string, status int, duration time.Duration) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.logger != nil {
+		c.logger.Event(ctx, level, event, stage, route, method, requestID, errorClass, status, duration)
+	}
+}
+
+func (c *Controller) Close() error {
+	c.configureMu.Lock()
+	defer c.configureMu.Unlock()
+	c.mu.Lock()
+	closeSink := c.closeSink
+	c.logger, c.closeSink = nil, nil
+	c.mu.Unlock()
+	if closeSink != nil {
+		return closeSink()
+	}
+	return nil
+}
 
 type fallbackWriter struct{ primary, fallback io.Writer }
 
@@ -187,7 +336,8 @@ func safeRequestID(id string) bool {
 func safeName(s, fallback string) string {
 	allowed := map[string]bool{
 		"http.request": true, "app.failure": true, "cli.startup": true, "cli.failure": true, "cli.shutdown": true,
-		"startup": true, "configuration": true, "storage": true, "listener": true, "http_server": true, "http": true, "application": true, "operation": true, "command": true,
+		"http.dispatch": true,
+		"startup":       true, "configuration": true, "storage": true, "listener": true, "http_server": true, "http": true, "application": true, "operation": true, "command": true,
 		"startup_failed": true, "request_failed": true, "request_rejected": true, "server_failed": true, "command_failed": true,
 		"operation_failed": true,
 	}
@@ -255,13 +405,16 @@ func (w *statusWriter) Flush() {
 
 // HTTP adds per-request correlation and logs only an allowlisted route name,
 // method, status, and duration. It never records URL, query, host, or headers.
-func HTTP(logger *Logger, next http.Handler) http.Handler {
+func HTTP(logger EventLogger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID()
 		w.Header().Set("X-Request-ID", id)
 		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
 		sw := &statusWriter{ResponseWriter: w}
 		started := time.Now()
+		if logger != nil {
+			logger.Event(ctx, slog.LevelDebug, "http.dispatch", "http", routeName(r), r.Method, id, "", 0, 0)
+		}
 		next.ServeHTTP(sw, r.WithContext(ctx))
 		status := sw.status
 		if status == 0 {
@@ -273,7 +426,9 @@ func HTTP(logger *Logger, next http.Handler) http.Handler {
 		} else if status >= 400 {
 			level, class = slog.LevelWarn, "request_rejected"
 		}
-		logger.Event(ctx, level, "http.request", "http", routeName(r), r.Method, id, class, status, time.Since(started))
+		if logger != nil {
+			logger.Event(ctx, level, "http.request", "http", routeName(r), r.Method, id, class, status, time.Since(started))
+		}
 	})
 }
 

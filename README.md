@@ -42,6 +42,8 @@ The UI server writes newline-delimited JSON events to stderr by default. Set `--
 
 The same settings can be supplied as `PINGONE_PROMOTE_LOG_LEVEL`, `PINGONE_PROMOTE_LOG_FORMAT`, and `PINGONE_PROMOTE_LOG_FILE`; CLI flags override these values. `pingone-runner` uses these environment settings and writes its existing result JSON/stdout unchanged; its failure event goes to stderr or the configured log file.
 
+Authenticated users can open **Logging settings** in the UI to change the minimum level, include bounded debug dispatch events, choose JSON or text, and switch between stderr and a private file. UI changes last only until the app exits and do not modify environment variables or command-line defaults. A failed destination change leaves the active sink and settings unchanged. On Windows, the file option is visibly disabled with the reason. Debug events add only the fixed route, method, and request ID; they do not include request data.
+
 Events contain severity, a fixed event and stage, an allowlisted route name, standard HTTP method, status, duration, and a generated request correlation ID. Request IDs are returned in the `X-Request-ID` response header; application failure events carry the same ID as the request completion event. Route names never include path segments; URLs, query strings, hosts, headers, cookies, request bodies, native PingOne payloads, tenant/environment identifiers, profile configuration, credentials, bootstrap/CSRF tokens, and personal data are excluded. Error strings and stack traces are never serialized. Treat logs as operational records, but still protect and retain them according to local policy.
 
 Session-only client secrets must be entered again after each app restart. To use a process environment variable, set it before starting the app, then save a profile with the `Environment variable` credential option and that variable's name:
@@ -115,6 +117,7 @@ In another terminal, run:
 python3 scripts/test_browser.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_races.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_gitlab.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
+python3 scripts/test_browser_logging.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium --output-dir /tmp/pingone-logging-evidence
 ```
 
 Stop the fixture with Ctrl+C when finished. Screenshots go to `/tmp/pingone-browser-evidence` unless `--output-dir` is supplied. These checks verify local behavior only. See [verification notes](docs/verification.md) for the live acceptance checklist and API limitations.

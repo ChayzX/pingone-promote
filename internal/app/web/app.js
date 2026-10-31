@@ -8,7 +8,8 @@
     sourceByID: new Map(), targetByType: new Map(), searchTimer: null,
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
     confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null,
+    loggingSettings: null, loggingSettingsGeneration: 0, loggingSettingsBusy: false
   };
 
   const el = (tag, className, value) => {
@@ -35,6 +36,7 @@
   const profilesDialog = $('#profiles-dialog');
   const deployDialog = $('#deploy-dialog');
   const gitlabDialog = $('#gitlab-dialog');
+  const loggingDialog = $('#logging-dialog');
   const deleteProfileDialog = $('#delete-profile-dialog');
 
   async function request(path, options = {}) {
@@ -42,7 +44,7 @@
     const headers = new Headers(options.headers || {});
     headers.set('Accept', 'application/json');
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
-    if (method === 'POST' || method === 'DELETE') headers.set('X-CSRF-Token', state.csrf);
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') headers.set('X-CSRF-Token', state.csrf);
     let response;
     try {
       response = await fetch(path, {
@@ -840,6 +842,93 @@
     finally { if (generation === state.gitlabConfigGeneration) $('#gitlab-save').disabled = false; }
   }
 
+  function renderLoggingSettings(settings) {
+    state.loggingSettings = settings;
+    const debug = settings.debug === true;
+    const destination = settings.destination === 'file' ? 'file' : 'stderr';
+    $('#logging-debug').checked = debug;
+    $('#logging-level').value = debug ? 'info' : ['info', 'warn', 'error'].includes(settings.level) ? settings.level : 'info';
+    $('#logging-level').disabled = debug;
+    $('#logging-format').value = settings.format === 'text' ? 'text' : 'json';
+    $('#logging-destination').value = destination;
+    $('#logging-file').value = typeof settings.file === 'string' ? settings.file : '';
+    $('#logging-file').required = destination === 'file';
+    $('#logging-file-field').hidden = destination !== 'file';
+    const fileOption = $('#logging-destination option[value="file"]');
+    fileOption.disabled = settings.fileSupported !== true;
+    $('#logging-file-support-note').textContent = settings.fileUnavailableReason || '';
+    $('#logging-file-support-note').hidden = settings.fileSupported === true;
+    $('#logging-destination-help').textContent = destination === 'file'
+      ? 'Events append to this private log file.'
+      : 'The active app process writes to standard error.';
+    const target = destination === 'file' ? settings.file : 'standard error';
+    $('#logging-current').textContent = `${settings.level || 'info'} · ${settings.format || 'json'} · ${target || 'standard error'}`;
+    $('#logging-warning').textContent = settings.warning || '';
+    $('#logging-warning').hidden = !settings.warning;
+  }
+
+  async function openLoggingSettings() {
+    const generation = ++state.loggingSettingsGeneration;
+    $('#logging-error').hidden = true;
+    $('#logging-current').textContent = 'Loading current settings.';
+    $('#logging-save').disabled = true;
+    loggingDialog.showModal();
+    try {
+      const settings = await request('/api/logging');
+      if (generation !== state.loggingSettingsGeneration || !loggingDialog.open) return;
+      renderLoggingSettings(settings);
+      $('#logging-save').disabled = false;
+    } catch (failure) {
+      if (generation !== state.loggingSettingsGeneration || !loggingDialog.open) return;
+      $('#logging-error').textContent = failure.message;
+      $('#logging-error').hidden = false;
+    }
+  }
+
+  async function saveLoggingSettings() {
+    const form = $('#logging-form');
+    if (!form.reportValidity() || state.loggingSettingsBusy) return;
+    const generation = state.loggingSettingsGeneration;
+    const debug = $('#logging-debug').checked;
+    const destination = $('#logging-destination').value;
+    const body = {
+      debug,
+      level: debug ? 'debug' : $('#logging-level').value,
+      format: $('#logging-format').value,
+      destination,
+      file: destination === 'file' ? $('#logging-file').value : ''
+    };
+    state.loggingSettingsBusy = true;
+    for (const button of [$('#logging-save'), $('#logging-cancel'), $('#logging-close')]) button.disabled = true;
+    $('#logging-error').hidden = true;
+    try {
+      const settings = await request('/api/logging', { method: 'PUT', body });
+      if (generation !== state.loggingSettingsGeneration || !loggingDialog.open) return;
+      renderLoggingSettings(settings);
+      loggingDialog.close();
+      showToast(settings.warning || 'Logging settings saved for this app session.', Boolean(settings.warning));
+    } catch (failure) {
+      if (generation === state.loggingSettingsGeneration && loggingDialog.open) {
+        $('#logging-error').textContent = failure.message;
+        $('#logging-error').hidden = false;
+      }
+    } finally {
+      state.loggingSettingsBusy = false;
+      $('#logging-save').disabled = false;
+      $('#logging-cancel').disabled = false;
+      $('#logging-close').disabled = false;
+    }
+  }
+
+  function updateLoggingDestination() {
+    const file = $('#logging-destination').value === 'file';
+    $('#logging-file-field').hidden = !file;
+    $('#logging-file').required = file;
+    $('#logging-destination-help').textContent = file
+      ? 'Events append to this private log file.'
+      : 'The active app process writes to standard error.';
+  }
+
   function schedulePoll(plan, generation = state.planGeneration) {
     clearTimer();
     if (generation !== state.planGeneration || !plan?.id || isTerminalStatus(plan.status)) return;
@@ -1165,7 +1254,13 @@
 
   $('#profiles-open').addEventListener('click', openProfiles);
   $('#gitlab-open').addEventListener('click', openGitLabSettings);
+  $('#logging-open').addEventListener('click', openLoggingSettings);
   $('#gitlab-save').addEventListener('click', saveGitLabSettings);
+  $('#logging-form').addEventListener('submit', event => { event.preventDefault(); saveLoggingSettings(); });
+  $('#logging-cancel').addEventListener('click', () => { if (!state.loggingSettingsBusy) loggingDialog.close(); });
+  $('#logging-close').addEventListener('click', () => { if (!state.loggingSettingsBusy) loggingDialog.close(); });
+  $('#logging-debug').addEventListener('change', event => { $('#logging-level').disabled = event.target.checked; });
+  $('#logging-destination').addEventListener('change', updateLoggingDestination);
   $('#add-first-profile').addEventListener('click', openProfiles);
   // Enter inside a field must save (never close the dialog and drop the input).
   $('#profiles-form').addEventListener('submit', event => { event.preventDefault(); saveProfile(); });
@@ -1194,5 +1289,7 @@
   profilesDialog.addEventListener('close', () => { resetProfileForm(); });
   $('#confirm-delete-profile').addEventListener('click', performDeleteProfile);
   deleteProfileDialog.addEventListener('close', () => { state.pendingDeleteProfile = null; });
+  loggingDialog.addEventListener('cancel', event => { if (state.loggingSettingsBusy) event.preventDefault(); });
+  loggingDialog.addEventListener('close', () => { state.loggingSettingsGeneration++; });
   initialize();
 })();

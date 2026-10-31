@@ -20,7 +20,7 @@ func NewWithPolicy(st *store.Store, token string, policy Policy) (*Server, error
 
 // NewWithPolicyAndLogger wires structured, redacted application failures to
 // the caller's logger while preserving request correlation from HTTP context.
-func NewWithPolicyAndLogger(st *store.Store, token string, policy Policy, logger *logging.Logger) (*Server, error) {
+func NewWithPolicyAndLogger(st *store.Store, token string, policy Policy, logger *logging.Controller) (*Server, error) {
 	s := New(st, token)
 	s.logger = logger
 	safe := regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)

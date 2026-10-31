@@ -86,6 +86,44 @@ func TestHTTPFailureLogsStageWithoutNativeIdentifierOrErrorText(t *testing.T) {
 	}
 }
 
+func TestDebugHTTPEventsExcludeRequestPayloadAndCredentials(t *testing.T) {
+	var output lockedBuffer
+	controller, err := NewController(Config{Level: "debug", Format: "json"}, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	h := HTTP(controller, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	const sentinel = "fixture-secret-tenant-personal-data"
+	r := httptest.NewRequest("POST", "/api/plans/native-private-id/deploy?token="+sentinel, strings.NewReader("native-payload-"+sentinel))
+	r.Header.Set("Authorization", "Bearer "+sentinel)
+	r.Header.Set("X-CSRF-Token", sentinel)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("debug mode should emit dispatch and completion only: %s", output.String())
+	}
+	var dispatch, completion map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &dispatch); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &completion); err != nil {
+		t.Fatal(err)
+	}
+	if dispatch["level"] != "DEBUG" || dispatch["event"] != "http.dispatch" || dispatch["route"] != "api.plans" || dispatch["method"] != "POST" {
+		t.Fatalf("debug dispatch missing bounded fields: %#v", dispatch)
+	}
+	if dispatch["request_id"] == "" || dispatch["request_id"] != completion["request_id"] {
+		t.Fatalf("debug and completion events are not correlated: %#v %#v", dispatch, completion)
+	}
+	for _, private := range []string{sentinel, "native-private-id", "native-payload", "Authorization", "X-CSRF-Token"} {
+		if strings.Contains(output.String(), private) {
+			t.Fatalf("debug logs contained %q: %s", private, output.String())
+		}
+	}
+}
+
 func TestHTTPRequestCorrelationIsUniqueUnderConcurrency(t *testing.T) {
 	var output lockedBuffer
 	logger, closeLog, err := Open(Config{Format: "json"}, &output)

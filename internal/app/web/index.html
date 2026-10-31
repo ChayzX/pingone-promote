@@ -16,6 +16,7 @@
         <span class="local-status">Local workspace</span>
         <button class="button button-quiet" id="profiles-open" type="button">Environment profiles</button>
         <button class="button button-quiet" id="gitlab-open" type="button">GitLab settings</button>
+        <button class="button button-quiet" id="logging-open" type="button">Logging settings</button>
       </div>
     </div>
   </header>
@@ -153,6 +154,30 @@
         <p class="form-error" id="gitlab-error" role="alert" hidden></p>
       </div>
       <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" value="cancel" formnovalidate>Close</button><button class="button button-primary" id="gitlab-save" type="button">Save and verify</button></footer>
+    </form>
+  </dialog>
+
+  <dialog class="dialog settings-dialog" id="logging-dialog" aria-labelledby="logging-dialog-title">
+    <form method="dialog" class="dialog-shell" id="logging-form">
+      <header class="dialog-header"><div><h2 id="logging-dialog-title">Logging settings</h2></div><button class="icon-button" type="button" id="logging-close" aria-label="Close logging settings">×</button></header>
+      <div class="dialog-content">
+        <p class="section-help">Changes apply to this app session only. Restarting returns to the command-line logging settings.</p>
+        <section class="settings-summary" aria-labelledby="logging-current-title">
+          <h3 id="logging-current-title">Current effective settings</h3>
+          <p id="logging-current" role="status" aria-live="polite">Loading current settings.</p>
+        </section>
+        <fieldset class="form-grid logging-grid"><legend class="sr-only">Configure local logging</legend>
+          <label class="settings-toggle field-wide"><input id="logging-debug" type="checkbox"><span><strong>Include debug events</strong><span class="field-help">Adds request dispatch events with route, method, and request ID. Payloads and headers are excluded.</span></span></label>
+          <label class="field">Minimum level<select id="logging-level" class="control"><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><span class="field-help">Debug mode temporarily overrides this level.</span></label>
+          <label class="field">Format<select id="logging-format" class="control"><option value="json">JSON</option><option value="text">Text</option></select></label>
+          <label class="field field-wide">Destination<select id="logging-destination" class="control"><option value="stderr">Standard error</option><option value="file">Private log file</option></select><span class="field-help" id="logging-destination-help">The active app process writes to standard error.</span></label>
+          <label class="field field-wide" id="logging-file-field" hidden>Absolute file path<input id="logging-file" class="control" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/absolute/path/to/pingone-promote.log"><span class="field-help">Existing regular files are appended to. The app creates the file with owner-only permissions.</span></label>
+        </fieldset>
+        <p class="inline-state logging-support-note" id="logging-file-support-note" role="status" hidden></p>
+        <p class="inline-state" id="logging-warning" role="status" hidden></p>
+        <p class="form-error" id="logging-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-actions dialog-actions-footer"><button class="button button-quiet" id="logging-cancel" type="button">Cancel</button><button class="button button-primary" id="logging-save" type="submit">Save changes</button></footer>
     </form>
   </dialog>
 

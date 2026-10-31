@@ -88,7 +88,7 @@ func run() (runErr error) {
 		return nil
 	}
 	stage := "startup"
-	logger, closeLog, err := logging.Open(logging.Config{Level: *logLevel, Format: *logFormat, File: *logFile}, os.Stderr)
+	logger, err := logging.NewController(logging.Config{Level: *logLevel, Format: *logFormat, File: *logFile}, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func run() (runErr error) {
 			}
 			logger.Event(context.Background(), slog.LevelError, "cli.failure", stage, "", "", "", failureClass, 0, 0)
 		}
-		if err := closeLog(); err != nil && runErr == nil {
+		if err := logger.Close(); err != nil && runErr == nil {
 			runErr = errors.New("could not close structured log output")
 		}
 	}()
