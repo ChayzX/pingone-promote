@@ -411,6 +411,91 @@ func mustRead(t *testing.T, path string) []byte {
 	return b
 }
 
+func TestCredentialProviderFailureRedactsCauseAndPreservesItForInternalChecks(t *testing.T) {
+	cause := errors.New("raw keyring diagnostic SECRET-CANARY")
+	failure := safeCredentialProviderFailure("Synthetic Keyring", "read", "Unlock and retry.", cause)
+	if strings.Contains(failure.Error(), "SECRET-CANARY") || strings.Contains(failure.Error(), "raw keyring diagnostic") {
+		t.Fatalf("provider diagnostic leaked in display error: %v", failure)
+	}
+	if !errors.Is(failure, cause) {
+		t.Fatal("sanitized provider error did not preserve its internal cause")
+	}
+}
+
+func TestKeyringProviderDiagnosticsNeverReachProfileErrors(t *testing.T) {
+	const canary = "RAW-PROVIDER-DIAGNOSTIC-SECRET-CANARY"
+	t.Run("set failure", func(t *testing.T) {
+		s, err := Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.credentials = &fakeCredentialProvider{setErr: errors.New(canary)}
+		p := validProfile()
+		p.SecretMode = "keychain"
+		_, err = s.SaveProfile(p, "profile-secret")
+		if err == nil || strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), "profile-secret") {
+			t.Fatalf("SaveProfile error leaked provider or credential data: %v", err)
+		}
+	})
+	t.Run("get failure", func(t *testing.T) {
+		s, err := Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := &fakeCredentialProvider{}
+		s.credentials = provider
+		p := validProfile()
+		p.SecretMode = "keychain"
+		p, err = s.SaveProfile(p, "profile-secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider.getErr = errors.New(canary)
+		_, err = s.Secret(p)
+		if err == nil || strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), "profile-secret") {
+			t.Fatalf("Secret error leaked provider or credential data: %v", err)
+		}
+	})
+	t.Run("delete failure", func(t *testing.T) {
+		s, err := Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := &fakeCredentialProvider{}
+		s.credentials = provider
+		p := validProfile()
+		p.SecretMode = "keychain"
+		p, err = s.SaveProfile(p, "profile-secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider.delErr = errors.New(canary)
+		err = s.DeleteProfile(p.ID)
+		if err == nil || strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), "profile-secret") {
+			t.Fatalf("DeleteProfile error leaked provider or credential data: %v", err)
+		}
+	})
+	t.Run("blank edit verification failure", func(t *testing.T) {
+		s, err := Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := &fakeCredentialProvider{}
+		s.credentials = provider
+		p := validProfile()
+		p.SecretMode = "keychain"
+		p, err = s.SaveProfile(p, "profile-secret")
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider.getErr = errors.New(canary)
+		_, err = s.SaveProfile(p, "")
+		if err == nil || strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), "profile-secret") {
+			t.Fatalf("blank-edit error leaked provider or credential data: %v", err)
+		}
+	})
+}
+
 func TestSaveProfileUpsertsAndPreservesID(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

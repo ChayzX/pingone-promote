@@ -3,7 +3,6 @@
 package store
 
 import (
-	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -20,7 +19,7 @@ func keychainSet(id, secret string) error {
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("macOS Keychain could not store the credential. Unlock your login keychain and approve any access prompt, then retry: %w", err)
+		return safeCredentialProviderFailure("macOS Keychain", "store", "Unlock your login keychain and approve any access prompt, then retry.", err)
 	}
 	return nil
 }
@@ -35,7 +34,7 @@ func keychainGet(id string) (string, error) {
 		if strings.Contains(stdout.String()+stderr.String(), "could not be found") {
 			return "", errCredentialNotFound
 		}
-		return "", fmt.Errorf("macOS Keychain could not read the credential. Unlock your login keychain and approve any access prompt, then retry: %w", err)
+		return "", safeCredentialProviderFailure("macOS Keychain", "read", "Unlock your login keychain and approve any access prompt, then retry.", err)
 	}
 	return strings.TrimSuffix(stdout.String(), "\n"), nil
 }
@@ -50,7 +49,7 @@ func keychainDelete(id string) error {
 		if strings.Contains(stdout.String()+stderr.String(), "could not be found") {
 			return nil
 		}
-		return fmt.Errorf("macOS Keychain could not remove the credential. Unlock your login keychain and approve any access prompt, then retry: %w", err)
+		return safeCredentialProviderFailure("macOS Keychain", "remove", "Unlock your login keychain and approve any access prompt, then retry.", err)
 	}
 	return nil
 }

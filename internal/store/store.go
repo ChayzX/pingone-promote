@@ -76,7 +76,7 @@ func credentialBeforeChange(provider credentialProvider, id string) (string, boo
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("could not verify the existing OS keyring credential; unlock the OS credential vault and retry: %w", err)
+		return "", false, safeCredentialProviderFailure("OS credential vault", "verify", "Unlock the OS credential vault and retry.", err)
 	}
 	return secret, true, nil
 }
@@ -391,7 +391,7 @@ func (s *Store) Secret(p pingone.Profile) (string, error) {
 			return "", fmt.Errorf("no OS credential is stored for profile %q; edit the profile, enter the PingOne client secret, and save", p.ID)
 		}
 		if err != nil {
-			return "", fmt.Errorf("could not access the OS credential store: %w", err)
+			return "", safeCredentialProviderFailure("OS credential vault", "access", "Unlock the OS credential vault and retry.", err)
 		}
 		return secret, nil
 	default:

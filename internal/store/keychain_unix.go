@@ -4,7 +4,6 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"runtime"
 
 	"github.com/zalando/go-keyring"
@@ -26,7 +25,7 @@ func keyringActionHint() string {
 
 func keychainSet(id, secret string) error {
 	if err := keyring.Set(keychainService, id, secret); err != nil {
-		return fmt.Errorf("%s could not store the credential. %s: %w", keyringProviderName(), keyringActionHint(), err)
+		return safeCredentialProviderFailure(keyringProviderName(), "store", keyringActionHint(), err)
 	}
 	return nil
 }
@@ -37,7 +36,7 @@ func keychainGet(id string) (string, error) {
 		return "", errCredentialNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s could not read the credential. %s: %w", keyringProviderName(), keyringActionHint(), err)
+		return "", safeCredentialProviderFailure(keyringProviderName(), "read", keyringActionHint(), err)
 	}
 	return secret, nil
 }
@@ -48,7 +47,7 @@ func keychainDelete(id string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("%s could not remove the credential. %s: %w", keyringProviderName(), keyringActionHint(), err)
+		return safeCredentialProviderFailure(keyringProviderName(), "remove", keyringActionHint(), err)
 	}
 	return nil
 }
