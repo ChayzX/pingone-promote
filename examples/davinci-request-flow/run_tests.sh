@@ -13,6 +13,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 node test/unit.js
+python3 test/generator_encoding.py
 python3 -I gen_flows.py "$work/out" values.example.json >/dev/null
 python3 -I check_flows.py "$work/out"/*.json
 node test/shipped_code.js "$work/out"/*.json

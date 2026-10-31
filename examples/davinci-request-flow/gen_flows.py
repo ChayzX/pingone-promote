@@ -22,7 +22,7 @@ import sys
 HERE = pathlib.Path(__file__).parent
 # Embedded copy: full-line comments and indentation removed (never touches
 # string or regex contents). test/load_fn.js applies the same transform.
-CORE = "\n".join(line.strip() for line in (HERE / "lib" / "core.js").read_text().splitlines()
+CORE = "\n".join(line.strip() for line in (HERE / "lib" / "core.js").read_text(encoding="utf-8").splitlines()
                  if line.strip() and not line.strip().startswith("//"))
 FN_DIR = HERE / "flows" / "fn"
 TERRAFORM = len(sys.argv) > 1 and sys.argv[1] == "--terraform"
@@ -31,7 +31,7 @@ if TERRAFORM:
     VALUES = {"requireSignIn": "--signin" in sys.argv[3:]}
 else:
     OUT = pathlib.Path(sys.argv[1])
-    VALUES = json.loads(pathlib.Path(sys.argv[2]).read_text()) if len(sys.argv) > 2 else {}
+    VALUES = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")) if len(sys.argv) > 2 else {}
 
 VALUE_KEYS = {
     "apiOrigin": "https://api.pingone.com",
@@ -81,7 +81,7 @@ for key, slot in CONNECTION_KEYS.items():
 
 
 def fn_code(name):
-    body = (FN_DIR / f"{name}.js").read_text()
+    body = (FN_DIR / f"{name}.js").read_text(encoding="utf-8")
     return ("module.exports = a = async ({params}) => {\nconst core = (() => {\n" + CORE +
             "\nreturn core;\n})();\n// ---- step: " + name + " ----\n" + body + "\n};\n")
 
@@ -1255,13 +1255,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 FLOWS = build_flows(SIGNIN)
 if TERRAFORM:
     datas = [resolve_aliases(fl) for fl in FLOWS]
-    (OUT / "flow.tf.json").write_text(json.dumps(terraform(datas), indent=1) + "\n")
+    (OUT / "flow.tf.json").write_text(json.dumps(terraform(datas), indent=1) + "\n", encoding="utf-8")
     print(f"flow.tf.json: {len(datas)} flows, {sum(len(d['graphData']['elements']['nodes']) for d in datas)} nodes, "
           f"{sum(1 for d in datas for v in d['variables'] if v['context'] == 'flow')} flow variables")
     sys.exit(0)
 data = export_file(FLOWS)
 fname = "pingone-promote-request.flow.json"
-(OUT / fname).write_text(json.dumps(data, separators=(",", ":")) + "\n")
+(OUT / fname).write_text(json.dumps(data, separators=(",", ":")) + "\n", encoding="utf-8")
 for d in data["flows"]:
     steps = sum(1 for n in d["graphData"]["elements"]["nodes"] if n["data"]["nodeType"] == "CONNECTION")
     print(f"{fname}: {d['name']}: {steps} steps, {len(d['graphData']['elements']['edges'])} edges")
