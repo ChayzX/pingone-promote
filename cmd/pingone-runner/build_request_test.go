@@ -111,6 +111,25 @@ func TestBuildRequestTakesNoSnapshotOutsideProtectedJob(t *testing.T) {
 	}
 }
 
+func TestBuildRequestOutputMustMatchIntentPathBeforeGateOrInventory(t *testing.T) {
+	f := newBuildFixture()
+	in := writeIntent(t, intentID, intentDoc)
+	wrongPaths := []string{
+		filepath.Join(t.TempDir(), "request.json"),
+		filepath.Join(filepath.Dir(in), "other.json"),
+		filepath.Join(filepath.Dir(filepath.Dir(in)), "other-id", "request.json"),
+	}
+	for _, out := range wrongPaths {
+		err := runWith([]string{"build-request", "--intent", in, "--out", out}, &strings.Builder{}, &strings.Builder{}, f.deps)
+		if err == nil || !strings.Contains(err.Error(), "output must be intents/") {
+			t.Errorf("output path %q was not rejected: %v", out, err)
+		}
+	}
+	if f.gate.targetChecked != 0 || f.gate.verified != 0 || f.inventoryN != 0 {
+		t.Fatalf("mismatched output reached protected work: target=%d plan=%d inventories=%d", f.gate.targetChecked, f.gate.verified, f.inventoryN)
+	}
+}
+
 func TestIntentMustLiveInItsOwnIDDirectory(t *testing.T) {
 	f := newBuildFixture()
 	wrongDir := writeIntent(t, "fedcba9876543210fedcba9876543210", intentDoc)

@@ -170,7 +170,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	case "build-request":
 		fs := flagSet("build-request", stderr)
 		intentPath := fs.String("intent", "", "reviewed intent file (intents/<id>/intent.json)")
-		outPath := fs.String("out", "", "request output path")
+		outPath := fs.String("out", "", "request output path (intents/<intent-id>/request.json)")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
@@ -180,11 +180,15 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if samePath(*intentPath, *outPath) {
 			return errors.New("build-request output must not overwrite the intent")
 		}
-		if err := requireAbsent(*outPath); err != nil {
-			return err
-		}
 		in, err := readIntent(*intentPath)
 		if err != nil {
+			return err
+		}
+		expectedOut := filepath.Join(filepath.Dir(filepath.Clean(*intentPath)), "request.json")
+		if !samePath(*outPath, expectedOut) {
+			return errors.New("build-request output must be intents/<matching-intent-id>/request.json beside the intent")
+		}
+		if err := requireAbsent(*outPath); err != nil {
 			return err
 		}
 		g, err := deps.gate()
