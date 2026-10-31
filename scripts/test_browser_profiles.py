@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--fixture-file', required=True)
     parser.add_argument('--chromium', required=True)
+    parser.add_argument('--credential-platform', choices=('native', 'macos', 'linux'), default='native')
     args = parser.parse_args()
     with open(args.fixture_file, encoding='utf-8') as file:
         fixture = json.load(file)
@@ -27,32 +28,56 @@ def main():
         page = browser.new_page()
         errors, writes, failures, created = [], [], [], []
         prefix = f'Credential {uuid.uuid4().hex[:8]}'
+        synthetic_keyring_profiles = {}
         page.on('pageerror', lambda error: errors.append(str(error)))
 
-        def profile_write(route):
-            if route.request.method != 'POST':
-                return route.continue_()
+        def session_capability(route):
+            response = route.fetch()
+            body = response.json()
+            if args.credential_platform == 'macos':
+                body['credentialStorage'] = {
+                    'mode': 'keychain', 'provider': 'macOS Keychain',
+                    'supported': True, 'availability': 'not_probed',
+                }
+            elif args.credential_platform == 'linux':
+                body['credentialStorage'] = {
+                    'mode': 'keychain', 'provider': 'Linux Secret Service',
+                    'supported': True, 'availability': 'not_probed',
+                    'requirement': 'Requires a running, unlocked Secret Service provider. Availability is checked when you save or use a credential.',
+                }
+            return route.fulfill(response=response, json=body)
+
+        def profile_api(route):
+            if route.request.method == 'GET':
+                response = route.fetch()
+                profiles = response.json()
+                profiles.extend(synthetic_keyring_profiles.values())
+                return route.fulfill(response=response, json=profiles)
             body = route.request.post_data_json
             writes.append(body)
             if body['secretMode'] == 'keychain':
                 # Do not use a real OS keychain in a synthetic browser test.
                 profile = {key: value for key, value in body.items() if key != 'secret'}
-                profile['id'] = 'synthetic-keychain-profile'
+                profile['id'] = f'synthetic-keychain-{uuid.uuid4().hex[:8]}'
+                synthetic_keyring_profiles[profile['id']] = profile
                 return route.fulfill(status=200, json=profile)
+            if body.get('id') in synthetic_keyring_profiles:
+                del synthetic_keyring_profiles[body['id']]
             return route.continue_()
 
-        page.route('**/api/profiles', profile_write)
+        page.route('**/api/session', session_capability)
+        page.route('**/api/profiles', profile_api)
         page.goto(fixture['url'])
         page.locator('#source-profile option').nth(1).wait_for(state='attached')
-        session = page.request.get(fixture['url'].split('/?')[0] + '/api/session').json()
+        session = page.evaluate("async () => await fetch('/api/session').then((response) => response.json())")
         credential_storage = session.get('credentialStorage', {})
         keyring_option = page.locator('[name="secretMode"] option[value="keychain"]')
         if credential_storage.get('supported'):
-            if credential_storage.get('provider') not in keyring_option.text_content() or keyring_option.is_disabled():
+            if credential_storage.get('provider') not in keyring_option.text_content() or keyring_option.evaluate('(option) => option.disabled'):
                 failures.append('credential-vault label does not match the supported app server platform')
             modes = ('session', 'keychain', 'env')
         else:
-            if not keyring_option.is_disabled() or 'unsupported' not in keyring_option.text_content().lower():
+            if not keyring_option.evaluate('(option) => option.disabled') or 'unsupported' not in keyring_option.text_content().lower():
                 failures.append('unsupported server platform left OS credential storage selectable')
             modes = ('session', 'env')
         for mode in modes:
@@ -109,6 +134,7 @@ def main():
                 created.append(migrated.value.json()['id'])
             else:
                 failures.append('keyring-to-session save failed')
+            page.get_by_role('button', name='Close environment profiles', exact=True).click()
 
         # Editing an existing env profile must not carry its variable name into
         # the new session-mode payload or persisted profile metadata.
@@ -133,7 +159,7 @@ def main():
         browser.close()
         assert not errors, errors
         assert not failures, '; '.join(failures)
-        print('PASS: supported credential modes and profile edits omit inactive credential fields')
+        print(f'PASS: {args.credential_platform} credential UI, mode prompts, and profile edits')
 
 
 if __name__ == '__main__':
