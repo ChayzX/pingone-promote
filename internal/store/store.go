@@ -52,10 +52,23 @@ type Record struct {
 // Store persists profiles and history under dir. Session secrets remain only
 // in this Store's memory.
 type Store struct {
-	dir     string
-	mu      sync.Mutex
-	session map[string]string
+	dir         string
+	mu          sync.Mutex
+	session     map[string]string
+	credentials credentialProvider
 }
+
+type credentialProvider interface {
+	Set(id, secret string) error
+	Get(id string) (string, error)
+	Delete(id string) error
+}
+
+type platformCredentialProvider struct{}
+
+func (platformCredentialProvider) Set(id, secret string) error   { return keychainSet(id, secret) }
+func (platformCredentialProvider) Get(id string) (string, error) { return keychainGet(id) }
+func (platformCredentialProvider) Delete(id string) error        { return keychainDelete(id) }
 
 // PersistenceError marks a local storage or stored-data error for API callers.
 // Its original cause remains available through Unwrap for local diagnostics.
@@ -86,7 +99,7 @@ func Open(dir string) (*Store, error) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, fmt.Errorf("secure store directory: %w", err)
 	}
-	s := &Store{dir: dir, session: make(map[string]string)}
+	s := &Store{dir: dir, session: make(map[string]string), credentials: platformCredentialProvider{}}
 	if _, err := s.profiles(); err != nil {
 		return nil, err
 	}
@@ -213,8 +226,8 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 	}
 	oldSecret, hasOldSecret := s.session[p.ID]
 	if p.SecretMode == "keychain" && secret != "" {
-		if err := keychainSet(p.ID, secret); err != nil {
-			return p, err
+		if err := s.credentials.Set(p.ID, secret); err != nil {
+			return p, fmt.Errorf("could not store credential in the OS keyring: %w", err)
 		}
 	}
 	found := false
@@ -267,8 +280,8 @@ func (s *Store) DeleteProfile(id string) error {
 		return fmt.Errorf("profile %q not found", id)
 	}
 	if deleted.SecretMode == "keychain" {
-		if err := keychainDelete(id); err != nil {
-			return err
+		if err := s.credentials.Delete(id); err != nil {
+			return fmt.Errorf("could not delete credential from the OS keyring: %w", err)
 		}
 	}
 	if err := s.write("profiles.json", kept); err != nil {
@@ -299,7 +312,14 @@ func (s *Store) Secret(p pingone.Profile) (string, error) {
 		}
 		return v, nil
 	case "keychain":
-		return keychainGet(p.ID)
+		secret, err := s.credentials.Get(p.ID)
+		if errors.Is(err, errCredentialNotFound) {
+			return "", fmt.Errorf("no OS credential is stored for profile %q", p.ID)
+		}
+		if err != nil {
+			return "", fmt.Errorf("could not access the OS credential store: %w", err)
+		}
+		return secret, nil
 	default:
 		return "", fmt.Errorf("unsupported secret mode %q", p.SecretMode)
 	}

@@ -51,7 +51,7 @@ export PINGONE_CLIENT_SECRET='your-worker-client-secret'
 ./pingone-promote --listen 127.0.0.1:8787
 ```
 
-The variable value is read when the app needs the credential. On macOS, profiles may instead store the credential in Keychain. Keychain access is macOS-only. Profile and activity JSON do not contain client secrets or API tokens.
+The variable value is read when the app needs the credential. Profiles may instead store the credential in the operating system keyring: macOS Keychain, Windows Credential Manager, or Linux Secret Service (such as GNOME Keyring or KWallet). Linux requires a running and unlocked Secret Service provider. If the system credential vault is unavailable or locked, the app reports the error and does not save the secret in a local file. Existing macOS Keychain entries continue to use the same service and profile account. Profile and activity JSON do not contain client secrets or API tokens.
 
 ## Promotion workflow and safety
 

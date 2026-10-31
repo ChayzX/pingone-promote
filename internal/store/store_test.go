@@ -12,6 +12,41 @@ import (
 	"pingone-promote/internal/pingone"
 )
 
+type fakeCredentialProvider struct {
+	values map[string]string
+	setErr error
+	getErr error
+	delErr error
+}
+
+func (f *fakeCredentialProvider) Set(id, secret string) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	if f.values == nil {
+		f.values = map[string]string{}
+	}
+	f.values[id] = secret
+	return nil
+}
+func (f *fakeCredentialProvider) Get(id string) (string, error) {
+	if f.getErr != nil {
+		return "", f.getErr
+	}
+	value, ok := f.values[id]
+	if !ok {
+		return "", errCredentialNotFound
+	}
+	return value, nil
+}
+func (f *fakeCredentialProvider) Delete(id string) error {
+	if f.delErr != nil {
+		return f.delErr
+	}
+	delete(f.values, id)
+	return nil
+}
+
 func validProfile() pingone.Profile {
 	return pingone.Profile{Name: "Production", Region: "us", EnvironmentID: "env_123", ClientID: "worker-1", SecretMode: "session"}
 }
@@ -83,6 +118,62 @@ func TestEnvironmentSecretIsResolvedAtUseTime(t *testing.T) {
 	}
 	if strings.Contains(string(data), "first") || strings.Contains(string(data), "second") {
 		t.Fatal("environment secret value was persisted")
+	}
+}
+
+func TestKeyringCredentialUsesProviderAndKeepsFilesSecretFree(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "synthetic-keyring-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Secret(p); err != nil || got != "synthetic-keyring-secret" {
+		t.Fatalf("Secret() = %q, %v", got, err)
+	}
+	for _, filename := range []string{"profiles.json", "records.json"} {
+		data, err := os.ReadFile(filepath.Join(dir, filename))
+		if err == nil && strings.Contains(string(data), "synthetic-keyring-secret") {
+			t.Fatalf("credential persisted in %s", filename)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteProfile(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := provider.values[p.ID]; ok {
+		t.Fatal("profile deletion did not remove keyring credential")
+	}
+}
+
+func TestKeyringUnavailableErrorDoesNotPersistProfileOrSecret(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{setErr: errors.New("vault unavailable")}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	if _, err := s.SaveProfile(p, "synthetic-secret"); err == nil || !strings.Contains(err.Error(), "OS keyring") {
+		t.Fatalf("SaveProfile error = %v, want explicit keyring failure", err)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("failed keyring save persisted profile: %+v", profiles)
 	}
 }
 

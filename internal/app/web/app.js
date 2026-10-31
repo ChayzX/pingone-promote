@@ -219,7 +219,7 @@
     const secret = $('#profiles-dialog [name="secret"]');
     secret.disabled = envMode;
     secret.required = !state.profileEditID && !envMode;
-    if (mode === 'keychain') $('#secret-help').textContent = 'Stored in macOS Keychain. This option requires the app to run on macOS.';
+    if (mode === 'keychain') $('#secret-help').textContent = 'Stored in the operating system credential vault. Linux requires a Secret Service keyring to be available.';
     if (mode === 'session') $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored secret; a new value replaces it.' : 'Kept in memory for this app session.';
     if (mode === 'env') $('#secret-help').textContent = '';
   }

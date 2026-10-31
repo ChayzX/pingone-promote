@@ -9,6 +9,8 @@ import (
 const maxSecurityInteractiveLine = 4095 // security's source uses a 4096-byte line buffer.
 const keychainService = "pingone-promote-worker-client"
 
+var errCredentialNotFound = errors.New("OS keyring credential not found")
+
 // quoteSecurityArg quotes one argument for Apple's security -i command parser.
 // That parser accepts single/double quoted arguments and backslash escapes.
 func quoteSecurityArg(s string) string {

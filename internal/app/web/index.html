@@ -125,7 +125,7 @@
             <label class="field">Environment ID<input class="control" name="environmentId" required autocomplete="off" spellcheck="false"></label>
             <label class="field">Authentication environment ID<input class="control" name="authEnvironmentId" required autocomplete="off" spellcheck="false"></label>
             <label class="field">Worker client ID<input class="control" name="clientId" required autocomplete="off" spellcheck="false"></label>
-            <label class="field field-wide">Client secret storage<select class="control" name="secretMode" required><option value="session">Session only</option><option value="env">Environment variable</option><option value="keychain">macOS Keychain</option></select></label>
+            <label class="field field-wide">Client secret storage<select class="control" name="secretMode" required><option value="session">Session only</option><option value="env">Environment variable</option><option value="keychain">Operating system keyring</option></select></label>
             <label class="field field-wide secret-env-field" hidden>Environment variable name<input class="control" name="secretEnv" autocomplete="off" spellcheck="false" placeholder="PINGONE_CLIENT_SECRET"><span class="field-help">The variable is read by the local app process.</span></label>
             <label class="field field-wide secret-value-field">Client secret<input class="control" name="secret" type="password" autocomplete="new-password"><span class="field-help" id="secret-help">Kept in memory for this app session.</span></label>
           </fieldset>
