@@ -335,11 +335,11 @@ function world(overrides) {
   return st;
 }
 
-const form = (selectedRaw, mappingsRaw, description, button, envs) => ({
+const form = (selectedRaw, mappingsRaw, description, button, envs, options) => ({
   'Choose source environment': { buttonValue: (envs || ['ENV1', 'ENV2'])[0] },
   'Choose target environment': { buttonValue: (envs || ['ENV1', 'ENV2'])[1] },
   'Choose resources': { selectedRaw, mappingsRaw: mappingsRaw || '', description: description === undefined ? 'Promote login' : description, buttonValue: 'BUILD' },
-  'Review request': { buttonValue: button || 'SUBMIT' }
+  'Review request': Object.assign({ buttonValue: button || 'SUBMIT', branchName: '', commitMessage: '' }, options || {})
 });
 const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
 
@@ -383,6 +383,18 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
     ok(sel.indexOf('a1') >= 0 && sel.indexOf('s3cr3t') < 0 && (SIGNIN ? sel.indexOf('alice@example.com') >= 0 : sel.indexOf('Sign-in is off') >= 0), 'selection page lists IDs and who (or that sign-in is off), never configuration' + mode);
     ok(w.log.indexOf('GET ' + G + '/api/v4/projects/42') < w.log.indexOf('POST ' + G + '/api/v4/projects/42/repository/branches'), 'project verified before any write' + mode);
     if (SAVE_DIR) { fs.writeFileSync(path.join(SAVE_DIR, 'flow-' + (saved++) + '.json'), content); }
+  }
+
+  // Optional GitLab metadata follows the same validation and defaults as the local app.
+  {
+    const w = world();
+    const r = await runFlow(w, form('a1', '', 'Promote login', undefined, undefined,
+      { branchName: 'feature/login-review', commitMessage: 'Promote the reviewed login flow' }));
+    ok(r.title === 'Merge request opened' && w.gitlab.branches['feature/login-review'] === 'main', 'custom branch is created from the default branch');
+    ok(w.gitlab.commits[0].branch === 'feature/login-review' && w.gitlab.commits[0].commit_message === 'Promote the reviewed login flow', 'custom commit details reach GitLab');
+    const preview = r.pages.find((pg) => pg.title === 'Review request').html;
+    ok(preview.indexOf('Optional GitLab commit details') >= 0 && preview.indexOf('maxlength="255"') >= 0 && preview.indexOf('maxlength="500"') >= 0,
+      'review screen exposes bounded branch and commit fields');
   }
 
   // Long description: MR title cut at 180 bytes like Go.
@@ -551,6 +563,16 @@ const gitlabWrites = (w) => w.log.filter((l) => l.indexOf('POST ' + G) === 0);
   await noWrite('project URL traversal', (g) => { g.project.web_url = G + '/%2e%2e/x'; }, 'outside the configured server');
   await noWrite('unprotected default branch', (g) => { g.branchInfo.protected = false; }, 'must be protected');
   await noWrite('branch name mismatch', (g) => { g.branchInfo.name = 'other'; }, 'must be protected');
+  {
+    const w = world();
+    const r = await runFlow(w, form('a1', '', undefined, undefined, undefined, { branchName: 'bad branch', commitMessage: '' }));
+    ok(r.end === 'error' && r.text.indexOf('branch name is invalid') >= 0 && gitlabWrites(w).length === 0, 'unsafe branch name is rejected before writes');
+  }
+  {
+    const w = world();
+    const r = await runFlow(w, form('a1', '', undefined, undefined, undefined, { branchName: '', commitMessage: '   ' }));
+    ok(r.end === 'error' && r.text.indexOf('commit message must contain') >= 0 && gitlabWrites(w).length === 0, 'blank custom commit message is rejected before writes');
+  }
   await noWrite('project unreadable', (g) => { g.fail['GET '] = 401; }, 'HTTP 401');
 
   // A failed API call ends on an error naming the step, never DaVinci's generic error page.

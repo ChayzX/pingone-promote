@@ -23,7 +23,7 @@ There are two ways to do it. Use **Path A (Terraform)** unless you can't run Ter
 
 Tick each one before you start; every item has bitten a first run.
 
-- [ ] **GitLab pipeline already works** for requests from the local app (see [docs/gitlab.md](../../docs/gitlab.md)). This flow only replaces the local app.
+- [ ] **GitLab pipeline template is installed** in the private project, with an untrusted validation runner and protected deployment runner configured (see [docs/gitlab.md](../../docs/gitlab.md)).
 - [ ] **Promotion project is private** and its **default branch is protected**. The flow refuses to submit otherwise.
 - [ ] **Configuration Management is enabled** on every environment you'll list, and the pipeline worker can take snapshots. (The worker roles fixed for the 403s are what this flow's worker copies.)
 - [ ] **A DaVinci-enabled host environment** for the flow. Prefer one that is never a promotion source or target.
@@ -43,6 +43,8 @@ Collect these values (IDs, not secrets) as you go:
 | Existing connection IDs | DaVinci → **Connections** | `connection_ids` | `httpConnectionId`, `functionsConnectionId`, `errorConnectionId`, `variablesConnectionId` |
 
 Keep the filled-in values in a private file (`terraform.tfvars` or `values.json`); both names are git-ignored or kept outside the repo. Don't commit tenant IDs to this public repository.
+
+Before the first pipeline, set `PROMOTION_TOOL_REF` to the reviewed full commit SHA of this DaVinci parity branch and `PROMOTION_VALIDATION_TOOL_REF` to a reviewed full commit SHA available to the untrusted validation runner. Keep the validation runner separate from protected deployment runners and variables; see [docs/gitlab.md](../../docs/gitlab.md) for the complete trust and variable setup.
 
 ## 2. Create the GitLab token
 
@@ -148,7 +150,7 @@ You keep one private promotion project for the whole lifecycle. The runner still
 
 What happens after a merge: the plan job of **every** environment starts. Each reads the request's target; only the environment whose scoped `PINGONE_TARGET_ENVIRONMENT_ID` matches it plans ("This request targets …"), and the others finish at once ("Not for dev …") without touching PingOne. Run the manual deploy job of the environment named in the merge request. The deploy job of another environment has no plan and stops. The runner re-checks the target in every job, so a mistake here fails closed.
 
-Rollback, preflight and evidence are manual web pipelines as before, plus `PROMOTION_GITLAB_ENVIRONMENT=<name>` to choose the environment.
+Rollback is a manual web pipeline on the protected default branch. Set `PROMOTION_GITLAB_ENVIRONMENT=<name>` to choose its target. The plan and rollback jobs publish `plan-summary.md` and `rollback-summary.md`; review these together with the full native plan artifacts before approval.
 
 | Example | Source | Target | Jobs that act |
 | --- | --- | --- | --- |
@@ -177,7 +179,7 @@ Rollback, preflight and evidence are manual web pipelines as before, plus `PROMO
 | "GitLab default branch must be protected" | Branch protection removed | Re-protect it |
 | "create promotion branch: GitLab returned HTTP 401/403" | Token expired, wrong scope or role | New token (step 2), then update `promoteGitlabToken` |
 | "… HTTP 400" on create branch | A branch for that request ID already exists | Rare; start the flow again for a new ID |
-| `validate_request` fails on `intents/<id>/intent.json` | The project's `PROMOTION_TOOL_REF` predates intent support | Set it to a reviewed commit with intent support (`2d038c1` or later on this branch) |
+| `validate_request` fails on `intents/<id>/intent.json` | The validation runner pin or protected runner pin predates intent support | Set `PROMOTION_VALIDATION_TOOL_REF` and `PROMOTION_TOOL_REF` to reviewed full SHAs of the DaVinci parity branch |
 | DaVinci's generic error page during a snapshot of a large environment, nothing logged | A version before intents carried full configuration through the flow | Import this version: the flow keeps names, IDs and types only |
 | Request too large | Very large selection | Promote in smaller batches |
 

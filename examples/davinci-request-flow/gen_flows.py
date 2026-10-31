@@ -1,9 +1,9 @@
-"""Generate the PingOne Promote Request flow as a single-flow DaVinci export.
+"""Generate the PingOne Promote Request flow as a DaVinci export.
 
-The flow does what the Go tool's local app does: an admin signs in, picks
-resources from live snapshots, and the flow commits request.json to a
-promotion/<id> branch and opens a merge request. Planning, approval, apply and
-rollback stay in the GitLab pipeline (pingone-runner), unchanged.
+The flow is an alternate request front door: an admin picks resources from
+live snapshots and commits a small intent on a chosen or default GitLab branch.
+The protected runner builds the redacted request; planning, approval, apply and
+rollback stay in GitLab.
 
 usage: python3 gen_flows.py OUT_DIR [values.json]          DaVinci import JSON
        python3 gen_flows.py --terraform TF_DIR [--signin] flow.tf.json for terraform/
@@ -970,31 +970,40 @@ def build_request_subflow(signin):
     f.link(select, build)
     build_ok = f.equals("Intent valid?", f.out(build, "state"), "ok")
     f.link(build, build_ok)
+    submit_options = ('<h2>Optional GitLab commit details</h2>'
+                      '<label for="branchName">Branch name</label><input type="text" id="branchName" name="branchName" maxlength="255" autocomplete="off" '
+                      'placeholder="promotion/{{local.BUILD.payload.output.intentId}}" data-id="branchName-input" />'
+                      '<p class="pp-lead">Leave blank to use the request-specific branch. Use a safe Git branch name.</p>'
+                      '<label for="commitMessage">Commit message</label><input type="text" id="commitMessage" name="commitMessage" maxlength="500" autocomplete="off" '
+                      'placeholder="Add promotion intent {{local.BUILD.payload.output.intentId}}" data-id="commitMessage-input" />'
+                      '<p class="pp-lead">Leave blank to use the default commit message.</p>')
     preview = f.page("Review request", page_html(
         "Review the promotion request",
         "{{local.BUILD.payload.output.summaryText}} Submitting opens a merge request that adds this intent; nothing changes in PingOne.",
         [("intents/{{local.BUILD.payload.output.intentId}}/intent.json", "{{local.BUILD.payload.output.previewText}}")],
-        "previewForm", "", [("SUBMIT", "Submit to GitLab", "btn-primary"), ("CANCEL", "Cancel", "btn-outline-secondary")],
-        step=3, route="global.parameters"), ["buttonValue"])
+        "previewForm", submit_options, [("SUBMIT", "Submit to GitLab", "btn-primary"), ("CANCEL", "Cancel", "btn-outline-secondary")],
+        step=3, route="global.parameters"), ["buttonValue", "branchName", "commitMessage"])
     f.link(build_ok, preview, false_target=f.fail("Invalid request", build))
     submit_go = f.equals("Submit pressed?", f.out(preview, "buttonValue"), "SUBMIT")
     f.link(preview, submit_go)
     done = f.success("Return the intent", [
         ("intentJson", "string", f.out(build, "intentJson")), ("intentId", "string", f.out(build, "intentId")),
-        ("gitlabApi", "string", f.out(build, "gitlabApi"))])
+        ("gitlabApi", "string", f.out(build, "gitlabApi")),
+        ("branchName", "string", f.out(preview, "branchName")), ("commitMessage", "string", f.out(preview, "commitMessage"))])
     f.link(submit_go, done, false_target=f.message("Cancelled", ["Cancelled. Nothing was sent to GitLab."]))
     f.alias = {"BUILD": build}
     return f
 
 
 SUBMIT_INPUTS = [("gitlabUrl", "string"), ("gitlabProjectId", "string"), ("gitlabEnvironment", "string"),
-                 ("gitlabApi", "string"), ("intentJson", "string"), ("sourceEnvName", "string"), ("targetEnvName", "string")]
+                 ("gitlabApi", "string"), ("intentJson", "string"), ("sourceEnvName", "string"), ("targetEnvName", "string"),
+                 ("branchName", "string"), ("commitMessage", "string")]
 
 
 def build_submit_flow():
-    """Subflow 4: check the project and default branch, create promotion/<id>, commit request.json, open the MR."""
+    """Subflow 4: check the project and default branch, create the chosen/default branch, commit the intent, open the MR."""
     f = Flow("PingOne Promote - 4 Submit to GitLab", FLOW_IDS["submit"],
-             "Subflow of PingOne Promote - Request: commits intents/<id>/intent.json to a promotion branch and opens the "
+             "Subflow of PingOne Promote - Request: commits intents/<id>/intent.json to the chosen or default branch and opens the "
              "merge request. Returns the merge request URL.",
              letter="d", inputs=SUBMIT_INPUTS)
     api = P("gitlabApi")
@@ -1013,7 +1022,8 @@ def build_submit_flow():
         ("defaultBranch", "string", f.out(proj, "defaultBranch")),
         ("statusCode", "number", f.out(br_get, "rawResponse.statusCode")), ("body", "object", f.out(br_get, "rawResponse.body")),
         ("intentJson", "string", P("intentJson")), ("sourceEnvName", "string", P("sourceEnvName")),
-        ("targetEnvName", "string", P("targetEnvName"))],
+        ("targetEnvName", "string", P("targetEnvName")), ("branchName", "string", P("branchName")),
+        ("commitMessage", "string", P("commitMessage"))],
         {"state": "string", "error": "string", "branch": "string", "branchBody": "string", "commitBody": "string", "mrBody": "string"})
     f.link(br_get, bodies)
     bodies_ok = f.equals("Branch protected?", f.out(bodies, "state"), "ok")
@@ -1054,8 +1064,8 @@ def build_flows(signin):
     """The main flow (what the application's policy launches) and its four UI subflows, in import order."""
     envs, snap, req, submit = build_envs_flow(), build_snapshot_flow(), build_request_subflow(signin), build_submit_flow()
     f = Flow("PingOne Promote - Request", FLOW_IDS["main"],
-             "A DaVinci Admin selects resources from live snapshots; the flow builds request.json exactly as the Go app does and "
-             "opens a GitLab merge request. Deployment and rollback happen only in the protected GitLab pipeline. "
+             "A DaVinci Admin selects resources from live snapshots; the flow commits an intent and opens a GitLab "
+             "merge request. Deployment and rollback happen only in the protected GitLab pipeline. "
              "Steps run in four subflows (1 Choose environments, 2 Snapshot environment, 3 Choose resources and review, "
              "4 Submit to GitLab).")
     # First: check the admin-set flow variables, naming any placeholder or typo.
@@ -1124,7 +1134,8 @@ def build_flows(signin):
     c_sub = f.conductor("4 Submit to GitLab", submit, {
         "gitlabUrl": f.fv("gitlabUrl"), "gitlabProjectId": f.fv("gitlabProjectId"), "gitlabEnvironment": f.fv("targetGitlabEnvironment"),
         "gitlabApi": f.out(c_req, "gitlabApi"), "intentJson": f.out(c_req, "intentJson"),
-        "sourceEnvName": f.fv("sourceEnvName"), "targetEnvName": f.fv("targetEnvName")})
+        "sourceEnvName": f.fv("sourceEnvName"), "targetEnvName": f.fv("targetEnvName"),
+        "branchName": f.out(c_req, "branchName"), "commitMessage": f.out(c_req, "commitMessage")})
     f.link(c_req, c_sub)
     done = f.page("Merge request opened", page_html(
         "Promotion request submitted",

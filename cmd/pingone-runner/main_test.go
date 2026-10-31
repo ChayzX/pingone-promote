@@ -19,9 +19,9 @@ import (
 )
 
 type fakeGate struct {
-	verifyErr, authErr, originalVerifyErr error
-	verified, originalVerified            int
-	origin                                gitops.Origin
+	verifyErr, authErr, originalVerifyErr, targetErr error
+	verified, originalVerified, targetChecked        int
+	origin                                           gitops.Origin
 }
 
 type fakeEngine struct {
@@ -73,6 +73,10 @@ func (e *fakeEngine) RollbackPlan(context.Context, gitops.Artifact, gitops.Origi
 }
 
 func (g *fakeGate) Origin() gitops.Origin { return g.origin }
+func (g *fakeGate) VerifyTarget(context.Context, string, string) error {
+	g.targetChecked++
+	return g.targetErr
+}
 func (g *fakeGate) VerifyPlan(context.Context, gitops.Request) error {
 	g.verified++
 	return g.verifyErr

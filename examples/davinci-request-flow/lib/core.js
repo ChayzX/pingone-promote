@@ -326,9 +326,27 @@ function newIntent(id, requester, source, target, selected, mappings, descriptio
   return { intent: intent, json: JSON.stringify(intent, null, 2) + '\n' };
 }
 // GitLab payloads for an intent, in the style of submitBodies.
-function intentBodies(intent, intentJson, environment, names, extra) {
+function validBranchName(s) {
+  if (s === '' || utf8(s).length > 255 || s === '@' || s.startsWith('-') || s.startsWith('/') || s.endsWith('/') || s.endsWith('.') ||
+      s.indexOf('..') >= 0 || s.indexOf('@{') >= 0 || s.indexOf('//') >= 0) { return false; }
+  for (const r of s) { const c = r.codePointAt(0); if (c <= 0x20 || c === 0x7f || '~^:?*[\\'.indexOf(r) >= 0) { return false; } }
+  for (const part of s.split('/')) { if (!part || part.startsWith('.') || part.toLowerCase().endsWith('.lock')) { return false; } }
+  return true;
+}
+function validateSubmissionOptions(options) {
+  const branch = String(options && options.branchName || '');
+  const message = String(options && options.commitMessage || '');
+  if (branch && !validBranchName(branch)) { throw new Error('branch name is invalid; use a safe Git branch name'); }
+  if (message && (!message.trim() || utf8(message).length > 500 || message.indexOf('\0') >= 0)) {
+    throw new Error('commit message must contain non-whitespace text and be at most 500 characters');
+  }
+}
+function intentBodies(intent, intentJson, environment, names, extra, options) {
+  options = options || {};
+  validateSubmissionOptions(options);
   const id = intent.id;
-  const branch = 'promotion/' + id;
+  const branch = String(options.branchName || 'promotion/' + id);
+  const commitMessage = String(options.commitMessage || 'Add promotion intent ' + id);
   const title = truncateUtf8(intent.description !== '' ? intent.description.split('\n')[0] : 'Promote selected PingOne resources', 180);
   const tick = (s) => String(s).replace(/[`\r\n]/g, '');
   let description = 'Promotion intent `' + id + '`\n\nSource environment: ' + (names.source ? tick(names.source) + ' ' : '') + '`' + intent.source.id +
@@ -345,7 +363,7 @@ function intentBodies(intent, intentJson, environment, names, extra) {
     branchBody: (defaultBranch) => goJSON({ branch: branch, ref: defaultBranch }, '', 0),
     commitBody: (defaultBranch) => goJSON({
       actions: [{ action: 'create', content: intentJson, file_path: 'intents/' + id + '/intent.json' }],
-      branch: branch, commit_message: 'Add promotion intent ' + id, start_branch: defaultBranch
+      branch: branch, commit_message: commitMessage, start_branch: defaultBranch
     }, '', 0),
     mrBody: (defaultBranch) => goJSON({ description: description, remove_source_branch: true, source_branch: branch, squash: false,
       target_branch: defaultBranch, title: title }, '', 0)
@@ -845,5 +863,6 @@ function escapeHtml(s) {
 const core = {
   rfc3339Nano, gitlabConfig, sameGitLabLocation, gitlabStatus, checkProject, checkDefaultBranch, submitBodies, checkMergeRequest,
   SAFE_ID, apiURL, encodeRequest, goJSON, goFingerprint, newRequest, validateRequest, truncateUtf8, utf8Compare, HEX_ID, canonical, parseBody, sha256, fingerprint, parseURL, redact, inventoryFromSnapshots, nextPageURL,
-  pagesComplete, buildRequest, suggestMappings, escapeHtml, isUnset, slimSnapshotItem, validateIntent, newIntent, intentBodies, goPrintable, randomHexId, sensitivePaths, variableName, variablesReport
+  pagesComplete, buildRequest, suggestMappings, escapeHtml, isUnset, slimSnapshotItem, validateIntent, newIntent, intentBodies,
+  validBranchName, validateSubmissionOptions, goPrintable, randomHexId, sensitivePaths, variableName, variablesReport
 };

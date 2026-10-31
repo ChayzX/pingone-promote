@@ -150,7 +150,7 @@ class SelectRequestTests(unittest.TestCase):
         commit = self.repo.commit()
         result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines(), ["built-request.json", f"intents/{ID_A}/intent.json"])
+        self.assertEqual(result.stdout.splitlines(), [f"intents/{ID_A}/request.json", f"intents/{ID_A}/intent.json"])
 
     def test_merge_request_selects_single_added_intent(self):
         self.repo.add_intent(ID_A)
@@ -204,10 +204,10 @@ class SelectRequestTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("regular file", result.stderr)
 
-    def test_intent_refuses_existing_built_request(self):
+    def test_intent_refuses_existing_generated_request(self):
         self.repo.add_intent(ID_A)
         commit = self.repo.commit()
-        (self.repo.root / "built-request.json").write_text("{}\n")
+        (self.repo.root / "intents" / ID_A / "request.json").write_text("{}\n")
         result = self.repo.run_selector(source="push", commit=commit, base=self.repo.base)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already exists", result.stderr)

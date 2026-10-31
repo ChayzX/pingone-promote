@@ -5,7 +5,7 @@
 #
 # Exports PROMOTION_REQUEST_FILE. For an intent (intents/<id>/intent.json) it
 # also exports PROMOTION_INTENT_FILE, and PROMOTION_REQUEST_FILE names the
-# request that `pingone-runner build-request` will write (built-request.json).
+# request that `pingone-runner build-request` writes beside that intent.
 set -euo pipefail
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
@@ -38,9 +38,9 @@ if [[ "${CI_PIPELINE_SOURCE:-}" != "web" && "$selected" =~ ^intents/${hex_reques
   intent_dir="${selected%/intent.json}"
   [[ ! -L "$intent_dir" && -d "$intent_dir" ]] || fail "The selected intent directory must be a real directory"
   [[ -f "$selected" && ! -L "$selected" ]] || fail "Selected intent must be a regular file, not a symlink"
-  [[ ! -e built-request.json ]] || fail "built-request.json already exists; refusing to reuse it"
+  PROMOTION_REQUEST_FILE="${intent_dir}/request.json"
+  [[ ! -e "$PROMOTION_REQUEST_FILE" && ! -L "$PROMOTION_REQUEST_FILE" ]] || fail "Generated request already exists; refusing to reuse it"
   PROMOTION_INTENT_FILE="$selected"
-  PROMOTION_REQUEST_FILE="built-request.json"
   printf '%s\n' "$PROMOTION_INTENT_FILE" > selected-request.txt
   export PROMOTION_INTENT_FILE PROMOTION_REQUEST_FILE
   return 0 2>/dev/null || exit 0

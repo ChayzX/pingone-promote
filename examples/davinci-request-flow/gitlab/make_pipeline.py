@@ -14,7 +14,7 @@ plans (for-this-environment.sh), the others stop at once. Deploy with the
 manual job of that environment. The runner still checks that the request's
 target is the job's trusted target, so a wrong job fails closed.
 
-Manual web pipelines (rollback, preflight, evidence) take
+Manual rollback pipelines take
 PROMOTION_GITLAB_ENVIRONMENT=<name> to choose the environment.
 """
 import copy
@@ -27,7 +27,7 @@ ROUTE = "./examples/davinci-request-flow/gitlab/for-this-environment.sh"
 SELECT = "source ./examples/gitlab/select-request.sh"
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # Jobs whose environment is $PROMOTION_ENVIRONMENT, i.e. that touch one PingOne target.
-MANUAL_WEB = {"rollback_plan", "apply_rollback", "preflight", "capture_evidence"}
+MANUAL_WEB = {"rollback_plan", "apply_rollback"}
 
 
 def tier(env):

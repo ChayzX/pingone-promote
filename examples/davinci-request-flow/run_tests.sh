@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Offline tests for the DaVinci Request flow. The Go cross-checks need the Go
-# tool at commit 537dbf4: inside this repository it is found automatically;
-# elsewhere set GO_TOOL to a checkout. It is cloned into a temporary
-# directory and never modified.
+# tool at the current checkout's HEAD, or GO_TOOL_REF if supplied. Inside this
+# repository the checkout is found automatically; elsewhere set GO_TOOL to a
+# checkout. The selected commit is cloned into a temporary directory and the
+# source checkout is never modified.
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ -z "${GO_TOOL:-}" ]] && root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -f "$root/go.mod" ]]; then
@@ -37,8 +38,9 @@ if [[ -z "${GO_TOOL:-}" ]]; then
   exit 0
 fi
 go="$work/go"
-# 2d038c1: the runner with intent support (build-request); Go code unchanged since.
-git clone -q "$GO_TOOL" "$go" && git -C "$go" checkout -q 2d038c1
+go_ref="${GO_TOOL_REF:-$(git -C "$GO_TOOL" rev-parse HEAD)}"
+[[ "$go_ref" =~ ^[0-9a-f]{40}$ ]] || { echo "GO_TOOL_REF must be a full commit SHA" >&2; exit 1; }
+git clone -q "$GO_TOOL" "$go" && git -C "$go" checkout -q "$go_ref"
 cp test/testdata/go/xcheck_drift.go "$go/internal/gitops/"
 cp test/testdata/go/xinv_export.go "$go/internal/pingone/"
 cp test/testdata/go/xgitlab_export.go "$go/internal/gitlab/"

@@ -19,4 +19,13 @@ for p in ["42", "0", "007", "", "4a", "-1", "42/../7", "１２"]:
     cases.append({"Base": "https://gitlab.example.com", "Project": p, "Environment": "", "WebURL": "https://gitlab.example.com/x"})
 for e in ["", "production", "prod-1", "prod_env", "Prod", "-prod", "prod env", "a" * 63, "a" * 64, "prod/x"]:
     cases.append({"Base": "https://gitlab.example.com", "Project": "42", "Environment": e, "WebURL": "https://gitlab.example.com/x"})
+for branch, message in [
+    ("", ""), ("feature/login", "Promote login"), ("release/main", "Unicode ✓"),
+    ("@", "message"), ("-leading", "message"), ("bad branch", "message"),
+    ("feature/.hidden", "message"), ("feature/name.lock", "message"),
+    ("x" * 256, "message"), ("feature/name", " "), ("feature/name", "x" * 501),
+    ("feature/name", "bad\u0000message"),
+]:
+    cases.append({"Base": "https://gitlab.example.com", "Project": "42", "Environment": "production",
+                  "WebURL": "https://gitlab.example.com/x", "BranchName": branch, "CommitMessage": message})
 print(json.dumps(cases))

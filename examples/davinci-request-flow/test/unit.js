@@ -1,4 +1,4 @@
-// Unit tests for core.js pieces without a direct Go counterpart.
+// Unit tests for DaVinci core.js, including runner-compatible GitLab options.
 const assert = require('assert');
 const crypto = require('crypto');
 const core = require('./load_core');
@@ -48,6 +48,17 @@ assert.throws(() => core.checkMergeRequest(cfg, 500, { web_url: 'https://gitlab.
 n += 2;
 for (const s of [199, 300, 302, 0, 'x']) { assert.throws(() => core.gitlabStatus(s, 'x')); n++; }
 core.gitlabStatus(201, 'x');
+
+for (const branch of ['feature/login-review', 'release/main', 'promotion/test_1']) {
+  ok(core.validBranchName(branch), 'safe custom branch name ' + branch);
+}
+for (const branch of ['', '@', '-bad', '/leading', 'trailing/', 'has..dots', 'has space', 'ends.lock', 'has\\slash', 'x'.repeat(256)]) {
+  ok(!core.validBranchName(branch), 'unsafe custom branch name rejected ' + branch.slice(0, 24));
+}
+core.validateSubmissionOptions({ branchName: 'feature/short', commitMessage: 'Promote this change' }); n++;
+for (const options of [{ branchName: 'bad branch' }, { commitMessage: '  ' }, { commitMessage: 'x'.repeat(501) }, { commitMessage: 'x\0y' }]) {
+  assert.throws(() => core.validateSubmissionOptions(options)); n++;
+}
 
 // Request identity and time in Go's formats
 ok(/^[a-f0-9]{32}$/.test(core.randomHexId('x')) && core.randomHexId('x') !== core.randomHexId('x'), 'random 32-hex request ID');

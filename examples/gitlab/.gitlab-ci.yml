@@ -61,7 +61,12 @@ validate_request:
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
   script:
     - source ./examples/gitlab/select-request.sh
-    - ./pingone-runner validate --request "$PROMOTION_REQUEST_FILE"
+    - |
+      if [[ -n "${PROMOTION_INTENT_FILE:-}" ]]; then
+        ./pingone-runner validate --intent "$PROMOTION_INTENT_FILE"
+      else
+        ./pingone-runner validate --request "$PROMOTION_REQUEST_FILE"
+      fi
   artifacts:
     access: developer
     expire_in: 1 day
@@ -79,6 +84,10 @@ plan_promotion:
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web") && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - source ./examples/gitlab/select-request.sh
+    - |
+      if [[ -n "${PROMOTION_INTENT_FILE:-}" ]]; then
+        ./pingone-runner build-request --intent "$PROMOTION_INTENT_FILE" --out "$PROMOTION_REQUEST_FILE"
+      fi
     - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256 --summary-out plan-summary.md
   artifacts:
     access: developer

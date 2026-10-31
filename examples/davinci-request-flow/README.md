@@ -2,7 +2,7 @@
 
 > **Setting it up or updating it? Start with [IMPORT.md](IMPORT.md):** one checklist of every value to fill in, and what changed since earlier versions.
 
-> Replaces the local app for requesters. The flow commits a promotion **intent** (`intents/<id>/intent.json`); the protected plan job builds `request.json` from it with `pingone-runner build-request`. The pipeline's `PROMOTION_TOOL_REF` must be a commit with intent support (`2d038c1` or later on this branch).
+> Replaces the local app for requesters. The flow commits a promotion **intent** (`intents/<id>/intent.json`); the protected plan job verifies its target, takes fresh snapshots, and builds the redacted `request.json` with `pingone-runner build-request`. Pin `PROMOTION_TOOL_REF` to the reviewed full SHA of this DaVinci parity branch; pin `PROMOTION_VALIDATION_TOOL_REF` to a reviewed full SHA for the separate untrusted validation runner.
 
 A DaVinci main flow and four subflows that replace the Go tool's local app for requesters. The flow does the choosing; the Go runner does the heavy lifting in GitLab. Planning, approval, deployment and rollback are unchanged.
 
@@ -25,7 +25,7 @@ DaVinci flows (this kit)                        GitLab (the tool's pipeline)
 Live snapshots: names, IDs, types only          Merge → plan_promotion:
 Requester picks resources and mappings            pingone-runner build-request (fresh snapshots,
 Builds intents/<id>/intent.json                    redaction, fingerprints) → plan + review
-Branch promotion/<id> → commit → merge request ──▶ Deployment approval → apply
+Branch promotion/<id> by default → commit → merge request ──▶ Deployment approval → apply
                                                 Rollback: separate manual pipeline
 ```
 
@@ -41,28 +41,28 @@ The flow never calls the PingOne promotions API, so it cannot deploy or roll bac
 1. **Sign in** (only when sign-in is on). PingOne SSO, which sends the admin to Entra. The flow then checks for the DaVinci Admin role on the organization or on one of the configured environments. No GitLab account is needed.
 2. **Choose environments.** Two pages with one button per configured environment (up to four): first the source, then the target.
 3. **Choose resources.** The local app's Step 2: a table of every source resource (name, ID, type, dependencies) with search across name, type and ID, a type filter and a selection count. Each row has a destination-mapping dropdown of same-type target resources, pre-filled as the local app does it: PingOne's saved promotion mappings first, then a unique same-type name match (cross-checked against Go's `suggestMappings`). **Show dependencies** and **Select listed dependencies** work as in the app, and a description becomes the MR title. If the screen's script can't run, plain lists and text boxes for IDs and `sourceId=targetId` mappings take its place.
-4. **Review request.** The page shows `intents/<id>/intent.json` exactly as it will be committed. The selection and mappings were already checked with the runner's request rules (unknown resources, type mismatches, two sources on one target), so a merged intent builds. **Submit to GitLab** or **Cancel**.
-5. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point. After the merge, the plan job builds the full request and PingOne's plan, summarized for approvers in `plan-review.md`; PingOne's plan reports any missing promotion variables.
+4. **Review request.** The page shows `intents/<id>/intent.json` exactly as it will be committed and offers optional branch name and commit message fields, with the same safety checks as the local app. The selection and mappings were already checked with the runner's request rules (unknown resources, type mismatches, two sources on one target), so a merged intent builds. **Submit to GitLab** or **Cancel**.
+5. **Merge request opened.** The page links to the MR. Nothing has changed in PingOne at this point. After the merge, the plan job builds the full request and PingOne's plan, with the `plan-summary.md` change summary for approvers; PingOne's plan reports any missing promotion variables.
 
 > **One GitLab project for every environment.** All requests go to `gitlabProjectId`. In that project, each environment you deploy to is a GitLab environment (`dev`, `test`, `production` …) with its own scoped variables and approvals, and the pipeline from `gitlab/make_pipeline.py` runs each environment's jobs only for requests that target it. Name a target's GitLab environment in `envNGitlabEnvironment` (Terraform: `gitlab_environment` in `environments`); empty uses `gitlabEnvironment`. See the runbook's [One project, several environments](RUNBOOK.md#one-project-several-environments).
 
 ## How it matches the Go tool
 
-| Go (commit `2d038c1`) | In the flow | Checked how |
+| Go runner (selected current branch commit) | In the flow | Checked how |
 | --- | --- | --- |
 | `gitops.DecodeIntent` / `ValidateIntent` | `newIntent`, `validateIntent` | 59 intents (as built, and breaking each rule) through Go's `DecodeIntent`: same accept/reject and the same message every time |
 | The pipeline's `select-request.sh` + `pingone-runner validate --intent` | — | Each intent the flow commits is replayed as a GitLab MR and passes the Go tool's own selector and validator |
 | Local app `suggestMappings` | `suggestMappings` | 52 fixtures (incl. Unicode names) against Go: 0 differences |
 | `pingone.Inventory`, `apiURL`, `Pages` | `inventoryFromSnapshots`, `apiURL`, `pagesComplete` | The real Go client against a fake API: 33 fixtures, 0 differences |
 | `promotion.BuildRequest` selection and mapping rules | `buildRequest` (as a check on the slim inventories) | 57 fixtures through the Go functions: 0 differences |
-| `gitlab.Config.Validate`, `sameGitLabLocation`, `VerifyProject` | `gitlabConfig`, `sameGitLabLocation`, `checkProject`, `checkDefaultBranch` | 324 URL/config fixtures against Go: 0 differences |
+| `gitlab.Config.Validate`, `ValidateSubmissionOptions`, `sameGitLabLocation`, `VerifyProject` | `gitlabConfig`, `validateSubmissionOptions`, `sameGitLabLocation`, `checkProject`, `checkDefaultBranch` | 336 URL/config/branch/commit fixtures against Go: 0 differences |
 
 The submit sequence:
 
 1. Read the project. It must be the configured ID, private, not archived, have a default branch, and its `web_url` must be on the configured server path.
 2. Read the default branch. It must be protected.
-3. Create the branch `promotion/<id>` from the default branch.
-4. Commit `intents/<id>/intent.json` with the message `Add promotion intent <id>`.
+3. Create the chosen branch (default `promotion/<id>`) from the default branch.
+4. Commit `intents/<id>/intent.json` with the chosen message (default `Add promotion intent <id>`).
 5. Open the MR with `remove_source_branch: true` and `squash: false`. The title is the description's first line, or "Promote selected PingOne resources", cut to 180 bytes. The description names both environments, the GitLab environment, the requester and every selected resource with its mapping.
 6. The MR's `web_url` must be on the configured server path.
 
@@ -96,7 +96,7 @@ These were written from documentation and real export samples, not captured from
 4. **Loops.** Snapshot polling and pagination route back to an earlier REST node. DaVinci must allow this cycle.
 5. **Function outputs.** Confirm each function's Output Schema lists the fields downstream nodes read, such as `state`, `requestJson` and `branchBody`.
 6. **Size.** The flow keeps only names, IDs, types and dependencies, but each snapshot page still passes through one REST step. If a single page is too large for DaVinci, the snapshot subflow's error screen will name the page step.
-7. **Runner version.** `PROMOTION_TOOL_REF` in the GitLab project must include intent support (`2d038c1` or later on this branch), or `validate_request` rejects the intent path.
+7. **Runner version.** `PROMOTION_TOOL_REF` must point to the reviewed full SHA of this DaVinci parity branch, which provides `validate --intent` and `build-request`. `PROMOTION_VALIDATION_TOOL_REF` is a separate full SHA used on the untrusted MR validation runner.
 8. **Randomness.** Check whether `globalThis.crypto` exists in DaVinci functions. The fallback works either way.
 
 ## Tests (no tenant needed)
@@ -105,10 +105,10 @@ These were written from documentation and real export samples, not captured from
 bash examples/davinci-request-flow/run_tests.sh   # from a clone of this repository
 ```
 
-The Go cross-checks build the Go tool at commit `2d038c1` (the runner with intent support) from this repository's history, in a temporary clone; nothing in the working tree changes. Outside the repository, set `GO_TOOL` to a checkout. Needs Node 18+, Python 3, Go 1.24+ and, for the screen test, Playwright with Chromium.
+The Go cross-checks build the selected current branch commit from a temporary clone; set `GO_TOOL_REF` to another reviewed full SHA when needed. Outside the repository, set `GO_TOOL` to the checkout to clone. Neither checkout is modified. Needs Node 18+, Python 3, Go 1.27.3+ and, for the screen test, Playwright with Chromium.
 
-- `test/unit.js` (61 checks): SHA-256 against Node crypto, `apiURL`, GitLab project, branch, status and MR checks, ID and time formats, and byte truncation.
-- `test/flow_run.js` (about 170 checks with sign-in off and on; both run): **runs the generated export itself**, main flow and subflows, against a fake PingOne and a fake GitLab. It executes each node, evaluator branch, template, flow variable and subflow call; function inputs are fed both as objects and as JSON strings. It covers the happy path with the exact GitLab payloads, the intent's content, the settings check, environment slots, a failed call at each step (named error screens), cancel, invalid input, project and branch refusals, a failure at each write, and a large environment (80 resources of 300 KB configuration: under 100 KB moves between flows, and no configuration value reaches any screen, flow variable or GitLab).
+- `test/unit.js` (79 checks): SHA-256 against Node crypto, `apiURL`, GitLab project, branch and commit validation, status and MR checks, ID and time formats, and byte truncation.
+- `test/flow_run.js` (about 175 checks with sign-in off and on; both run): **runs the generated export itself**, main flow and subflows, against a fake PingOne and a fake GitLab. It executes each node, evaluator branch, template, flow variable and subflow call; function inputs are fed both as objects and as JSON strings. It covers the happy path with the exact GitLab payloads, custom branch and commit metadata, the intent's content, the settings check, environment slots, a failed call at each step (named error screens), cancel, invalid input, project and branch refusals, a failure at each write, and a large environment (80 resources of 300 KB configuration: under 100 KB moves between flows, and no configuration value reaches any screen, flow variable or GitLab).
 - `test/picker_ui.js` (19 checks): the exported resource picker, CSS and script in Chromium: search, type filter, dependencies, mapping suggestions, the submitted fields, names shown as text, hidden unused environment slots, and the working page's delayed fallback button.
 - `check_flows.py`: structure checks on all five flows: one start node, every node reachable, references only to nodes that can run earlier, flow variables written before they're read, every REST call with a failure branch, no `<style>`/`<script>` in Custom HTML, function inputs matching their code, and subflow wiring (inputs match the schema, parameters declared, returned values declared, a screen on every subflow path).
 - `test/shipped_code.js`: every function node in the export is byte-identical to the tested code, and every screen script parses.
@@ -120,7 +120,7 @@ The Go cross-checks build the Go tool at commit `2d038c1` (the runner with inten
 | --- | --- |
 | Non-admin signs in | "Access denied: You need the DaVinci Admin role…"; no snapshots, no GitLab call |
 | Admin selects one mapped flow and submits | An MR in the promotion project with one new `intents/<id>/intent.json`; `validate_request` passes |
-| Merge the MR | `plan_promotion` runs `build-request`, then plans; `plan-review.md` summarizes the plan for approvers |
+| Merge the MR | `plan_promotion` runs `build-request`, then plans; `plan-summary.md` summarizes the plan for approvers |
 | Select a DaVinci connector with a secret and no promotion variable | The plan job's PingOne plan reports the missing sensitive promotion variable |
 | Cancel on the review page | "Cancelled. Nothing was sent to GitLab." |
 | Temporarily unprotect the default branch, then submit | "GitLab default branch must be protected"; no branch created |

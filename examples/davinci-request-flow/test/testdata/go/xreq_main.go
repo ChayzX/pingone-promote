@@ -28,11 +28,13 @@ type fx struct {
 
 type glFx struct {
 	Base, Project, Environment, WebURL string
+	BranchName, CommitMessage          string
 }
 
 type glOut struct {
-	ConfigError bool `json:"configError"`
-	Same        bool `json:"same"`
+	ConfigError     bool `json:"configError"`
+	Same            bool `json:"same"`
+	SubmissionError bool `json:"submissionError"`
 }
 
 type jsOut struct {
@@ -106,6 +108,7 @@ func gitlabCheck() {
 		if !g.ConfigError {
 			g.Same = gitlab.XSameLocation(f.Base, f.WebURL)
 		}
+		g.SubmissionError = gitlab.XValidateSubmissionOptions(f.BranchName, f.CommitMessage) != nil
 		if g != js[i] {
 			failures++
 			fmt.Printf("MISMATCH gitlab %+v: go %+v js %+v\n", f, g, js[i])

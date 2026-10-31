@@ -19,6 +19,8 @@ variables:
   PROMOTION_MODE: deploy
   PROMOTION_RUNNER_TAG: blue
   PROMOTION_GO_IMAGE: golang:1.27
+  PROMOTION_VALIDATION_TOOL_REF: REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
+  PROMOTION_VALIDATION_RUNNER_TAG: untrusted-validation
   GIT_DEPTH: '0'
   GIT_STRATEGY: fetch
 .runner_job:
@@ -37,9 +39,24 @@ variables:
   - cd .promotion-tool
   - go build -o ../pingone-runner ./cmd/pingone-runner
   - cd ..
+.validation_job:
+  tags:
+  - $PROMOTION_VALIDATION_RUNNER_TAG
+  retry: 0
+  interruptible: false
+  before_script:
+  - '[[ "${PROMOTION_VALIDATION_TOOL_REF:-}" =~ ^[0-9a-f]{40}$ ]] || { echo "Set PROMOTION_VALIDATION_TOOL_REF to a reviewed lowercase 40-character commit SHA" >&2; exit 1; }
+
+    '
+  - git clone --no-checkout https://github.com/ChayzX/pingone-promote.git .promotion-tool
+  - git -C .promotion-tool checkout --detach "$PROMOTION_VALIDATION_TOOL_REF"
+  - test "$(git -C .promotion-tool rev-parse HEAD)" = "$PROMOTION_VALIDATION_TOOL_REF"
+  - cd .promotion-tool
+  - go build -o ../pingone-runner ./cmd/pingone-runner
+  - cd ..
 validate_request:
   stage: validate
-  extends: .runner_job
+  extends: .validation_job
   image: $PROMOTION_GO_IMAGE
   rules:
   - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -69,8 +86,7 @@ plan_promotion_dev:
   - source ./examples/davinci-request-flow/gitlab/for-this-environment.sh
   - if [[ "$PP_FOR_THIS_ENVIRONMENT" != true ]]; then exit 0; fi
   - "if [[ -n \"${PROMOTION_INTENT_FILE:-}\" ]]; then\n  ./pingone-runner build-request --intent \"$PROMOTION_INTENT_FILE\" --out \"$PROMOTION_REQUEST_FILE\"\nfi\n"
-  - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
-  - ./pingone-runner plan-check --artifact plan.json --digest-file plan.sha256 --summary-out plan-review.md ${PROMOTION_FORBID_TYPES:+--forbid-type "$PROMOTION_FORBID_TYPES"}
+  - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256 --summary-out plan-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
@@ -78,9 +94,8 @@ plan_promotion_dev:
     paths:
     - plan.json
     - plan.sha256
-    - plan-review.md
+    - plan-summary.md
     - selected-request.txt
-    - built-request.json
   resource_group: pingone-dev
 plan_promotion_test:
   stage: plan
@@ -98,8 +113,7 @@ plan_promotion_test:
   - source ./examples/davinci-request-flow/gitlab/for-this-environment.sh
   - if [[ "$PP_FOR_THIS_ENVIRONMENT" != true ]]; then exit 0; fi
   - "if [[ -n \"${PROMOTION_INTENT_FILE:-}\" ]]; then\n  ./pingone-runner build-request --intent \"$PROMOTION_INTENT_FILE\" --out \"$PROMOTION_REQUEST_FILE\"\nfi\n"
-  - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
-  - ./pingone-runner plan-check --artifact plan.json --digest-file plan.sha256 --summary-out plan-review.md ${PROMOTION_FORBID_TYPES:+--forbid-type "$PROMOTION_FORBID_TYPES"}
+  - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256 --summary-out plan-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
@@ -107,9 +121,8 @@ plan_promotion_test:
     paths:
     - plan.json
     - plan.sha256
-    - plan-review.md
+    - plan-summary.md
     - selected-request.txt
-    - built-request.json
   resource_group: pingone-test
 plan_promotion_production:
   stage: plan
@@ -127,8 +140,7 @@ plan_promotion_production:
   - source ./examples/davinci-request-flow/gitlab/for-this-environment.sh
   - if [[ "$PP_FOR_THIS_ENVIRONMENT" != true ]]; then exit 0; fi
   - "if [[ -n \"${PROMOTION_INTENT_FILE:-}\" ]]; then\n  ./pingone-runner build-request --intent \"$PROMOTION_INTENT_FILE\" --out \"$PROMOTION_REQUEST_FILE\"\nfi\n"
-  - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
-  - ./pingone-runner plan-check --artifact plan.json --digest-file plan.sha256 --summary-out plan-review.md ${PROMOTION_FORBID_TYPES:+--forbid-type "$PROMOTION_FORBID_TYPES"}
+  - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256 --summary-out plan-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
@@ -136,9 +148,8 @@ plan_promotion_production:
     paths:
     - plan.json
     - plan.sha256
-    - plan-review.md
+    - plan-summary.md
     - selected-request.txt
-    - built-request.json
   resource_group: pingone-production
 apply_promotion_dev:
   stage: deploy
@@ -160,8 +171,8 @@ apply_promotion_dev:
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
   - 'test -f plan.json || { echo "No plan in dev: the merged request targets another environment. Run the deploy job of the environment named in the merge request." >&2; exit 1; }'
   - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
   - ./pingone-runner apply --artifact plan.json --approved-digest-file plan.sha256 --out result.json
   artifacts:
     access: developer
@@ -193,8 +204,8 @@ apply_promotion_test:
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
   - 'test -f plan.json || { echo "No plan in test: the merged request targets another environment. Run the deploy job of the environment named in the merge request." >&2; exit 1; }'
   - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
   - ./pingone-runner apply --artifact plan.json --approved-digest-file plan.sha256 --out result.json
   artifacts:
     access: developer
@@ -226,8 +237,8 @@ apply_promotion_production:
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
   - 'test -f plan.json || { echo "No plan in production: the merged request targets another environment. Run the deploy job of the environment named in the merge request." >&2; exit 1; }'
   - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
   - ./pingone-runner apply --artifact plan.json --approved-digest-file plan.sha256 --out result.json
   artifacts:
     access: developer
@@ -251,11 +262,11 @@ rollback_plan_dev:
   script:
   - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - 'test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
+  - 'test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
 
     test "$CI_API_V4_URL" = "${PROMOTION_GITLAB_URL%/}/api/v4"
 
-    test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
 
     case "${ORIGINAL_PLAN_JOB_ID:-}" in (''''|*[!0-9]*) echo "Set ORIGINAL_PLAN_JOB_ID to the numeric plan job ID" >&2; exit 1;; esac
 
@@ -266,9 +277,9 @@ rollback_plan_dev:
 
     test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
 
+    ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256 --summary-out rollback-summary.md
+
     '
-  - ./pingone-runner rollback-plan --artifact original-plan.json --out rollback.json --digest-out rollback.sha256
-  - ./pingone-runner plan-check --artifact rollback.json --digest-file rollback.sha256 --summary-out rollback-review.md
   artifacts:
     access: developer
     expire_in: 2 days
@@ -276,7 +287,7 @@ rollback_plan_dev:
     paths:
     - rollback.json
     - rollback.sha256
-    - rollback-review.md
+    - rollback-summary.md
     - original-plan.json
   resource_group: pingone-dev
 rollback_plan_test:
@@ -291,11 +302,11 @@ rollback_plan_test:
   script:
   - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - 'test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
+  - 'test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
 
     test "$CI_API_V4_URL" = "${PROMOTION_GITLAB_URL%/}/api/v4"
 
-    test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
 
     case "${ORIGINAL_PLAN_JOB_ID:-}" in (''''|*[!0-9]*) echo "Set ORIGINAL_PLAN_JOB_ID to the numeric plan job ID" >&2; exit 1;; esac
 
@@ -306,9 +317,9 @@ rollback_plan_test:
 
     test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
 
+    ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256 --summary-out rollback-summary.md
+
     '
-  - ./pingone-runner rollback-plan --artifact original-plan.json --out rollback.json --digest-out rollback.sha256
-  - ./pingone-runner plan-check --artifact rollback.json --digest-file rollback.sha256 --summary-out rollback-review.md
   artifacts:
     access: developer
     expire_in: 2 days
@@ -316,7 +327,7 @@ rollback_plan_test:
     paths:
     - rollback.json
     - rollback.sha256
-    - rollback-review.md
+    - rollback-summary.md
     - original-plan.json
   resource_group: pingone-test
 rollback_plan_production:
@@ -331,11 +342,11 @@ rollback_plan_production:
   script:
   - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - 'test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
+  - 'test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
 
     test "$CI_API_V4_URL" = "${PROMOTION_GITLAB_URL%/}/api/v4"
 
-    test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
 
     case "${ORIGINAL_PLAN_JOB_ID:-}" in (''''|*[!0-9]*) echo "Set ORIGINAL_PLAN_JOB_ID to the numeric plan job ID" >&2; exit 1;; esac
 
@@ -346,9 +357,9 @@ rollback_plan_production:
 
     test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
 
+    ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256 --summary-out rollback-summary.md
+
     '
-  - ./pingone-runner rollback-plan --artifact original-plan.json --out rollback.json --digest-out rollback.sha256
-  - ./pingone-runner plan-check --artifact rollback.json --digest-file rollback.sha256 --summary-out rollback-review.md
   artifacts:
     access: developer
     expire_in: 2 days
@@ -356,7 +367,7 @@ rollback_plan_production:
     paths:
     - rollback.json
     - rollback.sha256
-    - rollback-review.md
+    - rollback-summary.md
     - original-plan.json
   resource_group: pingone-production
 apply_rollback_dev:
@@ -378,8 +389,8 @@ apply_rollback_dev:
   - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
   - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
   - ./pingone-runner apply --artifact rollback.json --approved-digest-file rollback.sha256 --out rollback-result.json
   artifacts:
     access: developer
@@ -410,8 +421,8 @@ apply_rollback_test:
   - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
   - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
   - ./pingone-runner apply --artifact rollback.json --approved-digest-file rollback.sha256 --out rollback-result.json
   artifacts:
     access: developer
@@ -442,8 +453,8 @@ apply_rollback_production:
   - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
   - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
   - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+  - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+  - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
   - ./pingone-runner apply --artifact rollback.json --approved-digest-file rollback.sha256 --out rollback-result.json
   artifacts:
     access: developer
@@ -454,142 +465,4 @@ apply_rollback_production:
     - rollback.sha256
     - rollback-result.json
     - rollback.json.execute-intent
-  resource_group: pingone-production
-preflight_dev:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: dev
-    action: prepare
-  rules:
-  - if: ($PROMOTION_MODE == "preflight" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) && $PROMOTION_GITLAB_ENVIRONMENT == "dev"
-  script:
-  - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
-  - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - ./pingone-runner preflight --report preflight.md ${PREFLIGHT_SOURCE_ENVIRONMENT_ID:+--source "$PREFLIGHT_SOURCE_ENVIRONMENT_ID"}
-  artifacts:
-    access: developer
-    expire_in: 30 days
-    when: always
-    paths:
-    - preflight.md
-  resource_group: pingone-dev
-preflight_test:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: test
-    action: prepare
-  rules:
-  - if: ($PROMOTION_MODE == "preflight" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) && $PROMOTION_GITLAB_ENVIRONMENT == "test"
-  script:
-  - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
-  - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - ./pingone-runner preflight --report preflight.md ${PREFLIGHT_SOURCE_ENVIRONMENT_ID:+--source "$PREFLIGHT_SOURCE_ENVIRONMENT_ID"}
-  artifacts:
-    access: developer
-    expire_in: 30 days
-    when: always
-    paths:
-    - preflight.md
-  resource_group: pingone-test
-preflight_production:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: production
-    action: prepare
-  rules:
-  - if: ($PROMOTION_MODE == "preflight" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) && $PROMOTION_GITLAB_ENVIRONMENT == "production"
-  script:
-  - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
-  - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - ./pingone-runner preflight --report preflight.md ${PREFLIGHT_SOURCE_ENVIRONMENT_ID:+--source "$PREFLIGHT_SOURCE_ENVIRONMENT_ID"}
-  artifacts:
-    access: developer
-    expire_in: 30 days
-    when: always
-    paths:
-    - preflight.md
-  resource_group: pingone-production
-capture_evidence_dev:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: dev
-    action: prepare
-  rules:
-  - if: ($PROMOTION_MODE == "evidence" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) && $PROMOTION_GITLAB_ENVIRONMENT == "dev"
-  script:
-  - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
-  - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - 'case "${EVIDENCE_ENVIRONMENT_ID:-}" in (''''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_ENVIRONMENT_ID to a PingOne environment ID" >&2; exit 1;; esac
-
-    case "${EVIDENCE_LABEL:-}" in (''''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_LABEL to letters, digits, - or _" >&2; exit 1;; esac
-
-    '
-  - mkdir -p evidence
-  - ./pingone-runner evidence capture --env "$EVIDENCE_ENVIRONMENT_ID" --out "evidence/$EVIDENCE_LABEL.json"
-  artifacts:
-    access: developer
-    expire_in: 90 days
-    when: always
-    paths:
-    - evidence/
-  resource_group: pingone-dev
-capture_evidence_test:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: test
-    action: prepare
-  rules:
-  - if: ($PROMOTION_MODE == "evidence" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) && $PROMOTION_GITLAB_ENVIRONMENT == "test"
-  script:
-  - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
-  - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - 'case "${EVIDENCE_ENVIRONMENT_ID:-}" in (''''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_ENVIRONMENT_ID to a PingOne environment ID" >&2; exit 1;; esac
-
-    case "${EVIDENCE_LABEL:-}" in (''''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_LABEL to letters, digits, - or _" >&2; exit 1;; esac
-
-    '
-  - mkdir -p evidence
-  - ./pingone-runner evidence capture --env "$EVIDENCE_ENVIRONMENT_ID" --out "evidence/$EVIDENCE_LABEL.json"
-  artifacts:
-    access: developer
-    expire_in: 90 days
-    when: always
-    paths:
-    - evidence/
-  resource_group: pingone-test
-capture_evidence_production:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: production
-    action: prepare
-  rules:
-  - if: ($PROMOTION_MODE == "evidence" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) && $PROMOTION_GITLAB_ENVIRONMENT == "production"
-  script:
-  - export PROMOTION_ENVIRONMENT="${PROMOTION_ENVIRONMENT:-$CI_ENVIRONMENT_NAME}"
-  - test "$PROMOTION_ENVIRONMENT" = "$CI_ENVIRONMENT_NAME" || { echo "Scope PROMOTION_ENVIRONMENT to $CI_ENVIRONMENT_NAME" >&2; exit 1; }
-  - 'case "${EVIDENCE_ENVIRONMENT_ID:-}" in (''''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_ENVIRONMENT_ID to a PingOne environment ID" >&2; exit 1;; esac
-
-    case "${EVIDENCE_LABEL:-}" in (''''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_LABEL to letters, digits, - or _" >&2; exit 1;; esac
-
-    '
-  - mkdir -p evidence
-  - ./pingone-runner evidence capture --env "$EVIDENCE_ENVIRONMENT_ID" --out "evidence/$EVIDENCE_LABEL.json"
-  artifacts:
-    access: developer
-    expire_in: 90 days
-    when: always
-    paths:
-    - evidence/
   resource_group: pingone-production

@@ -18,3 +18,7 @@ func XSameLocation(baseURL, raw string) bool {
 	}
 	return sameGitLabLocation(base, u)
 }
+
+func XValidateSubmissionOptions(branch, message string) error {
+	return ValidateSubmissionOptions(SubmissionOptions{BranchName: branch, CommitMessage: message})
+}

@@ -64,7 +64,7 @@ func newBuildFixture() *buildFixture {
 func TestBuildRequestWritesValidRedactedRequestAfterGateChecks(t *testing.T) {
 	f := newBuildFixture()
 	in := writeIntent(t, intentID, intentDoc)
-	out := filepath.Join(t.TempDir(), "built-request.json")
+	out := filepath.Join(filepath.Dir(in), "request.json")
 	var stdout, stderr strings.Builder
 	if err := runWith([]string{"build-request", "--intent", in, "--out", out}, &stdout, &stderr, f.deps); err != nil {
 		t.Fatalf("build-request failed: %v", err)
@@ -101,12 +101,12 @@ func TestBuildRequestTakesNoSnapshotOutsideProtectedJob(t *testing.T) {
 	f.gate.targetErr = errors.New("request destination differs from protected runner target policy")
 	in := writeIntent(t, intentID, intentDoc)
 	var stdout, stderr strings.Builder
-	err := runWith([]string{"build-request", "--intent", in, "--out", filepath.Join(t.TempDir(), "r.json")}, &stdout, &stderr, f.deps)
+	err := runWith([]string{"build-request", "--intent", in, "--out", filepath.Join(filepath.Dir(in), "request.json")}, &stdout, &stderr, f.deps)
 	if err == nil || f.inventoryN != 0 {
 		t.Fatalf("snapshots taken without a verified job: err=%v inventories=%d", err, f.inventoryN)
 	}
 	// Default deps (no CI context) must fail closed too.
-	if err = runWith([]string{"build-request", "--intent", in, "--out", filepath.Join(t.TempDir(), "r.json")}, &stdout, &stderr, runnerDeps{}); err == nil {
+	if err = runWith([]string{"build-request", "--intent", in, "--out", filepath.Join(filepath.Dir(in), "request.json")}, &stdout, &stderr, runnerDeps{}); err == nil {
 		t.Fatal("build-request ran without a CI verifier")
 	}
 }
@@ -117,7 +117,7 @@ func TestIntentMustLiveInItsOwnIDDirectory(t *testing.T) {
 	var stdout, stderr strings.Builder
 	for _, args := range [][]string{
 		{"validate", "--intent", wrongDir},
-		{"build-request", "--intent", wrongDir, "--out", filepath.Join(t.TempDir(), "r.json")},
+		{"build-request", "--intent", wrongDir, "--out", filepath.Join(filepath.Dir(wrongDir), "request.json")},
 	} {
 		if err := runWith(args, &stdout, &stderr, f.deps); err == nil || !strings.Contains(err.Error(), "location") {
 			t.Fatalf("%v: accepted an intent outside its ID directory: %v", args[0], err)
