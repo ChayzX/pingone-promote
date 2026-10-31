@@ -102,6 +102,29 @@ func TestUnknownGitLabPreviewCannotBeSubmitted(t *testing.T) {
 	h.call("POST", "/api/gitlab/submit", map[string]string{"requestId": "invented"}, nil, 400)
 }
 
+func TestGitLabSetupExplainsRequiredTokenWhenNoSourceIsAvailable(t *testing.T) {
+	h := setup(t)
+	tokenEnv := "PINGONE_TEST_GITLAB_TOKEN_REQUIRED"
+	t.Setenv(tokenEnv, "")
+	var status struct {
+		Configured     bool `json:"configured"`
+		TokenAvailable bool `json:"tokenAvailable"`
+	}
+	h.call("GET", "/api/gitlab", nil, &status, 200)
+	if status.Configured || status.TokenAvailable {
+		t.Fatalf("unset GitLab settings reported configured=%v token=%v", status.Configured, status.TokenAvailable)
+	}
+	var failure struct {
+		Error string `json:"error"`
+	}
+	h.call("POST", "/api/gitlab", map[string]string{
+		"baseUrl": "https://gitlab.example.test", "projectId": "42", "tokenEnv": tokenEnv, "environment": "production",
+	}, &failure, 400)
+	if !strings.Contains(failure.Error, "project access token") || !strings.Contains(failure.Error, tokenEnv) {
+		t.Fatalf("missing-token response did not explain the recovery options: %q", failure.Error)
+	}
+}
+
 func TestGitLabPreflightFailureCanBeRetriedWithoutRebuildingPreview(t *testing.T) {
 	h := setup(t)
 	s := h.server.Config.Handler.(*Server)

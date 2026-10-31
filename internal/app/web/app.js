@@ -372,7 +372,7 @@
     const canBuild = Boolean(state.sourceInventory && state.targetInventory && state.selected.size > 0);
     const isGitLab = Boolean(selectedProfile('target') && !state.localTargets.includes(String(selectedProfile('target').environmentId)));
     $('#build-plan').disabled = !canBuild || state.planRequestPending;
-    $('#build-plan').textContent = state.planRequestPending ? 'Building…' : isGitLab ? 'Build submission preview' : 'Build review';
+    $('#build-plan').textContent = state.planRequestPending ? (isGitLab ? 'Preparing request…' : 'Building…') : (isGitLab ? 'Build submission preview' : 'Build review');
     $('#selection-count').textContent = `${state.selected.size} selected`;
   }
 
@@ -851,9 +851,27 @@
       const config = result.config || {};
       for (const key of ['baseUrl', 'projectId', 'tokenEnv', 'environment']) form.elements[key].value = config[key] || (key === 'tokenEnv' ? 'GITLAB_TOKEN' : key === 'environment' ? 'production' : '');
       form.elements.token.value = '';
-      $('#gitlab-config-state').textContent = result.configured ? `Configured · private project verified · token ${result.tokenAvailable ? 'available' : 'unavailable'}` : 'GitLab is not configured.';
+      form.elements.token.placeholder = result.tokenAvailable ? 'A token is already available' : 'Enter a project access token';
+      renderGitLabConfigState(result);
       gitlabDialog.showModal();
     } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; gitlabDialog.showModal(); } }
+  }
+
+  function renderGitLabConfigState(result, project = null) {
+    const stateLabel = $('#gitlab-config-state');
+    const tokenEnv = result.config?.tokenEnv || 'GITLAB_TOKEN';
+    stateLabel.classList.toggle('is-error', Boolean(result.configured && !result.tokenAvailable));
+    if (!result.configured) {
+      stateLabel.textContent = result.tokenAvailable
+        ? 'Token available to this app. Enter the project details and select Save and verify.'
+        : `Not connected yet. A token is required: enter one below or set ${tokenEnv} in the app process environment before launch.`;
+      return;
+    }
+    const projectName = project?.pathWithNamespace || project?.name;
+    const verified = projectName ? `Private project verified · ${text(projectName)}` : 'Private project settings saved and verified';
+    stateLabel.textContent = result.tokenAvailable
+      ? `${verified} · a token is available to this app session or process.`
+      : `${verified}, but no token is available. Enter one below or set ${tokenEnv} in the app process environment before launch.`;
   }
 
   async function saveGitLabSettings() {
@@ -867,7 +885,8 @@
       if (generation !== state.gitlabConfigGeneration) return;
       state.gitlab = result;
       form.elements.token.value = '';
-      $('#gitlab-config-state').textContent = `Configured · ${text(result.project?.pathWithNamespace || result.project?.name, 'private project verified')} · token ${result.tokenAvailable ? 'available' : 'unavailable'}`;
+      form.elements.token.placeholder = 'A token is already available';
+      renderGitLabConfigState(result, result.project);
       showToast('GitLab settings saved and project verified.');
       invalidatePlan('GitLab settings changed. Rebuild the request preview before submitting.');
     } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; } }
@@ -1004,13 +1023,15 @@
     const target = selectedProfile('target');
     const sourceInventoryID = String(state.sourceInventory.id);
     const targetInventoryID = String(state.targetInventory.id);
+    const gitlabRequired = !state.localTargets.includes(String(target?.environmentId || ''));
     const body = makePlanBody();
     clearTimer();
-    const button = $('#build-plan'); button.disabled = true; button.textContent = 'Building…';
-    setStateBox($('#plan-state'), { title: 'Building review', message: 'Creating a native plan and collecting its complete operation details.', kind: 'loading', icon: '…' });
+    const button = $('#build-plan'); button.disabled = true; button.textContent = gitlabRequired ? 'Preparing request…' : 'Building…';
+    setStateBox($('#plan-state'), gitlabRequired
+      ? { title: 'Preparing GitLab request', message: 'Checking the selected resources and preparing a request for review. No PingOne plan or changes are created in the app.', kind: 'loading', icon: '…' }
+      : { title: 'Building review', message: 'Creating a native plan and collecting its complete operation details.', kind: 'loading', icon: '…' });
     $('#plan-content').hidden = true; $('#deploy-bar').hidden = true;
     try {
-      const gitlabRequired = !state.localTargets.includes(String(target?.environmentId || ''));
       const plan = await request(gitlabRequired ? '/api/requests/preview' : '/api/plans', { method: 'POST', body });
       if (generation !== state.planGeneration || String(state.sourceInventory?.id) !== sourceInventoryID || String(state.targetInventory?.id) !== targetInventoryID || String(selectedProfile('source')?.id) !== String(source?.id) || String(selectedProfile('target')?.id) !== String(target?.id)) return;
       state.planMode = 'promotion';

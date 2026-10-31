@@ -34,12 +34,15 @@ async def test_preview_submit(browser):
     page = await browser.new_page()
     await setup(page)
     calls = {'plans':0, 'preview':0, 'submit':0}
+    preview_entered, release_preview = asyncio.Event(), asyncio.Event()
     async def plans(route):
         calls['plans'] += 1
         await route.continue_()
     async def preview(route):
         calls['preview'] += 1
         body = json.loads(route.request.post_data)
+        preview_entered.set()
+        await release_preview.wait()
         await route.fulfill(json={"gitlabRequired":True,"issues":[],"request":{"version":1,"id":"0123456789abcdef0123456789abcdef","createdAt":"2026-10-27T00:00:00Z","source":{"id":"src-env","region":"us","organizationId":"org-s","snapshotId":"snap-src"},"target":{"id":"prod-env","region":"us","organizationId":"org-p","snapshotId":"snap-prod"},"selected":body['selected'],"mappings":body['mappings'],"configurations":{"f":{"name":"Customer login","secret":"[REDACTED]"}},"fingerprints":{"f":"sha256:abc"}}})
     async def submit(route):
         calls['submit'] += 1
@@ -49,6 +52,11 @@ async def test_preview_submit(browser):
     await page.route('**/api/requests/preview', preview)
     await page.route('**/api/gitlab/submit', submit)
     await page.locator('#build-plan').click()
+    await asyncio.wait_for(preview_entered.wait(), 8)
+    await expect(page.locator('#build-plan')).to_have_text('Preparing request…')
+    await expect(page.locator('#plan-state')).to_contain_text('Preparing GitLab request')
+    await expect(page.locator('#plan-state')).to_contain_text('No PingOne plan or changes')
+    release_preview.set()
     await page.get_by_role('button', name='Submit to GitLab').wait_for()
     assert calls['preview']==1 and calls['plans']==0
     assert await page.locator('#deploy-bar').is_hidden()
@@ -60,6 +68,19 @@ async def test_preview_submit(browser):
     await page.locator('#confirm-deploy').click()
     await page.get_by_role('link', name='requests/custom-review !7').wait_for()
     assert calls['submit']==1 and calls['plans']==0
+    await page.close()
+
+async def test_gitlab_settings_explain_missing_token_and_inputs(browser):
+    page = await browser.new_page()
+    state = {"config":{"baseUrl":"https://gitlab.example.test","projectId":"42","tokenEnv":"GITLAB_TOKEN","environment":"production"},"configured":True,"tokenAvailable":False}
+    await setup(page, state)
+    await page.locator('#gitlab-open').click()
+    await expect(page.locator('#gitlab-config-state')).to_contain_text('no token is available')
+    guide = (await page.locator('.gitlab-setup-guide').inner_text()).lower()
+    assert 'settings' in guide and 'general' in guide and 'project id' in guide
+    assert 'developer' in guide and 'api' in guide and 'protected default branch' in guide
+    token_label = await page.locator('label:has(input[name="token"])').inner_text()
+    assert 'optional' not in token_label.lower()
     await page.close()
 
 async def test_stale_preview_invalidated(browser):
@@ -131,6 +152,7 @@ async def main():
     async with async_playwright() as pw:
         browser=await pw.chromium.launch(headless=True, executable_path=args.chromium, args=['--no-sandbox'])
         await test_preview_submit(browser)
+        await test_gitlab_settings_explain_missing_token_and_inputs(browser)
         await test_stale_preview_invalidated(browser)
         await test_submit_disabled_if_either_gitlab_requirement_is_missing(browser)
         await test_submission_errors_respect_write_stage(browser)

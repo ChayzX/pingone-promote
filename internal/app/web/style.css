@@ -231,6 +231,13 @@ tbody tr:last-child td { border-bottom: 0; }
 .profile-editor summary { padding: var(--s3); font-size: 13px; font-weight: 600; cursor: pointer; }
 .form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--s4); margin: 0; padding: 0 var(--s3) var(--s3); border: 0; }
 #gitlab-submit-options[hidden] { display: none; }
+.gitlab-setup-guide { margin-bottom: var(--s4); padding: var(--s4); border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface-subtle); color: var(--muted); font-size: 12px; line-height: 19px; }
+.gitlab-setup-guide h3 { margin-bottom: var(--s2); color: var(--ink); font-size: 13px; line-height: 20px; }
+.gitlab-setup-guide ol { display: grid; gap: var(--s2); margin: 0 0 var(--s3); padding-left: 22px; }
+.gitlab-setup-guide li { padding-left: var(--s1); }
+.gitlab-setup-guide p { margin: 0 0 var(--s2); }
+.gitlab-setup-guide p:last-child { margin-bottom: 0; }
+.gitlab-setup-guide code { color: var(--accent-strong); font-family: var(--font-mono); font-size: 11px; }
 .field { display: block; min-width: 0; color: var(--ink); font-size: 12px; line-height: 20px; font-weight: 500; }
 .field .control { margin-top: var(--s1); font-size: 13px; font-weight: 400; }
 .field input[name$="Id"], .field input[name="secretEnv"], .field input[name="tokenEnv"] { font-family: var(--font-mono); font-size: 12px; }

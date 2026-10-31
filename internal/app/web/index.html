@@ -142,13 +142,23 @@
     <form method="dialog" class="dialog-shell" id="gitlab-form">
       <header class="dialog-header"><div><h2 id="gitlab-dialog-title">GitLab settings</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Close GitLab settings">×</button></header>
       <div class="dialog-content">
-        <p class="section-help">Production requests are reviewed and deployed through your private GitLab project and protected runner. Store production write credentials only in protected CI variables. Local credentials should have read and snapshot permissions.</p>
+        <p class="section-help">This connects the app to one private GitLab project so it can verify the project, create a request branch and commit, and open a merge request. It does not configure your pipeline or deployment approvals.</p>
+        <section class="gitlab-setup-guide" aria-labelledby="gitlab-setup-heading">
+          <h3 id="gitlab-setup-heading">Before you connect</h3>
+          <ol>
+            <li>Use the HTTPS address of your GitLab instance, such as <code>https://gitlab.example.com</code>. Do not include the project path or <code>/api/v4</code>.</li>
+            <li>Open the private project, then <strong>Settings → General</strong>, and copy its numeric <strong>Project ID</strong>. Do not enter the project name or <code>group/project</code> path.</li>
+            <li>Use a <strong>project access token</strong> for this project with the <strong>Developer</strong> role and only the <code>api</code> scope. A project Maintainer or Owner must create it; the token itself only needs Developer access to create the request branch, commit, and merge request. Use an expiration date and rotate it as your policy requires.</li>
+          </ol>
+          <p>The app creates <code>promotion/&lt;request-id&gt;</code> from the project's protected default branch. The environment name defaults to <code>production</code>; keep it aligned with your protected deployment environment. This setting does not create or change GitLab protections.</p>
+          <p>Never put this token in source code, a repository file, a request, or a public issue. It is only for this local app's GitLab request work; it is not the runner's <code>GITLAB_READ_API_TOKEN</code> or your PingOne worker client secret.</p>
+        </section>
         <fieldset class="form-grid"><legend class="sr-only">GitLab project connection</legend>
-          <label class="field field-wide">Base URL<input class="control" name="baseUrl" type="url" required autocomplete="url" placeholder="https://gitlab.example.com"></label>
-          <label class="field field-wide">Numeric project ID<input class="control" name="projectId" inputmode="numeric" pattern="[0-9]+" required autocomplete="off"></label>
-          <label class="field">Token environment variable<input class="control" name="tokenEnv" required value="GITLAB_TOKEN" autocomplete="off"></label>
-          <label class="field">GitLab environment name<input class="control" name="environment" required value="production" autocomplete="off"></label>
-          <label class="field field-wide">Session token (optional)<input class="control" name="token" type="password" autocomplete="new-password"><span class="field-help">Used for this app session only. Never returned or saved.</span></label>
+          <label class="field field-wide">GitLab instance URL<input class="control" name="baseUrl" type="url" required autocomplete="url" placeholder="https://gitlab.example.com"><span class="field-help">Use the instance root. For a self-managed subpath, include only that prefix, for example https://example.com/gitlab.</span></label>
+          <label class="field field-wide">Private project ID<input class="control" name="projectId" inputmode="numeric" pattern="[0-9]+" required autocomplete="off" placeholder="12345678"><span class="field-help">Numeric ID from the project's Settings → General page.</span></label>
+          <label class="field">Environment variable name<input class="control" name="tokenEnv" required value="GITLAB_TOKEN" autocomplete="off"><span class="field-help">Default: GITLAB_TOKEN. Set this in the app process environment before launch, or use the session token below.</span></label>
+          <label class="field">Protected environment name<input class="control" name="environment" required value="production" autocomplete="off"><span class="field-help">Request label only, not a PingOne environment ID. Keep it aligned with the protected environment in your private pipeline.</span></label>
+          <label class="field field-wide">GitLab API token (project access token)<input class="control" name="token" type="password" autocomplete="new-password"><span class="field-help">A usable token is required. Leave blank only when the named environment variable already provides one. A pasted token stays in this app session; it is never saved to disk or returned.</span></label>
         </fieldset>
         <p id="gitlab-config-state" class="inline-state" aria-live="polite"></p>
         <p class="form-error" id="gitlab-error" role="alert" hidden></p>

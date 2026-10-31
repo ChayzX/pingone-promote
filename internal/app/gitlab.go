@@ -24,10 +24,13 @@ func configBinding(c gitlab.Config) string {
 	return strings.TrimRight(c.BaseURL, "/") + "/" + c.ProjectID
 }
 func (s *Server) gitlabToken(c gitlab.Config) string {
-	if s.gitlabTokenBinding == configBinding(c) && s.gitlabSessionToken != "" {
-		return s.gitlabSessionToken
+	if s.gitlabTokenBinding == configBinding(c) && strings.TrimSpace(s.gitlabSessionToken) != "" {
+		return strings.TrimSpace(s.gitlabSessionToken)
 	}
-	return os.Getenv(c.TokenEnv)
+	return strings.TrimSpace(os.Getenv(c.TokenEnv))
+}
+func missingGitLabToken(c gitlab.Config) error {
+	return fmt.Errorf("GitLab API token is required: enter a project access token for this app session, or set %s in the app process environment before launch", c.TokenEnv)
 }
 func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 	switch {
@@ -51,9 +54,13 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		if err := c.Validate(); err != nil {
 			return err
 		}
-		token := input.Token
+		sessionToken := strings.TrimSpace(input.Token)
+		token := sessionToken
 		if token == "" {
 			token = s.gitlabToken(c)
+		}
+		if token == "" {
+			return missingGitLabToken(c)
 		}
 		client, err := s.gitlabFactory(c, token)
 		if err != nil {
@@ -66,8 +73,8 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		if err = gitlab.SaveConfig(s.store.Directory(), c); err != nil {
 			return err
 		}
-		if input.Token != "" {
-			s.gitlabSessionToken = input.Token
+		if sessionToken != "" {
+			s.gitlabSessionToken = sessionToken
 			s.gitlabTokenBinding = configBinding(c)
 		}
 		writeJSON(w, map[string]any{"config": c, "configured": true, "tokenAvailable": true, "project": project})
@@ -132,7 +139,11 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		config = defaultGitLab(config)
-		client, err := s.gitlabFactory(config, s.gitlabToken(config))
+		token := s.gitlabToken(config)
+		if token == "" {
+			return missingGitLabToken(config)
+		}
+		client, err := s.gitlabFactory(config, token)
 		if err != nil {
 			return err
 		}
