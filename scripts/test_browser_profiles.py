@@ -48,11 +48,11 @@ def main():
         credential_storage = session.get('credentialStorage', {})
         keyring_option = page.locator('[name="secretMode"] option[value="keychain"]')
         if credential_storage.get('supported'):
-            if credential_storage.get('provider') not in keyring_option.text_content() or keyring_option.is_disabled():
+            if credential_storage.get('provider') not in keyring_option.text_content() or keyring_option.evaluate('(option) => option.disabled'):
                 failures.append('credential-vault label does not match the supported app server platform')
             modes = ('session', 'keychain', 'env')
         else:
-            if not keyring_option.is_disabled() or 'unsupported' not in keyring_option.text_content().lower():
+            if not keyring_option.evaluate('(option) => option.disabled') or 'unsupported' not in keyring_option.text_content().lower():
                 failures.append('unsupported server platform left OS credential storage selectable')
             modes = ('session', 'env')
         for mode in modes:
