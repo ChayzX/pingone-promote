@@ -23,6 +23,8 @@ Alternatives considered:
 - DaVinci remains a separate setup and build. Do not merge main into its branch. Review and port only individually applicable fixes to its flow JSON and embedded logic, with its own verification.
 - Preserve existing profiles, history and reviewed artifacts through an explicit compatibility policy. Do not silently reinterpret an old approved plan under new semantics.
 
+Compatibility decision: retain legacy records and artifacts for inspection and read-only reconciliation. An artifact whose execution semantics changed must be refused for execution with a clear instruction to produce a fresh review and obtain a new approval; never automatically migrate its approval or overwrite it. Legacy forward artifacts may still supply evidence to separately authorized rollback planning when their provenance and native linkage pass the existing checks. Additive metadata changes that preserve execution semantics do not alone invalidate an approval. Each stage must explicitly identify which case its changes introduce and test both supported legacy reads and refused execution.
+
 ## Evidence motivating the first stage
 
 The existing execution intent and GitLab gates provide substantial protection and should be retained. However:
