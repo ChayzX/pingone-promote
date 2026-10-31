@@ -2,7 +2,7 @@
 
 > **DaVinci Request flow (this branch):** admins can request promotions from a DaVinci flow instead of this local app. Import file: [examples/davinci-request-flow/export/pingone-promote-request.flow.json](examples/davinci-request-flow/export/pingone-promote-request.flow.json); steps: [IMPORT.md](examples/davinci-request-flow/IMPORT.md). Full details: [README](examples/davinci-request-flow/README.md) and [runbook](examples/davinci-request-flow/RUNBOOK.md).
 
-> This branch combines the GitLab-controlled promotion workflow with the optional DaVinci request front door. Start with [docs/gitlab.md](docs/gitlab.md) for pipeline setup and [the DaVinci runbook](examples/davinci-request-flow/RUNBOOK.md) for the alternate request flow. Live acceptance and a complete production-readiness review remain outstanding; see [docs/HANDOFF.md](docs/HANDOFF.md).
+> Production promotions are GitLab-only. This branch adds the optional DaVinci request front door to the current standard tool on `main`. Start with [docs/gitlab.md](docs/gitlab.md) for pipeline setup and [the DaVinci runbook](examples/davinci-request-flow/RUNBOOK.md) for the alternate request flow. See [docs/HANDOFF.md](docs/HANDOFF.md) for verification status and remaining acceptance work. Local execution is limited to explicitly allowlisted non-production environments.
 
 PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It requires Go 1.27.3 or newer to build and has no third-party runtime dependencies. The API must be enabled for the tenant.
 
@@ -98,7 +98,7 @@ Run `scripts/build.sh` to cross-build CGO-free binaries for macOS arm64/amd64 an
 
 ## Validation status
 
-The app has not been accepted against a live PingOne tenant, and macOS Keychain behavior has not been runtime-tested in this environment. Perform the acceptance check above, including snapshot completeness, exclusions, dependency reuse, flow mapping, and rollback, before treating those wire behaviors as verified.
+Live non-production checks have verified snapshot inventory loading, request validation, and a promotion with one variable. A selected sandbox native-flow apply partially progressed before PingOne returned HTTP 500; its complete outcome was not verified. Full live acceptance and rollback remain unverified. macOS Keychain and Linux Secret Service runtime behavior have not been verified. See [the handoff](docs/HANDOFF.md) for the remaining checks.
 
 ## PingOne API references
 
