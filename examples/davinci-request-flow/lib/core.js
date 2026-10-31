@@ -154,9 +154,57 @@ function redact(v) {
 
 function pinnedId(s) { return typeof s === 'string' && s !== '' && s !== '.' && s !== '..' && /^[A-Za-z0-9_-]+$/.test(s); }
 
+const SINGLETON_SNAPSHOT_IDS = {
+  brandingSettings: 'type:brandingsettings',
+  mfaSettings: 'type:mfasettings',
+  notificationsSettings: 'type:notificationssettings',
+  'notificationsSettings/emailDeliverySettings': 'type:notificationssettings:emaildeliverysettings',
+  ssoCookieSettings: 'type:ssocookiesettings'
+};
+
+function resourceIdentityPart(s) { return pinnedId(s) && s.length <= 256; }
+
+function validResourceId(id) {
+  if (resourceIdentityPart(id) && /^[A-Za-z0-9]/.test(id)) { return true; }
+  if (Object.keys(SINGLETON_SNAPSHOT_IDS).some((path) => SINGLETON_SNAPSHOT_IDS[path] === id)) { return true; }
+  const m = /^flowId:([^/]+)-version:(0|[1-9][0-9]*)$/.exec(String(id || ''));
+  if (!m || !resourceIdentityPart(m[1]) || m[2].length > 20 ||
+      (m[2].length === 20 && m[2] > '18446744073709551615')) { return false; }
+  return true;
+}
+
+// Mirrors internal/pingone/resource_identity.go. Snapshot IDs are bound to
+// their native URL shape for both live and pinned inventory reads.
+function snapshotResourceType(path, query, env, id) {
+  const bad = 'inventory resource URL does not match its original identity';
+  const prefix = '/v1/environments/' + env + '/';
+  if (path.indexOf(prefix) !== 0 || path.indexOf('//') >= 0 || !validResourceId(id)) { throw new Error(bad); }
+  const tail = path.slice(prefix.length).replace(/\/$/, '');
+  const parts = tail.split('/');
+  if (parts.some((part) => !resourceIdentityPart(part))) { throw new Error(bad); }
+  if (query && !(parts.length === 4 && parts[0] === 'applications' &&
+      ((parts[2] === 'attributes' && query === 'expand=oidcScopes') ||
+       (parts[2] === 'grants' && query === 'expand=scopes')))) { throw new Error(bad); }
+  if (Object.prototype.hasOwnProperty.call(SINGLETON_SNAPSHOT_IDS, tail)) {
+    if (id !== SINGLETON_SNAPSHOT_IDS[tail]) { throw new Error(bad); }
+    return parts.join(' / ');
+  }
+  if (parts.length === 5 && parts[0] === 'flows' && parts[2] === 'versions' && parts[4] === 'details') {
+    if (!/^(0|[1-9][0-9]*)$/.test(parts[3]) || parts[3].length > 20 ||
+        (parts[3].length === 20 && parts[3] > '18446744073709551615') || id !== 'flowId:' + parts[1] + '-version:' + parts[3]) {
+      throw new Error(bad);
+    }
+    return 'flows / versions / details';
+  }
+  if (parts.length < 2 || parts.length % 2 !== 0 || parts[parts.length - 1] !== id) { throw new Error(bad); }
+  const kinds = [];
+  for (let i = 0; i < parts.length; i += 2) { kinds.push(parts[i]); }
+  return kinds.join(' / ');
+}
+
 // Build an inventory from the environment record, the snapshot version record
-// and every page of embeddedSnapshots. pinned=true applies InventoryVersion's
-// stricter rules (exact snapshot ID, COMPLETE, URL ends in the resource ID).
+// and every page of embeddedSnapshots. Both live and pinned reads bind resource
+// IDs to native URL shapes; pinned=true additionally checks snapshot provenance.
 function inventoryFromSnapshots(apiOrigin, env, envRecord, snapshot, embeddedPages, pinned, expectedSnapshotId) {
   if (!isObject(envRecord) || envRecord.id !== env || !envRecord.organization || !envRecord.organization.id) {
     throw new Error('environment response omitted its identity or organization');
@@ -180,22 +228,12 @@ function inventoryFromSnapshots(apiOrigin, env, envRecord, snapshot, embeddedPag
       const u = apiURL(apiOrigin, s.resourceUrl);
       if (!u) { throw new Error('refused API URL outside the configured PingOne origin or environment path'); }
       const rid = s.resource && s.resource.id;
-      if (u.path.indexOf(prefix) !== 0 || !rid || u.hasQuery || (pinned && (!pinnedId(rid) || u.path.indexOf('//') >= 0))) {
+      if (u.path.indexOf(prefix) !== 0 || !rid) {
         throw new Error('inventory has an invalid resource identity');
       }
       if (seen[rid]) { throw new Error('ambiguous resource ID ' + rid); }
       seen[rid] = true;
-      const parts = trimSlashes(u.path.slice(prefix.length)).split('/');
-      if (pinned && (parts.length < 2 || parts[parts.length - 1] !== rid)) { throw new Error('pinned resource URL does not match its original identity'); }
-      let type = parts[0];
-      if (parts.length > 2 || pinned) {
-        const kinds = [];
-        for (let i = 0; i < parts.length; i += 2) {
-          if (pinned && !pinnedId(parts[i])) { throw new Error('invalid pinned resource path'); }
-          kinds.push(parts[i]);
-        }
-        type = kinds.join(' / ');
-      }
+      const type = snapshotResourceType(u.path, u.query, env, rid);
       let name = typeof s.configuration.name === 'string' ? s.configuration.name : '';
       if (!name) { name = typeof s.configuration.displayName === 'string' ? s.configuration.displayName : ''; }
       if (!name) { name = rid; }
