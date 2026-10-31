@@ -184,6 +184,48 @@ func TestKeyringCredentialUsesProviderAndKeepsFilesSecretFree(t *testing.T) {
 	}
 }
 
+func TestNewKeyringProfileRequiresASecret(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.credentials = &fakeCredentialProvider{}
+	p := validProfile()
+	p.SecretMode = "keychain"
+	if _, err := s.SaveProfile(p, ""); err == nil || !strings.Contains(err.Error(), "enter the PingOne client secret") {
+		t.Fatalf("SaveProfile error = %v, want a prompt to enter the secret", err)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("profile without a keyring credential was persisted: %+v", profiles)
+	}
+}
+
+func TestExistingKeyringProfileBlankSecretPreservesStoredCredential(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "stored-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Name = "Renamed profile"
+	if _, err := s.SaveProfile(p, ""); err != nil {
+		t.Fatal(err)
+	}
+	if provider.values[p.ID] != "stored-secret" {
+		t.Fatal("blank-secret edit changed the existing keyring credential")
+	}
+}
+
 func TestKeyringUnavailableErrorDoesNotPersistProfileOrSecret(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)

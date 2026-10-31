@@ -16,7 +16,7 @@ pingone-promote
 
 The interface opens in the default browser and listens on localhost. `--no-browser` prints its startup link instead. This package does not register or start a background service.
 
-Supported installation tests cover macOS Apple Silicon, macOS Intel and Linux x86_64 with a supported Homebrew installation. Successful builds alone do not establish runtime acceptance. Consult the release's installation checks before installing a preview. RHEL runtime and macOS Keychain acceptance are separate checks.
+Supported installation tests cover macOS Apple Silicon, macOS Intel and Linux x86_64 with a supported Homebrew installation. Successful builds alone do not establish runtime acceptance. Consult the release's installation checks before installing a preview. Native credential vaults are provided by the server OS; Linux requires a running and unlocked Secret Service provider, and vault availability is checked when credentials are saved or used.
 
 ## Upgrade and uninstall
 

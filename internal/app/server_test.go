@@ -14,6 +14,7 @@ import (
 	"pingone-promote/internal/logging"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/store"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -43,6 +44,27 @@ func TestReplyRouteErrorSurfacesCredentialStateInconsistency(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "state may be inconsistent") {
 		t.Fatalf("response omitted inconsistent credential state: %s", w.Body.String())
+	}
+}
+
+func TestCredentialStorageCapabilityUsesServerPlatformNames(t *testing.T) {
+	tests := []struct {
+		goos, provider string
+		supported      bool
+	}{
+		{"darwin", "macOS Keychain", true},
+		{"windows", "Windows Credential Manager", true},
+		{"linux", "Linux Secret Service", true},
+		{"freebsd", "Operating system credential vault", false},
+	}
+	for _, test := range tests {
+		got := credentialStorageCapabilityFor(test.goos)
+		if got.Provider != test.provider || got.Supported != test.supported || got.Availability != "not_probed" {
+			t.Errorf("capability for %s = %+v", test.goos, got)
+		}
+		if test.goos == "linux" && !strings.Contains(got.Requirement, "Availability is checked when you save or use") {
+			t.Errorf("Linux capability claims availability without a runtime check: %+v", got)
+		}
 	}
 }
 
@@ -210,9 +232,13 @@ func setup(t *testing.T) *harness {
 	io.Copy(io.Discard, res.Body)
 	res.Body.Close()
 	var session struct {
-		CSRF string `json:"csrf"`
+		CSRF              string                             `json:"csrf"`
+		CredentialStorage profileCredentialStorageCapability `json:"credentialStorage"`
 	}
 	h.call("GET", "/api/session", nil, &session, 200)
+	if want := credentialStorageCapabilityFor(runtime.GOOS); session.CredentialStorage != want {
+		t.Fatalf("session credential storage = %+v, want server platform capability %+v", session.CredentialStorage, want)
+	}
 	h.csrf = session.CSRF
 	return h
 }

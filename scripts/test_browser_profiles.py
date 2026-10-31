@@ -44,6 +44,11 @@ def main():
         page.route('**/api/profiles', profile_write)
         page.goto(fixture['url'])
         page.locator('#source-profile option').nth(1).wait_for(state='attached')
+        session = page.request.get(fixture['url'].split('/?')[0] + '/api/session').json()
+        credential_storage = session.get('credentialStorage', {})
+        keyring_option = page.locator('[name="secretMode"] option[value="keychain"]')
+        if not credential_storage.get('supported') or credential_storage.get('provider') not in keyring_option.text_content():
+            failures.append('credential-vault label does not match the app server platform')
         for mode in ('session', 'keychain', 'env'):
             page.locator('#profiles-open').click()
             form = page.locator('#profiles-form')
@@ -59,6 +64,12 @@ def main():
             form.locator('[name="secretMode"]').select_option('env')
             form.locator('[name="secretEnv"]').fill('SYNTHETIC_PROFILE_SECRET')
             form.locator('[name="secretMode"]').select_option(mode)
+            if mode == 'keychain':
+                help_text = page.locator('#secret-storage-help').inner_text()
+                if credential_storage.get('provider', '') not in help_text or 'click Save profile' not in help_text:
+                    failures.append('keychain mode does not explain how the entered secret is stored')
+                if credential_storage.get('provider') == 'Linux Secret Service' and credential_storage.get('availability') != 'not_probed':
+                    failures.append('Linux Secret Service was claimed available before use')
             with page.expect_response(lambda response: response.url.endswith('/api/profiles') and response.request.method == 'POST') as saved:
                 page.locator('#profile-save').click()
             body = writes[-1]

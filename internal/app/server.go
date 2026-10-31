@@ -15,6 +15,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -185,6 +186,34 @@ type statusError struct {
 	err    error
 }
 
+type profileCredentialStorageCapability struct {
+	Mode         string `json:"mode"`
+	Provider     string `json:"provider"`
+	Supported    bool   `json:"supported"`
+	Availability string `json:"availability"`
+	Requirement  string `json:"requirement,omitempty"`
+}
+
+func credentialStorageCapabilityFor(goos string) profileCredentialStorageCapability {
+	capability := profileCredentialStorageCapability{Mode: "keychain", Availability: "not_probed"}
+	switch goos {
+	case "darwin":
+		capability.Provider = "macOS Keychain"
+		capability.Supported = true
+	case "windows":
+		capability.Provider = "Windows Credential Manager"
+		capability.Supported = true
+	case "linux":
+		capability.Provider = "Linux Secret Service"
+		capability.Supported = true
+		capability.Requirement = "Requires a running, unlocked Secret Service provider, such as GNOME Keyring or KWallet. Availability is checked when you save or use a credential."
+	default:
+		capability.Provider = "Operating system credential vault"
+		capability.Requirement = "Credential vault storage is not supported on this server operating system."
+	}
+	return capability
+}
+
 func (e *statusError) Error() string      { return e.err.Error() }
 func problem(status int, err error) error { return &statusError{status, err} }
 func writeJSON(w http.ResponseWriter, v any) {
@@ -230,7 +259,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	}
 	switch {
 	case path == "/api/session" && r.Method == "GET":
-		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains, "localTargets": s.localTargetIDs()})
+		writeJSON(w, map[string]any{"csrf": s.csrf, "regions": pingone.RegionDomains, "localTargets": s.localTargetIDs(), "credentialStorage": credentialStorageCapabilityFor(runtime.GOOS)})
 		return nil
 	case path == "/api/profiles" && r.Method == "GET":
 		p, err := s.store.ListProfiles()

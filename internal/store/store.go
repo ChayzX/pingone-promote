@@ -76,7 +76,7 @@ func credentialBeforeChange(provider credentialProvider, id string) (string, boo
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, errors.New("could not read the existing OS keyring credential")
+		return "", false, fmt.Errorf("could not verify the existing OS keyring credential; unlock the OS credential vault and retry: %w", err)
 	}
 	return secret, true, nil
 }
@@ -253,10 +253,31 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 	if err != nil {
 		return p, err
 	}
+	var existingMode string
+	profileExists := false
+	for _, existing := range profiles {
+		if existing.ID == p.ID {
+			existingMode = existing.SecretMode
+			profileExists = true
+			break
+		}
+	}
 	oldSecret, hasOldSecret := s.session[p.ID]
 	var priorCredential string
 	var hadPriorCredential bool
 	changesCredential := p.SecretMode == "keychain" && secret != ""
+	if p.SecretMode == "keychain" && secret == "" {
+		if !profileExists || existingMode != "keychain" {
+			return p, errors.New("enter the PingOne client secret before saving this profile to the OS credential vault")
+		}
+		_, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
+		if err != nil {
+			return p, err
+		}
+		if !hadPriorCredential {
+			return p, errors.New("no OS credential is stored for this profile; enter the PingOne client secret and save again")
+		}
+	}
 	if changesCredential {
 		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
 		if err != nil {
@@ -367,7 +388,7 @@ func (s *Store) Secret(p pingone.Profile) (string, error) {
 	case "keychain":
 		secret, err := s.credentials.Get(p.ID)
 		if errors.Is(err, errCredentialNotFound) {
-			return "", fmt.Errorf("no OS credential is stored for profile %q", p.ID)
+			return "", fmt.Errorf("no OS credential is stored for profile %q; edit the profile, enter the PingOne client secret, and save", p.ID)
 		}
 		if err != nil {
 			return "", fmt.Errorf("could not access the OS credential store: %w", err)

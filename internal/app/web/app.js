@@ -7,8 +7,8 @@
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
     sourceByID: new Map(), targetByType: new Map(), searchTimer: null,
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
-    confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null,
+    confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, profileEditSecretMode: '', planSource: null, planTarget: null, historyBusy: false,
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], credentialStorage: null, gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null,
     loggingSettings: null, loggingSettingsGeneration: 0, loggingSettingsBusy: false
   };
 
@@ -100,6 +100,12 @@
 
   function profileByID(id) { return state.profiles.find(profile => String(profile.id) === String(id)); }
   function selectedProfile(which) { return profileByID($(`#${which}-profile`).value); }
+  function credentialModeLabel(mode) {
+    if (mode === 'keychain') return state.credentialStorage?.provider || 'Operating system credential vault';
+    if (mode === 'env') return 'Environment variable';
+    if (mode === 'session') return 'Session only';
+    return 'Credential mode unavailable';
+  }
 
   function renderProfileSelects() {
     for (const id of ['source-profile', 'target-profile']) {
@@ -157,7 +163,7 @@
       const row = el('div', 'profile-list-item');
       const main = el('div', 'profile-list-main');
       main.append(el('strong', '', text(profile.name, 'Unnamed profile')));
-      main.append(el('span', '', `${text(profile.region, 'Unknown region')} · ${text(profile.environmentId, 'No environment ID')} · ${text(profile.secretMode, 'secret mode unavailable')}`));
+      main.append(el('span', '', `${text(profile.region, 'Unknown region')} · ${text(profile.environmentId, 'No environment ID')} · ${credentialModeLabel(profile.secretMode)}`));
       const actions = el('div', 'profile-list-actions');
       const edit = el('button', '', 'Edit');
       edit.type = 'button';
@@ -178,14 +184,14 @@
     const region = form.querySelector('[name="region"]');
     region.value = 'us';
     const mode = form.querySelector('[name="secretMode"]');
-    mode.value = 'session';
+    mode.value = state.credentialStorage?.supported ? 'keychain' : 'session';
     state.profileEditID = '';
+    state.profileEditSecretMode = '';
     $('#profile-editor-summary').textContent = 'Add an environment profile';
     $('#profile-save').textContent = 'Save profile';
     $('#profile-save').disabled = false;
     $('#profile-cancel-edit').hidden = true;
     $('#profile-error').hidden = true;
-    $('#secret-help').textContent = 'Kept in memory for this app session.';
     updateSecretFields();
   }
 
@@ -193,6 +199,7 @@
     state.profileGeneration += 1;
     const form = $('#profiles-form');
     state.profileEditID = String(profile.id);
+    state.profileEditSecretMode = profile.secretMode || 'session';
     for (const key of ['name', 'region', 'environmentId', 'authEnvironmentId', 'clientId', 'secretMode', 'secretEnv']) {
       const input = form.querySelector(`[name="${key}"]`);
       if (input) input.value = profile[key] || '';
@@ -211,6 +218,9 @@
 
   function updateSecretFields() {
     const mode = $('#profiles-dialog [name="secretMode"]').value;
+    const capability = state.credentialStorage;
+    const provider = capability?.provider || 'operating system credential vault';
+    const storageHelp = $('#secret-storage-help');
     const envMode = mode === 'env';
     $('#profiles-dialog .secret-env-field').hidden = !envMode;
     const secretEnv = $('#profiles-dialog [name="secretEnv"]');
@@ -220,10 +230,32 @@
     secretField.hidden = envMode;
     const secret = $('#profiles-dialog [name="secret"]');
     secret.disabled = envMode;
-    secret.required = !state.profileEditID && !envMode;
-    if (mode === 'keychain') $('#secret-help').textContent = 'Stored in the operating system credential vault. Linux requires a Secret Service keyring to be available.';
-    if (mode === 'session') $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored secret; a new value replaces it.' : 'Kept in memory for this app session.';
-    if (mode === 'env') $('#secret-help').textContent = '';
+    const enteringKeyring = Boolean(state.profileEditID) && mode === 'keychain' && state.profileEditSecretMode !== 'keychain';
+    secret.required = !envMode && (!state.profileEditID || enteringKeyring);
+    if (mode === 'keychain') {
+      if (!capability?.supported) {
+        storageHelp.textContent = `${provider} storage is not supported by the app server. Choose Session only or Environment variable.`;
+        $('#secret-help').textContent = storageHelp.textContent;
+      } else {
+        const linuxRequirement = capability.requirement ? ` ${capability.requirement}` : '';
+        storageHelp.textContent = `Enter the client secret below, then click Save profile. It will be stored in ${provider}; the app checks the vault when you save or use it.${linuxRequirement}`;
+        const existingKeyringProfile = state.profileEditID && state.profileEditSecretMode === 'keychain';
+        storageHelp.textContent = existingKeyringProfile
+          ? `Leave the secret blank to keep this profile's existing ${provider} credential. If none is stored, enter the client secret and save. ${capability.requirement || ''}`
+          : `Enter the client secret below, then click Save profile. It will be stored in ${provider}; the app checks the vault when you save or use it. ${capability.requirement || ''}`;
+        $('#secret-help').textContent = existingKeyringProfile
+          ? `Leave blank to preserve the existing ${provider} credential; enter a replacement and save to update it.`
+          : `Save profile stores this secret in ${provider}, not in a profile file.`;
+      }
+    }
+    if (mode === 'session') {
+      storageHelp.textContent = 'Enter the client secret below. It stays in memory until this app closes, so enter it again after a restart.';
+      $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored session credential; a new value replaces it.' : 'Kept in memory for this app session.';
+    }
+    if (mode === 'env') {
+      storageHelp.textContent = 'Set the named environment variable before starting the app. Save profile stores only its name; it does not save the variable value.';
+      $('#secret-help').textContent = '';
+    }
   }
 
   async function saveProfile() {
@@ -1237,6 +1269,9 @@
       state.csrf = session.csrf || '';
       state.localTargets = safeArray(session.localTargets).map(String);
       state.regions = session.regions || {};
+      state.credentialStorage = session.credentialStorage || null;
+      const keyringOption = $('#profiles-dialog [name="secretMode"] option[value="keychain"]');
+      keyringOption.textContent = state.credentialStorage?.supported ? state.credentialStorage.provider : 'Operating system credential vault (unsupported)';
       const [profiles, history] = await Promise.all([request('/api/profiles'), request('/api/history')]);
       state.profiles = Array.isArray(profiles) ? profiles : profiles?.profiles || [];
       state.history = Array.isArray(history) ? history : history?.records || [];
