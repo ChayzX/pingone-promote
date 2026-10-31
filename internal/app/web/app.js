@@ -5,9 +5,11 @@
   const state = {
     csrf: '', regions: {}, profiles: [], history: [], sourceInventory: null, targetInventory: null,
     suggestions: {}, mappings: {}, mappingWarnings: [], selected: new Set(), expandedDependencies: new Set(),
+    sourceByID: new Map(), targetByType: new Map(), searchTimer: null,
     search: '', type: '', plan: null, planMode: 'promotion', pollTimer: null, profileEditID: '',
-    confirmMode: 'deploy', planSource: null, planTarget: null, historyBusy: false,
-    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, confirmGeneration: 0, localTargets: [], gitlabConfigGeneration: 0, gitlab: null
+    confirmMode: 'deploy', confirmKey: '', confirmAttempts: new Map(), profileGeneration: 0, profileEditSecretMode: '', planSource: null, planTarget: null, historyBusy: false,
+    inventoryGeneration: 0, inventoryLoading: false, planGeneration: 0, planPending: false, planRequestPending: false, confirmGeneration: 0, localTargets: [], credentialStorage: null, gitlabConfigGeneration: 0, gitlab: null, pendingDeleteProfile: null,
+    loggingSettings: null, loggingSettingsGeneration: 0, loggingSettingsBusy: false
   };
 
   const el = (tag, className, value) => {
@@ -34,13 +36,15 @@
   const profilesDialog = $('#profiles-dialog');
   const deployDialog = $('#deploy-dialog');
   const gitlabDialog = $('#gitlab-dialog');
+  const loggingDialog = $('#logging-dialog');
+  const deleteProfileDialog = $('#delete-profile-dialog');
 
   async function request(path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
     const headers = new Headers(options.headers || {});
     headers.set('Accept', 'application/json');
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
-    if (method === 'POST' || method === 'DELETE') headers.set('X-CSRF-Token', state.csrf);
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') headers.set('X-CSRF-Token', state.csrf);
     let response;
     try {
       response = await fetch(path, {
@@ -49,15 +53,22 @@
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
         credentials: 'same-origin'
       });
-    } catch (error) {
-      throw new Error(error?.message || 'The local app could not be reached. Check that it is running, then retry.');
+    } catch (_) {
+      throw new Error('The connection to the local app was interrupted. Check that it is running before trying again.');
     }
-    const raw = await response.text();
-    let data = {};
-    if (raw) {
-      try { data = JSON.parse(raw); } catch (_) { data = { error: raw }; }
+    let data;
+    try {
+      data = JSON.parse(await response.text());
+      if (!data || typeof data !== 'object' || (response.ok && Object.hasOwn(data, 'error'))) throw new Error();
+    } catch (_) {
+      throw new Error(`The local app returned an invalid response (HTTP ${response.status}). Check that it is running and reload the app.`);
     }
-    if (!response.ok) throw new Error(text(data?.error, `Request failed (${response.status}).`));
+    if (!response.ok) {
+      const failure = new Error(typeof data.error === 'string' && data.error ? data.error : `Request failed (HTTP ${response.status}). Check the local app and retry.`);
+      failure.safeToRetry = data.safeToRetry === true;
+      failure.mutationNotStarted = data.mutationStarted === false;
+      throw failure;
+    }
     return data;
   }
 
@@ -89,6 +100,12 @@
 
   function profileByID(id) { return state.profiles.find(profile => String(profile.id) === String(id)); }
   function selectedProfile(which) { return profileByID($(`#${which}-profile`).value); }
+  function credentialModeLabel(mode) {
+    if (mode === 'keychain') return state.credentialStorage?.provider || 'Operating system credential vault';
+    if (mode === 'env') return 'Environment variable';
+    if (mode === 'session') return 'Session only';
+    return 'Credential mode unavailable';
+  }
 
   function renderProfileSelects() {
     for (const id of ['source-profile', 'target-profile']) {
@@ -146,14 +163,14 @@
       const row = el('div', 'profile-list-item');
       const main = el('div', 'profile-list-main');
       main.append(el('strong', '', text(profile.name, 'Unnamed profile')));
-      main.append(el('span', '', `${text(profile.region, 'Unknown region')} · ${text(profile.environmentId, 'No environment ID')} · ${text(profile.secretMode, 'secret mode unavailable')}`));
+      main.append(el('span', '', `${text(profile.region, 'Unknown region')} · ${text(profile.environmentId, 'No environment ID')} · ${credentialModeLabel(profile.secretMode)}`));
       const actions = el('div', 'profile-list-actions');
       const edit = el('button', '', 'Edit');
       edit.type = 'button';
       edit.addEventListener('click', () => editProfile(profile));
       const remove = el('button', 'delete-profile', 'Delete');
       remove.type = 'button';
-      remove.addEventListener('click', () => deleteProfile(profile));
+      remove.addEventListener('click', () => openDeleteProfileConfirmation(profile));
       actions.append(edit, remove);
       row.append(main, actions);
       list.append(row);
@@ -161,24 +178,28 @@
   }
 
   function resetProfileForm() {
+    state.profileGeneration += 1;
     const form = $('#profiles-form');
     form.querySelectorAll('.field input').forEach(input => { input.value = ''; });
     const region = form.querySelector('[name="region"]');
     region.value = 'us';
     const mode = form.querySelector('[name="secretMode"]');
-    mode.value = 'session';
+    mode.value = state.credentialStorage?.supported ? 'keychain' : 'session';
     state.profileEditID = '';
+    state.profileEditSecretMode = '';
     $('#profile-editor-summary').textContent = 'Add an environment profile';
     $('#profile-save').textContent = 'Save profile';
+    $('#profile-save').disabled = false;
     $('#profile-cancel-edit').hidden = true;
     $('#profile-error').hidden = true;
-    $('#secret-help').textContent = 'Kept in memory for this app session.';
     updateSecretFields();
   }
 
   function editProfile(profile) {
+    state.profileGeneration += 1;
     const form = $('#profiles-form');
     state.profileEditID = String(profile.id);
+    state.profileEditSecretMode = profile.secretMode || 'session';
     for (const key of ['name', 'region', 'environmentId', 'authEnvironmentId', 'clientId', 'secretMode', 'secretEnv']) {
       const input = form.querySelector(`[name="${key}"]`);
       if (input) input.value = profile[key] || '';
@@ -187,6 +208,7 @@
     $('#profile-editor').open = true;
     $('#profile-editor-summary').textContent = `Edit ${text(profile.name, 'environment profile')}`;
     $('#profile-save').textContent = 'Save changes';
+    $('#profile-save').disabled = false;
     $('#profile-cancel-edit').hidden = false;
     $('#profile-error').hidden = true;
     $('#secret-help').textContent = 'Leave blank to keep the stored secret. Enter a new value to replace it.';
@@ -196,23 +218,69 @@
 
   function updateSecretFields() {
     const mode = $('#profiles-dialog [name="secretMode"]').value;
+    const capability = state.credentialStorage;
+    const provider = capability?.provider || 'operating system credential vault';
+    const storageHelp = $('#secret-storage-help');
+    const keyringOption = $('#profiles-dialog [name="secretMode"] option[value="keychain"]');
+    keyringOption.disabled = !capability?.supported && !(state.profileEditID && state.profileEditSecretMode === 'keychain');
+    const unsupportedSavedKeyring = !capability?.supported && Boolean(state.profileEditID) && state.profileEditSecretMode === 'keychain';
     const envMode = mode === 'env';
     $('#profiles-dialog .secret-env-field').hidden = !envMode;
-    $('#profiles-dialog [name="secretEnv"]').required = envMode;
+    const secretEnv = $('#profiles-dialog [name="secretEnv"]');
+    secretEnv.required = envMode;
+    secretEnv.disabled = !envMode;
     const secretField = $('#profiles-dialog .secret-value-field');
     secretField.hidden = envMode;
     const secret = $('#profiles-dialog [name="secret"]');
-    secret.required = !state.profileEditID && !envMode;
-    if (mode === 'keychain') $('#secret-help').textContent = 'Stored in macOS Keychain. This option requires the app to run on macOS.';
-    if (mode === 'session') $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored secret; a new value replaces it.' : 'Kept in memory for this app session.';
-    if (mode === 'env') $('#secret-help').textContent = '';
+    secret.disabled = envMode;
+    const enteringKeyring = Boolean(state.profileEditID) && mode === 'keychain' && state.profileEditSecretMode !== 'keychain';
+    const leavingKeyringForSession = Boolean(state.profileEditID) && mode === 'session' && state.profileEditSecretMode === 'keychain';
+    const leavingKeyringForEnv = Boolean(state.profileEditID) && mode === 'env' && state.profileEditSecretMode === 'keychain';
+    secret.required = !envMode && (!state.profileEditID || enteringKeyring || leavingKeyringForSession);
+    if (mode === 'keychain') {
+      if (!capability?.supported) {
+        storageHelp.textContent = `${provider}. ${capability?.requirement || 'OS credential storage is unsupported here.'} This profile cannot access or remove a vault credential on this server.`;
+        $('#secret-help').textContent = storageHelp.textContent;
+      } else {
+        const existingKeyringProfile = state.profileEditID && state.profileEditSecretMode === 'keychain';
+        storageHelp.textContent = existingKeyringProfile
+          ? `Leave the secret blank to keep this profile's existing ${provider} credential. If none is stored, enter the client secret and save. ${capability.requirement || ''}`
+          : `Enter the client secret below, then click Save profile. It will be stored in ${provider}; the app checks the vault when you save or use it. ${capability.requirement || ''}`;
+        $('#secret-help').textContent = existingKeyringProfile
+          ? `Leave blank to preserve the existing ${provider} credential; enter a replacement and save to update it.`
+          : `Save profile stores this secret in ${provider}, not in a profile file.`;
+      }
+    }
+    if (mode === 'session') {
+      if (leavingKeyringForSession) {
+        storageHelp.textContent = `Switching away from ${provider} removes the old vault copy. Enter a new client secret below for Session only; it stays in memory until this app closes.`;
+        $('#secret-help').textContent = `Enter the new session secret. The existing ${provider} credential will be removed when you save.`;
+      } else {
+        storageHelp.textContent = 'Enter the client secret below. It stays in memory until this app closes, so enter it again after a restart.';
+        $('#secret-help').textContent = state.profileEditID ? 'Leave blank to keep the stored session credential; a new value replaces it.' : 'Kept in memory for this app session.';
+      }
+    }
+    if (mode === 'env') {
+      storageHelp.textContent = leavingKeyringForEnv
+        ? `Switching away from ${provider} removes the old vault copy. Set the named environment variable before app startup; Save profile stores only its name.`
+        : 'Set the named environment variable before starting the app. Save profile stores only its name; it does not save the variable value.';
+      $('#secret-help').textContent = '';
+    }
+    if (unsupportedSavedKeyring) {
+      storageHelp.textContent = `This profile uses ${provider}, which this app server cannot access or remove. Open the profile on macOS or Linux to change its storage mode, or create a new Session only or Environment variable profile here.`;
+      $('#secret-help').textContent = storageHelp.textContent;
+    }
+    $('#profile-save').disabled = unsupportedSavedKeyring;
   }
 
   async function saveProfile() {
+    const generation = state.profileGeneration;
     const form = $('#profiles-form');
     const error = $('#profile-error');
     error.hidden = true;
     const save = $('#profile-save');
+    const editing = Boolean(state.profileEditID);
+    const name = form.querySelector('[name="name"]').value;
     save.disabled = true;
     try {
       if (!form.reportValidity()) return;
@@ -227,24 +295,42 @@
       else state.profiles.push(profile);
       state.profiles.sort((a, b) => text(a.name).localeCompare(text(b.name)));
       renderProfileSelects();
-      $('#source-profile').value = String(profile.id);
-      if (!$('#target-profile').value || $('#target-profile').value === String(profile.id)) {
-        $('#target-profile').value = state.profiles.find(item => String(item.id) !== String(profile.id))?.id || '';
+      if (!editing && generation === state.profileGeneration) {
+        $('#source-profile').value = String(profile.id);
+        if (!$('#target-profile').value || $('#target-profile').value === String(profile.id)) {
+          $('#target-profile').value = state.profiles.find(item => String(item.id) !== String(profile.id))?.id || '';
+        }
       }
+      updateEnvironmentMeta();
       invalidateInventory('Profile details changed. Load resources again to continue.');
       renderProfiles();
-      resetProfileForm();
-      showToast('Profile saved.');
+      if (generation === state.profileGeneration) resetProfileForm();
+      showToast(`Profile “${text(profile.name, name)}” saved.`);
     } catch (failure) {
-      error.textContent = failure.message;
-      error.hidden = false;
+      if (generation === state.profileGeneration) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      } else showToast(`Could not save profile “${name}”: ${failure.message}`, true);
     } finally {
-      save.disabled = false;
+      if (generation === state.profileGeneration) save.disabled = false;
     }
   }
 
-  async function deleteProfile(profile) {
-    if (!window.confirm(`Delete the saved profile “${text(profile.name)}”?`)) return;
+  function openDeleteProfileConfirmation(profile) {
+    state.pendingDeleteProfile = profile;
+    $('#delete-profile-copy').textContent = `Delete the saved profile “${text(profile.name)}”? This cannot be undone.`;
+    $('#delete-profile-error').hidden = true;
+    $('#confirm-delete-profile').disabled = false;
+    $('#confirm-delete-profile').textContent = 'Delete';
+    deleteProfileDialog.showModal();
+  }
+
+  async function performDeleteProfile() {
+    const profile = state.pendingDeleteProfile;
+    if (!profile) return;
+    const button = $('#confirm-delete-profile');
+    button.disabled = true;
+    button.textContent = 'Deleting…';
     try {
       await request(`/api/profiles/${encodeURIComponent(profile.id)}`, { method: 'DELETE' });
       state.profiles = state.profiles.filter(item => String(item.id) !== String(profile.id));
@@ -256,14 +342,19 @@
       invalidateInventory('A profile was removed. Choose profiles and load resources again.');
       renderProfiles();
       showToast('Profile deleted.');
+      state.pendingDeleteProfile = null;
+      deleteProfileDialog.close();
     } catch (failure) {
-      $('#profile-list-state').textContent = failure.message;
-      $('#profile-list-state').className = 'inline-state is-error';
+      $('#delete-profile-error').textContent = failure.message;
+      $('#delete-profile-error').hidden = false;
+      button.disabled = false;
+      button.textContent = 'Delete';
     }
   }
 
   function invalidatePlan(message = 'Choices changed. Build a new review before deploying.') {
     state.planGeneration += 1;
+    state.planPending = false;
     clearTimer();
     state.plan = null;
     state.planSource = null;
@@ -295,8 +386,8 @@
   function updateBuildButton() {
     const canBuild = Boolean(state.sourceInventory && state.targetInventory && state.selected.size > 0);
     const isGitLab = Boolean(selectedProfile('target') && !state.localTargets.includes(String(selectedProfile('target').environmentId)));
-    $('#build-plan').disabled = !canBuild;
-    $('#build-plan').textContent = isGitLab ? 'Build submission preview' : 'Build review';
+    $('#build-plan').disabled = !canBuild || state.planRequestPending;
+    $('#build-plan').textContent = state.planRequestPending ? (isGitLab ? 'Preparing request…' : 'Building…') : (isGitLab ? 'Build submission preview' : 'Build review');
     $('#selection-count').textContent = `${state.selected.size} selected`;
   }
 
@@ -311,19 +402,28 @@
     });
   }
 
-  function resourceMapByID(inventory) {
-    return new Map((inventory?.resources || []).map(resource => [String(resource.id), resource]));
+  // Build the lookups the table needs once per inventory load, instead of
+  // rebuilding a full-inventory Map on every dependency lookup and filtering
+  // the whole destination list once per row. Cleared when inventories reset.
+  function buildIndexes() {
+    state.sourceByID = new Map((state.sourceInventory?.resources || []).map(resource => [String(resource.id), resource]));
+    const byType = new Map();
+    for (const target of state.targetInventory?.resources || []) {
+      const type = resourceType(target);
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(target);
+    }
+    state.targetByType = byType;
   }
 
   function targetOptionsFor(resource) {
-    const type = resourceType(resource);
-    return (state.targetInventory?.resources || []).filter(target => resourceType(target) === type);
+    return state.targetByType.get(resourceType(resource)) || [];
   }
 
   function dependencyResource(dep) {
     if (dep && typeof dep === 'object') return dep;
     const id = String(dep);
-    return resourceMapByID(state.sourceInventory).get(id) || { id, name: id, type: 'Dependency' };
+    return state.sourceByID.get(id) || { id, name: id, type: 'Dependency' };
   }
 
   function makeDependencyCell(resource) {
@@ -370,6 +470,13 @@
     return td;
   }
 
+  function mappingOption(target) {
+    const option = document.createElement('option');
+    option.value = String(target.id);
+    option.textContent = `${resourceName(target)} · ${resourceID(target)}`;
+    return option;
+  }
+
   function mappingObjectFor(resource) {
     const targets = targetOptionsFor(resource);
     const td = el('td');
@@ -379,18 +486,30 @@
     automatic.value = '';
     automatic.textContent = 'Automatic / create if unmatched';
     select.append(automatic);
-    for (const target of targets) {
-      const option = document.createElement('option');
-      option.value = String(target.id);
-      option.textContent = `${resourceName(target)} · ${resourceID(target)}`;
-      select.append(option);
-    }
-    const mapped = state.mappings[String(resource.id)] ?? state.suggestions[String(resource.id)] ?? '';
-    if (targets.some(target => String(target.id) === String(mapped))) select.value = String(mapped);
+    const mapped = String(state.mappings[String(resource.id)] ?? state.suggestions[String(resource.id)] ?? '');
+    const current = mapped && targets.find(target => String(target.id) === mapped);
+    // Pre-filling every row's select with the full compatible-destination list
+    // (often 100+ options) dominates render time at a few hundred rows. Start
+    // with just the current selection, and populate the rest on first focus.
+    if (current) { select.append(mappingOption(current)); select.value = mapped; }
     else select.value = '';
+    select.dataset.filled = targets.length ? 'pending' : 'done';
+    const fill = () => {
+      if (select.dataset.filled !== 'pending') return;
+      const chosen = select.value;
+      const frag = document.createDocumentFragment();
+      for (const target of targets) {
+        if (current && String(target.id) === mapped) continue;
+        frag.append(mappingOption(target));
+      }
+      select.append(frag);
+      select.value = chosen;
+      select.dataset.filled = 'done';
+    };
+    select.addEventListener('pointerdown', fill);
+    select.addEventListener('focus', fill);
     select.addEventListener('change', () => {
-      const id = String(resource.id);
-      state.mappings[id] = select.value;
+      state.mappings[String(resource.id)] = select.value;
       invalidatePlan('Destination mapping changed. Build a new review.');
     });
     const note = el('p', 'mapping-note', targets.length ? `${targets.length} compatible destination ${targets.length === 1 ? 'resource' : 'resources'} · unselected resources can still be reused.` : 'No loaded destination match of this type. Automatic mapping may create a new resource.');
@@ -459,8 +578,11 @@
       check.type = 'checkbox'; check.checked = state.selected.has(id); check.setAttribute('aria-label', `Select ${resourceName(resource)} for promotion`);
       check.addEventListener('change', () => {
         if (check.checked) state.selected.add(id); else state.selected.delete(id);
+        // Update only this row rather than rebuilding the whole table (every
+        // other row's cells, dependency state and mapping select are unchanged).
+        tr.classList.toggle('is-selected', check.checked);
         invalidatePlan('Resource selection changed. Build a new review.');
-        renderResources();
+        updateBuildButton();
       });
       checkCell.append(check);
       const sourceCell = el('td');
@@ -492,30 +614,36 @@
     state.inventoryLoading = true;
     clearTimer();
     state.sourceInventory = null; state.targetInventory = null; state.selected.clear(); state.mappings = {}; state.suggestions = {};
+    state.sourceByID = new Map(); state.targetByType = new Map();
     state.mappingWarnings = [];
     invalidatePlan('Loading new inventories.');
     renderInventoryLoading();
     const button = $('#load-resources'); button.disabled = true; button.textContent = 'Loading…';
     try {
       const [sourceInventory, targetInventory] = await Promise.all([
-        request('/api/inventory', { method: 'POST', body: { profileId: source.id } }),
-        request('/api/inventory', { method: 'POST', body: { profileId: target.id } })
+        request('/api/inventory', { method: 'POST', body: { profileId: source.id } }).catch(failure => { throw new Error(`Source inventory: ${failure.message}`); }),
+        request('/api/inventory', { method: 'POST', body: { profileId: target.id } }).catch(failure => { throw new Error(`Destination inventory: ${failure.message}`); })
       ]);
-      const mappingResult = await request('/api/mappings', { method: 'POST', body: { sourceInventoryId: sourceInventory.id, targetInventoryId: targetInventory.id } });
+      const mappingResult = await request('/api/mappings', { method: 'POST', body: { sourceInventoryId: sourceInventory.id, targetInventoryId: targetInventory.id } }).catch(failure => { throw new Error(`Destination mapping suggestions: ${failure.message}`); });
       if (generation !== state.inventoryGeneration || String(selectedProfile('source')?.id) !== sourceID || String(selectedProfile('target')?.id) !== targetID) return;
       state.sourceInventory = sourceInventory;
       state.targetInventory = targetInventory;
+      buildIndexes();
       state.suggestions = mappingResult?.mappings || {};
       state.mappings = { ...state.suggestions };
       state.mappingWarnings = Array.isArray(mappingResult?.warnings) ? mappingResult.warnings : [];
       state.search = ''; state.type = '';
       $('#resource-search').value = '';
+      invalidatePlan('Resources loaded. Select resources and build a review to continue.');
       renderResources();
       const warnings = state.mappingWarnings;
       if (warnings.length) showToast(`${sourceInventory.resources?.length || 0} source resources loaded. ${warnings.length} mapping warning${warnings.length === 1 ? '' : 's'} need review.`);
       else showToast(`${sourceInventory.resources?.length || 0} source resources loaded.`);
     } catch (failure) {
-      if (generation === state.inventoryGeneration) setStateBox($('#resource-state'), { title: 'Could not load resources', message: failure.message, kind: 'error', icon: '!' });
+      if (generation === state.inventoryGeneration) {
+        setStateBox($('#resource-state'), { title: 'Could not load resources', message: failure.message, kind: 'error', icon: '!' });
+        invalidatePlan('Load both inventories successfully before building a review. See the resource error above.');
+      }
     } finally {
       if (generation === state.inventoryGeneration) {
         state.inventoryLoading = false;
@@ -526,9 +654,16 @@
   }
 
   function updateFilterValues() {
-    state.search = $('#resource-search').value;
     state.type = $('#type-filter').value;
     renderResources();
+  }
+
+  // Debounce search: re-rendering the table on every keystroke is wasted work
+  // while the user is still typing. The type filter stays immediate.
+  function onSearchInput() {
+    state.search = $('#resource-search').value;
+    if (state.searchTimer) clearTimeout(state.searchTimer);
+    state.searchTimer = setTimeout(() => { state.searchTimer = null; renderResources(); }, 150);
   }
 
   function safeArray(value) { return Array.isArray(value) ? value : value == null ? [] : [value]; }
@@ -542,6 +677,19 @@
     const review = plan?.review || {};
     const steps = safeArray(review.steps);
     const section = el('section', 'steps-section');
+    const changeSummary = review.summary;
+    const summaryKeys = ['create', 'change', 'destroy', 'unsupported'];
+    const summaryAvailable = changeSummary && summaryKeys.every(key => Number.isInteger(changeSummary[key]) && changeSummary[key] >= 0);
+    const summary = el('div', 'change-summary');
+    summary.append(el('strong', '', 'Change summary'));
+    if (summaryAvailable) {
+      summary.append(el('p', '', `${changeSummary.create} create · ${changeSummary.change} change · ${changeSummary.destroy} destroy · ${changeSummary.unsupported} unsupported`));
+      summary.append(el('small', '', 'Counts are classified locally from PingOne’s native operation methods and paths.'));
+    } else {
+      summary.append(el('p', '', 'Summary unavailable for this saved review.'));
+      summary.append(el('small', '', 'Refresh the review to classify its native operations.'));
+    }
+    section.append(summary);
     const heading = el('div', 'steps-heading');
     heading.append(el('h3', '', 'Operations'), el('span', 'step-count', `${steps.length} ${steps.length === 1 ? 'operation' : 'operations'}`));
     section.append(heading);
@@ -675,7 +823,7 @@
     if (issues.length) { const ul = el('ul', 'issues-list'); issues.forEach(issue => ul.append(el('li', '', stringify(issue)))); box.append(ul); }
     const actions = el('div', 'preview-actions');
     const submit = el('button', 'button button-primary', 'Submit to GitLab'); submit.type = 'button';
-    submit.disabled = !state.gitlab?.configured && !state.gitlab?.tokenAvailable;
+    submit.disabled = !state.gitlab?.configured || !state.gitlab?.tokenAvailable;
     submit.title = submit.disabled ? 'Configure GitLab in GitLab settings before submitting.' : '';
     submit.addEventListener('click', () => openGitLabConfirmation(req));
     actions.append(submit);
@@ -687,16 +835,23 @@
     state.reviewedRequestId = String(req.id || '');
     state.confirmGeneration = ++state.planGeneration;
     state.confirmMode = 'gitlab-submit';
+    state.confirmKey = `gitlab-submit:${state.reviewedRequestId}`;
     $('#confirm-eyebrow').textContent = 'GitLab submission';
     $('#deploy-dialog-title').textContent = 'Submit this request to GitLab?';
     $('#confirm-target-name').textContent = profileLabel(state.planTarget);
     $('#deploy-warning').hidden = false;
     $('#deploy-warning').textContent = 'This creates a branch and merge request in the configured private GitLab project. Production planning, approval, deployment and rollback happen through your protected GitLab runner.';
     $('#deploy-confirm-copy').textContent = `Submit reviewed request ${text(req.id)} with its pinned source snapshot, target environment, resource selection, mappings, redacted exports and fingerprints.`;
+    $('#gitlab-submit-options').hidden = false;
+    $('#gitlab-branch-name').value = '';
+    $('#gitlab-branch-name').placeholder = `promotion/${text(req.id, '')}`;
+    $('#gitlab-commit-message').value = '';
+    $('#gitlab-commit-message').placeholder = `Add promotion request ${text(req.id, '')}`;
     $('#deploy-confirm-check').checked = false;
     $('#confirm-deploy').disabled = true;
     $('#confirm-deploy').textContent = 'Submit to GitLab';
     $('#deploy-error').hidden = true;
+    restoreConfirmationAttempt();
     deployDialog.showModal();
   }
 
@@ -711,9 +866,27 @@
       const config = result.config || {};
       for (const key of ['baseUrl', 'projectId', 'tokenEnv', 'environment']) form.elements[key].value = config[key] || (key === 'tokenEnv' ? 'GITLAB_TOKEN' : key === 'environment' ? 'production' : '');
       form.elements.token.value = '';
-      $('#gitlab-config-state').textContent = result.configured ? `Configured · private project verified · token ${result.tokenAvailable ? 'available' : 'unavailable'}` : 'GitLab is not configured.';
+      form.elements.token.placeholder = result.tokenAvailable ? 'A token is already available' : 'Enter a project access token';
+      renderGitLabConfigState(result);
       gitlabDialog.showModal();
     } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; gitlabDialog.showModal(); } }
+  }
+
+  function renderGitLabConfigState(result, project = null) {
+    const stateLabel = $('#gitlab-config-state');
+    const tokenEnv = result.config?.tokenEnv || 'GITLAB_TOKEN';
+    stateLabel.classList.toggle('is-error', Boolean(result.configured && !result.tokenAvailable));
+    if (!result.configured) {
+      stateLabel.textContent = result.tokenAvailable
+        ? 'Token available to this app. Enter the project details and select Save and verify.'
+        : `Not connected yet. A token is required: enter one below or set ${tokenEnv} in the app process environment before launch.`;
+      return;
+    }
+    const projectName = project?.pathWithNamespace || project?.name;
+    const verified = projectName ? `Private project verified · ${text(projectName)}` : 'Private project settings saved and verified';
+    stateLabel.textContent = result.tokenAvailable
+      ? `${verified} · a token is available to this app session or process.`
+      : `${verified}, but no token is available. Enter one below or set ${tokenEnv} in the app process environment before launch.`;
   }
 
   async function saveGitLabSettings() {
@@ -727,11 +900,99 @@
       if (generation !== state.gitlabConfigGeneration) return;
       state.gitlab = result;
       form.elements.token.value = '';
-      $('#gitlab-config-state').textContent = `Configured · ${text(result.project?.pathWithNamespace || result.project?.name, 'private project verified')} · token ${result.tokenAvailable ? 'available' : 'unavailable'}`;
+      form.elements.token.placeholder = 'A token is already available';
+      renderGitLabConfigState(result, result.project);
       showToast('GitLab settings saved and project verified.');
       invalidatePlan('GitLab settings changed. Rebuild the request preview before submitting.');
     } catch (failure) { if (generation === state.gitlabConfigGeneration) { $('#gitlab-error').textContent = failure.message; $('#gitlab-error').hidden = false; } }
     finally { if (generation === state.gitlabConfigGeneration) $('#gitlab-save').disabled = false; }
+  }
+
+  function renderLoggingSettings(settings) {
+    state.loggingSettings = settings;
+    const debug = settings.debug === true;
+    const destination = settings.destination === 'file' ? 'file' : 'stderr';
+    $('#logging-debug').checked = debug;
+    $('#logging-level').value = debug ? 'info' : ['info', 'warn', 'error'].includes(settings.level) ? settings.level : 'info';
+    $('#logging-level').disabled = debug;
+    $('#logging-format').value = settings.format === 'text' ? 'text' : 'json';
+    $('#logging-destination').value = destination;
+    $('#logging-file').value = typeof settings.file === 'string' ? settings.file : '';
+    $('#logging-file').required = destination === 'file';
+    $('#logging-file-field').hidden = destination !== 'file';
+    const fileOption = $('#logging-destination option[value="file"]');
+    fileOption.disabled = settings.fileSupported !== true;
+    $('#logging-file-support-note').textContent = settings.fileUnavailableReason || '';
+    $('#logging-file-support-note').hidden = settings.fileSupported === true;
+    $('#logging-destination-help').textContent = destination === 'file'
+      ? 'Events append to this private log file.'
+      : 'The active app process writes to standard error.';
+    const target = destination === 'file' ? settings.file : 'standard error';
+    $('#logging-current').textContent = `${settings.level || 'info'} · ${settings.format || 'json'} · ${target || 'standard error'}`;
+    $('#logging-warning').textContent = settings.warning || '';
+    $('#logging-warning').hidden = !settings.warning;
+  }
+
+  async function openLoggingSettings() {
+    const generation = ++state.loggingSettingsGeneration;
+    $('#logging-error').hidden = true;
+    $('#logging-current').textContent = 'Loading current settings.';
+    $('#logging-save').disabled = true;
+    loggingDialog.showModal();
+    try {
+      const settings = await request('/api/logging');
+      if (generation !== state.loggingSettingsGeneration || !loggingDialog.open) return;
+      renderLoggingSettings(settings);
+      $('#logging-save').disabled = false;
+    } catch (failure) {
+      if (generation !== state.loggingSettingsGeneration || !loggingDialog.open) return;
+      $('#logging-error').textContent = failure.message;
+      $('#logging-error').hidden = false;
+    }
+  }
+
+  async function saveLoggingSettings() {
+    const form = $('#logging-form');
+    if (!form.reportValidity() || state.loggingSettingsBusy) return;
+    const generation = state.loggingSettingsGeneration;
+    const debug = $('#logging-debug').checked;
+    const destination = $('#logging-destination').value;
+    const body = {
+      debug,
+      level: debug ? 'debug' : $('#logging-level').value,
+      format: $('#logging-format').value,
+      destination,
+      file: destination === 'file' ? $('#logging-file').value : ''
+    };
+    state.loggingSettingsBusy = true;
+    for (const button of [$('#logging-save'), $('#logging-cancel'), $('#logging-close')]) button.disabled = true;
+    $('#logging-error').hidden = true;
+    try {
+      const settings = await request('/api/logging', { method: 'PUT', body });
+      if (generation !== state.loggingSettingsGeneration || !loggingDialog.open) return;
+      renderLoggingSettings(settings);
+      loggingDialog.close();
+      showToast(settings.warning || 'Logging settings saved for this app session.', Boolean(settings.warning));
+    } catch (failure) {
+      if (generation === state.loggingSettingsGeneration && loggingDialog.open) {
+        $('#logging-error').textContent = failure.message;
+        $('#logging-error').hidden = false;
+      }
+    } finally {
+      state.loggingSettingsBusy = false;
+      $('#logging-save').disabled = false;
+      $('#logging-cancel').disabled = false;
+      $('#logging-close').disabled = false;
+    }
+  }
+
+  function updateLoggingDestination() {
+    const file = $('#logging-destination').value === 'file';
+    $('#logging-file-field').hidden = !file;
+    $('#logging-file').required = file;
+    $('#logging-destination-help').textContent = file
+      ? 'Events append to this private log file.'
+      : 'The active app process writes to standard error.';
   }
 
   function schedulePoll(plan, generation = state.planGeneration) {
@@ -769,19 +1030,23 @@
   }
 
   async function buildPlan() {
-    if (!state.sourceInventory || !state.targetInventory || !state.selected.size) return;
+    if (state.planRequestPending || !state.sourceInventory || !state.targetInventory || !state.selected.size) return;
     const generation = ++state.planGeneration;
+    state.planPending = true;
+    state.planRequestPending = true;
     const source = selectedProfile('source');
     const target = selectedProfile('target');
     const sourceInventoryID = String(state.sourceInventory.id);
     const targetInventoryID = String(state.targetInventory.id);
+    const gitlabRequired = !state.localTargets.includes(String(target?.environmentId || ''));
     const body = makePlanBody();
     clearTimer();
-    const button = $('#build-plan'); button.disabled = true; button.textContent = 'Building…';
-    setStateBox($('#plan-state'), { title: 'Building review', message: 'Creating a native plan and collecting its complete operation details.', kind: 'loading', icon: '…' });
+    const button = $('#build-plan'); button.disabled = true; button.textContent = gitlabRequired ? 'Preparing request…' : 'Building…';
+    setStateBox($('#plan-state'), gitlabRequired
+      ? { title: 'Preparing GitLab request', message: 'Checking the selected resources and preparing a request for review. No PingOne plan or changes are created in the app.', kind: 'loading', icon: '…' }
+      : { title: 'Building review', message: 'Creating a native plan and collecting its complete operation details.', kind: 'loading', icon: '…' });
     $('#plan-content').hidden = true; $('#deploy-bar').hidden = true;
     try {
-      const gitlabRequired = !state.localTargets.includes(String(target?.environmentId || ''));
       const plan = await request(gitlabRequired ? '/api/requests/preview' : '/api/plans', { method: 'POST', body });
       if (generation !== state.planGeneration || String(state.sourceInventory?.id) !== sourceInventoryID || String(state.targetInventory?.id) !== targetInventoryID || String(selectedProfile('source')?.id) !== String(source?.id) || String(selectedProfile('target')?.id) !== String(target?.id)) return;
       state.planMode = 'promotion';
@@ -791,11 +1056,18 @@
       renderPlan(plan, generation);
     } catch (failure) {
       if (generation === state.planGeneration) setStateBox($('#plan-state'), { title: 'Could not build review', message: failure.message, kind: 'error', icon: '!' });
-    } finally {
-      if (generation === state.planGeneration) {
-        button.textContent = 'Build review';
-        updateBuildButton();
+      else {
+        const message = `Earlier request for ${profileLabel(source)} → ${profileLabel(target)}: ${failure.message}`;
+        if (!state.plan && !$('#plan-state').classList.contains('state-loading')) setStateBox($('#plan-state'), { title: 'Previous review request failed', message, kind: 'error', icon: '!' });
+        else showToast(message, true);
       }
+    } finally {
+      state.planRequestPending = false;
+      if (generation === state.planGeneration) {
+        state.planPending = false;
+        button.textContent = 'Build review';
+      }
+      updateBuildButton();
     }
   }
 
@@ -826,6 +1098,8 @@
     state.confirmGeneration = ++state.planGeneration;
     clearTimer();
     state.confirmMode = mode;
+    $('#gitlab-submit-options').hidden = true;
+    state.confirmKey = `${mode}:${mode === 'rollback-draft' ? state.rollbackRecord?.id : state.plan?.id}`;
     const rollbackDraft = mode === 'rollback-draft';
     const rollbackExecute = mode === 'rollback-execute';
     const target = rollbackDraft ? state.rollbackRecord?.target : state.planTarget || selectedProfile('target');
@@ -839,11 +1113,31 @@
     $('#confirm-deploy').disabled = true;
     $('#confirm-deploy').textContent = rollbackDraft ? 'Create rollback review' : rollbackExecute ? 'Execute rollback' : 'Deploy';
     $('#deploy-error').hidden = true;
+    restoreConfirmationAttempt();
     deployDialog.showModal();
+  }
+
+  function restoreConfirmationAttempt() {
+    const attempt = state.confirmAttempts.get(state.confirmKey);
+    if (!attempt) return;
+    $('#deploy-error').textContent = attempt.message;
+    $('#deploy-error').hidden = false;
+    $('#confirm-deploy').disabled = true;
+    $('#confirm-deploy').textContent = attempt.label || (state.confirmMode === 'gitlab-submit' ? 'Check GitLab' : 'Check history');
+  }
+
+  function recordConfirmationAttempt(key, message, label) {
+    state.confirmAttempts.set(key, { message, label });
+    if (key === state.confirmKey && deployDialog.open) restoreConfirmationAttempt();
   }
 
   async function confirmDeployAction() {
     const generation = state.confirmGeneration;
+    const key = state.confirmKey;
+    const mode = state.confirmMode;
+    if (generation !== state.planGeneration || !$('#deploy-confirm-check').checked || state.confirmAttempts.has(key)) return;
+    state.confirmAttempts.set(key, { message: 'This request is in progress. Wait for its result before taking another action.', label: 'Request in progress' });
+    let requestStarted = false;
     const button = $('#confirm-deploy');
     button.disabled = true;
     button.textContent = state.confirmMode === 'rollback-draft' ? 'Creating review…' : 'Submitting…';
@@ -852,7 +1146,14 @@
       if (state.confirmMode === 'gitlab-submit') {
         const requestId = state.reviewedRequestId;
         if (!requestId || !state.plan?.gitlabRequired) throw new Error('The reviewed GitLab request is missing. Build a fresh submission preview.');
-        const result = await request('/api/gitlab/submit', { method: 'POST', body: { requestId } });
+        requestStarted = true;
+        const submission = { requestId };
+        const branchName = $('#gitlab-branch-name').value;
+        const commitMessage = $('#gitlab-commit-message').value;
+        if (branchName !== '') submission.branchName = branchName;
+        if (commitMessage !== '') submission.commitMessage = commitMessage;
+        const result = await request('/api/gitlab/submit', { method: 'POST', body: submission });
+        recordConfirmationAttempt(key, 'This request was submitted. Check GitLab for its branch and merge request.');
         if (generation !== state.planGeneration || requestId !== state.reviewedRequestId) return;
         deployDialog.close();
         const toast = el('div', 'toast'); toast.setAttribute('role', 'status'); toast.append(document.createTextNode('Merge request created: '));
@@ -861,7 +1162,9 @@
         if (link.href) toast.append(link); $('#toast-region').append(toast); window.setTimeout(() => toast.remove(), 12000);
       } else if (state.confirmMode === 'rollback-draft') {
         const record = state.rollbackRecord;
+        requestStarted = true;
         const rollback = await request(`/api/plans/${encodeURIComponent(record.id)}/rollback`, { method: 'POST', body: { confirm: true } });
+        recordConfirmationAttempt(key, 'This rollback draft was submitted. Check promotion history before making another request.');
         if (generation !== state.planGeneration) return;
         state.planMode = 'rollback';
         state.planSource = record.source || null;
@@ -874,7 +1177,9 @@
       } else {
         const plan = state.plan;
         if (!plan?.id || !plan.review?.digest) throw new Error('The reviewed plan or digest is missing. Build a fresh review before continuing.');
+        requestStarted = true;
         const result = await request(`/api/plans/${encodeURIComponent(plan.id)}/deploy`, { method: 'POST', body: { digest: plan.review.digest, confirm: true } });
+        recordConfirmationAttempt(key, 'This execution was submitted. Check promotion history for its current status.');
         if (generation !== state.planGeneration) return;
         state.planMode = state.confirmMode === 'rollback-execute' ? 'rollback' : 'promotion';
         renderPlan(result, generation);
@@ -883,11 +1188,26 @@
         await refreshHistory(false);
       }
     } catch (failure) {
-      if (generation !== state.planGeneration) return;
-      $('#deploy-error').textContent = state.confirmMode === 'gitlab-submit' ? `${failure.message} Check GitLab for the request before submitting again.` : `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
-      $('#deploy-error').hidden = false;
-      button.disabled = true;
-      button.textContent = state.confirmMode === 'gitlab-submit' ? 'Check GitLab' : 'Check history';
+      if (failure.safeToRetry === true) {
+        state.confirmAttempts.delete(key);
+        if (key === state.confirmKey && deployDialog.open) {
+          $('#deploy-error').textContent = failure.message;
+          $('#deploy-error').hidden = false;
+          button.textContent = mode === 'gitlab-submit' ? 'Retry submission' : 'Retry request';
+          button.disabled = !$('#deploy-confirm-check').checked || state.confirmGeneration !== state.planGeneration;
+        }
+        return;
+      }
+      const notStarted = !requestStarted || failure.mutationNotStarted;
+      const message = notStarted ? failure.message : mode === 'gitlab-submit' ? `${failure.message} Check GitLab for the request before submitting again.` : `${failure.message} Check promotion history before making another request; PingOne may have received it.`;
+      recordConfirmationAttempt(key, message, notStarted ? 'Review required' : undefined);
+      if (!notStarted && mode !== 'gitlab-submit' && mode !== 'rollback-draft' && generation === state.planGeneration) {
+        $('#deploy-button').disabled = true;
+        try {
+          const current = state.plan?.id ? await request(`/api/plans/${encodeURIComponent(state.plan.id)}`) : null;
+          if (current && generation === state.planGeneration) renderPlan(current, generation);
+        } catch (_) { /* Keep the deployment disabled until the user reconciles history. */ }
+      }
     }
   }
 
@@ -985,6 +1305,10 @@
       state.csrf = session.csrf || '';
       state.localTargets = safeArray(session.localTargets).map(String);
       state.regions = session.regions || {};
+      state.credentialStorage = session.credentialStorage || null;
+      const keyringOption = $('#profiles-dialog [name="secretMode"] option[value="keychain"]');
+      keyringOption.textContent = state.credentialStorage?.provider || 'Operating system credential vault (unsupported)';
+      keyringOption.disabled = !state.credentialStorage?.supported;
       const [profiles, history] = await Promise.all([request('/api/profiles'), request('/api/history')]);
       state.profiles = Array.isArray(profiles) ? profiles : profiles?.profiles || [];
       state.history = Array.isArray(history) ? history : history?.records || [];
@@ -1002,18 +1326,26 @@
 
   $('#profiles-open').addEventListener('click', openProfiles);
   $('#gitlab-open').addEventListener('click', openGitLabSettings);
+  $('#logging-open').addEventListener('click', openLoggingSettings);
   $('#gitlab-save').addEventListener('click', saveGitLabSettings);
+  $('#logging-form').addEventListener('submit', event => { event.preventDefault(); saveLoggingSettings(); });
+  $('#logging-cancel').addEventListener('click', () => { if (!state.loggingSettingsBusy) loggingDialog.close(); });
+  $('#logging-close').addEventListener('click', () => { if (!state.loggingSettingsBusy) loggingDialog.close(); });
+  $('#logging-debug').addEventListener('change', event => { $('#logging-level').disabled = event.target.checked; });
+  $('#logging-destination').addEventListener('change', updateLoggingDestination);
   $('#add-first-profile').addEventListener('click', openProfiles);
-  $('#profile-save').addEventListener('click', saveProfile);
+  // Enter inside a field must save (never close the dialog and drop the input).
+  $('#profiles-form').addEventListener('submit', event => { event.preventDefault(); saveProfile(); });
+  $('#profiles-close').addEventListener('click', () => profilesDialog.close());
   $('#profile-cancel-edit').addEventListener('click', resetProfileForm);
   $('#profiles-dialog [name="secretMode"]').addEventListener('change', updateSecretFields);
-  $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked; });
+  $('#deploy-confirm-check').addEventListener('change', event => { $('#confirm-deploy').disabled = !event.target.checked || state.confirmAttempts.has(state.confirmKey) || state.confirmGeneration !== state.planGeneration; });
   $('#confirm-deploy').addEventListener('click', confirmDeployAction);
   $('#load-resources').addEventListener('click', loadResources);
-  $('#resource-search').addEventListener('input', updateFilterValues);
+  $('#resource-search').addEventListener('input', onSearchInput);
   $('#type-filter').addEventListener('change', updateFilterValues);
   $('#build-plan').addEventListener('click', buildPlan);
-  $('#plan-description').addEventListener('input', () => { if (state.plan) invalidatePlan('Promotion description changed. Build a new review before continuing.'); });
+  $('#plan-description').addEventListener('input', () => { if (state.plan || state.planPending) invalidatePlan('Promotion description changed. Build a new review before continuing.'); });
   $('#deploy-button').addEventListener('click', () => openDeployConfirmation(state.planMode === 'rollback' ? 'rollback-execute' : 'deploy'));
   $('#refresh-history').addEventListener('click', () => refreshHistory());
   $('#clear-selection').addEventListener('click', () => {
@@ -1027,5 +1359,9 @@
   }
   deployDialog.addEventListener('close', () => { $('#deploy-confirm-check').checked = false; });
   profilesDialog.addEventListener('close', () => { resetProfileForm(); });
+  $('#confirm-delete-profile').addEventListener('click', performDeleteProfile);
+  deleteProfileDialog.addEventListener('close', () => { state.pendingDeleteProfile = null; });
+  loggingDialog.addEventListener('cancel', event => { if (state.loggingSettingsBusy) event.preventDefault(); });
+  loggingDialog.addEventListener('close', () => { state.loggingSettingsGeneration++; });
   initialize();
 })();

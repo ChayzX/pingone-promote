@@ -63,3 +63,53 @@ func TestRequestRejectsMissingUnsafeAndExtraFields(t *testing.T) {
 		t.Fatal("accepted oversized request")
 	}
 }
+
+func TestRequestRoundTripsNativeSnapshotResourceIdentities(t *testing.T) {
+	for _, tc := range []struct{ source, target, kind, sourcePath, targetPath string }{
+		{"flowId:flow-one-version:3", "flowId:flow-two-version:7", "flows / versions / details", "flows/flow-one/versions/3/details", "flows/flow-two/versions/7/details"},
+		{"type:brandingsettings", "type:brandingsettings", "brandingSettings", "brandingSettings", "brandingSettings"},
+		{"type:notificationssettings:emaildeliverysettings", "type:notificationssettings:emaildeliverysettings", "notificationsSettings / emailDeliverySettings", "notificationsSettings/emailDeliverySettings", "notificationsSettings/emailDeliverySettings"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			src, dst := testInventories("https://api.pingone.com")
+			src.Resources[0].ID, src.Resources[0].Type = tc.source, tc.kind
+			dst.Resources[0].ID, dst.Resources[0].Type = tc.target, tc.kind
+			src.Resources[0].URL = src.APIOrigin + "/v1/environments/source/" + tc.sourcePath
+			dst.Resources[0].URL = dst.APIOrigin + "/v1/environments/target/" + tc.targetPath
+			r, err := NewRequest(src, dst, "us", "us", []string{tc.source}, map[string]string{tc.source: tc.target}, "Native snapshot identity")
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := Encode(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := Decode(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(decoded.Selected) != 1 || decoded.Selected[0] != tc.source || decoded.Mappings[tc.source] != tc.target {
+				t.Fatal("native resource identity changed during serialization")
+			}
+		})
+	}
+}
+
+func TestRequestRejectsUnsupportedCompositeResourceIdentities(t *testing.T) {
+	for _, id := range []string{"type:arbitrarysettings", "flowId:../escape-version:1", "flowId:flow-version:01", "flowId:flow-version:latest", "flowId:flow-version:1/extra", "type:brandingsettings/extra"} {
+		t.Run(id, func(t *testing.T) {
+			r := testRequest(t)
+			r.Mappings = map[string]string{"flow": id}
+			if Validate(r) == nil {
+				t.Fatal("accepted unsupported mapping identity")
+			}
+			r.Mappings = nil
+			r.Selected = []string{id}
+			r.Configurations = map[string]any{id: r.Configurations["flow"]}
+			r.Fingerprints = map[string]string{id: r.Fingerprints["flow"]}
+			if Validate(r) == nil {
+				t.Fatal("accepted unsupported selection identity")
+			}
+		})
+	}
+}

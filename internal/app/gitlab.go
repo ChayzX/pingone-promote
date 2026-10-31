@@ -24,10 +24,13 @@ func configBinding(c gitlab.Config) string {
 	return strings.TrimRight(c.BaseURL, "/") + "/" + c.ProjectID
 }
 func (s *Server) gitlabToken(c gitlab.Config) string {
-	if s.gitlabTokenBinding == configBinding(c) && s.gitlabSessionToken != "" {
-		return s.gitlabSessionToken
+	if s.gitlabTokenBinding == configBinding(c) && strings.TrimSpace(s.gitlabSessionToken) != "" {
+		return strings.TrimSpace(s.gitlabSessionToken)
 	}
-	return os.Getenv(c.TokenEnv)
+	return strings.TrimSpace(os.Getenv(c.TokenEnv))
+}
+func missingGitLabToken(c gitlab.Config) error {
+	return fmt.Errorf("GitLab API token is required: enter a project access token for this app session, or set %s in the app process environment before launch", c.TokenEnv)
 }
 func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 	switch {
@@ -51,9 +54,13 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		if err := c.Validate(); err != nil {
 			return err
 		}
-		token := input.Token
+		sessionToken := strings.TrimSpace(input.Token)
+		token := sessionToken
 		if token == "" {
 			token = s.gitlabToken(c)
+		}
+		if token == "" {
+			return missingGitLabToken(c)
 		}
 		client, err := s.gitlabFactory(c, token)
 		if err != nil {
@@ -66,8 +73,8 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		if err = gitlab.SaveConfig(s.store.Directory(), c); err != nil {
 			return err
 		}
-		if input.Token != "" {
-			s.gitlabSessionToken = input.Token
+		if sessionToken != "" {
+			s.gitlabSessionToken = sessionToken
 			s.gitlabTokenBinding = configBinding(c)
 		}
 		writeJSON(w, map[string]any{"config": c, "configured": true, "tokenAvailable": true, "project": project})
@@ -109,7 +116,9 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	case r.URL.Path == "/api/gitlab/submit" && r.Method == "POST":
 		var input struct {
-			RequestID string `json:"requestId"`
+			RequestID     string `json:"requestId"`
+			BranchName    string `json:"branchName"`
+			CommitMessage string `json:"commitMessage"`
 		}
 		if err := decodeBody(w, r, &input); err != nil {
 			return err
@@ -117,6 +126,10 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 		req, ok := s.requests[input.RequestID]
 		if !ok {
 			return errors.New("request preview expired or unknown; build and review it before submission")
+		}
+		submissionOptions := gitlab.SubmissionOptions{BranchName: input.BranchName, CommitMessage: input.CommitMessage}
+		if err := gitlab.ValidateSubmissionOptions(submissionOptions); err != nil {
+			return err
 		}
 		if s.submissionAttempts[req.ID] {
 			return problem(409, errors.New("a submission was already attempted; inspect the GitLab branch before creating another request"))
@@ -126,7 +139,11 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		config = defaultGitLab(config)
-		client, err := s.gitlabFactory(config, s.gitlabToken(config))
+		token := s.gitlabToken(config)
+		if token == "" {
+			return missingGitLabToken(config)
+		}
+		client, err := s.gitlabFactory(config, token)
 		if err != nil {
 			return err
 		}
@@ -146,8 +163,16 @@ func (s *Server) gitlabRoute(w http.ResponseWriter, r *http.Request) error {
 			title = title[:180]
 		}
 		description := fmt.Sprintf("Promotion request `%s`\n\nSource environment: `%s` (snapshot `%s`)\nTarget environment: `%s`\nSelected resources: %d\nGitLab environment: `%s`\n\nThis merge request submits configuration for review. Actual deployment and rollback must execute through protected GitLab jobs. Review the configuration exports and final native plan before approving deployment.", req.ID, req.Source.ID, req.Source.SnapshotID, req.Target.ID, len(req.Selected), config.Environment)
-		mr, err := client.Submit(r.Context(), req.ID, map[string]string{"request.json": string(raw) + "\n"}, title, description)
+		mr, err := client.SubmitWithOptions(r.Context(), req.ID, map[string]string{"request.json": string(raw) + "\n"}, title, description, submissionOptions)
 		if err != nil {
+			var preflightErr *gitlab.SubmissionPreflightError
+			if errors.As(err, &preflightErr) {
+				delete(s.submissionAttempts, req.ID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				writeJSON(w, map[string]any{"error": err.Error(), "safeToRetry": true})
+				return nil
+			}
 			return problem(502, err)
 		}
 		writeJSON(w, map[string]any{"requestId": req.ID, "url": mr.WebURL, "branch": mr.Branch, "iid": mr.IID})

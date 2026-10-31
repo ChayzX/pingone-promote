@@ -33,9 +33,12 @@ func (c Config) Validate() error {
 	if u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("GitLab base URL must be an HTTPS origin and path without credentials, query, or fragment")
 	}
-	for _, part := range strings.Split(u.EscapedPath(), "/") {
-		decoded, e := urlPathUnescape(part)
-		if e != nil || decoded == "." || decoded == ".." {
+	decodedPath, e := urlPathUnescape(u.EscapedPath())
+	if e != nil {
+		return errors.New("GitLab base URL cannot contain traversal")
+	}
+	for _, part := range strings.Split(decodedPath, "/") {
+		if part == "." || part == ".." {
 			return errors.New("GitLab base URL cannot contain traversal")
 		}
 	}

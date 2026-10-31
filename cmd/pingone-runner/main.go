@@ -9,17 +9,22 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
-	"pingone-promote/internal/checks"
+	"pingone-promote/internal/buildinfo"
 	"pingone-promote/internal/cigate"
 	"pingone-promote/internal/gitops"
+	"pingone-promote/internal/logging"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/promotion"
+	"pingone-promote/internal/strictjson"
 )
 
 const maxArtifactBytes = 16 << 20
@@ -27,12 +32,13 @@ const maxArtifactBytes = 16 << 20
 type runnerGate interface {
 	Origin() gitops.Origin
 	VerifyPlan(context.Context, gitops.Request) error
-	VerifyTarget(ctx context.Context, targetID, targetRegion string) error
+	VerifyOriginalPlan(context.Context, gitops.Artifact, string) error
 	Authorize(context.Context, gitops.Artifact) error
 }
 
 type runnerEngine interface {
 	Plan(context.Context, gitops.Request, gitops.Origin) (gitops.Artifact, error)
+	Refresh(context.Context, gitops.Artifact) (gitops.Artifact, error)
 	Apply(context.Context, gitops.Artifact, string, func(context.Context, gitops.Artifact) error) (pingone.Promotion, error)
 	Status(context.Context, gitops.Artifact) (pingone.Promotion, error)
 	RollbackPlan(context.Context, gitops.Artifact, gitops.Origin) (gitops.Artifact, error)
@@ -45,12 +51,6 @@ type runnerDeps struct {
 	engine       func(*pingone.Client) runnerEngine
 	pollInterval time.Duration
 	pollTimeout  time.Duration
-	// Acceptance-check hooks (checks.go).
-	environ         func() []string
-	gitlabPreflight func(context.Context) checks.Report
-	targetClient    func(func(string) string) (*pingone.Client, error)
-	// inventory takes a fresh snapshot inventory (build-request).
-	inventory func(context.Context, *pingone.Client, string) (pingone.Inventory, error)
 }
 
 func defaultDeps(getenv func(string) string) runnerDeps {
@@ -63,22 +63,37 @@ func defaultDeps(getenv func(string) string) runnerDeps {
 			}
 			return &cigate.Verifier{Config: cfg}, nil
 		},
-		client:          makePingOneClient,
-		engine:          func(c *pingone.Client) runnerEngine { return &gitops.Engine{Client: c} },
-		pollInterval:    time.Second,
-		pollTimeout:     10 * time.Minute,
-		environ:         os.Environ,
-		gitlabPreflight: defaultGitLabPreflight(getenv),
-		targetClient:    targetClient,
-		inventory: func(ctx context.Context, c *pingone.Client, env string) (pingone.Inventory, error) {
-			return c.Inventory(ctx, env)
-		},
+		client:       makePingOneClient,
+		engine:       func(c *pingone.Client) runnerEngine { return &gitops.Engine{Client: c} },
+		pollInterval: time.Second,
+		pollTimeout:  10 * time.Minute,
 	}
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
+		if err := run(args, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, safeError(err, os.Getenv))
+			os.Exit(1)
+		}
+		return
+	}
+	logger, closeLog, err := logging.Open(logging.Config{
+		Level: os.Getenv("PINGONE_PROMOTE_LOG_LEVEL"), Format: os.Getenv("PINGONE_PROMOTE_LOG_FORMAT"), File: os.Getenv("PINGONE_PROMOTE_LOG_FILE"),
+	}, os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pingone-runner: could not initialize structured logging")
+		os.Exit(1)
+	}
+	if err := run(args, os.Stdout, os.Stderr); err != nil {
+		logger.Event(context.Background(), slog.LevelError, "cli.failure", "command", "", "", "", "command_failed", 0, 0)
 		fmt.Fprintln(os.Stderr, safeError(err, os.Getenv))
+		_ = closeLog()
+		os.Exit(1)
+	}
+	if err := closeLog(); err != nil {
+		fmt.Fprintln(os.Stderr, "pingone-runner: could not close structured log output")
 		os.Exit(1)
 	}
 }
@@ -88,8 +103,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
+	if len(args) > 0 && args[0] == "--version" {
+		if len(args) != 1 {
+			return errors.New("--version does not accept additional arguments")
+		}
+		_, err := fmt.Fprintf(stdout, "pingone-runner %s\n", buildinfo.Version)
+		return err
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|build-request|digest|plan|apply|status|rollback-plan|preflight|plan-check|evidence> [flags]\n")
+		_, _ = io.WriteString(stdout, "usage: pingone-runner <validate|digest|inspect|plan|apply|status|rollback-plan> [flags]\n")
 		return nil
 	}
 	if deps.getenv == nil {
@@ -112,107 +134,21 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	if deps.pollTimeout <= 0 {
 		deps.pollTimeout = 10 * time.Minute
 	}
-	if deps.environ == nil {
-		deps.environ = func() []string { return nil }
-	}
-	if deps.gitlabPreflight == nil {
-		deps.gitlabPreflight = func(context.Context) checks.Report {
-			r := checks.Report{Title: "GitLab preflight"}
-			r.Fail("job context", "runner CI verifier is unavailable")
-			return r
-		}
-	}
-	if deps.targetClient == nil {
-		deps.targetClient = func(func(string) string) (*pingone.Client, error) {
-			return nil, errors.New("PingOne client factory is unavailable")
-		}
-	}
-	if deps.inventory == nil {
-		deps.inventory = func(context.Context, *pingone.Client, string) (pingone.Inventory, error) {
-			return pingone.Inventory{}, errors.New("PingOne inventory is unavailable")
-		}
-	}
 	ctx := context.Background()
-	if handled, err := runChecks(ctx, args, stdout, stderr, deps); handled {
-		return err
-	}
 	switch args[0] {
 	case "validate":
 		fs := flagSet("validate", stderr)
 		requestPath := fs.String("request", "", "request JSON file")
-		intentPath := fs.String("intent", "", "intent JSON file (intents/<id>/intent.json)")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		if (*requestPath == "") == (*intentPath == "") {
-			return errors.New("validate requires exactly one of --request or --intent")
+		if *requestPath == "" {
+			return errors.New("validate requires --request")
 		}
-		var err error
-		if *intentPath != "" {
-			_, err = readIntent(*intentPath)
-		} else {
-			_, err = readRequest(*requestPath)
-		}
-		if err != nil {
+		if _, err := readRequest(*requestPath); err != nil {
 			return err
 		}
-		_, err = io.WriteString(stdout, "valid\n")
-		return err
-	case "build-request":
-		fs := flagSet("build-request", stderr)
-		intentPath := fs.String("intent", "", "reviewed intent file (intents/<id>/intent.json)")
-		outPath := fs.String("out", "", "request output path")
-		if err := parseFlags(fs, args[1:]); err != nil {
-			return err
-		}
-		if *intentPath == "" || *outPath == "" {
-			return errors.New("build-request requires --intent and --out")
-		}
-		if samePath(*intentPath, *outPath) {
-			return errors.New("build-request output must not overwrite the intent")
-		}
-		if err := requireAbsent(*outPath); err != nil {
-			return err
-		}
-		in, err := readIntent(*intentPath)
-		if err != nil {
-			return err
-		}
-		g, err := deps.gate()
-		if err != nil {
-			return err
-		}
-		// Prove the protected job context before any snapshot is taken.
-		if err = g.VerifyTarget(ctx, in.Target.ID, in.Target.Region); err != nil {
-			return err
-		}
-		client, err := deps.client(gitops.Request{Source: gitops.Environment{ID: in.Source.ID, Region: in.Source.Region}}, deps.getenv)
-		if err != nil {
-			return err
-		}
-		source, err := deps.inventory(ctx, client, in.Source.ID)
-		if err != nil {
-			return err
-		}
-		target, err := deps.inventory(ctx, client, in.Target.ID)
-		if err != nil {
-			return err
-		}
-		r, err := gitops.RequestFromIntent(in, source, target)
-		if err != nil {
-			return err
-		}
-		if err = g.VerifyPlan(ctx, r); err != nil {
-			return err
-		}
-		raw, err := gitops.Encode(r)
-		if err != nil {
-			return err
-		}
-		if err = writePrivateBytes(*outPath, raw); err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(stdout, "built request %s for %s from %d selected resource(s)\n", r.ID, in.RequestedBy.Username, len(r.Selected))
+		_, err := io.WriteString(stdout, "valid\n")
 		return err
 	case "digest":
 		fs := flagSet("digest", stderr)
@@ -229,18 +165,72 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		_, err = fmt.Fprintln(stdout, a.Review.Digest)
 		return err
+	case "inspect":
+		fs := flagSet("inspect", stderr)
+		artifactPath := fs.String("artifact", "", "existing artifact JSON file")
+		outPath := fs.String("out", "", "fresh diagnostic artifact output path")
+		if err := parseFlags(fs, args[1:]); err != nil {
+			return err
+		}
+		if *artifactPath == "" || *outPath == "" {
+			return errors.New("inspect requires --artifact and --out")
+		}
+		if samePath(*artifactPath, *outPath) {
+			return errors.New("diagnostic output must not overwrite the input artifact")
+		}
+		if err := requireAbsent(*outPath); err != nil {
+			return err
+		}
+		a, err := readArtifact(*artifactPath)
+		if err != nil {
+			return err
+		}
+		g, err := deps.gate()
+		if err != nil {
+			return err
+		}
+		if !sameTrustedProject(a.Origin, g.Origin()) {
+			return errors.New("artifact origin does not match the trusted GitLab server and project")
+		}
+		if err = g.VerifyPlan(ctx, a.Request); err != nil {
+			return err
+		}
+		client, err := deps.client(a.Request, deps.getenv)
+		if err != nil {
+			return err
+		}
+		engine := deps.engine(client)
+		refreshed, err := engine.Refresh(ctx, a)
+		if err != nil {
+			return err
+		}
+		if err = validateRefreshIdentity(a, refreshed); err != nil {
+			return err
+		}
+		if err = refreshed.Validate(); err != nil {
+			return fmt.Errorf("refresh returned an invalid diagnostic artifact: %w", err)
+		}
+		if err = writePrivateJSON(*outPath, refreshed); err != nil {
+			return err
+		}
+		if len(refreshed.Review.Issues) > 0 {
+			return errors.New("diagnostic artifact written with review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates")
+		}
+		_, err = io.WriteString(stdout, "diagnostic inspection complete; no review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates\n")
+		return err
 	case "plan":
 		fs := flagSet("plan", stderr)
 		requestPath := fs.String("request", "", "request JSON file")
 		outPath := fs.String("out", "", "artifact output path")
 		digestPath := fs.String("digest-out", "", "optional digest output path")
+		summaryPath := fs.String("summary-out", "", "optional Markdown change summary output path")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		if *requestPath == "" || *outPath == "" {
 			return errors.New("plan requires --request and --out")
 		}
-		if samePath(*requestPath, *outPath) || (*digestPath != "" && (samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath))) {
+		if samePath(*requestPath, *outPath) || (*digestPath != "" && (samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath))) || (*summaryPath != "" && (samePath(*summaryPath, *requestPath) || samePath(*summaryPath, *outPath) || (*digestPath != "" && samePath(*summaryPath, *digestPath)))) {
 			return errors.New("plan outputs must not overwrite an input or each other")
 		}
 		if err := requireAbsent(*outPath); err != nil {
@@ -248,6 +238,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if *digestPath != "" {
 			if err := requireAbsent(*digestPath); err != nil {
+				return err
+			}
+		}
+		if *summaryPath != "" {
+			if err := requireAbsent(*summaryPath); err != nil {
 				return err
 			}
 		}
@@ -275,6 +270,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if err = writePrivateJSON(*outPath, a); err != nil {
 			return err
+		}
+		if *summaryPath != "" {
+			if err = writePrivateBytes(*summaryPath, []byte(promotion.RenderMarkdown(a.Review))); err != nil {
+				return err
+			}
 		}
 		if *digestPath != "" {
 			if samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath) {
@@ -409,15 +409,17 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	case "rollback-plan":
 		fs := flagSet("rollback-plan", stderr)
 		artifactPath := fs.String("artifact", "", "forward artifact JSON file")
+		originalJobID := fs.String("original-job-id", "", "original plan_promotion job ID")
 		outPath := fs.String("out", "", "rollback artifact output path")
 		digestPath := fs.String("digest-out", "", "optional digest output path")
+		summaryPath := fs.String("summary-out", "", "optional Markdown change summary output path")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
-		if *artifactPath == "" || *outPath == "" {
-			return errors.New("rollback-plan requires --artifact and --out")
+		if *artifactPath == "" || *originalJobID == "" || *outPath == "" {
+			return errors.New("rollback-plan requires --artifact, --original-job-id and --out")
 		}
-		if samePath(*artifactPath, *outPath) || (*digestPath != "" && (samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath))) {
+		if samePath(*artifactPath, *outPath) || (*digestPath != "" && (samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath))) || (*summaryPath != "" && (samePath(*summaryPath, *artifactPath) || samePath(*summaryPath, *outPath) || (*digestPath != "" && samePath(*summaryPath, *digestPath)))) {
 			return errors.New("rollback outputs must not overwrite an input or each other")
 		}
 		if err := requireAbsent(*outPath); err != nil {
@@ -425,6 +427,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if *digestPath != "" {
 			if err := requireAbsent(*digestPath); err != nil {
+				return err
+			}
+		}
+		if *summaryPath != "" {
+			if err := requireAbsent(*summaryPath); err != nil {
 				return err
 			}
 		}
@@ -437,6 +444,9 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if err = g.VerifyPlan(ctx, a.Request); err != nil {
+			return err
+		}
+		if err = g.VerifyOriginalPlan(ctx, a, *originalJobID); err != nil {
 			return err
 		}
 		client, err := deps.client(a.Request, deps.getenv)
@@ -452,6 +462,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if err = writePrivateJSON(*outPath, rollback); err != nil {
 			return err
+		}
+		if *summaryPath != "" {
+			if err = writePrivateBytes(*summaryPath, []byte(promotion.RenderMarkdown(rollback.Review))); err != nil {
+				return err
+			}
 		}
 		if *digestPath != "" {
 			if samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath) {
@@ -547,40 +562,24 @@ func readRequest(path string) (gitops.Request, error) {
 		return gitops.Request{}, fmt.Errorf("could not open request: %w", err)
 	}
 	defer f.Close()
-	return gitops.Decode(f)
-}
-
-// readIntent decodes an intent and binds it to its reviewed location: the file
-// must be named intent.json inside a directory named after the intent's ID.
-func readIntent(path string) (gitops.Intent, error) {
-	f, err := os.Open(path)
+	r, err := gitops.Decode(f)
 	if err != nil {
-		return gitops.Intent{}, fmt.Errorf("could not open intent: %w", err)
+		return r, err
 	}
-	defer f.Close()
-	in, err := gitops.DecodeIntent(f)
-	if err != nil {
-		return in, err
+	dir := filepath.Dir(filepath.Clean(path))
+	if filepath.Base(path) != "request.json" || filepath.Base(dir) != r.ID || filepath.Base(filepath.Dir(dir)) != "requests" {
+		return gitops.Request{}, errors.New("request must be selected from requests/<matching-request-id>/request.json")
 	}
-	if filepath.Base(path) != "intent.json" || filepath.Base(filepath.Dir(path)) != in.ID {
-		return in, errors.New("intent ID must match its intents/<id>/intent.json location")
-	}
-	return in, nil
+	return r, nil
 }
 func readArtifact(path string) (gitops.Artifact, error) {
 	b, err := readSmallFile(path, maxArtifactBytes)
 	if err != nil {
 		return gitops.Artifact{}, fmt.Errorf("could not read artifact: %w", err)
 	}
-	d := json.NewDecoder(strings.NewReader(string(b)))
-	d.DisallowUnknownFields()
 	var a gitops.Artifact
-	if err = d.Decode(&a); err != nil {
+	if err = strictjson.Unmarshal(b, &a); err != nil {
 		return a, errors.New("invalid artifact JSON or unknown fields")
-	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return a, errors.New("artifact must contain exactly one JSON document")
 	}
 	if err = a.Validate(); err != nil {
 		return a, fmt.Errorf("invalid artifact: %w", err)
@@ -651,6 +650,22 @@ func samePath(a, b string) bool {
 	aa, e1 := filepath.Abs(a)
 	bb, e2 := filepath.Abs(b)
 	return e1 == nil && e2 == nil && aa == bb
+}
+
+func sameTrustedProject(artifact, trusted gitops.Origin) bool {
+	artifactURL, artifactErr := url.Parse(artifact.ServerURL)
+	trustedURL, trustedErr := url.Parse(trusted.ServerURL)
+	if artifactErr != nil || trustedErr != nil || artifact.ProjectID != trusted.ProjectID {
+		return false
+	}
+	return strings.EqualFold(artifactURL.Scheme, trustedURL.Scheme) && strings.EqualFold(artifactURL.Host, trustedURL.Host) && strings.TrimSuffix(artifactURL.Path, "/") == strings.TrimSuffix(trustedURL.Path, "/")
+}
+
+func validateRefreshIdentity(original, refreshed gitops.Artifact) error {
+	if original.Version != refreshed.Version || original.Kind != refreshed.Kind || original.NativeID != refreshed.NativeID || original.OriginalNativeID != refreshed.OriginalNativeID || original.CreatedAt != refreshed.CreatedAt || original.TargetSnapshotID != refreshed.TargetSnapshotID || original.Origin != refreshed.Origin || !reflect.DeepEqual(original.Request, refreshed.Request) {
+		return errors.New("refresh changed the original artifact identity or provenance")
+	}
+	return nil
 }
 func isDigest(s string) bool { return regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(s) }
 

@@ -19,6 +19,7 @@ with sync_playwright() as p:
  page=b.new_page(viewport={'width':1440,'height':1000},reduced_motion='reduce')
  errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
  page.goto(info['url']);page.locator('#source-profile option:nth-child(2)').wait_for(state='attached')
+ assert page.evaluate('getComputedStyle(document.documentElement).colorScheme') == 'dark', 'operations console must use the requested dark color scheme'
  page.locator('#source-profile').select_option(info['source']);page.locator('#target-profile').select_option(info['target'])
  page.get_by_role('button',name='Load resources',exact=True).click()
  expect(page.locator('#resource-rows tr')).to_have_count(3)
@@ -29,16 +30,23 @@ with sync_playwright() as p:
  expect(page.get_by_role('checkbox',name='Select Email template for promotion',exact=True)).not_to_be_checked()
  expect(page.get_by_label('Destination mapping for Customer login')).to_have_value('g')
  page.locator('#plan-description').fill('Browser fixture promotion')
+ def omit_legacy_summary(route):
+  response=route.fetch();payload=response.json();payload.get('review',{}).pop('summary',None)
+  route.fulfill(response=response,json=payload)
+ page.route('**/api/plans',omit_legacy_summary)
  hidden(True)
  page.get_by_role('button',name='Build review',exact=True).click()
  expect(page.locator('#plan-content')).to_contain_text('unknown or unselected')
+ expect(page.locator('.change-summary')).to_contain_text('Summary unavailable for this saved review')
  expect(page.locator('#deploy-button')).to_be_disabled()
  page.screenshot(path=str(out/'blocked-template-1440.png'),full_page=True)
  print('PASS: friendly-name search, explicit selection/mapping, later-page template blocked')
+ page.unroute('**/api/plans',omit_legacy_summary)
  hidden(False)
  page.get_by_role('button',name='Build review',exact=True).click()
  expect(page.locator('#deploy-button')).to_be_enabled()
  expect(page.locator('#plan-content')).to_contain_text('Before')
+ expect(page.locator('.change-summary')).to_contain_text('1 change')
  for width,height in [(1440,1000),(900,1000),(390,844)]:
   page.set_viewport_size({'width':width,'height':height})
   assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'),f'overflow at {width}'

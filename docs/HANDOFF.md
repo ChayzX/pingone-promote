@@ -1,12 +1,32 @@
 # Production acceptance handoff
 
-This workspace has no access to the enterprise GitLab instance, private project, own runner, PingOne tenant, test environment IDs or credentials. The GitLab template and instructions are prepared for operator review; they are not evidence of live GitLab or production compatibility. This work is on branch `feat/gitlab-production`. The published `main` at `v0.1.0` does not yet include the production policy and GitLab submission work on this branch.
+This work integrates the GitLab-controlled workflow and subsequent main-branch fixes. Disposable acceptance used a private GitLab project and GitLab-hosted Linux runners at the operator's request; this does not verify enterprise or self-managed runner policy. Keep credentials, tenant configuration and raw evidence outside this public repository. An existing public main-branch commit message contains sandbox-identifying details and should be reviewed separately.
+
+## Acceptance status — 2026-10-30
+
+Production readiness is **not established**. A subsequently provided sandbox pair supports native inventory snapshots and draft creation. Live browser testing verified complete inventory loading, private GitLab request submission and merge request validation, and rejection of zero-request and two-request changes before planning. GitLab compatibility fixes cover commits to an already-created request branch and job identity responses that report the pipeline source under `pipeline.source`.
+
+One sandbox promotion reached PingOne and was independently reported COMPLETED by a read-only GitLab status job. The original apply job failed after sending execution because the status check compared resolved mappings to draft mappings. A regression-tested runner fix permits resolved mappings only for recognized post-execution statuses; pre-execution checks remain strict. This is evidence of one completed sandbox promotion, not proof of all resource effects or production readiness. A separately initiated rollback plan returned HTTP 400 without an actionable service detail. No rollback was applied; reconcile the native state before another attempt.
+
+Before/after inventory hashes and detailed test evidence are retained privately. Some unrelated form hashes changed across captures; their cause is not established. Do not attribute every observed change to the promotion or claim that every excluded resource remained unchanged.
+
+Disposable acceptance uses GitLab-hosted runners at the operator's request. For the completed sandbox run, the user approved a temporary project-only exception allowing the pipeline triggerer to approve its deployment; the exception was restored afterward. This is not independent human approval. Rollback requires a separately reviewed and approved web pipeline; do not weaken production approval checks to accommodate a single available account.
+
+### Earlier trial capability result — 2026-10-27
+
+At that time, live authenticated probes could read ordinary environment, flow and application APIs, but native snapshots returned `403 ACCESS_FAILED` with detail code `LICENSE_EXCEEDED`. Both disposable trial sandboxes were already opted in to Configuration Management while their effective capability remained false. Later testing used a different sandbox pair; the trial capability issue remains unresolved.
+
+[Ping's current Configuration Management documentation](https://docs.pingidentity.com/pingone/early-access-features/ea-p1_promote.html) describes early access for sandbox environments only. Production use also requires vendor-confirmed support, independently of passing sandbox tests.
+
+Review fixes now compare current destination resources immediately before native execution, including reused unselected dependencies, and reject rollback reviews missing native target-snapshot linkage. Rollback planning verifies that the original artifact came from the matching successful `plan_promotion` job in the trusted GitLab project. Merge request validation has a separate non-secret SHA pin and runner tag. API-fixture regressions support these checks. Actual native response compatibility still requires live evidence.
+
+GitLab's actual CI linter accepted the revised example template. Keep local automated checks, hosted Linux fixture checks, and live service acceptance distinct in the evidence log. Hosted fixture success does not complete any deployment or rollback criterion.
 
 ## Evidence available in this workspace
 
 API-shaped Go fixtures and local browser fixtures can verify application behavior and request/plan handling. They do not verify live PingOne API semantics, GitLab protected environment approval behavior, runner registration, organization policies or a production deployment. The fixture-based PingOne verification recorded in [verification.md](verification.md) covers explicit selection/exclusion, digest checks, duplicate-execution blocking and separate rollback review/execution.
 
-The GitLab approval verifier and `pingone-runner` commands are now implemented on this branch. Go tests, local browser regression suites, and template/selector syntax tests have passed in this workspace. A complete independent production-readiness review is still needed. Live GitLab approval behavior and PingOne tenant behavior remain unverified here.
+The GitLab approval verifier and `pingone-runner` commands are implemented on this branch. Earlier private disposable GitLab tests verified deployment blocking before approval, retry rejection, merge request credential isolation, and zero/one/two request selection without native execution. Later sandbox evidence is described above. A complete independent production-readiness review and successful live rollback remain outstanding.
 
 ## Local verification commands
 
@@ -30,6 +50,7 @@ Then run these in another terminal with the installed Chromium path:
 ```sh
 python3 scripts/test_browser.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_races.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
+python3 scripts/test_browser_profiles.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 scripts/test_browser_gitlab.py --fixture-file /tmp/pingone-browser.json --chromium /path/to/chromium
 python3 -m unittest discover -s examples/gitlab -p "test_*.py"
 ```
@@ -52,7 +73,7 @@ Use a local agent configured for the enterprise GitLab and test PingOne environm
 
 ## First review items for the local agent
 
-- Reproduce destination drift with an unchanged native promotion plan: the engine currently reconstructs the pinned target snapshot and rechecks native steps, but does not independently fingerprint current live target configuration immediately before apply. Determine whether PingOne invalidates such stale plans; otherwise add a fail-closed current-target comparison for affected resources. Separate GitLab resource-group jobs do not lock an entire plan/approval/apply interval. Do this before any production acceptance.
+- Verify the current-target drift gate against the live service with an unchanged native promotion plan, including secret-only changes, reused dependencies, deletes and create collisions. The engine now compares affected live target state immediately before execute; it cannot provide an atomic lock against a later console edit. Separate GitLab resource-group jobs do not lock an entire plan/approval/apply interval. Avoid concurrent target editing and establish native stale-plan behavior before production acceptance.
 - Verify exact native `resourceMapping` behavior: the engine deliberately rejects extra/changed mappings rather than guessing whether a native automatic mapping is safe. It may need a narrowly tested compatibility adapter.
 - Verify native rollback source snapshot/version/linkage fields against actual responses; the current checks are conservative and may reject a legitimate undocumented shape.
 - Verify GitLab's actual `GET /job`, protected-environment and deployment `approval_summary.rules` payloads for the installed version. Unsupported or absent approval data must block; do not replace these checks with `CI=true`, a manual job alone, or a permissive callback.

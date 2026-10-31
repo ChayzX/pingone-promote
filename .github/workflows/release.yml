@@ -1,0 +1,56 @@
+name: Prepare installation preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, including v prefix (for example v0.2.0-rc.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      version: ${{ inputs.version }}
+
+  draft:
+    needs: homebrew
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: installation-preview
+          path: release-assets
+      - name: Verify and create a draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.sha }}
+        run: |
+          python3 scripts/release.py verify --directory release-assets
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo 'This release version already exists; choose a new version.' >&2
+            exit 1
+          fi
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION^{}" | cut -f1)
+          if [ -z "$tag_commit" ]; then
+            tag_commit=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" | cut -f1)
+          fi
+          if [ -n "$tag_commit" ] && [ "$tag_commit" != "$RELEASE_REF" ]; then
+            echo 'This version tag points to a different source revision; choose a new version.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_VERSION" --target "$RELEASE_REF" --draft --prerelease \
+            --title "PingOne Promote $RELEASE_VERSION (preview)" \
+            --notes-file docs/release-notes.md release-assets/*

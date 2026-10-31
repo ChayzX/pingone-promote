@@ -35,6 +35,18 @@ type MergeRequest struct {
 	Branch string `json:"-"`
 }
 
+// SubmissionPreflightError means Submit failed before it attempted any write.
+// Callers may offer an explicit retry after the preflight problem is corrected.
+type SubmissionPreflightError struct {
+	Err error
+}
+
+func (e *SubmissionPreflightError) Error() string {
+	return "GitLab submission preflight failed; no GitLab writes occurred: " + e.Err.Error()
+}
+
+func (e *SubmissionPreflightError) Unwrap() error { return e.Err }
+
 func NewClient(config Config, token string) (*Client, error) {
 	config = config.withDefaults()
 	if err := config.Validate(); err != nil {
@@ -167,8 +179,38 @@ func (c *Client) VerifyProject(ctx context.Context) (Project, error) {
 }
 
 func (c *Client) Submit(ctx context.Context, id string, files map[string]string, title, description string) (MergeRequest, error) {
+	return c.SubmitWithOptions(ctx, id, files, title, description, SubmissionOptions{})
+}
+
+type SubmissionOptions struct {
+	BranchName    string
+	CommitMessage string
+}
+
+func ValidateSubmissionOptions(options SubmissionOptions) error {
+	if options.BranchName != "" && !validBranchName(options.BranchName) {
+		return errors.New("branch name is invalid; use a safe Git branch name")
+	}
+	if options.CommitMessage != "" && (strings.TrimSpace(options.CommitMessage) == "" || len(options.CommitMessage) > 500 || strings.ContainsRune(options.CommitMessage, '\x00')) {
+		return errors.New("commit message must contain non-whitespace text and be at most 500 characters")
+	}
+	return nil
+}
+
+func (c *Client) SubmitWithOptions(ctx context.Context, id string, files map[string]string, title, description string, options SubmissionOptions) (MergeRequest, error) {
 	if !validName(id) {
 		return MergeRequest{}, errors.New("request ID is invalid")
+	}
+	branch := options.BranchName
+	if branch == "" {
+		branch = "promotion/" + id
+	}
+	if err := ValidateSubmissionOptions(options); err != nil {
+		return MergeRequest{}, err
+	}
+	commitMessage := options.CommitMessage
+	if commitMessage == "" {
+		commitMessage = "Add promotion request " + id
 	}
 	if len(files) == 0 {
 		return MergeRequest{}, errors.New("at least one request file is required")
@@ -180,9 +222,8 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	}
 	project, err := c.VerifyProject(ctx)
 	if err != nil {
-		return MergeRequest{}, err
+		return MergeRequest{}, &SubmissionPreflightError{Err: err}
 	}
-	branch := "promotion/" + id
 	if err = c.Do(ctx, http.MethodPost, "projects/"+c.Config.ProjectID+"/repository/branches", map[string]string{"branch": branch, "ref": project.DefaultBranch}, nil); err != nil {
 		return MergeRequest{}, fmt.Errorf("create promotion branch %q: %w", branch, err)
 	}
@@ -195,7 +236,7 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	for _, name := range names {
 		actions = append(actions, map[string]string{"action": "create", "file_path": "requests/" + id + "/" + name, "content": files[name]})
 	}
-	commit := map[string]any{"branch": branch, "start_branch": project.DefaultBranch, "commit_message": "Add promotion request " + id, "actions": actions}
+	commit := map[string]any{"branch": branch, "commit_message": commitMessage, "actions": actions}
 	if err = c.Do(ctx, http.MethodPost, "projects/"+c.Config.ProjectID+"/repository/commits", commit, nil); err != nil {
 		return MergeRequest{}, fmt.Errorf("commit promotion request on branch %q: %w", branch, err)
 	}
@@ -203,6 +244,9 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	var mr MergeRequest
 	if err = c.Do(ctx, http.MethodPost, "projects/"+c.Config.ProjectID+"/merge_requests", payload, &mr); err != nil {
 		return MergeRequest{}, fmt.Errorf("create merge request for branch %q: %w", branch, err)
+	}
+	if mr.ID < 1 || mr.IID < 1 {
+		return MergeRequest{}, errors.New("GitLab returned an incomplete merge request identity")
 	}
 	base, _ := parseBase(c.Config.BaseURL)
 	link, e := url.Parse(mr.WebURL)
@@ -212,6 +256,25 @@ func (c *Client) Submit(ctx context.Context, id string, files map[string]string,
 	mr.Branch = branch
 	return mr, nil
 }
+
+// validBranchName enforces the unsafe-name rules from git check-ref-format for
+// a complete branch ref, without invoking Git or contacting GitLab.
+func validBranchName(s string) bool {
+	if s == "" || len(s) > 255 || s == "@" || strings.HasPrefix(s, "-") || strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.HasSuffix(s, ".") || strings.Contains(s, "..") || strings.Contains(s, "@{") || strings.Contains(s, "//") {
+		return false
+	}
+	for _, r := range s {
+		if r <= 0x20 || r == 0x7f || strings.ContainsRune("~^:?*[\\", r) {
+			return false
+		}
+	}
+	for _, part := range strings.Split(s, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(strings.ToLower(part), ".lock") {
+			return false
+		}
+	}
+	return true
+}
 func validFileName(n string) bool {
 	return n != "" && path.Base(n) == n && n != ".gitlab-ci.yml" && n != "." && n != ".." && !strings.ContainsAny(n, "\\\x00")
 }
@@ -220,9 +283,8 @@ func sameGitLabLocation(base, u *url.URL) bool {
 		return false
 	}
 	bp := strings.TrimRight(base.Path, "/")
-	for _, part := range strings.Split(u.EscapedPath(), "/") {
-		decoded, err := url.PathUnescape(part)
-		if err != nil || decoded == "." || decoded == ".." {
+	for _, part := range strings.Split(u.Path, "/") {
+		if part == "." || part == ".." {
 			return false
 		}
 	}

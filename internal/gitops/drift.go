@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -31,7 +32,7 @@ var ErrTargetDrift = errors.New("live target configuration changed after review;
 // same-named resource also blocks. Comparison uses full unredacted configuration
 // in memory only; nothing from the live inventory is persisted.
 func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
-	pinned, err := e.Client.InventoryVersion(ctx, a.Request.Target.ID, a.TargetSnapshotID)
+	source, pinned, err := e.inventories(ctx, a.Request, a.TargetSnapshotID)
 	if err != nil {
 		return fmt.Errorf("%w: pinned target unreadable: %v", ErrTargetDrift, err)
 	}
@@ -58,6 +59,34 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 	for _, tid := range a.Request.Mappings {
 		affected[tid] = true
 	}
+	// An excluded dependency may be reused by the selected resource without a
+	// native write step of its own. Its destination configuration is part of the
+	// reviewed behavior, so include the transitive reused dependency graph.
+	sourceByID := byID(source)
+	queue := append([]string(nil), a.Request.Selected...)
+	visited := map[string]bool{}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		for _, dependencyID := range sourceByID[id].Dependencies {
+			targetID := a.Request.Mappings[dependencyID]
+			if targetID == "" {
+				targetID = dependencyID
+			}
+			if _, exists := before[targetID]; exists {
+				affected[targetID] = true
+			} else if _, exists := after[targetID]; exists {
+				affected[targetID] = true
+			}
+			if _, exists := sourceByID[dependencyID]; exists {
+				queue = append(queue, dependencyID)
+			}
+		}
+	}
 	for _, st := range steps {
 		if st.Target.ID != "" {
 			affected[st.Target.ID] = true
@@ -73,9 +102,51 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 				matched = true
 			}
 		}
-		if !matched && st.Target.ID == "" && strings.EqualFold(st.Action, "POST") {
+		if !matched && strings.EqualFold(st.Action, "POST") {
 			if c := collectionType(p, a.Request.Target.ID); c != "" {
 				collections[c] = true
+			}
+		}
+		// Native plans may rewrite a selected resource's dependency IDs to
+		// reuse destination resources. Include only exact IDs found in the
+		// reviewed target snapshots; this creates drift candidates, not write
+		// authorization. Their complete configurations are compared below.
+		var payload any
+		if len(st.Payload) > 0 {
+			if err := json.Unmarshal(st.Payload, &payload); err != nil {
+				return fmt.Errorf("%w: step payload cannot be resolved for comparison", ErrTargetDrift)
+			}
+			if err := collectTargetIDs(payload, before, after, affected); err != nil {
+				return fmt.Errorf("%w: %v", ErrTargetDrift, err)
+			}
+		}
+	}
+	// Follow dependencies from every affected pinned/live target resource.
+	// Considering both snapshots detects a dependency added or removed after
+	// review while remaining cycle-safe.
+	dependencyQueue := make([]string, 0, len(affected))
+	for id := range affected {
+		dependencyQueue = append(dependencyQueue, id)
+	}
+	dependencyVisited := map[string]bool{}
+	for len(dependencyQueue) > 0 {
+		id := dependencyQueue[0]
+		dependencyQueue = dependencyQueue[1:]
+		if dependencyVisited[id] {
+			continue
+		}
+		dependencyVisited[id] = true
+		for _, inventory := range []map[string]pingone.Resource{before, after} {
+			if resource, ok := inventory[id]; ok {
+				for _, dependencyID := range resource.Dependencies {
+					if _, inPinned := before[dependencyID]; inPinned {
+						affected[dependencyID] = true
+						dependencyQueue = append(dependencyQueue, dependencyID)
+					} else if _, inLive := after[dependencyID]; inLive {
+						affected[dependencyID] = true
+						dependencyQueue = append(dependencyQueue, dependencyID)
+					}
+				}
 			}
 		}
 	}
@@ -93,7 +164,7 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 		case !inPinned && inLive:
 			return fmt.Errorf("%w: affected resource %s appeared after review", ErrTargetDrift, id)
 		case inPinned && inLive:
-			bf, lf := fingerprint(b.Configuration), fingerprint(l.Configuration)
+			bf, lf := driftConfigurationFingerprint(b), driftConfigurationFingerprint(l)
 			if bf == "" || lf == "" || b.Type != l.Type || bf != lf || fingerprint(b.Dependencies) != fingerprint(l.Dependencies) {
 				return fmt.Errorf("%w: affected resource %s changed", ErrTargetDrift, id)
 			}
@@ -102,6 +173,62 @@ func (e *Engine) checkTargetDrift(ctx context.Context, a Artifact) error {
 	for c := range collections {
 		if !sameMembers(before, after, c) {
 			return fmt.Errorf("%w: membership of %s changed", ErrTargetDrift, c)
+		}
+	}
+	return nil
+}
+
+// PingOne documents form fieldTypes as read-only, and its provider describes it
+// as a set: https://registry.terraform.io/providers/pingidentity/pingone/latest/docs/resources/form
+// Snapshot responses can return the same set in different orders. Normalize only that
+// field for drift comparison; all editable fields and other arrays stay exact.
+func driftConfigurationFingerprint(r pingone.Resource) string {
+	if r.Type != "forms" || r.Configuration == nil {
+		return fingerprint(r.Configuration)
+	}
+	raw, exists := r.Configuration["fieldTypes"]
+	if !exists {
+		return fingerprint(r.Configuration)
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return ""
+	}
+	types := make([]string, len(values))
+	for i, value := range values {
+		types[i], ok = value.(string)
+		if !ok {
+			return ""
+		}
+	}
+	sort.Strings(types)
+	copyConfig := make(map[string]any, len(r.Configuration))
+	for k, value := range r.Configuration {
+		copyConfig[k] = value
+	}
+	copyConfig["fieldTypes"] = types
+	return fingerprint(copyConfig)
+}
+
+func collectTargetIDs(value any, before, after map[string]pingone.Resource, affected map[string]bool) error {
+	switch item := value.(type) {
+	case string:
+		if _, ok := before[item]; ok {
+			affected[item] = true
+		} else if _, ok := after[item]; ok {
+			affected[item] = true
+		}
+	case []any:
+		for _, child := range item {
+			if err := collectTargetIDs(child, before, after, affected); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for _, child := range item {
+			if err := collectTargetIDs(child, before, after, affected); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -1,6 +1,6 @@
 # Copy into the private promotion project and configure its protected settings.
-# This file is a template: PROMOTION_TOOL_REF must be set to a reviewed full
-# commit SHA before the first pipeline can run.
+# This file is a template: set both PROMOTION_TOOL_REF (protected jobs) and
+# PROMOTION_VALIDATION_TOOL_REF (MR-safe validation) to reviewed full SHAs.
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -16,6 +16,8 @@ variables:
   PROMOTION_ENVIRONMENT: "production"
   PROMOTION_RUNNER_TAG: "blue"
   PROMOTION_GO_IMAGE: "golang:1.27"
+  PROMOTION_VALIDATION_TOOL_REF: "REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA"
+  PROMOTION_VALIDATION_RUNNER_TAG: "untrusted-validation"
   GIT_DEPTH: "0"
   GIT_STRATEGY: fetch
 
@@ -35,23 +37,31 @@ variables:
     - go build -o ../pingone-runner ./cmd/pingone-runner
     - cd ..
 
+.validation_job:
+  tags:
+    - $PROMOTION_VALIDATION_RUNNER_TAG
+  retry: 0
+  interruptible: false
+  before_script:
+    - |
+      [[ "${PROMOTION_VALIDATION_TOOL_REF:-}" =~ ^[0-9a-f]{40}$ ]] || { echo "Set PROMOTION_VALIDATION_TOOL_REF to a reviewed lowercase 40-character commit SHA" >&2; exit 1; }
+    - git clone --no-checkout https://github.com/ChayzX/pingone-promote.git .promotion-tool
+    - git -C .promotion-tool checkout --detach "$PROMOTION_VALIDATION_TOOL_REF"
+    - test "$(git -C .promotion-tool rev-parse HEAD)" = "$PROMOTION_VALIDATION_TOOL_REF"
+    - cd .promotion-tool
+    - go build -o ../pingone-runner ./cmd/pingone-runner
+    - cd ..
+
 validate_request:
   stage: validate
-  extends: .runner_job
+  extends: .validation_job
   image: $PROMOTION_GO_IMAGE
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
   script:
     - source ./examples/gitlab/select-request.sh
-    # A DaVinci front-door intent is validated as an intent; the full request
-    # is built later, inside the protected plan job.
-    - |
-      if [[ -n "${PROMOTION_INTENT_FILE:-}" ]]; then
-        ./pingone-runner validate --intent "$PROMOTION_INTENT_FILE"
-      else
-        ./pingone-runner validate --request "$PROMOTION_REQUEST_FILE"
-      fi
+    - ./pingone-runner validate --request "$PROMOTION_REQUEST_FILE"
   artifacts:
     access: developer
     expire_in: 1 day
@@ -69,20 +79,12 @@ plan_promotion:
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web") && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - source ./examples/gitlab/select-request.sh
-    # For a merged intent, build the redacted, fingerprinted request from fresh
-    # snapshots here, after the runner proves this is the protected job.
-    - |
-      if [[ -n "${PROMOTION_INTENT_FILE:-}" ]]; then
-        ./pingone-runner build-request --intent "$PROMOTION_INTENT_FILE" --out "$PROMOTION_REQUEST_FILE"
-      fi
-    - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
-    # Independent re-check of the reviewed plan + a readable summary for approvers.
-    - ./pingone-runner plan-check --artifact plan.json --digest-file plan.sha256 --summary-out plan-review.md ${PROMOTION_FORBID_TYPES:+--forbid-type "$PROMOTION_FORBID_TYPES"}
+    - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256 --summary-out plan-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [plan.json, plan.sha256, plan-review.md, selected-request.txt, built-request.json]
+    paths: [plan.json, plan.sha256, plan-summary.md, selected-request.txt]
 
 apply_promotion:
   stage: deploy
@@ -101,8 +103,8 @@ apply_promotion:
       allow_failure: false
   script:
     - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
     - ./pingone-runner apply --artifact plan.json --approved-digest-file plan.sha256 --out result.json
   artifacts:
     access: developer
@@ -121,20 +123,19 @@ rollback_plan:
     - if: '$PROMOTION_MODE == "rollback" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - |
-      test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
+      test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
       test "$CI_API_V4_URL" = "${PROMOTION_GITLAB_URL%/}/api/v4"
-      test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+      test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
       case "${ORIGINAL_PLAN_JOB_ID:-}" in (''|*[!0-9]*) echo "Set ORIGINAL_PLAN_JOB_ID to the numeric plan job ID" >&2; exit 1;; esac
       test -n "${CI_JOB_TOKEN:-}" || { echo "CI_JOB_TOKEN is required to retrieve the original plan" >&2; exit 1; }
       status="$(curl --silent --show-error --output original-plan.json --write-out '%{http_code}' --header "JOB-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/$ORIGINAL_PLAN_JOB_ID/artifacts/plan.json")" || { echo "Could not retrieve the original plan artifact" >&2; exit 1; }
       test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
-    - ./pingone-runner rollback-plan --artifact original-plan.json --out rollback.json --digest-out rollback.sha256
-    - ./pingone-runner plan-check --artifact rollback.json --digest-file rollback.sha256 --summary-out rollback-review.md
+      ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256 --summary-out rollback-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [rollback.json, rollback.sha256, rollback-review.md, original-plan.json]
+    paths: [rollback.json, rollback.sha256, rollback-summary.md, original-plan.json]
 
 apply_rollback:
   stage: rollback_apply
@@ -153,56 +154,11 @@ apply_rollback:
       allow_failure: false
   script:
     - test "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH"
-    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL"
-    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID"
+    - test -n "${PROMOTION_GITLAB_URL:-}" && test "$PROMOTION_GITLAB_URL" = "$CI_SERVER_URL" || { echo "PROMOTION_GITLAB_URL must match CI_SERVER_URL" >&2; exit 1; }
+    - test -n "${PROMOTION_GITLAB_PROJECT_ID:-}" && test "$PROMOTION_GITLAB_PROJECT_ID" = "$CI_PROJECT_ID" || { echo "PROMOTION_GITLAB_PROJECT_ID must match CI_PROJECT_ID" >&2; exit 1; }
     - ./pingone-runner apply --artifact rollback.json --approved-digest-file rollback.sha256 --out rollback-result.json
   artifacts:
     access: developer
     expire_in: 90 days
     when: always
     paths: [rollback.json, rollback.sha256, rollback-result.json, rollback.json.execute-intent]
-
-# Read-only audit of GitLab settings, CI/CD variables and PingOne capability.
-# Start a manual pipeline on the default branch with PROMOTION_MODE=preflight.
-# Optional PREFLIGHT_SOURCE_ENVIRONMENT_ID also probes the source environment.
-preflight:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: $PROMOTION_ENVIRONMENT
-    action: prepare
-  rules:
-    - if: '$PROMOTION_MODE == "preflight" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-  script:
-    - ./pingone-runner preflight --report preflight.md ${PREFLIGHT_SOURCE_ENVIRONMENT_ID:+--source "$PREFLIGHT_SOURCE_ENVIRONMENT_ID"}
-  artifacts:
-    access: developer
-    expire_in: 30 days
-    when: always
-    paths: [preflight.md]
-
-# Keyed before/after fingerprints of every resource in one environment (no
-# configuration values). Start a manual pipeline with PROMOTION_MODE=evidence,
-# EVIDENCE_ENVIRONMENT_ID and EVIDENCE_LABEL (for example "before-hp4").
-# Compare two downloads with: pingone-runner evidence compare --before … --after …
-capture_evidence:
-  stage: validate
-  extends: .runner_job
-  image: $PROMOTION_GO_IMAGE
-  environment:
-    name: $PROMOTION_ENVIRONMENT
-    action: prepare
-  rules:
-    - if: '$PROMOTION_MODE == "evidence" && $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-  script:
-    - |
-      case "${EVIDENCE_ENVIRONMENT_ID:-}" in (''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_ENVIRONMENT_ID to a PingOne environment ID" >&2; exit 1;; esac
-      case "${EVIDENCE_LABEL:-}" in (''|*[!A-Za-z0-9_-]*) echo "Set EVIDENCE_LABEL to letters, digits, - or _" >&2; exit 1;; esac
-    - mkdir -p evidence
-    - ./pingone-runner evidence capture --env "$EVIDENCE_ENVIRONMENT_ID" --out "evidence/$EVIDENCE_LABEL.json"
-  artifacts:
-    access: developer
-    expire_in: 90 days
-    when: always
-    paths: [evidence/]

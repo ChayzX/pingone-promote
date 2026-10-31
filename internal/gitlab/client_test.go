@@ -27,6 +27,7 @@ func TestConfigValidate(t *testing.T) {
 		{BaseURL: "https://git.example/?x=1", ProjectID: "42"},
 		{BaseURL: "https://git.example/#frag", ProjectID: "42"},
 		{BaseURL: "https://git.example/a/../b", ProjectID: "42"},
+		{BaseURL: "https://git.example/gitlab%2f..%2foutside", ProjectID: "42"},
 		{BaseURL: "https://git.example", ProjectID: "group/project"},
 		{BaseURL: "https://git.example", ProjectID: "42", TokenEnv: "BAD-NAME"},
 		{BaseURL: "https://git.example", ProjectID: "42", Environment: "prod/evil"},
@@ -115,6 +116,7 @@ func TestVerifyProjectRequiresPrivateProtectedDefaultBranch(t *testing.T) {
 
 func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 	var gotBranch, gotCommit, gotMR bool
+	branchExists := false
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/projects/42"):
@@ -128,14 +130,28 @@ func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 				t.Errorf("branch payload: %#v", b)
 			}
 			gotBranch = true
+			branchExists = true
 			w.WriteHeader(201)
 			_, _ = w.Write([]byte(`{"name":"promotion/req-1"}`))
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/repository/commits"):
 			var b map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&b)
 			gotCommit = true
-			if b["branch"] != "promotion/req-1" || b["start_branch"] != "main" {
+			if !branchExists {
+				t.Error("commit attempted before promotion branch was created")
+			}
+			if b["branch"] != "promotion/req-1" {
 				t.Errorf("commit refs: %#v", b)
+			}
+			if b["commit_message"] != "Add promotion request req-1" {
+				t.Errorf("default commit message changed: %#v", b["commit_message"])
+			}
+			if _, ok := b["start_branch"]; ok || b["force"] == true {
+				// GitLab's create-commit API treats start_branch/force as branch
+				// creation or replacement controls; this branch already exists.
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"message":"A branch called 'promotion/req-1' already exists"}`))
+				return
 			}
 			actions, _ := b["actions"].([]any)
 			if len(actions) != 1 {
@@ -178,6 +194,74 @@ func TestSubmitCreatesScopedBranchCommitAndMergeRequest(t *testing.T) {
 	}
 }
 
+func TestSubmitBranchCollisionStopsBeforeCommitOrMergeRequest(t *testing.T) {
+	var serverURL string
+	var gotCommit, gotMR bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/projects/42"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "visibility": "private", "archived": false, "default_branch": "main", "web_url": serverURL + "/gitlab/group/project"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/repository/branches/main"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/branches"):
+			// The request-specific branch already exists. GitLab rejects branch
+			// creation; the client must leave it untouched and stop here.
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"Branch already exists"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/commits"):
+			gotCommit = true
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			gotMR = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	serverURL = srv.URL
+	c, err := NewClient(testConfig(srv.URL+"/gitlab"), "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = srv.Client()
+	if _, err = c.Submit(context.Background(), "req-1", map[string]string{"request.json": "{}"}, "title", "desc"); err == nil {
+		t.Fatal("preexisting promotion branch was accepted")
+	}
+	if gotCommit || gotMR {
+		t.Fatalf("branch collision did not abort before later writes: commit=%v merge_request=%v", gotCommit, gotMR)
+	}
+}
+
+func TestSubmitRejectsUnsafeCustomBranchBeforeNetwork(t *testing.T) {
+	for _, branch := range []string{"../main", "topic//child", "topic/.hidden", "topic/name.lock", "topic name", "-option"} {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("unsafe branch made network request %s %s", r.Method, r.URL.Path)
+		}))
+		c, err := NewClient(testConfig(srv.URL), "token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.HTTP = srv.Client()
+		if _, err = c.SubmitWithOptions(context.Background(), "req", map[string]string{"request.json": "{}"}, "title", "description", SubmissionOptions{BranchName: branch}); err == nil {
+			t.Errorf("accepted unsafe branch %q", branch)
+		}
+		srv.Close()
+	}
+}
+
+func TestValidateSubmissionOptionsRejectsInvalidCommitMessages(t *testing.T) {
+	for _, message := range []string{"   ", strings.Repeat("x", 501), "bad\x00message"} {
+		if err := ValidateSubmissionOptions(SubmissionOptions{CommitMessage: message}); err == nil {
+			t.Errorf("accepted invalid commit message %q", message)
+		}
+	}
+	if err := ValidateSubmissionOptions(SubmissionOptions{BranchName: "feature/issue-3", CommitMessage: "Update promotion"}); err != nil {
+		t.Fatalf("rejected valid custom options: %v", err)
+	}
+}
+
 var srvURLPlaceholder string
 
 func TestSubmitRejectsUnsafeFileAndMRURL(t *testing.T) {
@@ -189,6 +273,40 @@ func TestSubmitRejectsUnsafeFileAndMRURL(t *testing.T) {
 			t.Errorf("accepted file %q", name)
 		}
 		srv.Close()
+	}
+}
+
+func TestSubmitRejectsMalformedMergeRequestResponse(t *testing.T) {
+	var serverURL string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/projects/42"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "visibility": "private", "archived": false, "default_branch": "main", "web_url": serverURL + "/gitlab/group/project"})
+		case strings.HasSuffix(r.URL.Path, "/repository/branches/main"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/branches"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/repository/commits"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merge_requests"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"web_url":"` + serverURL + `/gitlab/group/project"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	serverURL = srv.URL
+	c, err := NewClient(testConfig(srv.URL+"/gitlab"), "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = srv.Client()
+	if _, err = c.Submit(context.Background(), "req", map[string]string{"request.json": "{}"}, "title", "description"); err == nil {
+		t.Fatal("malformed merge request response reported success")
 	}
 }
 
@@ -227,7 +345,7 @@ func TestConfigPersistenceIsPrivateAndMetadataOnly(t *testing.T) {
 
 func TestSafeMergeRequestURLConfinement(t *testing.T) {
 	base, _ := url.Parse("https://git.example/gitlab")
-	for _, raw := range []string{"https://evil.example/gitlab/x", "https://git.example/other/x", "https://git.example/gitlab/%2e%2e/x"} {
+	for _, raw := range []string{"https://evil.example/gitlab/x", "https://git.example/other/x", "https://git.example/gitlab/%2e%2e/x", "https://git.example/gitlab%2f..%2foutside/x"} {
 		u, _ := url.Parse(raw)
 		if sameGitLabLocation(base, u) {
 			t.Errorf("accepted %s", raw)

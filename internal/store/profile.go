@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"pingone-promote/internal/pingone"
 )
@@ -51,6 +53,26 @@ func validateProfile(p pingone.Profile) error {
 		}
 	default:
 		return fmt.Errorf("secret mode must be session, env, or keychain")
+	}
+	return nil
+}
+
+// maxProfileNameRunes matches the maxlength of the profile form field.
+const maxProfileNameRunes = 80
+
+// validateProfileName is applied when saving only, so profiles already on disk
+// remain usable.
+func validateProfileName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("profile name is required")
+	}
+	if utf8.RuneCountInString(name) > maxProfileNameRunes {
+		return fmt.Errorf("profile name must be at most %d characters", maxProfileNameRunes)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return errors.New("profile name must not contain control characters")
+		}
 	}
 	return nil
 }

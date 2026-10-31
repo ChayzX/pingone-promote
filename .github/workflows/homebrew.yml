@@ -1,0 +1,90 @@
+name: Homebrew lifecycle
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to exercise in the installer lifecycle"
+        type: string
+        default: v0.2.0-rc.2
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: v0.2.0-rc.2
+
+permissions:
+  contents: read
+
+jobs:
+  install-matrix:
+    name: Install and lifecycle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-15-intel
+          - ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ inputs.version || 'v0.2.0-rc.2' }}
+      RELEASE_REF: ${{ github.sha }}
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - name: Check out the exact tested revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Homebrew on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          echo /home/linuxbrew/.linuxbrew/sbin >> "$GITHUB_PATH"
+
+      - name: Refresh Homebrew formula metadata
+        shell: bash
+        run: brew update
+
+      - name: Run real Homebrew install, upgrade, app safety probes, and uninstall
+        shell: bash
+        run: python3 scripts/test_homebrew.py --version "$RELEASE_VERSION" --ref "$RELEASE_REF"
+
+  assets:
+    name: Verify source and build release assets
+    needs: install-matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Test source and build versioned release assets
+        env:
+          RELEASE_VERSION: ${{ inputs.version || 'v0.2.0-rc.2' }}
+          RELEASE_REF: ${{ github.sha }}
+        run: |
+          go test ./...
+          go test -race ./...
+          go vet ./...
+          python3 -m unittest discover -s scripts -p test_release.py -v
+          python3 scripts/release.py release --version "$RELEASE_VERSION" --ref "$RELEASE_REF" --output dist/release
+          python3 scripts/release.py verify --directory dist/release
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: installation-preview
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 7

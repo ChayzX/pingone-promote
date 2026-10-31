@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"pingone-promote/internal/pingone"
@@ -51,10 +52,69 @@ type Record struct {
 // Store persists profiles and history under dir. Session secrets remain only
 // in this Store's memory.
 type Store struct {
-	dir     string
-	mu      sync.Mutex
-	session map[string]string
+	dir         string
+	mu          sync.Mutex
+	session     map[string]string
+	credentials credentialProvider
 }
+
+type credentialProvider interface {
+	Set(id, secret string) error
+	Get(id string) (string, error)
+	Delete(id string) error
+}
+
+type platformCredentialProvider struct{}
+
+func (platformCredentialProvider) Set(id, secret string) error   { return keychainSet(id, secret) }
+func (platformCredentialProvider) Get(id string) (string, error) { return keychainGet(id) }
+func (platformCredentialProvider) Delete(id string) error        { return keychainDelete(id) }
+
+func credentialBeforeChange(provider credentialProvider, id string) (string, bool, error) {
+	secret, err := provider.Get(id)
+	if errors.Is(err, errCredentialNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, safeCredentialProviderFailure("OS credential vault", "verify", "Unlock the OS credential vault and retry.", err)
+	}
+	return secret, true, nil
+}
+
+func restoreCredential(provider credentialProvider, id, secret string, existed bool) error {
+	if existed {
+		return provider.Set(id, secret)
+	}
+	return provider.Delete(id)
+}
+
+func compensationFailure(err error, action string) error {
+	if err == nil {
+		return errors.New(action)
+	}
+	return fmt.Errorf("%s: %w", action, ErrCredentialStateInconsistent)
+}
+
+// PersistenceError marks a local storage or stored-data error for API callers.
+// Its original cause remains available through Unwrap for local diagnostics.
+type PersistenceError struct{ err error }
+
+func (e *PersistenceError) Error() string { return e.err.Error() }
+func (e *PersistenceError) Unwrap() error { return e.err }
+
+func persistenceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PersistenceError{err: err}
+}
+
+// ErrRecordNotFound identifies an absent record without masking store read failures.
+var ErrRecordNotFound = errors.New("record not found")
+
+// ErrCredentialStateInconsistent indicates that a failed metadata write could
+// not be compensated in the OS keyring.
+var ErrCredentialStateInconsistent = errors.New("profile metadata and OS keyring state may be inconsistent; inspect both before continuing")
 
 // Open opens or creates a private store directory and rejects malformed
 // existing data files instead of silently replacing them.
@@ -68,7 +128,7 @@ func Open(dir string) (*Store, error) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, fmt.Errorf("secure store directory: %w", err)
 	}
-	s := &Store{dir: dir, session: make(map[string]string)}
+	s := &Store{dir: dir, session: make(map[string]string), credentials: platformCredentialProvider{}}
 	if _, err := s.profiles(); err != nil {
 		return nil, err
 	}
@@ -83,10 +143,13 @@ func (s *Store) path(name string) string { return filepath.Join(s.dir, name) }
 func (s *Store) read(name string) ([]byte, error) {
 	b, err := os.ReadFile(s.path(name))
 	if err != nil {
-		return nil, err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return nil, persistenceError(err)
 	}
 	if err := os.Chmod(s.path(name), 0600); err != nil {
-		return nil, fmt.Errorf("secure %s: %w", name, err)
+		return nil, persistenceError(fmt.Errorf("secure %s: %w", name, err))
 	}
 	return b, nil
 }
@@ -95,11 +158,11 @@ func decode(name string, b []byte, out any) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		return fmt.Errorf("decode %s: %w", name, err)
+		return persistenceError(fmt.Errorf("decode %s: %w", name, err))
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("decode %s: trailing JSON data", name)
+		return persistenceError(fmt.Errorf("decode %s: trailing JSON data", name))
 	}
 	return nil
 }
@@ -107,32 +170,32 @@ func decode(name string, b []byte, out any) error {
 func (s *Store) write(name string, value any) error {
 	b, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", name, err)
+		return persistenceError(fmt.Errorf("encode %s: %w", name, err))
 	}
 	b = append(b, '\n')
 	f, err := os.CreateTemp(s.dir, ".store-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temporary %s: %w", name, err)
+		return persistenceError(fmt.Errorf("create temporary %s: %w", name, err))
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
 	if err := f.Chmod(0600); err != nil {
 		f.Close()
-		return fmt.Errorf("secure temporary %s: %w", name, err)
+		return persistenceError(fmt.Errorf("secure temporary %s: %w", name, err))
 	}
 	if _, err := f.Write(b); err != nil {
 		f.Close()
-		return fmt.Errorf("write %s: %w", name, err)
+		return persistenceError(fmt.Errorf("write %s: %w", name, err))
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
-		return fmt.Errorf("sync %s: %w", name, err)
+		return persistenceError(fmt.Errorf("sync %s: %w", name, err))
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", name, err)
+		return persistenceError(fmt.Errorf("close %s: %w", name, err))
 	}
 	if err := os.Rename(tmp, s.path(name)); err != nil {
-		return fmt.Errorf("replace %s: %w", name, err)
+		return persistenceError(fmt.Errorf("replace %s: %w", name, err))
 	}
 	if d, err := os.Open(s.dir); err == nil {
 		_ = d.Sync()
@@ -179,6 +242,10 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 		}
 		p.ID = id
 	}
+	p.Name = strings.TrimSpace(p.Name)
+	if err := validateProfileName(p.Name); err != nil {
+		return p, err
+	}
 	if err := validateProfile(p); err != nil {
 		return p, err
 	}
@@ -186,10 +253,50 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 	if err != nil {
 		return p, err
 	}
+	var existingMode string
+	profileExists := false
+	for _, existing := range profiles {
+		if existing.ID == p.ID {
+			existingMode = existing.SecretMode
+			profileExists = true
+			break
+		}
+	}
 	oldSecret, hasOldSecret := s.session[p.ID]
-	if p.SecretMode == "keychain" && secret != "" {
-		if err := keychainSet(p.ID, secret); err != nil {
+	var priorCredential string
+	var hadPriorCredential bool
+	changesCredential := p.SecretMode == "keychain" && secret != ""
+	removesCredential := profileExists && existingMode == "keychain" && p.SecretMode != "keychain"
+	if removesCredential && p.SecretMode == "session" && secret == "" {
+		return p, errors.New("enter the PingOne client secret for the new session before switching away from the OS credential vault")
+	}
+	if p.SecretMode == "keychain" && secret == "" {
+		if !profileExists || existingMode != "keychain" {
+			return p, errors.New("enter the PingOne client secret before saving this profile to the OS credential vault")
+		}
+		_, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
+		if err != nil {
 			return p, err
+		}
+		if !hadPriorCredential {
+			return p, errors.New("no OS credential is stored for this profile; enter the PingOne client secret and save again")
+		}
+	}
+	if changesCredential {
+		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
+		if err != nil {
+			return p, err
+		}
+		if err := s.credentials.Set(p.ID, secret); err != nil {
+			return p, compensationFailure(restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential), "could not store credential in the OS keyring")
+		}
+	} else if removesCredential {
+		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
+		if err != nil {
+			return p, err
+		}
+		if err := s.credentials.Delete(p.ID); err != nil {
+			return p, compensationFailure(restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential), "could not remove the previous OS keyring credential")
 		}
 	}
 	found := false
@@ -204,6 +311,11 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 		profiles = append(profiles, p)
 	}
 	if err := s.write("profiles.json", profiles); err != nil {
+		if changesCredential || removesCredential {
+			if restoreErr := restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential); restoreErr != nil {
+				return p, errors.Join(err, compensationFailure(restoreErr, "profile metadata was not saved"))
+			}
+		}
 		return p, err
 	}
 	if p.SecretMode == "session" {
@@ -241,12 +353,24 @@ func (s *Store) DeleteProfile(id string) error {
 	if !found {
 		return fmt.Errorf("profile %q not found", id)
 	}
-	if deleted.SecretMode == "keychain" {
-		if err := keychainDelete(id); err != nil {
+	var priorCredential string
+	var hadPriorCredential bool
+	changesCredential := deleted.SecretMode == "keychain"
+	if changesCredential {
+		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, id)
+		if err != nil {
 			return err
+		}
+		if err := s.credentials.Delete(id); err != nil {
+			return compensationFailure(restoreCredential(s.credentials, id, priorCredential, hadPriorCredential), "could not delete credential from the OS keyring")
 		}
 	}
 	if err := s.write("profiles.json", kept); err != nil {
+		if changesCredential {
+			if restoreErr := restoreCredential(s.credentials, id, priorCredential, hadPriorCredential); restoreErr != nil {
+				return errors.Join(err, compensationFailure(restoreErr, "profile metadata was not deleted"))
+			}
+		}
 		return err
 	}
 	delete(s.session, id)
@@ -274,7 +398,14 @@ func (s *Store) Secret(p pingone.Profile) (string, error) {
 		}
 		return v, nil
 	case "keychain":
-		return keychainGet(p.ID)
+		secret, err := s.credentials.Get(p.ID)
+		if errors.Is(err, errCredentialNotFound) {
+			return "", fmt.Errorf("no OS credential is stored for profile %q; edit the profile, enter the PingOne client secret, and save", p.ID)
+		}
+		if err != nil {
+			return "", safeCredentialProviderFailure("OS credential vault", "access", "Unlock the OS credential vault and retry.", err)
+		}
+		return secret, nil
 	default:
 		return "", fmt.Errorf("unsupported secret mode %q", p.SecretMode)
 	}
@@ -359,7 +490,7 @@ func (s *Store) GetRecord(id string) (Record, error) {
 			return r, nil
 		}
 	}
-	return Record{}, fmt.Errorf("record %q not found", id)
+	return Record{}, fmt.Errorf("record %q: %w", id, ErrRecordNotFound)
 }
 
 // Directory is the private application-data directory used by additional
