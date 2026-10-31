@@ -195,21 +195,23 @@ type profileCredentialStorageCapability struct {
 }
 
 func credentialStorageCapabilityFor(goos string) profileCredentialStorageCapability {
-	capability := profileCredentialStorageCapability{Mode: "keychain", Availability: "not_probed"}
+	capability := profileCredentialStorageCapability{Mode: "keychain", Availability: "unsupported"}
 	switch goos {
 	case "darwin":
 		capability.Provider = "macOS Keychain"
 		capability.Supported = true
-	case "windows":
-		capability.Provider = "Windows Credential Manager"
-		capability.Supported = true
+		capability.Availability = "not_probed"
 	case "linux":
 		capability.Provider = "Linux Secret Service"
 		capability.Supported = true
+		capability.Availability = "not_probed"
 		capability.Requirement = "Requires a running, unlocked Secret Service provider, such as GNOME Keyring or KWallet. Availability is checked when you save or use a credential."
+	case "windows":
+		capability.Provider = "OS credential vault (unsupported on Windows)"
+		capability.Requirement = "Persistent OS credential storage is supported only on macOS and Linux. Use Session only or Environment variable on Windows."
 	default:
-		capability.Provider = "Operating system credential vault"
-		capability.Requirement = "Credential vault storage is not supported on this server operating system."
+		capability.Provider = "OS credential vault (unsupported)"
+		capability.Requirement = "Persistent OS credential storage is supported only on macOS and Linux. Use Session only or Environment variable on this platform."
 	}
 	return capability
 }

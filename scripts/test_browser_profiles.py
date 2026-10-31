@@ -47,9 +47,15 @@ def main():
         session = page.request.get(fixture['url'].split('/?')[0] + '/api/session').json()
         credential_storage = session.get('credentialStorage', {})
         keyring_option = page.locator('[name="secretMode"] option[value="keychain"]')
-        if not credential_storage.get('supported') or credential_storage.get('provider') not in keyring_option.text_content():
-            failures.append('credential-vault label does not match the app server platform')
-        for mode in ('session', 'keychain', 'env'):
+        if credential_storage.get('supported'):
+            if credential_storage.get('provider') not in keyring_option.text_content() or keyring_option.is_disabled():
+                failures.append('credential-vault label does not match the supported app server platform')
+            modes = ('session', 'keychain', 'env')
+        else:
+            if not keyring_option.is_disabled() or 'unsupported' not in keyring_option.text_content().lower():
+                failures.append('unsupported server platform left OS credential storage selectable')
+            modes = ('session', 'env')
+        for mode in modes:
             page.locator('#profiles-open').click()
             form = page.locator('#profiles-form')
             for key, value in {
@@ -85,23 +91,24 @@ def main():
                 created.append(saved.value.json()['id'])
             page.get_by_role('button', name='Close environment profiles', exact=True).click()
 
-        # Switching away from an OS vault must tell the user the old entry is
-        # removed and require a new direct secret for Session only.
-        page.locator('#profiles-open').click()
-        page.locator('.profile-list-item').filter(has_text=f'{prefix} mode keychain fixture').get_by_role('button', name='Edit', exact=True).click()
-        form = page.locator('#profiles-form')
-        form.locator('[name="secretMode"]').select_option('session')
-        if not form.locator('[name="secret"]').evaluate('(node) => node.required'):
-            failures.append('switching from keyring to session did not require a new secret')
-        if 'removes the old vault copy' not in page.locator('#secret-storage-help').inner_text():
-            failures.append('switching away from keyring did not explain that its old copy is removed')
-        form.locator('[name="secret"]').fill('synthetic-session-after-keyring')
-        with page.expect_response(lambda response: response.url.endswith('/api/profiles') and response.request.method == 'POST') as migrated:
-            page.locator('#profile-save').click()
-        if migrated.value.status == 200:
-            created.append(migrated.value.json()['id'])
-        else:
-            failures.append('keyring-to-session save failed')
+        if credential_storage.get('supported'):
+            # Switching away from an OS vault must tell the user the old entry
+            # is removed and require a new direct secret for Session only.
+            page.locator('#profiles-open').click()
+            page.locator('.profile-list-item').filter(has_text=f'{prefix} mode keychain fixture').get_by_role('button', name='Edit', exact=True).click()
+            form = page.locator('#profiles-form')
+            form.locator('[name="secretMode"]').select_option('session')
+            if not form.locator('[name="secret"]').evaluate('(node) => node.required'):
+                failures.append('switching from keyring to session did not require a new secret')
+            if 'removes the old vault copy' not in page.locator('#secret-storage-help').inner_text():
+                failures.append('switching away from keyring did not explain that its old copy is removed')
+            form.locator('[name="secret"]').fill('synthetic-session-after-keyring')
+            with page.expect_response(lambda response: response.url.endswith('/api/profiles') and response.request.method == 'POST') as migrated:
+                page.locator('#profile-save').click()
+            if migrated.value.status == 200:
+                created.append(migrated.value.json()['id'])
+            else:
+                failures.append('keyring-to-session save failed')
 
         # Editing an existing env profile must not carry its variable name into
         # the new session-mode payload or persisted profile metadata.
@@ -126,7 +133,7 @@ def main():
         browser.close()
         assert not errors, errors
         assert not failures, '; '.join(failures)
-        print('PASS: session/env saves, keychain payload, and env-to-session edit omit inactive credential fields')
+        print('PASS: supported credential modes and profile edits omit inactive credential fields')
 
 
 if __name__ == '__main__':

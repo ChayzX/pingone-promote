@@ -221,6 +221,9 @@
     const capability = state.credentialStorage;
     const provider = capability?.provider || 'operating system credential vault';
     const storageHelp = $('#secret-storage-help');
+    const keyringOption = $('#profiles-dialog [name="secretMode"] option[value="keychain"]');
+    keyringOption.disabled = !capability?.supported && !(state.profileEditID && state.profileEditSecretMode === 'keychain');
+    const unsupportedSavedKeyring = !capability?.supported && Boolean(state.profileEditID) && state.profileEditSecretMode === 'keychain';
     const envMode = mode === 'env';
     $('#profiles-dialog .secret-env-field').hidden = !envMode;
     const secretEnv = $('#profiles-dialog [name="secretEnv"]');
@@ -236,11 +239,9 @@
     secret.required = !envMode && (!state.profileEditID || enteringKeyring || leavingKeyringForSession);
     if (mode === 'keychain') {
       if (!capability?.supported) {
-        storageHelp.textContent = `${provider} storage is not supported by the app server. Choose Session only or Environment variable.`;
+        storageHelp.textContent = `${provider}. ${capability?.requirement || 'OS credential storage is unsupported here.'} This profile cannot access or remove a vault credential on this server.`;
         $('#secret-help').textContent = storageHelp.textContent;
       } else {
-        const linuxRequirement = capability.requirement ? ` ${capability.requirement}` : '';
-        storageHelp.textContent = `Enter the client secret below, then click Save profile. It will be stored in ${provider}; the app checks the vault when you save or use it.${linuxRequirement}`;
         const existingKeyringProfile = state.profileEditID && state.profileEditSecretMode === 'keychain';
         storageHelp.textContent = existingKeyringProfile
           ? `Leave the secret blank to keep this profile's existing ${provider} credential. If none is stored, enter the client secret and save. ${capability.requirement || ''}`
@@ -265,6 +266,11 @@
         : 'Set the named environment variable before starting the app. Save profile stores only its name; it does not save the variable value.';
       $('#secret-help').textContent = '';
     }
+    if (unsupportedSavedKeyring) {
+      storageHelp.textContent = `This profile uses ${provider}, which this app server cannot access or remove. Open the profile on macOS or Linux to change its storage mode, or create a new Session only or Environment variable profile here.`;
+      $('#secret-help').textContent = storageHelp.textContent;
+    }
+    $('#profile-save').disabled = unsupportedSavedKeyring;
   }
 
   async function saveProfile() {
@@ -1301,7 +1307,8 @@
       state.regions = session.regions || {};
       state.credentialStorage = session.credentialStorage || null;
       const keyringOption = $('#profiles-dialog [name="secretMode"] option[value="keychain"]');
-      keyringOption.textContent = state.credentialStorage?.supported ? state.credentialStorage.provider : 'Operating system credential vault (unsupported)';
+      keyringOption.textContent = state.credentialStorage?.provider || 'Operating system credential vault (unsupported)';
+      keyringOption.disabled = !state.credentialStorage?.supported;
       const [profiles, history] = await Promise.all([request('/api/profiles'), request('/api/history')]);
       state.profiles = Array.isArray(profiles) ? profiles : profiles?.profiles || [];
       state.history = Array.isArray(history) ? history : history?.records || [];

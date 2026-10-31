@@ -53,17 +53,24 @@ func TestCredentialStorageCapabilityUsesServerPlatformNames(t *testing.T) {
 		supported      bool
 	}{
 		{"darwin", "macOS Keychain", true},
-		{"windows", "Windows Credential Manager", true},
 		{"linux", "Linux Secret Service", true},
-		{"freebsd", "Operating system credential vault", false},
+		{"windows", "OS credential vault (unsupported on Windows)", false},
+		{"freebsd", "OS credential vault (unsupported)", false},
 	}
 	for _, test := range tests {
 		got := credentialStorageCapabilityFor(test.goos)
-		if got.Provider != test.provider || got.Supported != test.supported || got.Availability != "not_probed" {
+		wantAvailability := "unsupported"
+		if test.supported {
+			wantAvailability = "not_probed"
+		}
+		if got.Provider != test.provider || got.Supported != test.supported || got.Availability != wantAvailability {
 			t.Errorf("capability for %s = %+v", test.goos, got)
 		}
 		if test.goos == "linux" && !strings.Contains(got.Requirement, "Availability is checked when you save or use") {
 			t.Errorf("Linux capability claims availability without a runtime check: %+v", got)
+		}
+		if test.goos == "windows" && !strings.Contains(got.Requirement, "only on macOS and Linux") {
+			t.Errorf("Windows capability does not explain the supported platforms: %+v", got)
 		}
 	}
 }

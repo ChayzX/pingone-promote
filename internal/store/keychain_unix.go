@@ -1,25 +1,18 @@
-//go:build windows || linux
+//go:build linux
 
 package store
 
 import (
 	"errors"
-	"runtime"
 
 	"github.com/zalando/go-keyring"
 )
 
 func keyringProviderName() string {
-	if runtime.GOOS == "windows" {
-		return "Windows Credential Manager"
-	}
 	return "Linux Secret Service"
 }
 
 func keyringActionHint() string {
-	if runtime.GOOS == "windows" {
-		return "Check that the current Windows account can use Credential Manager."
-	}
 	return "Start and unlock GNOME Keyring, KWallet, or another Secret Service provider, then retry."
 }
 
