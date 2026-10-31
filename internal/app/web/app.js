@@ -628,11 +628,18 @@
     const review = plan?.review || {};
     const steps = safeArray(review.steps);
     const section = el('section', 'steps-section');
-    const changeSummary = review.summary || {};
+    const changeSummary = review.summary;
+    const summaryKeys = ['create', 'change', 'destroy', 'unsupported'];
+    const summaryAvailable = changeSummary && summaryKeys.every(key => Number.isInteger(changeSummary[key]) && changeSummary[key] >= 0);
     const summary = el('div', 'change-summary');
     summary.append(el('strong', '', 'Change summary'));
-    summary.append(el('p', '', `${Number(changeSummary.create) || 0} create · ${Number(changeSummary.change) || 0} change · ${Number(changeSummary.destroy) || 0} destroy · ${Number(changeSummary.unsupported) || 0} unsupported`));
-    summary.append(el('small', '', 'Counts are classified locally from PingOne’s native operation methods and paths.'));
+    if (summaryAvailable) {
+      summary.append(el('p', '', `${changeSummary.create} create · ${changeSummary.change} change · ${changeSummary.destroy} destroy · ${changeSummary.unsupported} unsupported`));
+      summary.append(el('small', '', 'Counts are classified locally from PingOne’s native operation methods and paths.'));
+    } else {
+      summary.append(el('p', '', 'Summary unavailable for this saved review.'));
+      summary.append(el('small', '', 'Refresh the review to classify its native operations.'));
+    }
     section.append(summary);
     const heading = el('div', 'steps-heading');
     heading.append(el('h3', '', 'Operations'), el('span', 'step-count', `${steps.length} ${steps.length === 1 ? 'operation' : 'operations'}`));

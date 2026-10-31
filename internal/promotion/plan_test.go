@@ -39,6 +39,7 @@ func TestBuildRequestRejectsInvalidMappings(t *testing.T) {
 }
 func TestReviewBlocksUnselectedTemplateAndWrongTarget(t *testing.T) {
 	s, d := inventories()
+	d.APIOrigin = "https://api.pingone.com"
 	base := pingone.Step{Action: "PUT", URL: d.Resources[0].URL, Source: pingone.Ref{ID: "f"}, Target: pingone.Ref{ID: "g"}, Payload: json.RawMessage(`{"name":"new"}`)}
 	for _, change := range []string{"none", "unselected template", "wrong target", "forged type", "delete", "unknown source", "cross host", "sibling flow"} {
 		t.Run(change, func(t *testing.T) {
@@ -71,6 +72,27 @@ func TestReviewBlocksUnselectedTemplateAndWrongTarget(t *testing.T) {
 				t.Fatal("unapproved change allowed")
 			}
 		})
+	}
+}
+
+func TestChangeSummaryRequiresExactDestinationOperationShape(t *testing.T) {
+	s, d := inventories()
+	d.APIOrigin = "https://api.pingone.com"
+	step := pingone.Step{Action: "PUT", URL: d.Resources[0].URL, Source: pingone.Ref{ID: "f"}, Target: pingone.Ref{ID: "g"}, Payload: json.RawMessage(`{"name":"new"}`)}
+	review := Inspect(s, d, []string{"f"}, map[string]string{"f": "g"}, []pingone.Step{step}, false)
+	if review.Summary.Change != 1 {
+		t.Fatalf("exact mapped destination operation summary = %+v", review.Summary)
+	}
+	step.URL += "/status"
+	review = Inspect(s, d, []string{"f"}, map[string]string{"f": "g"}, []pingone.Step{step}, false)
+	if review.Summary.Unsupported != 1 || review.Summary.Create != 0 {
+		t.Fatalf("unknown subresource was guessed as an operation: %+v", review.Summary)
+	}
+	step.URL = strings.Replace(d.Resources[0].URL, "api.pingone.com", "api.pingone.eu", 1)
+	d.APIOrigin = "https://api.pingone.com"
+	review = Inspect(s, d, []string{"f"}, map[string]string{"f": "g"}, []pingone.Step{step}, false)
+	if review.Summary.Unsupported != 1 || review.Summary.Change != 0 {
+		t.Fatalf("wrong-region operation was classified: %+v", review.Summary)
 	}
 }
 func TestTemplatesArePromotableOnlyWhenSelected(t *testing.T) {

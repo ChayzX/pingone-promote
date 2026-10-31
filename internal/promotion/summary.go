@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
+
+	"pingone-promote/internal/pingone"
 )
 
 type ChangeSummary struct {
@@ -14,12 +17,12 @@ type ChangeSummary struct {
 	Unsupported int `json:"unsupported"`
 }
 
-// Summarize classifies the native operation list from its HTTP action and resource path.
-// Unknown or non-resource operations are reported as unsupported, never guessed.
+// Summarize counts classifications produced while inspecting the native plan against inventory.
+// Missing and unknown classifications are unsupported; summary output never guesses from names.
 func Summarize(steps []StepReview) ChangeSummary {
 	var out ChangeSummary
 	for _, step := range steps {
-		switch classifyStep(step) {
+		switch step.Operation {
 		case "create":
 			out.Create++
 		case "change":
@@ -33,41 +36,73 @@ func Summarize(steps []StepReview) ChangeSummary {
 	return out
 }
 
-func classifyStep(step StepReview) string {
-	u, err := url.Parse(step.URL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || strings.Contains(u.Path, "//") {
+func classifyNativeStep(st pingone.Step, index int, lifecycle *flowVersionLifecycle, target pingone.Inventory, src, dst map[string]pingone.Resource) string {
+	if target.APIOrigin == "" || !sameOriginEnvURL(st.URL, target, dst) {
 		return "unsupported"
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 4 || parts[0] != "v1" || parts[1] != "environments" || parts[2] == "" {
-		return "unsupported"
+	if lifecycle != nil {
+		switch index {
+		case 0, 2:
+			return "create"
+		case 1, 3:
+			return "change"
+		}
 	}
-	switch strings.ToUpper(step.Action) {
+	action := strings.ToUpper(st.Action)
+	switch action {
 	case "POST":
-		last := parts[len(parts)-1]
-		if strings.HasSuffix(last, "s") {
+		if targetResource, ok := dst[st.Target.ID]; ok && validMappedPathURL(st.URL, targetResource, action) {
+			return "change"
+		}
+		if sourceResource, ok := src[st.Source.ID]; ok && validCreatePathURL(st.URL, sourceResource, target, action) {
 			return "create"
 		}
 	case "PUT", "PATCH":
-		if len(parts) >= 5 {
+		if targetResource, ok := dst[st.Target.ID]; ok && validMappedPathURL(st.URL, targetResource, action) {
 			return "change"
 		}
 	case "DELETE":
-		if len(parts) >= 5 {
+		if targetResource, ok := dst[st.Target.ID]; ok && exactURL(st.URL, targetResource.URL) {
 			return "destroy"
 		}
 	}
 	return "unsupported"
 }
 
+func sameOriginEnvURL(raw string, target pingone.Inventory, dst map[string]pingone.Resource) bool {
+	u, err := parseStrictStepURL(raw)
+	return err == nil && sameOriginEnv(u, target, dst)
+}
+
+func parseStrictStepURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" {
+		return nil, fmt.Errorf("invalid native step URL")
+	}
+	return u, nil
+}
+
+func validMappedPathURL(raw string, resource pingone.Resource, action string) bool {
+	u, err := parseStrictStepURL(raw)
+	return err == nil && validMappedPath(u, resource, action)
+}
+
+func validCreatePathURL(raw string, resource pingone.Resource, target pingone.Inventory, action string) bool {
+	u, err := parseStrictStepURL(raw)
+	return err == nil && validCreatePath(u, resource, target, action)
+}
+
 func RenderMarkdown(review Review) string {
 	summary := Summarize(review.Steps)
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Plan change summary\n\n**Native plan steps (classified locally):** %d create, %d change, %d destroy, %d unsupported.\n\n", summary.Create, summary.Change, summary.Destroy, summary.Unsupported)
-	b.WriteString("Counts classify PingOne's returned operation list by HTTP method and resource path. They are a local estimate; PingOne does not return Terraform-style resource classifications. Before/after values below are included only when present in the redacted review.\n\n")
+	b.WriteString("Counts classify PingOne's returned operation list against the selected inventory, destination API origin, HTTP method, and resource path. They are a local estimate; PingOne does not return Terraform-style resource classifications. Before/after values below are included only when present in the redacted review.\n\n")
 	b.WriteString("| Operation | Resource | Before | After |\n| --- | --- | --- | --- |\n")
 	for _, step := range review.Steps {
-		label := classifyStep(step)
+		label := step.Operation
+		if label == "" {
+			label = "unsupported"
+		}
 		name := step.Name
 		if name == "" {
 			name = step.TargetID
@@ -97,13 +132,25 @@ func markdownValue(value any) string {
 }
 
 func markdownEscape(value string) string {
-	value = strings.ReplaceAll(value, "\\", "\\\\")
-	value = strings.ReplaceAll(value, "|", "\\|")
-	value = strings.ReplaceAll(value, "`", "\\`")
-	value = strings.ReplaceAll(value, "\r", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
-	value = strings.ReplaceAll(value, "&", "&amp;")
-	value = strings.ReplaceAll(value, "<", "&lt;")
-	value = strings.ReplaceAll(value, ">", "&gt;")
-	return value
+	var b strings.Builder
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			b.WriteByte(' ')
+			continue
+		}
+		switch r {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		default:
+			if strings.ContainsRune(`!"#$%&'()*+,-./:;=?@[\\]^_`+"`"+`{|}~`, r) {
+				b.WriteByte('\\')
+			}
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

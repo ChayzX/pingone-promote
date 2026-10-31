@@ -17,15 +17,16 @@ import (
 )
 
 type StepReview struct {
-	Action   string   `json:"action"`
-	URL      string   `json:"url"`
-	SourceID string   `json:"sourceId,omitempty"`
-	TargetID string   `json:"targetId,omitempty"`
-	Name     string   `json:"name,omitempty"`
-	Before   any      `json:"before,omitempty"`
-	After    any      `json:"after,omitempty"`
-	Changes  []string `json:"changes,omitempty"`
-	Issue    string   `json:"issue,omitempty"`
+	Operation string   `json:"operation"`
+	Action    string   `json:"action"`
+	URL       string   `json:"url"`
+	SourceID  string   `json:"sourceId,omitempty"`
+	TargetID  string   `json:"targetId,omitempty"`
+	Name      string   `json:"name,omitempty"`
+	Before    any      `json:"before,omitempty"`
+	After     any      `json:"after,omitempty"`
+	Changes   []string `json:"changes,omitempty"`
+	Issue     string   `json:"issue,omitempty"`
 }
 type Review struct {
 	Digest  string        `json:"digest"`
@@ -135,6 +136,7 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 			r.Steps = append(r.Steps, rev)
 			continue
 		}
+		rev.Operation = classifyNativeStep(st, i, flowLifecycle, target, src, dst)
 		if st.Source.ID == "" {
 			if !rollback && !(flowLifecycle != nil && (i == 1 || i == 3)) {
 				rev.Issue = "missing source resource"

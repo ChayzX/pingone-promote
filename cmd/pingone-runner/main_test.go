@@ -559,7 +559,7 @@ func TestPlanWritesMarkdownSummaryWithBlockedArtifact(t *testing.T) {
 	d := t.TempDir()
 	r, a := fixture(t)
 	rp, outp, mdp := filepath.Join(d, "requests", r.ID, "request.json"), filepath.Join(d, "artifact.json"), filepath.Join(d, "summary.md")
-	a.Review.Steps = []promotion.StepReview{{Action: "PUT", URL: "https://api.pingone.com/v1/environments/target/flows/f", Name: "Flow", Before: map[string]any{"clientSecret": "[REDACTED]"}, After: map[string]any{"name": "new"}}}
+	a.Review.Steps = []promotion.StepReview{{Operation: "change", Action: "PUT", URL: "https://api.pingone.com/v1/environments/target/flows/f", Name: "Flow", Before: map[string]any{"clientSecret": "[REDACTED]"}, After: map[string]any{"name": "new"}}}
 	a.Review.Issues = []string{"native promotion is not READY"}
 	putJSON(t, rp, r)
 	dd := deps(&fakeGate{})
