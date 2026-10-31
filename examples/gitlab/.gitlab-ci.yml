@@ -84,7 +84,7 @@ plan_promotion:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [plan.json, plan.sha256, plan-summary.md, selected-request.txt]
+    paths: [plan.json, plan.json.draft-attempt, plan.sha256, plan-summary.md, selected-request.txt]
 
 apply_promotion:
   stage: deploy
@@ -135,7 +135,7 @@ rollback_plan:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [rollback.json, rollback.sha256, rollback-summary.md, original-plan.json]
+    paths: [rollback.json, rollback.json.draft-attempt, rollback.sha256, rollback-summary.md, original-plan.json]
 
 apply_rollback:
   stage: rollback_apply

@@ -36,7 +36,10 @@ type Artifact struct {
 	TargetSnapshotID string           `json:"targetSnapshotId"`
 	Review           promotion.Review `json:"review"`
 }
-type Engine struct{ Client *pingone.Client }
+type Engine struct {
+	Client        *pingone.Client
+	DraftAttempts AttemptStore
+}
 
 var numericID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 var commitID = regexp.MustCompile(`^[a-f0-9]{40}$`)
@@ -169,6 +172,10 @@ func (e *Engine) Plan(ctx context.Context, r Request, origin Origin) (Artifact, 
 	if err != nil {
 		return a, err
 	}
+	attempt := newDraftAttempt(r, origin, "promotion", "", target.SnapshotID)
+	if err = e.beginDraft(ctx, attempt); err != nil {
+		return a, err
+	}
 	var native pingone.Promotion
 	if err = e.Client.Do(ctx, "POST", pingone.EnvPath(r.Source.ID)+"/promotions", "", body, &native); err != nil {
 		return a, err
@@ -176,7 +183,11 @@ func (e *Engine) Plan(ctx context.Context, r Request, origin Origin) (Artifact, 
 	if !safeID.MatchString(native.ID) {
 		return a, errors.New("draft response omitted safe native promotion identity; inspect native status before creating another draft")
 	}
-	a = Artifact{Version: 1, Kind: "promotion", NativeID: native.ID, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Request: r, Origin: origin, TargetSnapshotID: target.SnapshotID}
+	a = Artifact{Version: 1, Kind: "promotion", NativeID: native.ID, CreatedAt: attempt.CreatedAt, Request: r, Origin: origin, TargetSnapshotID: target.SnapshotID}
+	attempt.NativeID = native.ID
+	if err = e.checkpointDraft(ctx, attempt); err != nil {
+		return a, err
+	}
 	// The native service may pin a fresher target snapshot while preparing its plan.
 	native, err = e.wait(ctx, r.Source.ID, native.ID)
 	if err != nil {
@@ -408,11 +419,15 @@ func (e *Engine) RollbackPlan(ctx context.Context, original Artifact, origin Ori
 	if p.Status != "COMPLETED" && p.Status != "ERROR" {
 		return a, errors.New("only a completed or failed promotion can produce a rollback plan")
 	}
+	attempt := newDraftAttempt(original.Request, origin, "rollback", original.NativeID, original.TargetSnapshotID)
+	if err = e.beginDraft(ctx, attempt); err != nil {
+		return a, err
+	}
 	var native pingone.Promotion
 	if err = e.Client.Do(ctx, "POST", pingone.EnvPath(original.Request.Source.ID)+"/promotions/"+original.NativeID, pingone.RollbackType, nil, &native); err != nil {
 		return a, fmt.Errorf("could not create native rollback draft; reconcile native status before retry: %w", err)
 	}
-	if !safeID.MatchString(native.ID) || native.ID == original.NativeID || native.Previous.ID != original.NativeID {
+	if !safeID.MatchString(native.ID) || native.ID == original.NativeID || native.Previous.ID != original.NativeID || native.Source.ID != original.Request.Source.ID || native.Target.ID != original.Request.Target.ID || native.SourceSnapshot.ID != original.Request.Source.SnapshotID {
 		return a, errors.New("rollback did not create a distinct linked plan; reconcile native status before retrying")
 	}
 	a = original
@@ -420,7 +435,11 @@ func (e *Engine) RollbackPlan(ctx context.Context, original Artifact, origin Ori
 	a.NativeID = native.ID
 	a.OriginalNativeID = original.NativeID
 	a.Origin = origin
-	a.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	a.CreatedAt = attempt.CreatedAt
+	attempt.NativeID = native.ID
+	if err = e.checkpointDraft(ctx, attempt); err != nil {
+		return a, err
+	}
 	native, err = e.wait(ctx, a.Request.Source.ID, a.NativeID)
 	if err != nil {
 		return a, err

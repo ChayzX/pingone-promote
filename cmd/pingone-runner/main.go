@@ -246,6 +246,9 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 				return err
 			}
 		}
+		if err := precheckDraftAttempt(*outPath, *requestPath, *outPath, *digestPath, *summaryPath); err != nil {
+			return err
+		}
 		r, err := readRequest(*requestPath)
 		if err != nil {
 			return err
@@ -261,7 +264,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err != nil {
 			return err
 		}
-		a, err := deps.engine(client).Plan(ctx, r, g.Origin())
+		a, err := bindDraftAttempts(deps.engine(client), *outPath).Plan(ctx, r, g.Origin())
 		if err != nil {
 			return err
 		}
@@ -439,6 +442,9 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 				return err
 			}
 		}
+		if err := precheckDraftAttempt(*outPath, *artifactPath, *outPath, *digestPath, *summaryPath); err != nil {
+			return err
+		}
 		a, err := readArtifact(*artifactPath)
 		if err != nil {
 			return err
@@ -457,7 +463,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err != nil {
 			return err
 		}
-		rollback, err := deps.engine(client).RollbackPlan(ctx, a, g.Origin())
+		rollback, err := bindDraftAttempts(deps.engine(client), *outPath).RollbackPlan(ctx, a, g.Origin())
 		if err != nil {
 			return err
 		}

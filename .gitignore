@@ -20,3 +20,4 @@ gitlab.json
 /rollback.json
 /rollback.sha256
 /selected-request.txt
+*.draft-attempt
