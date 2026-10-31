@@ -29,6 +29,7 @@ type fakeEngine struct {
 	artifact      gitops.Artifact
 	refreshed     gitops.Artifact
 	refreshErr    error
+	applyErr      error
 	initial       pingone.Promotion
 	statuses      []pingone.Promotion
 	planCalls     int
@@ -36,6 +37,7 @@ type fakeEngine struct {
 	applyCalls    int
 	statusCalls   int
 	rollbackCalls int
+	statusHook    func()
 }
 
 func (e *fakeEngine) Plan(context.Context, gitops.Request, gitops.Origin) (gitops.Artifact, error) {
@@ -57,12 +59,15 @@ func (e *fakeEngine) Apply(ctx context.Context, a gitops.Artifact, digest string
 	if err := authorize(ctx, a); err != nil {
 		return pingone.Promotion{}, err
 	}
-	return e.initial, nil
+	return e.initial, e.applyErr
 }
 func (e *fakeEngine) Status(context.Context, gitops.Artifact) (pingone.Promotion, error) {
 	e.statusCalls++
+	if e.statusHook != nil {
+		e.statusHook()
+	}
 	if len(e.statuses) == 0 {
-		return pingone.Promotion{Status: "IN_PROGRESS"}, nil
+		return pingone.Promotion{ID: "native-1", Status: "IN_PROGRESS"}, nil
 	}
 	p := e.statuses[0]
 	e.statuses = e.statuses[1:]
@@ -418,10 +423,16 @@ func TestApplyPollsAcceptedExecutionToCompletedOrError(t *testing.T) {
 			ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
 			putJSON(t, ap, a)
 			g := &fakeGate{}
-			e := &fakeEngine{initial: pingone.Promotion{Status: "IN_PROGRESS"}, statuses: []pingone.Promotion{{Status: terminal}}}
+			e := &fakeEngine{initial: pingone.Promotion{ID: "native-1", Status: "IN_PROGRESS"}, statuses: []pingone.Promotion{{ID: "native-1", Status: terminal}}}
 			dd := deps(g)
 			dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
 			dd.engine = func(*pingone.Client) runnerEngine { return e }
+			e.statusHook = func() {
+				saved, readErr := readExecutionAttempt(ap + ".execute-intent")
+				if readErr != nil || saved.Dispatch != operation.Identified || !saved.NativeObserved || saved.NativeStatus != "IN_PROGRESS" {
+					t.Errorf("poll began before matching identity checkpoint: attempt=%+v err=%v", saved, readErr)
+				}
+			}
 			dd.pollInterval = time.Millisecond
 			dd.pollTimeout = time.Second
 			var out, errOut strings.Builder
@@ -439,6 +450,9 @@ func TestApplyPollsAcceptedExecutionToCompletedOrError(t *testing.T) {
 			var res resultOutput
 			if json.Unmarshal(b, &res) != nil || res.Status != terminal {
 				t.Fatalf("result status=%s raw=%s", res.Status, b)
+			}
+			if res.DispatchState != operation.Identified || !res.NativeObserved || res.EffectsVerified {
+				t.Fatalf("result lifecycle evidence=%+v", res)
 			}
 			if e.applyCalls != 1 || e.statusCalls != 1 {
 				t.Fatalf("apply=%d status=%d", e.applyCalls, e.statusCalls)
@@ -492,11 +506,12 @@ func TestApplyReportsSanitizedPromotionErrorsAndRetainsIntent(t *testing.T) {
 	if err := json.Unmarshal([]byte(response), &terminal); err != nil {
 		t.Fatal(err)
 	}
+	terminal.ID = "native-1"
 	d := t.TempDir()
 	_, a := fixture(t)
 	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
 	putJSON(t, ap, a)
-	e := &fakeEngine{initial: pingone.Promotion{Status: "IN_PROGRESS"}, statuses: []pingone.Promotion{terminal}}
+	e := &fakeEngine{initial: pingone.Promotion{ID: "native-1", Status: "IN_PROGRESS"}, statuses: []pingone.Promotion{terminal}}
 	dd := deps(&fakeGate{})
 	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
 	dd.engine = func(*pingone.Client) runnerEngine { return e }
@@ -554,7 +569,7 @@ func TestApplyTimeoutWritesInProgressAndRetainsIntent(t *testing.T) {
 	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
 	putJSON(t, ap, a)
 	g := &fakeGate{}
-	e := &fakeEngine{initial: pingone.Promotion{Status: "ACCEPTED"}, statuses: []pingone.Promotion{{Status: "IN_PROGRESS"}}}
+	e := &fakeEngine{initial: pingone.Promotion{ID: "native-1", Status: "IN_PROGRESS"}, statuses: []pingone.Promotion{{ID: "native-1", Status: "IN_PROGRESS"}}}
 	dd := deps(g)
 	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
 	dd.engine = func(*pingone.Client) runnerEngine { return e }
@@ -573,8 +588,207 @@ func TestApplyTimeoutWritesInProgressAndRetainsIntent(t *testing.T) {
 	if json.Unmarshal(b, &res) != nil || res.Status != "IN_PROGRESS" {
 		t.Fatalf("result status=%s raw=%s", res.Status, b)
 	}
+	if !res.NativeObserved || !res.NeedsReconciliation || res.EffectsVerified {
+		t.Fatalf("poll timeout did not retain observed status and require reconciliation: %+v", res)
+	}
 	if _, err = os.Stat(ap + ".execute-intent"); err != nil {
 		t.Fatal("execute intent was not retained")
+	}
+}
+
+func TestStatusProjectsFutureStatusAsObservedUnknownWithoutDispatchClaim(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap := filepath.Join(d, "artifact.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{statuses: []pingone.Promotion{{ID: "native-1", Status: "FUTURE_PRIVATE_STATUS"}}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	var out, errOut strings.Builder
+	if err := runWith([]string{"status", "--artifact", ap}, &out, &errOut, dd); err != nil {
+		t.Fatal(err)
+	}
+	var res resultOutput
+	if err := json.Unmarshal([]byte(out.String()), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "UNKNOWN" || !res.NativeObserved || res.EffectsVerified || !res.NeedsReconciliation || res.DispatchState != "" || strings.Contains(out.String(), "FUTURE_PRIVATE_STATUS") {
+		t.Fatalf("status exposed unsafe or inferred evidence: %+v output=%s", res, out.String())
+	}
+	if e.statusCalls != 1 || e.applyCalls != 0 {
+		t.Fatalf("status calls=%d apply calls=%d", e.statusCalls, e.applyCalls)
+	}
+}
+
+func TestStatusRejectsMismatchedNativeIdentity(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap := filepath.Join(d, "artifact.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{statuses: []pingone.Promotion{{ID: "different-native", Status: "COMPLETED"}}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	var out, errOut strings.Builder
+	err := runWith([]string{"status", "--artifact", ap}, &out, &errOut, dd)
+	if err == nil || out.Len() != 0 || e.statusCalls != 1 || e.applyCalls != 0 {
+		t.Fatalf("mismatched status identity was accepted: err=%v stdout=%s status=%d apply=%d", err, out.String(), e.statusCalls, e.applyCalls)
+	}
+}
+
+func TestApplyErrorReportsUncertainDispatchInsteadOfInventedRunningStatus(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{applyErr: errors.New("connection lost after write")}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", outp}, &out, &errOut, dd)
+	if err == nil || e.applyCalls != 1 || e.statusCalls != 0 {
+		t.Fatalf("apply error did not stop without polling: err=%v apply=%d status=%d", err, e.applyCalls, e.statusCalls)
+	}
+	b, readErr := os.ReadFile(outp)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var res resultOutput
+	if json.Unmarshal(b, &res) != nil || res.Status == "IN_PROGRESS" {
+		t.Fatalf("apply error invented a native running observation: %+v raw=%s", res, b)
+	}
+	e2 := &fakeEngine{}
+	dd.engine = func(*pingone.Client) runnerEngine { return e2 }
+	err = runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", filepath.Join(d, "result-restart.json")}, &out, &errOut, dd)
+	if err == nil || e2.applyCalls != 0 {
+		t.Fatalf("restart replayed uncertain apply: err=%v apply=%d", err, e2.applyCalls)
+	}
+}
+
+func TestApplyRejectsMismatchedNativeIdentityBeforePolling(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{initial: pingone.Promotion{ID: "different-native", Status: "IN_PROGRESS"}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	dd.pollInterval, dd.pollTimeout = time.Millisecond, time.Millisecond
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", outp}, &out, &errOut, dd)
+	if err == nil || e.statusCalls != 0 {
+		t.Fatalf("mismatched native identity was treated as observed: err=%v status calls=%d", err, e.statusCalls)
+	}
+	attempt, readErr := readExecutionAttempt(ap + ".execute-intent")
+	if readErr != nil || attempt.Dispatch != operation.Uncertain || attempt.NativeObserved {
+		t.Fatalf("mismatched identity was checkpointed as trusted: %+v err=%v", attempt, readErr)
+	}
+}
+
+func TestApplyFutureStatusKeepsIdentifiedDispatchWithSafeUnknownProjection(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{initial: pingone.Promotion{ID: "native-1", Status: "FUTURE_PRIVATE_STATUS"}, statuses: []pingone.Promotion{{ID: "native-1", Status: "COMPLETED"}}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	e.statusHook = func() {
+		saved, readErr := readExecutionAttempt(ap + ".execute-intent")
+		decision := operation.Evaluate(operation.Observation{Status: saved.NativeStatus, Dispatch: saved.Dispatch, EffectsVerified: saved.EffectsVerified})
+		if readErr != nil || saved.Dispatch != operation.Identified || !saved.NativeObserved || saved.NativeStatus != "UNKNOWN" || !decision.NeedsReconciliation {
+			t.Errorf("future status identity checkpoint=%+v decision=%+v err=%v", saved, decision, readErr)
+		}
+	}
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", outp}, &out, &errOut, dd)
+	if err != nil || e.statusCalls != 1 {
+		t.Fatalf("future status apply err=%v status calls=%d", err, e.statusCalls)
+	}
+	b, readErr := os.ReadFile(outp)
+	if readErr != nil || strings.Contains(string(b), "FUTURE_PRIVATE_STATUS") {
+		t.Fatalf("raw future status leaked to result: read=%v body=%s", readErr, b)
+	}
+	var res resultOutput
+	if err = json.Unmarshal(b, &res); err != nil || !res.NativeObserved || res.EffectsVerified {
+		t.Fatalf("future status lifecycle result=%+v err=%v", res, err)
+	}
+}
+
+func TestApplyIdentityCheckpointFailureRetainsIntentAndSkipsPoll(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, outp := filepath.Join(d, "artifact.json"), filepath.Join(d, "result.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{initial: pingone.Promotion{ID: "native-1", Status: "IN_PROGRESS"}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	dd.executionAttempts = func(path string) executionAttemptStore {
+		return failingCheckpointStore{executionAttemptStore: &executionAttemptFileStore{path: path}}
+	}
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", outp}, &out, &errOut, dd)
+	if err == nil || e.applyCalls != 1 || e.statusCalls != 0 {
+		t.Fatalf("failed identity checkpoint did not stop before polling: err=%v apply=%d status=%d", err, e.applyCalls, e.statusCalls)
+	}
+	attempt, readErr := readExecutionAttempt(ap + ".execute-intent")
+	if readErr != nil || attempt.Dispatch != operation.Uncertain || attempt.NativeObserved {
+		t.Fatalf("failed checkpoint lost or advanced initial intent: %+v err=%v", attempt, readErr)
+	}
+	if _, readErr = os.Stat(outp); !os.IsNotExist(readErr) {
+		t.Fatalf("identity checkpoint failure wrote result: %v", readErr)
+	}
+}
+
+func TestApplyOutputFailureRetainsIntentAndRestartBlocksReplay(t *testing.T) {
+	d := t.TempDir()
+	_, a := fixture(t)
+	ap, badOut := filepath.Join(d, "artifact.json"), filepath.Join(d, "missing", "result.json")
+	putJSON(t, ap, a)
+	e := &fakeEngine{initial: pingone.Promotion{ID: "native-1", Status: "COMPLETED"}}
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return e }
+	var out, errOut strings.Builder
+	err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", badOut}, &out, &errOut, dd)
+	if err == nil || e.applyCalls != 1 {
+		t.Fatalf("result output failure was not reported: err=%v apply=%d", err, e.applyCalls)
+	}
+	if _, readErr := os.Stat(ap + ".execute-intent"); readErr != nil {
+		t.Fatalf("output failure lost execute intent: %v", readErr)
+	}
+	e2 := &fakeEngine{}
+	dd.engine = func(*pingone.Client) runnerEngine { return e2 }
+	err = runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", filepath.Join(d, "restart.json")}, &out, &errOut, dd)
+	if err == nil || e2.applyCalls != 0 {
+		t.Fatalf("restart replayed after result output failure: err=%v apply=%d", err, e2.applyCalls)
+	}
+}
+
+func TestMalformedAndLegacyExecuteIntentsBlockBeforeAuthorization(t *testing.T) {
+	for name, content := range map[string]string{"malformed": "{", "legacy": "artifact=native-1\napprovedDigest=abc\n"} {
+		t.Run(name, func(t *testing.T) {
+			d := t.TempDir()
+			_, a := fixture(t)
+			ap := filepath.Join(d, "artifact.json")
+			putJSON(t, ap, a)
+			if err := os.WriteFile(ap+".execute-intent", []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			g, e := &fakeGate{}, &fakeEngine{}
+			dd := deps(g)
+			dd.engine = func(*pingone.Client) runnerEngine { return e }
+			var out, errOut strings.Builder
+			err := runWith([]string{"apply", "--artifact", ap, "--approved-digest", a.Review.Digest, "--out", filepath.Join(d, "result.json")}, &out, &errOut, dd)
+			if err == nil || g.verified != 0 || e.applyCalls != 0 {
+				t.Fatalf("existing %s intent did not block before authorization: err=%v verify=%d apply=%d", name, err, g.verified, e.applyCalls)
+			}
+		})
 	}
 }
 

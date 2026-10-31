@@ -46,12 +46,13 @@ type runnerEngine interface {
 }
 
 type runnerDeps struct {
-	getenv       func(string) string
-	gate         func() (runnerGate, error)
-	client       func(gitops.Request, func(string) string) (*pingone.Client, error)
-	engine       func(*pingone.Client) runnerEngine
-	pollInterval time.Duration
-	pollTimeout  time.Duration
+	getenv            func(string) string
+	gate              func() (runnerGate, error)
+	client            func(gitops.Request, func(string) string) (*pingone.Client, error)
+	engine            func(*pingone.Client) runnerEngine
+	executionAttempts func(string) executionAttemptStore
+	pollInterval      time.Duration
+	pollTimeout       time.Duration
 }
 
 func defaultDeps(getenv func(string) string) runnerDeps {
@@ -128,6 +129,9 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 	}
 	if deps.engine == nil {
 		deps.engine = func(c *pingone.Client) runnerEngine { return &gitops.Engine{Client: c} }
+	}
+	if deps.executionAttempts == nil {
+		deps.executionAttempts = func(path string) executionAttemptStore { return &executionAttemptFileStore{path: path} }
 	}
 	if deps.pollInterval <= 0 {
 		deps.pollInterval = time.Second
@@ -347,12 +351,17 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return operation.NewFailure("client_setup_failed", "preflight", "The PingOne client could not be prepared. Verify runner credentials and retry before dispatch.", "retry_pre_dispatch", "", err)
 		}
 		engine := deps.engine(client)
+		attempts := deps.executionAttempts(marker)
 		markerWritten := false
 		result, err := engine.Apply(ctx, a, *approved, func(c context.Context, current gitops.Artifact) error {
 			if e := g.Authorize(c, current); e != nil {
 				return e
 			}
-			if e := createIntent(marker, a, *approved); e != nil {
+			attempt, e := newExecutionAttempt(a, *approved)
+			if e != nil {
+				return e
+			}
+			if e = attempts.Begin(c, attempt); e != nil {
 				return e
 			}
 			markerWritten = true
@@ -360,7 +369,8 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		})
 		if err != nil {
 			if markerWritten {
-				res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: "IN_PROGRESS", Errors: []string{safeError(err, deps.getenv)}, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+				res := executionResult(a, "UNKNOWN", operation.Uncertain, false)
+				res.Errors = []string{safeError(err, deps.getenv)}
 				_ = writePrivateJSON(*outPath, res)
 				return operation.NewFailure("execution_outcome_uncertain", "execution", "PingOne may have received the execution request. The execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", err)
 			}
@@ -369,10 +379,40 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			}
 			return operation.NewFailure("execution_pre_dispatch_refused", "preflight", "Execution was not dispatched. Resolve the review, target drift, authorization, or local intent issue before retrying.", "verify_review_and_authorization", "", err)
 		}
-		result, pollErr := waitForTerminal(ctx, func(c context.Context) (pingone.Promotion, error) { return engine.Status(c, a) }, result, deps.pollTimeout, deps.pollInterval)
-		res := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: result.Status, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), Errors: pingone.SummarizePromotionErrors(result.Errors, result.PromotionErrors)}
+		if result.ID != a.NativeID {
+			failure := errors.New("execute response identity does not match the approved promotion; reconcile native status before any retry")
+			res := executionResult(a, "UNKNOWN", operation.Uncertain, false)
+			res.Errors = []string{safeError(failure, deps.getenv)}
+			_ = writePrivateJSON(*outPath, res)
+			return operation.NewFailure("execution_outcome_uncertain", "reconciliation", "The execute response did not establish a matching native operation state. The execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", failure)
+		}
+		attempt, attemptErr := readExecutionAttempt(marker)
+		if attemptErr == nil {
+			attempt.Dispatch = operation.Identified
+			attempt.NativeObserved = true
+			attempt.NativeStatus = executionStatusProjection(result.Status)
+			attemptErr = attempts.Checkpoint(ctx, attempt)
+		}
+		if attemptErr != nil {
+			return operation.NewFailure("execution_identity_checkpoint_failed", "persistence", "Execution returned a matching native identity, but its status could not be checkpointed. The uncertain execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", attemptErr)
+		}
+		result, pollErr := waitForTerminal(ctx, func(c context.Context) (pingone.Promotion, error) {
+			p, statusErr := engine.Status(c, a)
+			if statusErr == nil && p.ID != a.NativeID {
+				return pingone.Promotion{}, errors.New("native status identity differs from the approved promotion")
+			}
+			return p, statusErr
+		}, result, deps.pollTimeout, deps.pollInterval)
+		if result.ID == a.NativeID {
+			attempt.NativeStatus = executionStatusProjection(result.Status)
+			if attemptErr = attempts.Checkpoint(ctx, attempt); attemptErr != nil {
+				return operation.NewFailure("execution_status_checkpoint_failed", "persistence", "Native status was observed, but the execution record could not be updated. The execute intent is retained; reconcile native status before any retry.", "reconcile_native_status", "", attemptErr)
+			}
+		}
+		res := executionResult(a, executionStatusProjection(result.Status), operation.Identified, true)
+		res.Errors = pingone.SummarizePromotionErrors(result.Errors, result.PromotionErrors)
 		if pollErr != nil {
-			res.Status = "IN_PROGRESS"
+			res.NeedsReconciliation = true
 			res.Errors = append(res.Errors, safeError(pollErr, deps.getenv))
 		}
 		if err = writePrivateJSON(*outPath, res); err != nil {
@@ -413,7 +453,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err != nil {
 			return err
 		}
-		out := resultOutput{Kind: a.Kind, NativeID: a.NativeID, Status: p.Status, Errors: pingone.SummarizePromotionErrors(p.Errors, p.PromotionErrors)}
+		if p.ID != a.NativeID {
+			return errors.New("native status identity differs from the requested promotion")
+		}
+		out := executionResult(a, executionStatusProjection(p.Status), "", true)
+		out.Errors = pingone.SummarizePromotionErrors(p.Errors, p.PromotionErrors)
 		return json.NewEncoder(stdout).Encode(out)
 	case "rollback-plan":
 		fs := flagSet("rollback-plan", stderr)
@@ -506,11 +550,26 @@ func makePingOneClient(r gitops.Request, getenv func(string) string) (*pingone.C
 }
 
 type resultOutput struct {
-	Kind      string   `json:"kind"`
-	NativeID  string   `json:"nativeId"`
-	Status    string   `json:"status"`
-	UpdatedAt string   `json:"updatedAt,omitempty"`
-	Errors    []string `json:"errors,omitempty"`
+	Kind                string                  `json:"kind"`
+	NativeID            string                  `json:"nativeId"`
+	Status              string                  `json:"status"`
+	DispatchState       operation.DispatchState `json:"dispatchState,omitempty"`
+	NativeObserved      bool                    `json:"nativeObserved,omitempty"`
+	EffectsVerified     bool                    `json:"effectsVerified"`
+	NeedsReconciliation bool                    `json:"needsReconciliation,omitempty"`
+	MayHaveEffects      bool                    `json:"mayHaveEffects,omitempty"`
+	UpdatedAt           string                  `json:"updatedAt,omitempty"`
+	Errors              []string                `json:"errors,omitempty"`
+}
+
+func executionResult(a gitops.Artifact, status string, dispatch operation.DispatchState, observed bool) resultOutput {
+	decision := operation.Evaluate(operation.Observation{Status: status, Dispatch: dispatch, EffectsVerified: false})
+	return resultOutput{
+		Kind: a.Kind, NativeID: a.NativeID, Status: status, DispatchState: dispatch,
+		NativeObserved: observed, EffectsVerified: decision.EffectsVerified,
+		NeedsReconciliation: decision.NeedsReconciliation, MayHaveEffects: decision.MayHaveEffects,
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
 }
 
 func waitForTerminal(ctx context.Context, status func(context.Context) (pingone.Promotion, error), current pingone.Promotion, timeout, interval time.Duration) (pingone.Promotion, error) {
@@ -647,16 +706,11 @@ func writePrivateBytes(path string, data []byte) error {
 	return nil
 }
 func createIntent(path string, a gitops.Artifact, digest string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	attempt, err := newExecutionAttempt(a, digest)
 	if err != nil {
-		return fmt.Errorf("could not create execute intent marker: %w", err)
+		return err
 	}
-	defer f.Close()
-	data := []byte(fmt.Sprintf("artifact=%s\napprovedDigest=%s\ncreatedAt=%s\n", a.NativeID, digest, time.Now().UTC().Format(time.RFC3339Nano)))
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	return err
+	return (&executionAttemptFileStore{path: path}).Begin(context.Background(), attempt)
 }
 func samePath(a, b string) bool {
 	aa, e1 := filepath.Abs(a)
