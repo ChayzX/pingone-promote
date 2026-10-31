@@ -48,6 +48,9 @@ func TestEvaluate(t *testing.T) {
 		{"rolled back may have effects", Observation{Status: "ROLLED_BACK", Dispatch: NotDispatched}, Decision{Native: RolledBack, MayHaveEffects: true}},
 		{"effects verified is preserved independently", Observation{Status: "COMPLETED", Dispatch: NotDispatched, EffectsVerified: true}, Decision{Native: Completed, MayHaveEffects: true, EffectsVerified: true}},
 		{"preparing does not execute", Observation{Status: "PREPARING", Dispatch: NotDispatched}, Decision{Native: Preparing}},
+		{"empty dispatch requires reconciliation even when ready", Observation{Status: "READY", EffectsVerified: true}, Decision{Native: Ready, NeedsReconciliation: true, MayHaveEffects: true, EffectsVerified: true}},
+		{"invalid dispatch requires reconciliation while preparing", Observation{Status: "PREPARING", Dispatch: DispatchState("future")}, Decision{Native: Preparing, NeedsReconciliation: true, MayHaveEffects: true}},
+		{"empty dispatch requires reconciliation for invalid native state", Observation{Status: "VALIDATION_FAILED"}, Decision{Native: Invalid, NeedsReconciliation: true, MayHaveEffects: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

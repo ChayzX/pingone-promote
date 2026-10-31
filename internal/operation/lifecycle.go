@@ -65,9 +65,10 @@ func Classify(status string) NativeState {
 // Evaluate derives execution and reconciliation decisions without side effects.
 func Evaluate(observation Observation) Decision {
 	native := Classify(observation.Status)
-	dispatchMayHaveEffects := observation.Dispatch == Uncertain || observation.Dispatch == Identified
+	dispatchKnown := observation.Dispatch == NotDispatched || observation.Dispatch == Uncertain || observation.Dispatch == Identified
+	dispatchMayHaveEffects := observation.Dispatch == Uncertain || observation.Dispatch == Identified || !dispatchKnown
 	mayHaveEffects := native == Running || native == Completed || native == Failed || native == RolledBack || dispatchMayHaveEffects
-	needsReconciliation := native == Unknown || observation.Dispatch == Uncertain || (native == Ready && observation.Dispatch == Identified)
+	needsReconciliation := native == Unknown || !dispatchKnown || observation.Dispatch == Uncertain || (native == Ready && observation.Dispatch == Identified)
 	return Decision{
 		Native:              native,
 		CanExecute:          native == Ready && observation.Dispatch == NotDispatched,
