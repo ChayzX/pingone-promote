@@ -70,6 +70,31 @@ func (platformCredentialProvider) Set(id, secret string) error   { return keycha
 func (platformCredentialProvider) Get(id string) (string, error) { return keychainGet(id) }
 func (platformCredentialProvider) Delete(id string) error        { return keychainDelete(id) }
 
+func credentialBeforeChange(provider credentialProvider, id string) (string, bool, error) {
+	secret, err := provider.Get(id)
+	if errors.Is(err, errCredentialNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, errors.New("could not read the existing OS keyring credential")
+	}
+	return secret, true, nil
+}
+
+func restoreCredential(provider credentialProvider, id, secret string, existed bool) error {
+	if existed {
+		return provider.Set(id, secret)
+	}
+	return provider.Delete(id)
+}
+
+func compensationFailure(err error, action string) error {
+	if err == nil {
+		return errors.New(action)
+	}
+	return fmt.Errorf("%s: %w", action, ErrCredentialStateInconsistent)
+}
+
 // PersistenceError marks a local storage or stored-data error for API callers.
 // Its original cause remains available through Unwrap for local diagnostics.
 type PersistenceError struct{ err error }
@@ -86,6 +111,10 @@ func persistenceError(err error) error {
 
 // ErrRecordNotFound identifies an absent record without masking store read failures.
 var ErrRecordNotFound = errors.New("record not found")
+
+// ErrCredentialStateInconsistent indicates that a failed metadata write could
+// not be compensated in the OS keyring.
+var ErrCredentialStateInconsistent = errors.New("profile metadata and OS keyring state may be inconsistent; inspect both before continuing")
 
 // Open opens or creates a private store directory and rejects malformed
 // existing data files instead of silently replacing them.
@@ -225,9 +254,16 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 		return p, err
 	}
 	oldSecret, hasOldSecret := s.session[p.ID]
-	if p.SecretMode == "keychain" && secret != "" {
+	var priorCredential string
+	var hadPriorCredential bool
+	changesCredential := p.SecretMode == "keychain" && secret != ""
+	if changesCredential {
+		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, p.ID)
+		if err != nil {
+			return p, err
+		}
 		if err := s.credentials.Set(p.ID, secret); err != nil {
-			return p, fmt.Errorf("could not store credential in the OS keyring: %w", err)
+			return p, compensationFailure(restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential), "could not store credential in the OS keyring")
 		}
 	}
 	found := false
@@ -242,6 +278,11 @@ func (s *Store) SaveProfile(p pingone.Profile, secret string) (pingone.Profile, 
 		profiles = append(profiles, p)
 	}
 	if err := s.write("profiles.json", profiles); err != nil {
+		if changesCredential {
+			if restoreErr := restoreCredential(s.credentials, p.ID, priorCredential, hadPriorCredential); restoreErr != nil {
+				return p, errors.Join(err, compensationFailure(restoreErr, "profile metadata was not saved"))
+			}
+		}
 		return p, err
 	}
 	if p.SecretMode == "session" {
@@ -279,12 +320,24 @@ func (s *Store) DeleteProfile(id string) error {
 	if !found {
 		return fmt.Errorf("profile %q not found", id)
 	}
-	if deleted.SecretMode == "keychain" {
+	var priorCredential string
+	var hadPriorCredential bool
+	changesCredential := deleted.SecretMode == "keychain"
+	if changesCredential {
+		priorCredential, hadPriorCredential, err = credentialBeforeChange(s.credentials, id)
+		if err != nil {
+			return err
+		}
 		if err := s.credentials.Delete(id); err != nil {
-			return fmt.Errorf("could not delete credential from the OS keyring: %w", err)
+			return compensationFailure(restoreCredential(s.credentials, id, priorCredential, hadPriorCredential), "could not delete credential from the OS keyring")
 		}
 	}
 	if err := s.write("profiles.json", kept); err != nil {
+		if changesCredential {
+			if restoreErr := restoreCredential(s.credentials, id, priorCredential, hadPriorCredential); restoreErr != nil {
+				return errors.Join(err, compensationFailure(restoreErr, "profile metadata was not deleted"))
+			}
+		}
 		return err
 	}
 	delete(s.session, id)

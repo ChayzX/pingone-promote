@@ -168,6 +168,8 @@ func replyRouteError(w http.ResponseWriter, err error) {
 	var e *statusError
 	if errors.As(err, &e) {
 		replyError(w, e.status, e.err)
+	} else if errors.Is(err, store.ErrCredentialStateInconsistent) {
+		replyError(w, http.StatusInternalServerError, store.ErrCredentialStateInconsistent)
 	} else {
 		var persistenceErr *store.PersistenceError
 		if errors.As(err, &persistenceErr) {

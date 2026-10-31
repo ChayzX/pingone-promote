@@ -34,6 +34,17 @@ type nativeFixture struct {
 	mapping map[string]string
 }
 
+func TestReplyRouteErrorSurfacesCredentialStateInconsistency(t *testing.T) {
+	w := httptest.NewRecorder()
+	replyRouteError(w, errors.Join(errors.New("profiles.json write failed"), store.ErrCredentialStateInconsistent))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(w.Body.String(), "state may be inconsistent") {
+		t.Fatalf("response omitted inconsistent credential state: %s", w.Body.String())
+	}
+}
+
 func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

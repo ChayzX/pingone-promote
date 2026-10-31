@@ -13,10 +13,12 @@ import (
 )
 
 type fakeCredentialProvider struct {
-	values map[string]string
-	setErr error
-	getErr error
-	delErr error
+	values       map[string]string
+	setErr       error
+	getErr       error
+	delErr       error
+	beforeSet    func() error
+	beforeDelete func() error
 }
 
 func (f *fakeCredentialProvider) Set(id, secret string) error {
@@ -27,6 +29,9 @@ func (f *fakeCredentialProvider) Set(id, secret string) error {
 		f.values = map[string]string{}
 	}
 	f.values[id] = secret
+	if f.beforeSet != nil {
+		return f.beforeSet()
+	}
 	return nil
 }
 func (f *fakeCredentialProvider) Get(id string) (string, error) {
@@ -44,7 +49,31 @@ func (f *fakeCredentialProvider) Delete(id string) error {
 		return f.delErr
 	}
 	delete(f.values, id)
+	if f.beforeDelete != nil {
+		return f.beforeDelete()
+	}
 	return nil
+}
+
+func blockProfilesWrite(t *testing.T, dir string) func() {
+	t.Helper()
+	path := filepath.Join(dir, "profiles.json")
+	backup := filepath.Join(dir, "profiles.json.backup")
+	if err := os.Rename(path, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		_ = os.Rename(backup, path)
+		t.Fatal(err)
+	}
+	return func() {
+		if err := os.Remove(path); err != nil {
+			t.Errorf("remove synthetic profiles directory: %v", err)
+		}
+		if err := os.Rename(backup, path); err != nil {
+			t.Errorf("restore profiles.json after synthetic failure: %v", err)
+		}
+	}
 }
 
 func validProfile() pingone.Profile {
@@ -175,6 +204,169 @@ func TestKeyringUnavailableErrorDoesNotPersistProfileOrSecret(t *testing.T) {
 	if len(profiles) != 0 {
 		t.Fatalf("failed keyring save persisted profile: %+v", profiles)
 	}
+}
+
+func TestSaveProfileRestoresKeyringCredentialWhenMetadataWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "prior-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restore func()
+	provider.beforeSet = func() error {
+		provider.beforeSet = nil
+		restore = blockProfilesWrite(t, dir)
+		return nil
+	}
+	updated := p
+	updated.Name = "Renamed profile"
+	_, saveErr := s.SaveProfile(updated, "replacement-secret")
+	if restore != nil {
+		restore()
+	}
+	if saveErr == nil {
+		t.Fatal("SaveProfile unexpectedly succeeded with profiles.json replaced by a directory")
+	}
+	if got := provider.values[p.ID]; got != "prior-secret" {
+		t.Fatalf("credential after failed profile update = %q, want prior credential", got)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].Name != p.Name {
+		t.Fatalf("profile metadata after failed update = %+v", profiles)
+	}
+	if strings.Contains(string(mustRead(t, filepath.Join(dir, "profiles.json"))), "prior-secret") || strings.Contains(string(mustRead(t, filepath.Join(dir, "profiles.json"))), "replacement-secret") {
+		t.Fatal("credential was written to profiles.json")
+	}
+}
+
+func TestDeleteProfileRestoresKeyringCredentialWhenMetadataWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "retained-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restore func()
+	provider.beforeDelete = func() error {
+		provider.beforeDelete = nil
+		restore = blockProfilesWrite(t, dir)
+		return nil
+	}
+	deleteErr := s.DeleteProfile(p.ID)
+	if restore != nil {
+		restore()
+	}
+	if deleteErr == nil {
+		t.Fatal("DeleteProfile unexpectedly succeeded with profiles.json replaced by a directory")
+	}
+	if got, ok := provider.values[p.ID]; !ok || got != "retained-secret" {
+		t.Fatalf("credential after failed profile deletion = %q, present %v", got, ok)
+	}
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].ID != p.ID {
+		t.Fatalf("profile metadata after failed deletion = %+v", profiles)
+	}
+	if strings.Contains(string(mustRead(t, filepath.Join(dir, "profiles.json"))), "retained-secret") {
+		t.Fatal("credential was written to profiles.json")
+	}
+}
+
+func TestSaveProfileReportsCompensationFailureWithoutCredentialValues(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "prior-secret-canary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restore func()
+	provider.beforeSet = func() error {
+		provider.beforeSet = nil
+		provider.setErr = errors.New("provider diagnostic includes secret canaries")
+		restore = blockProfilesWrite(t, dir)
+		return nil
+	}
+	updated := p
+	updated.Name = "Rename that cannot be saved"
+	_, saveErr := s.SaveProfile(updated, "replacement-secret-canary")
+	if restore != nil {
+		restore()
+	}
+	if saveErr == nil || !strings.Contains(saveErr.Error(), "state may be inconsistent") {
+		t.Fatalf("SaveProfile error = %v, want explicit compensation failure", saveErr)
+	}
+	if strings.Contains(saveErr.Error(), "prior-secret-canary") || strings.Contains(saveErr.Error(), "replacement-secret-canary") || strings.Contains(saveErr.Error(), "provider diagnostic") {
+		t.Fatalf("credential data leaked through error: %v", saveErr)
+	}
+}
+
+func TestDeleteProfileReportsCompensationFailureWithoutCredentialValues(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCredentialProvider{}
+	s.credentials = provider
+	p := validProfile()
+	p.SecretMode = "keychain"
+	p, err = s.SaveProfile(p, "delete-secret-canary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restore func()
+	provider.beforeDelete = func() error {
+		provider.beforeDelete = nil
+		provider.setErr = errors.New("provider diagnostic includes secret canary")
+		restore = blockProfilesWrite(t, dir)
+		return nil
+	}
+	deleteErr := s.DeleteProfile(p.ID)
+	if restore != nil {
+		restore()
+	}
+	if deleteErr == nil || !strings.Contains(deleteErr.Error(), "state may be inconsistent") {
+		t.Fatalf("DeleteProfile error = %v, want explicit compensation failure", deleteErr)
+	}
+	if strings.Contains(deleteErr.Error(), "delete-secret-canary") || strings.Contains(deleteErr.Error(), "provider diagnostic") {
+		t.Fatalf("credential data leaked through error: %v", deleteErr)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestSaveProfileUpsertsAndPreservesID(t *testing.T) {
