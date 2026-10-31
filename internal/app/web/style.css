@@ -158,6 +158,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .issues-list li + li { margin-top: var(--s1); }
 .steps-heading { display: flex; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s2); }
 .step-count { color: var(--muted); font: 11px/20px var(--font-mono); }
+.change-summary { margin: 0 0 var(--s3); padding: var(--s3); border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface-subtle); }
+.change-summary strong { display: block; font-size: 12px; font-weight: 600; }
+.change-summary p { margin: var(--s1) 0 0; color: var(--ink); font: 12px/20px var(--font-mono); }
+.change-summary small { display: block; margin-top: var(--s1); color: var(--muted); font-size: 11px; line-height: 17px; }
 .step-list { display: grid; gap: var(--s3); }
 .step-card { min-width: 0; overflow: hidden; border: 1px solid var(--border-soft); border-radius: var(--radius); }
 .step-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); padding: var(--s3); background: var(--surface-subtle); }

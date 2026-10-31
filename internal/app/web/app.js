@@ -628,6 +628,12 @@
     const review = plan?.review || {};
     const steps = safeArray(review.steps);
     const section = el('section', 'steps-section');
+    const changeSummary = review.summary || {};
+    const summary = el('div', 'change-summary');
+    summary.append(el('strong', '', 'Change summary'));
+    summary.append(el('p', '', `${Number(changeSummary.create) || 0} create · ${Number(changeSummary.change) || 0} change · ${Number(changeSummary.destroy) || 0} destroy · ${Number(changeSummary.unsupported) || 0} unsupported`));
+    summary.append(el('small', '', 'Counts are classified locally from PingOne’s native operation methods and paths.'));
+    section.append(summary);
     const heading = el('div', 'steps-heading');
     heading.append(el('h3', '', 'Operations'), el('span', 'step-count', `${steps.length} ${steps.length === 1 ? 'operation' : 'operations'}`));
     section.append(heading);

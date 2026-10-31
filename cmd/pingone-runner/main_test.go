@@ -555,3 +555,23 @@ func TestPrivateAtomicWriteAndIntentReplayBlock(t *testing.T) {
 		t.Fatalf("replay was not blocked before CI/native calls: %v", err)
 	}
 }
+func TestPlanWritesMarkdownSummaryWithBlockedArtifact(t *testing.T) {
+	d := t.TempDir()
+	r, a := fixture(t)
+	rp, outp, mdp := filepath.Join(d, "requests", r.ID, "request.json"), filepath.Join(d, "artifact.json"), filepath.Join(d, "summary.md")
+	a.Review.Steps = []promotion.StepReview{{Action: "PUT", URL: "https://api.pingone.com/v1/environments/target/flows/f", Name: "Flow", Before: map[string]any{"clientSecret": "[REDACTED]"}, After: map[string]any{"name": "new"}}}
+	a.Review.Issues = []string{"native promotion is not READY"}
+	putJSON(t, rp, r)
+	dd := deps(&fakeGate{})
+	dd.client = func(gitops.Request, func(string) string) (*pingone.Client, error) { return &pingone.Client{}, nil }
+	dd.engine = func(*pingone.Client) runnerEngine { return &fakeEngine{artifact: a} }
+	var out, errOut strings.Builder
+	err := runWith([]string{"plan", "--request", rp, "--out", outp, "--summary-out", mdp}, &out, &errOut, dd)
+	if err == nil {
+		t.Fatal("blocked plan returned success")
+	}
+	md, readErr := os.ReadFile(mdp)
+	if readErr != nil || !strings.Contains(string(md), "1 change") || strings.Contains(string(md), "secret-value") {
+		t.Fatalf("summary=%q read=%v plan=%v stderr=%s", md, readErr, err, errOut.String())
+	}
+}

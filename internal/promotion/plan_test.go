@@ -64,6 +64,9 @@ func TestReviewBlocksUnselectedTemplateAndWrongTarget(t *testing.T) {
 				if len(r.Issues) > 0 || r.Digest == "" {
 					t.Fatalf("valid review rejected %+v", r)
 				}
+				if r.Summary.Change != 1 || r.Summary.Create != 0 || r.Summary.Destroy != 0 || r.Summary.Unsupported != 0 {
+					t.Fatalf("valid native operation summary = %+v", r.Summary)
+				}
 			} else if len(r.Issues) == 0 {
 				t.Fatal("unapproved change allowed")
 			}

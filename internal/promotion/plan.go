@@ -28,9 +28,10 @@ type StepReview struct {
 	Issue    string   `json:"issue,omitempty"`
 }
 type Review struct {
-	Digest string       `json:"digest"`
-	Issues []string     `json:"issues"`
-	Steps  []StepReview `json:"steps"`
+	Digest  string        `json:"digest"`
+	Issues  []string      `json:"issues"`
+	Steps   []StepReview  `json:"steps"`
+	Summary ChangeSummary `json:"summary"`
 }
 
 func BuildRequest(source, target pingone.Inventory, selected []string, mappings map[string]string, description string) (map[string]any, error) {
@@ -213,6 +214,7 @@ func Inspect(source, target pingone.Inventory, selected []string, mappings map[s
 	}{source.EnvironmentID + "/" + source.SnapshotID, target.EnvironmentID, selected, mappings, rollback, steps})
 	h := sha256.Sum256(canonical)
 	r.Digest = hex.EncodeToString(h[:])
+	r.Summary = Summarize(r.Steps)
 	return r
 }
 

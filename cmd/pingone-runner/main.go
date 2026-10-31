@@ -223,13 +223,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		requestPath := fs.String("request", "", "request JSON file")
 		outPath := fs.String("out", "", "artifact output path")
 		digestPath := fs.String("digest-out", "", "optional digest output path")
+		summaryPath := fs.String("summary-out", "", "optional Markdown change summary output path")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		if *requestPath == "" || *outPath == "" {
 			return errors.New("plan requires --request and --out")
 		}
-		if samePath(*requestPath, *outPath) || (*digestPath != "" && (samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath))) {
+		if samePath(*requestPath, *outPath) || (*digestPath != "" && (samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath))) || (*summaryPath != "" && (samePath(*summaryPath, *requestPath) || samePath(*summaryPath, *outPath) || (*digestPath != "" && samePath(*summaryPath, *digestPath)))) {
 			return errors.New("plan outputs must not overwrite an input or each other")
 		}
 		if err := requireAbsent(*outPath); err != nil {
@@ -237,6 +238,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if *digestPath != "" {
 			if err := requireAbsent(*digestPath); err != nil {
+				return err
+			}
+		}
+		if *summaryPath != "" {
+			if err := requireAbsent(*summaryPath); err != nil {
 				return err
 			}
 		}
@@ -264,6 +270,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if err = writePrivateJSON(*outPath, a); err != nil {
 			return err
+		}
+		if *summaryPath != "" {
+			if err = writePrivateBytes(*summaryPath, []byte(promotion.RenderMarkdown(a.Review))); err != nil {
+				return err
+			}
 		}
 		if *digestPath != "" {
 			if samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath) {
@@ -401,13 +412,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		originalJobID := fs.String("original-job-id", "", "original plan_promotion job ID")
 		outPath := fs.String("out", "", "rollback artifact output path")
 		digestPath := fs.String("digest-out", "", "optional digest output path")
+		summaryPath := fs.String("summary-out", "", "optional Markdown change summary output path")
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
 		if *artifactPath == "" || *originalJobID == "" || *outPath == "" {
 			return errors.New("rollback-plan requires --artifact, --original-job-id and --out")
 		}
-		if samePath(*artifactPath, *outPath) || (*digestPath != "" && (samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath))) {
+		if samePath(*artifactPath, *outPath) || (*digestPath != "" && (samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath))) || (*summaryPath != "" && (samePath(*summaryPath, *artifactPath) || samePath(*summaryPath, *outPath) || (*digestPath != "" && samePath(*summaryPath, *digestPath)))) {
 			return errors.New("rollback outputs must not overwrite an input or each other")
 		}
 		if err := requireAbsent(*outPath); err != nil {
@@ -415,6 +427,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if *digestPath != "" {
 			if err := requireAbsent(*digestPath); err != nil {
+				return err
+			}
+		}
+		if *summaryPath != "" {
+			if err := requireAbsent(*summaryPath); err != nil {
 				return err
 			}
 		}
@@ -445,6 +462,11 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if err = writePrivateJSON(*outPath, rollback); err != nil {
 			return err
+		}
+		if *summaryPath != "" {
+			if err = writePrivateBytes(*summaryPath, []byte(promotion.RenderMarkdown(rollback.Review))); err != nil {
+				return err
+			}
 		}
 		if *digestPath != "" {
 			if samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath) {

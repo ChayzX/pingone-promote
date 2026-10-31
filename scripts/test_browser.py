@@ -40,6 +40,7 @@ with sync_playwright() as p:
  page.get_by_role('button',name='Build review',exact=True).click()
  expect(page.locator('#deploy-button')).to_be_enabled()
  expect(page.locator('#plan-content')).to_contain_text('Before')
+ expect(page.locator('.change-summary')).to_contain_text('1 change')
  for width,height in [(1440,1000),(900,1000),(390,844)]:
   page.set_viewport_size({'width':width,'height':height})
   assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'),f'overflow at {width}'

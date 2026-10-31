@@ -79,12 +79,12 @@ plan_promotion:
     - if: '$PROMOTION_MODE == "deploy" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web") && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
     - source ./examples/gitlab/select-request.sh
-    - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256
+    - ./pingone-runner plan --request "$PROMOTION_REQUEST_FILE" --out plan.json --digest-out plan.sha256 --summary-out plan-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [plan.json, plan.sha256, selected-request.txt]
+    paths: [plan.json, plan.sha256, plan-summary.md, selected-request.txt]
 
 apply_promotion:
   stage: deploy
@@ -130,12 +130,12 @@ rollback_plan:
       test -n "${CI_JOB_TOKEN:-}" || { echo "CI_JOB_TOKEN is required to retrieve the original plan" >&2; exit 1; }
       status="$(curl --silent --show-error --output original-plan.json --write-out '%{http_code}' --header "JOB-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/$ORIGINAL_PLAN_JOB_ID/artifacts/plan.json")" || { echo "Could not retrieve the original plan artifact" >&2; exit 1; }
       test "$status" = 200 || { rm -f original-plan.json; echo "Original plan artifact request returned HTTP $status; redirects are not followed" >&2; exit 1; }
-      ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256
+      ./pingone-runner rollback-plan --artifact original-plan.json --original-job-id "$ORIGINAL_PLAN_JOB_ID" --out rollback.json --digest-out rollback.sha256 --summary-out rollback-summary.md
   artifacts:
     access: developer
     expire_in: 2 days
     when: always
-    paths: [rollback.json, rollback.sha256, original-plan.json]
+    paths: [rollback.json, rollback.sha256, rollback-summary.md, original-plan.json]
 
 apply_rollback:
   stage: rollback_apply
