@@ -124,7 +124,7 @@ func precheckDraftAttempt(out string, paths ...string) error {
 	sidecar := out + ".draft-attempt"
 	for _, p := range paths {
 		if p != "" && pathsAlias(sidecar, p) {
-			return errors.New("draft attempt sidecar must not alias inputs or outputs")
+			return safeRunnerValidation("draft attempt sidecar must not alias inputs or outputs")
 		}
 	}
 	if err := requireAbsent(sidecar); err != nil {
@@ -172,11 +172,11 @@ func reconcilePlan(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return err
 	}
 	if *attemptPath == "" || *jobID == "" || *requestPath == "" || *out == "" {
-		return errors.New("reconcile-plan requires --attempt, --attempt-job-id, --request and --out")
+		return safeRunnerValidation("reconcile-plan requires --attempt, --attempt-job-id, --request and --out")
 	}
 	for _, p := range []string{*attemptPath, *requestPath, *originalPath} {
 		if p != "" && pathsAlias(*out, p) {
-			return errors.New("diagnostic output must not alias inputs")
+			return safeRunnerValidation("diagnostic output must not alias inputs")
 		}
 	}
 	if err := requireAbsent(*out); err != nil {
@@ -187,7 +187,7 @@ func reconcilePlan(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return err
 	}
 	if a.NativeID == "" {
-		return errors.New("draft identity unavailable; blocked investigation required; do not guess candidates or retry draft creation")
+		return safeRunnerDiagnostic("draft identity unavailable; blocked investigation required; do not guess candidates or retry draft creation")
 	}
 	r, err := readRequest(*requestPath)
 	if err != nil {
@@ -199,7 +199,7 @@ func reconcilePlan(ctx context.Context, args []string, stdout, stderr io.Writer,
 	var original gitops.Artifact
 	if a.Kind == "rollback" {
 		if *originalPath == "" || *originalJob == "" {
-			return errors.New("rollback reconciliation requires --original-artifact and --original-job-id")
+			return safeRunnerValidation("rollback reconciliation requires --original-artifact and --original-job-id")
 		}
 		original, err = readArtifact(*originalPath)
 		if err != nil {
@@ -209,7 +209,7 @@ func reconcilePlan(ctx context.Context, args []string, stdout, stderr io.Writer,
 			return errors.New("rollback original artifact linkage mismatch")
 		}
 	} else if *originalPath != "" || *originalJob != "" {
-		return errors.New("forward reconciliation rejects rollback-only flags")
+		return safeRunnerValidation("forward reconciliation rejects rollback-only flags")
 	}
 	g, err := deps.gate()
 	if err != nil {

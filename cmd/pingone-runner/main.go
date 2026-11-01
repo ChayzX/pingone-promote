@@ -55,6 +55,40 @@ type runnerDeps struct {
 	pollTimeout       time.Duration
 }
 
+type runnerFailureContext struct {
+	command                 string
+	draftOutputPath         string
+	draftArtifactReady      bool
+	draftOutputWriteStarted bool
+}
+
+type runnerSafeMessageKind uint8
+
+const (
+	runnerValidationMessage runnerSafeMessageKind = iota + 1
+	runnerDiagnosticMessage
+	runnerReviewMessage
+)
+
+type runnerSafeMessage struct {
+	kind    runnerSafeMessageKind
+	message string
+}
+
+func (e *runnerSafeMessage) Error() string { return e.message }
+
+func safeRunnerValidation(message string) error {
+	return &runnerSafeMessage{kind: runnerValidationMessage, message: message}
+}
+
+func safeRunnerDiagnostic(message string) error {
+	return &runnerSafeMessage{kind: runnerDiagnosticMessage, message: message}
+}
+
+func safeRunnerReview(message string) error {
+	return &runnerSafeMessage{kind: runnerReviewMessage, message: message}
+}
+
 func defaultDeps(getenv func(string) string) runnerDeps {
 	return runnerDeps{
 		getenv: getenv,
@@ -105,6 +139,25 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
+	failureContext := runnerFailureContext{}
+	if len(args) > 0 {
+		failureContext.command = args[0]
+	}
+	err := runCommand(args, stdout, stderr, deps, &failureContext)
+	if err == nil {
+		return nil
+	}
+	var failure *operation.Failure
+	if errors.As(err, &failure) {
+		return err
+	}
+	if len(args) == 0 {
+		return err
+	}
+	return classifyRunnerCommandFailure(failureContext, err)
+}
+
+func runCommand(args []string, stdout, stderr io.Writer, deps runnerDeps, failureContext *runnerFailureContext) error {
 	if len(args) > 0 && args[0] == "--version" {
 		if len(args) != 1 {
 			return errors.New("--version does not accept additional arguments")
@@ -150,7 +203,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if *requestPath == "" {
-			return errors.New("validate requires --request")
+			return safeRunnerValidation("validate requires --request")
 		}
 		if _, err := readRequest(*requestPath); err != nil {
 			return err
@@ -164,7 +217,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if *artifactPath == "" {
-			return errors.New("digest requires --artifact")
+			return safeRunnerValidation("digest requires --artifact")
 		}
 		a, err := readArtifact(*artifactPath)
 		if err != nil {
@@ -180,10 +233,10 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if *artifactPath == "" || *outPath == "" {
-			return errors.New("inspect requires --artifact and --out")
+			return safeRunnerValidation("inspect requires --artifact and --out")
 		}
 		if samePath(*artifactPath, *outPath) {
-			return errors.New("diagnostic output must not overwrite the input artifact")
+			return safeRunnerValidation("diagnostic output must not overwrite the input artifact")
 		}
 		if err := requireAbsent(*outPath); err != nil {
 			return err
@@ -212,7 +265,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if err = validateRefreshIdentity(a, refreshed); err != nil {
-			return err
+			return safeRunnerDiagnostic(err.Error())
 		}
 		if err = refreshed.Validate(); err != nil {
 			return fmt.Errorf("refresh returned an invalid diagnostic artifact: %w", err)
@@ -221,7 +274,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if len(refreshed.Review.Issues) > 0 {
-			return errors.New("diagnostic artifact written with review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates")
+			return safeRunnerReview("diagnostic artifact written with review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates")
 		}
 		_, err = io.WriteString(stdout, "diagnostic inspection complete; no review issues; inspect did not approve, authorize, or execute; output remains subject to all normal apply gates\n")
 		return err
@@ -234,11 +287,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
+		if failureContext != nil {
+			failureContext.draftOutputPath = *outPath
+		}
 		if *requestPath == "" || *outPath == "" {
-			return errors.New("plan requires --request and --out")
+			return safeRunnerValidation("plan requires --request and --out")
 		}
 		if samePath(*requestPath, *outPath) || (*digestPath != "" && (samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath))) || (*summaryPath != "" && (samePath(*summaryPath, *requestPath) || samePath(*summaryPath, *outPath) || (*digestPath != "" && samePath(*summaryPath, *digestPath)))) {
-			return errors.New("plan outputs must not overwrite an input or each other")
+			return safeRunnerValidation("plan outputs must not overwrite an input or each other")
 		}
 		if err := requireAbsent(*outPath); err != nil {
 			return err
@@ -278,6 +334,10 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err = a.Validate(); err != nil {
 			return fmt.Errorf("native plan returned an invalid artifact: %w", err)
 		}
+		if failureContext != nil {
+			failureContext.draftArtifactReady = true
+			failureContext.draftOutputWriteStarted = true
+		}
 		if err = writePrivateJSON(*outPath, a); err != nil {
 			return err
 		}
@@ -288,14 +348,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if *digestPath != "" {
 			if samePath(*outPath, *digestPath) || samePath(*requestPath, *digestPath) {
-				return errors.New("digest output must not overwrite an input or artifact")
+				return safeRunnerValidation("digest output must not overwrite an input or artifact")
 			}
 			if err = writePrivateBytes(*digestPath, []byte(a.Review.Digest+"\n")); err != nil {
 				return err
 			}
 		}
 		if len(a.Review.Issues) > 0 {
-			return errors.New("plan artifact written with review issues; deployment is blocked")
+			return safeRunnerReview("plan artifact written with review issues; deployment is blocked")
 		}
 		return nil
 	case "apply":
@@ -308,10 +368,10 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if *artifactPath == "" || *outPath == "" {
-			return errors.New("apply requires --artifact and --out")
+			return safeRunnerValidation("apply requires --artifact and --out")
 		}
 		if (*approved == "") == (*approvedFile == "") {
-			return errors.New("apply requires exactly one of --approved-digest or --approved-digest-file")
+			return safeRunnerValidation("apply requires exactly one of --approved-digest or --approved-digest-file")
 		}
 		if *approvedFile != "" {
 			b, err := readSmallFile(*approvedFile, 256)
@@ -321,14 +381,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			*approved = strings.TrimSpace(string(b))
 		}
 		if !isDigest(*approved) {
-			return errors.New("approved digest must be 64 lowercase hexadecimal characters")
+			return safeRunnerValidation("approved digest must be 64 lowercase hexadecimal characters")
 		}
 		a, err := readArtifact(*artifactPath)
 		if err != nil {
 			return err
 		}
 		if samePath(*artifactPath, *outPath) {
-			return errors.New("result output must not overwrite the input artifact")
+			return safeRunnerValidation("result output must not overwrite the input artifact")
 		}
 		if err := requireAbsent(*outPath); err != nil {
 			return err
@@ -432,7 +492,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if *artifactPath == "" {
-			return errors.New("status requires --artifact")
+			return safeRunnerValidation("status requires --artifact")
 		}
 		a, err := readArtifact(*artifactPath)
 		if err != nil {
@@ -454,7 +514,7 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 			return err
 		}
 		if p.ID != a.NativeID {
-			return errors.New("native status identity differs from the requested promotion")
+			return safeRunnerDiagnostic("native status identity differs from the requested promotion")
 		}
 		out := executionResult(a, executionStatusProjection(p.Status), "", true)
 		out.Errors = pingone.SummarizePromotionErrors(p.Errors, p.PromotionErrors)
@@ -469,11 +529,14 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err := parseFlags(fs, args[1:]); err != nil {
 			return err
 		}
+		if failureContext != nil {
+			failureContext.draftOutputPath = *outPath
+		}
 		if *artifactPath == "" || *originalJobID == "" || *outPath == "" {
-			return errors.New("rollback-plan requires --artifact, --original-job-id and --out")
+			return safeRunnerValidation("rollback-plan requires --artifact, --original-job-id and --out")
 		}
 		if samePath(*artifactPath, *outPath) || (*digestPath != "" && (samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath))) || (*summaryPath != "" && (samePath(*summaryPath, *artifactPath) || samePath(*summaryPath, *outPath) || (*digestPath != "" && samePath(*summaryPath, *digestPath)))) {
-			return errors.New("rollback outputs must not overwrite an input or each other")
+			return safeRunnerValidation("rollback outputs must not overwrite an input or each other")
 		}
 		if err := requireAbsent(*outPath); err != nil {
 			return err
@@ -516,6 +579,10 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		if err = rollback.Validate(); err != nil {
 			return fmt.Errorf("native rollback plan returned invalid artifact: %w", err)
 		}
+		if failureContext != nil {
+			failureContext.draftArtifactReady = true
+			failureContext.draftOutputWriteStarted = true
+		}
 		if err = writePrivateJSON(*outPath, rollback); err != nil {
 			return err
 		}
@@ -526,18 +593,71 @@ func runWith(args []string, stdout, stderr io.Writer, deps runnerDeps) error {
 		}
 		if *digestPath != "" {
 			if samePath(*digestPath, *artifactPath) || samePath(*digestPath, *outPath) {
-				return errors.New("digest output must not overwrite an input or artifact")
+				return safeRunnerValidation("digest output must not overwrite an input or artifact")
 			}
 			if err = writePrivateBytes(*digestPath, []byte(rollback.Review.Digest+"\n")); err != nil {
 				return err
 			}
 		}
 		if len(rollback.Review.Issues) > 0 {
-			return errors.New("rollback artifact written with review issues; deployment is blocked")
+			return safeRunnerReview("rollback artifact written with review issues; deployment is blocked")
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q", args[0])
+		return operation.NewFailure("cli_command_invalid", "validation", "Unknown command. Run pingone-runner --help to see supported commands.", "check_runner_usage", "", nil)
+	}
+}
+
+func classifyRunnerCommandFailure(failureContext runnerFailureContext, cause error) error {
+	command := failureContext.command
+	var safe *runnerSafeMessage
+	if errors.As(cause, &safe) {
+		switch safe.kind {
+		case runnerValidationMessage:
+			return operation.NewFailure("cli_arguments_invalid", "validation", safe.message, "correct_command_arguments", "", nil)
+		case runnerDiagnosticMessage:
+			switch command {
+			case "inspect":
+				return operation.NewFailure("diagnostic_identity_mismatch", "validation", safe.message, "verify_source_artifact_identity", "", nil)
+			case "status":
+				return operation.NewFailure("read_only_status_failed", "reconciliation", safe.message, "verify_requested_native_identity", "", nil)
+			case "reconcile-plan":
+				return operation.NewFailure("read_only_reconciliation_failed", "reconciliation", safe.message, "inspect_attempt_and_linkage", "", nil)
+			}
+		case runnerReviewMessage:
+			if command == "inspect" {
+				return operation.NewFailure("diagnostic_review_blocked", "review", safe.message, "inspect_saved_diagnostic_and_review", "", nil)
+			}
+			return operation.NewFailure("draft_review_blocked", "review", safe.message, "inspect_saved_artifact_and_review", "", nil)
+		}
+	}
+	switch command {
+	case "plan", "rollback-plan":
+		out := failureContext.draftOutputPath
+		if out != "" {
+			if attempt, err := readDraftAttempt(out + ".draft-attempt"); err == nil {
+				if attempt.NativeID != "" {
+					if failureContext.draftArtifactReady && failureContext.draftOutputWriteStarted {
+						return operation.NewFailure("draft_output_persistence_failed", "persistence", "The accepted draft identity is retained in its attempt sidecar, but the artifact or a requested output could not be persisted. Preserve the sidecar and reconcile the plan before continuing.", "reconcile_plan_from_retained_attempt", "", cause)
+					}
+					return operation.NewFailure("draft_reconciliation_required", "reconciliation", "A draft identity was checkpointed, but planning failed before an artifact was ready to persist. Preserve the attempt sidecar and reconcile the known native identity; do not create another draft.", "reconcile_plan_from_retained_attempt", "", cause)
+				}
+				return operation.NewFailure("draft_outcome_uncertain", "draft", "A draft attempt record exists without a confirmed native identity. Preserve the sidecar; reconcile the plan or investigate the unknown identity before any new draft.", "reconcile_plan_or_investigate_unknown_identity", "", cause)
+			} else if _, statErr := os.Lstat(out + ".draft-attempt"); statErr == nil {
+				return operation.NewFailure("draft_outcome_uncertain", "draft", "A draft attempt record exists but its identity cannot be trusted. Preserve the sidecar; reconcile the plan or investigate the unknown identity before any new draft.", "reconcile_plan_or_investigate_unknown_identity", "", cause)
+			} else if !os.IsNotExist(statErr) {
+				return operation.NewFailure("draft_recovery_evidence_unavailable", "reconciliation", "The runner could not inspect draft recovery evidence. Do not create another draft until the output path and native operation have been investigated.", "investigate_draft_recovery_evidence", "", cause)
+			}
+		}
+		return operation.NewFailure("draft_pre_dispatch_refused", "preflight", "Draft creation was not dispatched. Verify the request, trusted GitLab authorization, and output paths before retrying.", "verify_request_and_gitlab_authorization", "", cause)
+	case "status":
+		return operation.NewFailure("read_only_status_failed", "reconciliation", "Read-only native status could not be confirmed. Retry the status lookup or investigate the saved artifact and native operation.", "retry_read_only_status_or_investigate", "", cause)
+	case "inspect":
+		return operation.NewFailure("read_only_inspection_failed", "reconciliation", "Read-only inspection could not be completed. Preserve the source artifact and retry inspection or investigate the native operation.", "retry_read_only_inspection_or_investigate", "", cause)
+	case "reconcile-plan":
+		return operation.NewFailure("read_only_reconciliation_failed", "reconciliation", "Read-only plan reconciliation could not be completed. Preserve the attempt record and retry reconciliation or investigate the native identity; no new draft was requested.", "retry_reconcile_plan_or_investigate", "", cause)
+	default:
+		return operation.NewFailure("cli_command_failed", "operation", "The command failed before a safe detail could be classified. Review sanitized runner logs using the correlation ID.", "review_command_and_correlation", "", nil)
 	}
 }
 
@@ -639,7 +759,7 @@ func readRequest(path string) (gitops.Request, error) {
 	}
 	dir := filepath.Dir(filepath.Clean(path))
 	if filepath.Base(path) != "request.json" || filepath.Base(dir) != r.ID || filepath.Base(filepath.Dir(dir)) != "requests" {
-		return gitops.Request{}, errors.New("request must be selected from requests/<matching-request-id>/request.json")
+		return gitops.Request{}, safeRunnerValidation("request must be selected from requests/<matching-request-id>/request.json")
 	}
 	return r, nil
 }
@@ -761,7 +881,7 @@ func safeError(err error, getenv func(string) string) string {
 func cliFailure(err error, getenv func(string) string) string {
 	var failure *operation.Failure
 	if !errors.As(err, &failure) {
-		return safeError(err, getenv)
+		failure = operation.NewFailure("cli_failure_unclassified", "operation", "The command failed without a safe classification. Review sanitized runner logs using the correlation ID.", "review_command_and_correlation", "", nil)
 	}
 	return fmt.Sprintf("%s [code=%s phase=%s recovery=%s correlation=%s]", failure.Error(), failure.Code, failure.Phase, failure.RecoveryAction, failure.CorrelationID)
 }
