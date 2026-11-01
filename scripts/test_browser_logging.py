@@ -7,6 +7,11 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 
+def open_logging_settings(page):
+    page.get_by_role('button', name='Logging settings').click()
+    expect(page.locator('#logging-save')).to_be_enabled()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--fixture-file', required=True)
@@ -27,7 +32,7 @@ def main():
         page.goto(fixture['url'])
         page.locator('#source-profile option').nth(1).wait_for(state='attached')
 
-        page.get_by_role('button', name='Logging settings').click()
+        open_logging_settings(page)
         dialog = page.get_by_role('dialog', name='Logging settings')
         expect(dialog).to_be_visible()
         expect(page.locator('#logging-current')).to_contain_text('info · json · standard error')
@@ -42,7 +47,7 @@ def main():
         effective = page.evaluate("fetch('/api/logging').then(response => response.json())")
         assert effective['debug'] is False and effective['level'] == 'info', 'Cancel applied the unsaved debug toggle'
 
-        page.get_by_role('button', name='Logging settings').click()
+        open_logging_settings(page)
         page.locator('#logging-debug').check()
         page.get_by_role('button', name='Close logging settings').click()
         expect(dialog).to_be_hidden()
@@ -59,7 +64,7 @@ def main():
         assert csrf_status == 403, f'logging settings accepted a PUT without CSRF (HTTP {csrf_status})'
 
         with tempfile.TemporaryDirectory(prefix='pingone-log-ui-') as temp_dir:
-            page.get_by_role('button', name='Logging settings').click()
+            open_logging_settings(page)
             page.locator('#logging-debug').check()
             page.locator('#logging-format').select_option('text')
             settings = page.evaluate("fetch('/api/logging').then(response => response.json())")
@@ -81,7 +86,7 @@ def main():
             if settings['fileSupported']:
                 assert effective['destination'] == 'file' and effective['file'] == log_path, effective
                 assert Path(log_path).exists(), 'the selected log file was not created'
-                page.get_by_role('button', name='Logging settings').click()
+                open_logging_settings(page)
                 page.locator('#logging-destination').select_option('stderr')
                 page.get_by_role('button', name='Save changes').click()
                 expect(dialog).to_be_hidden()
@@ -94,7 +99,7 @@ def main():
                 return route.continue_()
 
             page.route('**/api/logging', fail_log_save)
-            page.get_by_role('button', name='Logging settings').click()
+            open_logging_settings(page)
             page.locator('#logging-format').select_option('json')
             page.get_by_role('button', name='Save changes').click()
             expect(dialog).to_be_visible()
