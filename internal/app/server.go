@@ -370,6 +370,16 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		// for restart scope reconstruction, and createPlan reloads full records.
 		for i := range records {
 			records[i].Resources = nil
+			if records[i].Execution != nil {
+				evidence := *records[i].Execution
+				evidence.EffectsVerified = false // Local metadata is not resource verification.
+				records[i].Execution = &evidence
+			}
+			switch records[i].Status {
+			case "CREATING", "DRAFT_CREATION_UNCERTAIN": // App-owned progress states.
+			default:
+				records[i].Status = safeObservedStatus(records[i].Status)
+			}
 		}
 		writeJSON(w, records)
 		return nil

@@ -27,6 +27,9 @@ type nativeFixture struct {
 	omitPromotionID       bool
 	failExecuteAfterWrite bool
 	executeFailureBody    string
+	executeIDOverride     *string
+	afterExecute          func()
+	beforeExecutedStatus  func()
 	failParentStatusRead  bool
 	afterParentStatus     func()
 	afterSteps            func()
@@ -167,6 +170,9 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.Contains(p, "/promotions/") {
+		if r.Method == http.MethodGet && len(f.executed) > 0 && f.beforeExecutedStatus != nil {
+			f.beforeExecutedStatus()
+		}
 		if r.Method == "GET" && f.failParentStatusRead && strings.HasSuffix(p, "/promotions/p1") {
 			http.Error(w, `{"code":"PRIVATE_VENDOR_CODE","message":"private tenant secret=vendor-secret"}`, http.StatusBadGateway)
 			return
@@ -176,6 +182,11 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case pingone.ExecuteType:
 				f.executed = append(f.executed, id)
 				f.statuses[id] = "COMPLETED"
+				if f.afterExecute != nil {
+					after := f.afterExecute
+					f.afterExecute = nil
+					after()
+				}
 				if f.failExecuteAfterWrite {
 					body := f.executeFailureBody
 					if body == "" {
@@ -196,7 +207,11 @@ func (f *nativeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		write(f.metadata(id))
+		metadata := f.metadata(id)
+		if r.Method == http.MethodPost && r.Header.Get("Content-Type") == pingone.ExecuteType && f.executeIDOverride != nil {
+			metadata["id"] = *f.executeIDOverride
+		}
+		write(metadata)
 		if r.Method == http.MethodGet && id == "p1" && f.afterParentStatus != nil {
 			after := f.afterParentStatus
 			f.afterParentStatus = nil
@@ -902,6 +917,7 @@ func TestRestartReconstructsPinnedScopeWithoutReplayingExecution(t *testing.T) {
 	if restored.Status != "COMPLETED" || restored.CanDeploy || restored.NativeID != "p1" {
 		t.Fatalf("wrong restored status %+v", restored)
 	}
+	assertAppEvidence(t, evidenceObject(t, restored), "identified", true)
 	h.call("POST", "/api/plans/"+v.ID+"/deploy", map[string]any{"digest": restored.Review.Digest, "confirm": true}, nil, 409)
 	if len(h.f.executed) != 1 {
 		t.Fatal("restart replayed an execution")

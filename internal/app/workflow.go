@@ -20,15 +20,20 @@ type inventoryPair struct {
 	TargetID string `json:"targetInventoryId"`
 }
 type PlanView struct {
-	ID             string           `json:"id"`
-	NativeID       string           `json:"nativeId"`
-	Kind           string           `json:"kind"`
-	Description    string           `json:"description"`
-	Status         string           `json:"status"`
-	Errors         any              `json:"errors,omitempty"`
-	Review         promotion.Review `json:"review"`
-	CanDeploy      bool             `json:"canDeploy"`
-	GitLabRequired bool             `json:"gitlabRequired"`
+	ID                  string                  `json:"id"`
+	NativeID            string                  `json:"nativeId"`
+	Kind                string                  `json:"kind"`
+	Description         string                  `json:"description"`
+	Status              string                  `json:"status"`
+	Errors              any                     `json:"errors,omitempty"`
+	Review              promotion.Review        `json:"review"`
+	CanDeploy           bool                    `json:"canDeploy"`
+	GitLabRequired      bool                    `json:"gitlabRequired"`
+	DispatchState       operation.DispatchState `json:"dispatchState"`
+	NativeObserved      bool                    `json:"nativeObserved"`
+	EffectsVerified     bool                    `json:"effectsVerified"`
+	NeedsReconciliation bool                    `json:"needsReconciliation"`
+	MayHaveEffects      bool                    `json:"mayHaveEffects"`
 }
 
 const invalidPromotionInputMessage = "Selection or destination mappings are invalid. Reload resources, review the selected items and mappings, then retry."
@@ -135,7 +140,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) error {
 		return problem(502, operation.NewFailure("draft_identity_missing", "draft_creation", "PingOne may have created a draft but omitted its identity; reconcile promotions in PingOne before creating another draft. Nothing has been deployed.", "reconcile_native_drafts", w.Header().Get("X-Request-ID"), nil))
 	}
 	record.NativeID = native.ID
-	record.Status = native.Status
+	record.Status = safeObservedStatus(native.Status)
 	record.Intent = ""
 	record.UpdatedAt = now()
 	if err = s.store.SaveRecord(record); err != nil {
@@ -183,7 +188,8 @@ func (s *Server) loadPlan(id string) (*planSession, error) {
 }
 func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	rec := &ps.Record
-	v := PlanView{ID: rec.ID, NativeID: rec.NativeID, Kind: rec.Kind, Description: rec.Description, Status: rec.Status, Review: promotion.Review{Issues: []string{}, Steps: []promotion.StepReview{}}}
+	v := PlanView{ID: rec.ID, NativeID: rec.NativeID, Kind: rec.Kind, Description: rec.Description, Status: safeObservedStatus(rec.Status), Review: promotion.Review{Issues: []string{}, Steps: []promotion.StepReview{}}}
+	projectExecution(&v, rec, false)
 	if rec.NativeID == "" {
 		v.Review.Issues = append(v.Review.Issues, "This draft has no known PingOne ID. No deployment was requested; load resources and create a new draft.")
 		return v, nil
@@ -199,7 +205,8 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if err != nil {
 		return v, problem(502, err)
 	}
-	v.Status = native.Status
+	v.Status = safeObservedStatus(native.Status)
+	projectExecution(&v, rec, true)
 	if nativeErrors := pingone.SummarizePromotionErrors(native.Errors, native.PromotionErrors); len(nativeErrors) > 0 {
 		v.Errors = nativeErrors
 	}
@@ -210,12 +217,20 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	// (deploy, rollback) are persisted explicitly at those call sites, so the
 	// only field that would change on an unchanged poll is UpdatedAt, which is
 	// cosmetic.
-	if native.Status != rec.Status {
-		rec.Status = native.Status
-		rec.UpdatedAt = now()
-		if err = s.store.SaveRecord(*rec); err != nil {
+	observedChanged := rec.Execution != nil && recordDispatch(rec) != "" && !rec.Execution.NativeObserved
+	if v.Status != rec.Status || observedChanged {
+		updated := *rec
+		updated.Status = v.Status
+		updated.UpdatedAt = now()
+		if observedChanged {
+			evidence := *rec.Execution
+			evidence.NativeObserved = true
+			updated.Execution = &evidence
+		}
+		if err = s.store.SaveRecord(updated); err != nil {
 			return v, err
 		}
+		*rec = updated
 	}
 	// Reconcile the original record after a completed native rollback so history
 	// cannot continue to offer another rollback of the restored promotion.
@@ -228,7 +243,7 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 		if stateErr != nil {
 			return v, problem(http.StatusBadGateway, operation.NewFailure("rollback_reconciliation_incomplete", "reconciliation", "The rollback operation completed, but the original promotion status could not be reconciled. Refresh native status; resource restoration is not verified.", "refresh_native_status", logging.RequestID(r.Context()), stateErr))
 		}
-		original.Status = state.Status
+		original.Status = safeObservedStatus(state.Status)
 		original.UpdatedAt = now()
 		if err = s.store.SaveRecord(original); err != nil {
 			return v, problem(http.StatusInternalServerError, operation.NewFailure("rollback_reconciliation_incomplete", "reconciliation", "The rollback operation completed, but the original promotion status could not be reconciled locally. Refresh native status; resource restoration is not verified.", "refresh_native_status", logging.RequestID(r.Context()), err))
@@ -286,11 +301,15 @@ func (s *Server) refresh(r *http.Request, ps *planSession) (PlanView, error) {
 	if rec.Intent != "" && operation.Classify(native.Status) == operation.Ready {
 		v.Review.Issues = append(v.Review.Issues, "An execution or rollback request was already sent or its outcome is uncertain. Refresh status; this app will not automatically resend it.")
 	}
+	if rec.Execution != nil && recordDispatch(rec) == "" {
+		v.Review.Issues = append(v.Review.Issues, "The saved execution evidence is unsupported or inconsistent. Preserve history and reconcile before another request.")
+	}
 	if !s.localAllowed(rec.Target) {
 		v.GitLabRequired = true
 		v.Review.Issues = append(v.Review.Issues, gitlabOnlyMessage)
 	}
-	v.CanDeploy = operation.Classify(native.Status) == operation.Ready && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
+	decision := operation.Evaluate(operation.Observation{Status: native.Status, Dispatch: recordDispatch(rec)})
+	v.CanDeploy = decision.CanExecute && len(v.Review.Issues) == 0 && v.Errors == nil && rec.Intent == ""
 	return v, nil
 }
 
@@ -335,6 +354,7 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession)
 	}
 	attempt := ps.Record
 	attempt.Intent = "execute_requested"
+	attempt.Execution = &store.ExecutionEvidence{Version: 1, DispatchState: operation.Uncertain}
 	attempt.UpdatedAt = now()
 	if err = s.store.SaveRecord(attempt); err != nil {
 		replyNativeNoWrite(w, http.StatusInternalServerError, "Could not save the execution attempt marker in local history; no PingOne write was sent. Check local app storage and retry.", true)
@@ -345,17 +365,18 @@ func (s *Server) deploy(w http.ResponseWriter, r *http.Request, ps *planSession)
 	if err = c.Do(r.Context(), "POST", pingone.EnvPath(ps.Record.Source.EnvironmentID)+"/promotions/"+ps.Record.NativeID, pingone.ExecuteType, nil, &native); err != nil {
 		return problem(502, operation.NewFailure("execution_outcome_uncertain", "execution", "PingOne may have received the execution request. Reconcile native status before any retry.", "reconcile_native_status", w.Header().Get("X-Request-ID"), err))
 	}
-	if native.ID != "" && native.ID != ps.Record.NativeID {
-		return problem(502, errors.New("execute returned an unexpected promotion identity; refresh native status"))
+	if native.ID != ps.Record.NativeID {
+		return problem(502, operation.NewFailure("execution_outcome_uncertain", "reconciliation", "The execute response did not establish the expected native identity. The uncertain intent is retained; reconcile native status before any retry.", "reconcile_native_status", w.Header().Get("X-Request-ID"), nil))
 	}
-	ps.Record.Intent = "execute_sent"
-	if native.Status != "" {
-		ps.Record.Status = native.Status
+	identified := ps.Record
+	identified.Intent = "execute_sent"
+	identified.Status = safeObservedStatus(native.Status)
+	identified.Execution = &store.ExecutionEvidence{Version: 1, DispatchState: operation.Identified, NativeObserved: true}
+	identified.UpdatedAt = now()
+	if err = s.store.SaveRecord(identified); err != nil {
+		return problem(500, operation.NewFailure("execution_identity_checkpoint_failed", "persistence", "Execution returned a matching identity, but its observation could not be saved. The uncertain intent is retained; reconcile native status before any retry.", "reconcile_native_status", w.Header().Get("X-Request-ID"), err))
 	}
-	ps.Record.UpdatedAt = now()
-	if err = s.store.SaveRecord(ps.Record); err != nil {
-		return err
-	}
+	ps.Record = identified
 	view, err := s.refresh(r, ps)
 	if err != nil {
 		return err
@@ -388,7 +409,7 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 		}
 		return nil
 	}
-	if ps.Record.Kind == "rollback" || (operation.Classify(view.Status) != operation.Completed && operation.Classify(view.Status) != operation.Failed) || strings.HasPrefix(ps.Record.Intent, "rollback") {
+	if ps.Record.Kind == "rollback" || (operation.Classify(view.Status) != operation.Completed && operation.Classify(view.Status) != operation.Failed) || strings.HasPrefix(ps.Record.Intent, "rollback") || (ps.Record.Execution != nil && recordDispatch(&ps.Record) == "") {
 		replyNativeNoWrite(w, http.StatusConflict, "only a completed or failed forward promotion can request rollback; PingOne enforces latest-promotion eligibility", false)
 		return nil
 	}
@@ -417,8 +438,9 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, ps *planSessio
 	record.NativeID = native.ID
 	record.Kind = "rollback"
 	record.ParentID = ps.Record.ID
-	record.Status = native.Status
+	record.Status = safeObservedStatus(native.Status)
 	record.Intent = ""
+	record.Execution = nil
 	record.CreatedAt = now()
 	record.UpdatedAt = now()
 	record.Description = "Rollback: " + ps.Record.Description

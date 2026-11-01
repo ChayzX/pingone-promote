@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"pingone-promote/internal/operation"
 	"pingone-promote/internal/pingone"
 )
 
@@ -24,29 +25,39 @@ type ResourceRef struct {
 	Type string `json:"type"`
 }
 
+// ExecutionEvidence records this app's dispatch evidence separately from the
+// native observation. Native completion never verifies resource effects.
+type ExecutionEvidence struct {
+	Version         int                     `json:"version"`
+	DispatchState   operation.DispatchState `json:"dispatchState"`
+	NativeObserved  bool                    `json:"nativeObserved"`
+	EffectsVerified bool                    `json:"effectsVerified"`
+}
+
 // Record contains durable metadata about an inventory, promotion, or rollback
 // operation. Payloads, configurations, credentials, and tokens are excluded.
 type Record struct {
-	ID                   string            `json:"id"`
-	NativeID             string            `json:"nativeId"`
-	Kind                 string            `json:"kind"`
-	ParentID             string            `json:"parentId"`
-	Description          string            `json:"description"`
-	Status               string            `json:"status"`
-	Intent               string            `json:"intent"`
-	Source               pingone.Profile   `json:"source"`
-	Target               pingone.Profile   `json:"target"`
-	SourceSnapshotID     string            `json:"sourceSnapshotId"`
-	TargetSnapshotID     string            `json:"targetSnapshotId"`
-	SourceOrganizationID string            `json:"sourceOrganizationId"`
-	TargetOrganizationID string            `json:"targetOrganizationId"`
-	SourceAPIOrigin      string            `json:"sourceApiOrigin"`
-	TargetAPIOrigin      string            `json:"targetApiOrigin"`
-	Selected             []string          `json:"selected"`
-	Mappings             map[string]string `json:"mappings"`
-	Resources            []ResourceRef     `json:"resources"`
-	CreatedAt            string            `json:"createdAt"`
-	UpdatedAt            string            `json:"updatedAt"`
+	ID                   string             `json:"id"`
+	NativeID             string             `json:"nativeId"`
+	Kind                 string             `json:"kind"`
+	ParentID             string             `json:"parentId"`
+	Description          string             `json:"description"`
+	Status               string             `json:"status"`
+	Intent               string             `json:"intent"`
+	Execution            *ExecutionEvidence `json:"execution,omitempty"`
+	Source               pingone.Profile    `json:"source"`
+	Target               pingone.Profile    `json:"target"`
+	SourceSnapshotID     string             `json:"sourceSnapshotId"`
+	TargetSnapshotID     string             `json:"targetSnapshotId"`
+	SourceOrganizationID string             `json:"sourceOrganizationId"`
+	TargetOrganizationID string             `json:"targetOrganizationId"`
+	SourceAPIOrigin      string             `json:"sourceApiOrigin"`
+	TargetAPIOrigin      string             `json:"targetApiOrigin"`
+	Selected             []string           `json:"selected"`
+	Mappings             map[string]string  `json:"mappings"`
+	Resources            []ResourceRef      `json:"resources"`
+	CreatedAt            string             `json:"createdAt"`
+	UpdatedAt            string             `json:"updatedAt"`
 }
 
 // Store persists profiles and history under dir. Session secrets remain only
