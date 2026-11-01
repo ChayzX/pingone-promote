@@ -142,8 +142,8 @@ async def test_submission_errors_respect_write_stage(browser):
             await expect(page.locator('#confirm-deploy')).to_be_enabled()
             assert len(calls) == 2, 'proven pre-write failure did not allow explicit retry'
         else:
-    await expect(page.locator('#deploy-error')).to_contain_text('Check GitLab')
-    await expect(page.locator('#deploy-error')).to_contain_text('branch and merge request')
+            await expect(page.locator('#deploy-error')).to_contain_text('Check GitLab')
+            await expect(page.locator('#deploy-error')).to_contain_text('branch and merge request')
             await page.locator('#deploy-confirm-check').uncheck()
             await page.locator('#deploy-confirm-check').check()
             await expect(page.locator('#confirm-deploy')).to_be_disabled()
