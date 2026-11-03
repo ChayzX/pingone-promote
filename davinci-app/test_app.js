@@ -94,6 +94,20 @@ assert.throws(() => lib.gl(cfg0, 'pipelines/1/play')); passed += 1;
 assert.throws(() => lib.queue({ cfg: cfg0 }, 'x', [{ k: 'commit' }]), /only reads/); passed += 1;
 eq(lib.webUrl(cfg0, 'https://evil.example/x'), '', 'links to other hosts are dropped');
 eq(lib.webUrl(cfg0, 'javascript:alert(1)'), '', 'script links are dropped');
+const baseSettings = { apiOrigin: 'https://api.pingone.com', authOrigin: 'https://auth.pingone.com', workerEnvironmentId: WORKER, sourceEnvs: 'dev=' + SRC,
+  pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,stage,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*' };
+const PA = '/v1/environments/{envId}/davinciApplications';
+const PP = '/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies';
+const cfgA = lib.checkSettings(Object.assign({}, baseSettings, { pathApplications: PA, pathFlowPolicies: PP }));
+ok(cfgA.problems.length === 0 && !cfg0.pathApplications && !cfg0.pathFlowPolicies, 'the application and flow policy paths are optional settings; empty switches the step off');
+eq(lib.listUrl(cfgA.cfg, { kind: 'applications', source: 'dev' }), 'https://api.pingone.com/v1/environments/' + SRC + '/davinciApplications', 'application list URL');
+eq(lib.listUrl(cfgA.cfg, { kind: 'policies', source: 'dev', appId: dvid(21) }), 'https://api.pingone.com/v1/environments/' + SRC + '/davinciApplications/' + dvid(21) + '/flowPolicies', 'flow policy list URL for one application');
+assert.throws(() => lib.listUrl(cfgA.cfg, { kind: 'policies', source: 'dev', appId: '../x' })); passed += 1;
+assert.throws(() => lib.listUrl(cfg0, { kind: 'applications', source: 'dev' })); passed += 1;
+for (const bad of [{ pathApplications: 'http://evil.example/x' }, { pathApplications: '/v1/{envId}/../x' }, { pathApplications: '/v1/environments/x/apps' }, { pathApplications: PA, pathFlowPolicies: '/v1/environments/{envId}/policies' },
+  { pathApplications: PA, pathFlowPolicies: '/v1/environments/{envId}/{other}/{appId}' }]) {
+  ok(lib.checkSettings(Object.assign({}, baseSettings, bad)).problems.some((x) => /^path(Applications|FlowPolicies)$/.test(x.name)), 'a bad list path is a settings problem: ' + JSON.stringify(bad).slice(0, 60));
+}
 const p1 = lib.checkSettings({});
 ok(p1.problems.length >= 6 && JSON.stringify(p1).indexOf('not set') > 0, 'missing settings are listed');
 const flowsFake = [{ id: 'a1', name: 'Login' }, { id: 'a2', name: 'Login - MFA' }, { id: 'a3', name: 'Registration' }];
@@ -134,6 +148,13 @@ vbad({ secretMappings: { a: '1bad' } }, 'secretMappings.a');
 vbad({ dependencyChoices: { 'not.an_address': 'keep' } }, 'dependencyChoices');
 vbad({ remove: ['bad'] }, 'remove');
 vbad({ inlineValues: ['1bad'] }, 'inlineValues');
+vbad({ applications: Array(21).fill({ name: 'a' }) }, 'flows');
+vbad({ flowPolicies: Array(21).fill({ name: 'a' }) }, 'flows');
+vbad({ applications: [{ id: dvid(1), name: 'x' }] }, 'applications[0].id');
+vbad({ flowPolicies: [{ name: ' ' }] }, 'flowPolicies[0].name');
+eq(contract.validateRequest(Object.assign({}, req0, { flows: [], applications: [{ name: 'Web' }] }), cfgV), [], 'applications alone are enough, as in the job');
+eq(contract.buildRequest({ requestId: rid, requestedBy: 'p', source: 'dev', flow: { id: dvid(1), name: 'X' }, options: { mode: 'mr', deps: {}, env: {}, secrets: {}, applications: [{ name: 'Web', app: 'x' }], flowPolicies: [{ name: 'P', app: 'Web' }] }, dryRun: true }).applications,
+  [{ name: 'Web' }], 'applications and flow policies are sent by name only');
 ok(contract.validateRequest(Object.assign({}, req0, { envValues: { dev: { a: 'b' }, prod: { uris: ['https://x.example.com/cb'] } } }), cfgV).length === 0, 'env values may name the source and rollout envs, and be JSON lists');
 ok(lib.checkSettings({ apiOrigin: 'https://api.pingone.com', authOrigin: 'https://auth.pingone.com', workerEnvironmentId: WORKER, sourceEnvs: 'qa=' + SRC,
   pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*' }).problems.some((x) => x.name === 'sourceEnvs'), 'a source env that is also in the rollout is a settings problem');
@@ -252,7 +273,9 @@ const PREVIEW = (req, o) => {
   for (const c of changes) { summary[c.action] += 1; }
   const res = { resultVersion: 1, requestId: req.requestId, requestedBy: req.requestedBy, status: 'previewed', dryRun: true, mode: req.mode, source: req.source, branch: req.branchName,
     commitId: '', mrUrl: '', mrIid: 0, branchUrl: GLWEB + '/-/tree/' + encodeURIComponent(req.branchName), diffUrl: GLWEB + '/-/compare/main...' + encodeURIComponent(req.branchName),
-    selected: [{ query: req.flows[0].id || req.flows[0].name, address: SEL, name: req.flows[0].name, id: req.flows[0].id }], changes: changes, summary: summary, files: [],
+    selected: [{ query: req.flows[0].id || req.flows[0].name, address: SEL, name: req.flows[0].name, id: req.flows[0].id }]
+      .concat((req.applications || []).map((a) => ({ query: a.name, address: 'pingone_davinci_application.pingcli__' + a.name.replace(/[^A-Za-z0-9]/g, '_'), name: a.name })))
+      .concat((req.flowPolicies || []).map((a) => ({ query: a.name, address: 'pingone_davinci_application_flow_policy.pingcli__' + a.name.replace(/[^A-Za-z0-9]/g, '_'), name: a.name }))), changes: changes, summary: summary, files: [],
     requiredSecrets: [{ key: 'davinci_variable_PingFedAuthNCreds_value', varName: 'davinci_variable_PingFedAuthNCreds_value', field: 'davinci_variable_PingFedAuthNCreds_value', declared: false,
       vault: 'apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/davinci_variable_PingFedAuthNCreds_value@secret' }],
     blockers: blockers, warnings: o.warning ? ['flows[0]: name does not match ' + SRC] : [], diff: '--- a/definitions/pingone_davinci_flow.tf\n' + '+ x\n'.repeat(4000), diffTruncated: false, error: null };
@@ -271,12 +294,18 @@ function world(opt) {
   const branchObj = (b) => ({ name: b, web_url: GLWEB + '/-/tree/' + b, commit: { id: head(b), title: g.branches[b].titles[g.branches[b].titles.length - 1], committed_date: '2026-11-03T09:00:00Z' } });
   g.branches.main.titles = ['init'];
   const commitTo = (b, t) => { const s = newSha(); g.branches[b].commits.push(s); g.branches[b].titles.push(t); return s; };
-  const page = (items, pg, base) => {
+  const page = (items, pg, base, key, query) => {
     const start = pg * o.pageSize;
-    const body = { _embedded: { flows: items.slice(start, start + o.pageSize) }, count: items.length };
-    if (start + o.pageSize < items.length) { body._links = { next: { href: base + '?attributes=id,name&cursor=' + (pg + 1) } }; }
+    const body = { _embedded: { [key || 'flows']: items.slice(start, start + o.pageSize) }, count: items.length };
+    if (start + o.pageSize < items.length) { body._links = { next: { href: base + (query === undefined ? '?attributes=id,name&' : '?') + 'cursor=' + (pg + 1) } }; }
     return { status: 200, body: body };
   };
+  // Applications carry more than names: a client secret that must never reach the state or a screen.
+  const apps = (o.manyApps ? Array.from({ length: 25 }, (_, i) => ({ id: dvid(100 + i), name: 'Bulk app ' + String(i + 1).padStart(2, '0') })) : [
+    { id: dvid(21), name: 'Web Portal' }, { id: dvid(22), name: 'Mobile App' }, { id: dvid(23), name: 'Mobile App Beta' }, { id: dvid(24), name: 'Admin Console' },
+    { id: dvid(25), name: 'Partner API' }, { id: dvid(26), name: 'Partner API' }, { id: dvid(27), name: '<img src=x onerror=alert(1)> app' }, { id: dvid(28), name: 'Kiosk' }])
+    .map((a) => Object.assign({ oauth: { clientSecret: 'secret-value-for-tests', redirectUris: ['https://x.example.com/cb'] } }, a));
+  const policiesOf = { [dvid(21)]: ['Sign in policy', 'Sign in policy - MFA', 'Registration policy', 'Recovery policy'], [dvid(28)]: ['Kiosk policy'] };
   const runJob = (p) => {
     // The request job finishes: decide the result and do what the backend would do.
     const req = p.req;
@@ -337,8 +366,15 @@ function world(opt) {
     if (url.indexOf('https://api.pingone.com/') === 0) {
       assert.strictEqual(method, 'GET', 'PingOne is read-only');
       assert.strictEqual(headers.Authorization, 'Bearer ' + ACCESS);
+      const ma = /^https:\/\/api\.pingone\.com\/v1\/environments\/([^/]+)\/davinciApplications(?:\?cursor=([0-9]+))?$/.exec(url);
+      if (ma) { return page(ma[1] === SRC ? apps : [], Number(ma[2] || 0), 'https://api.pingone.com/v1/environments/' + ma[1] + '/davinciApplications', 'davinciApplications', ''); }
+      const mp = /^https:\/\/api\.pingone\.com\/v1\/environments\/([^/]+)\/davinciApplications\/([A-Za-z0-9_-]+)\/flowPolicies(?:\?cursor=([0-9]+))?$/.exec(url);
+      if (mp) {
+        const list = (policiesOf[mp[2]] || []).map((n, i) => ({ id: dvid(200 + i), name: n, status: 'enabled' }));
+        return page(mp[1] === SRC ? list : [], Number(mp[3] || 0), 'https://api.pingone.com/v1/environments/' + mp[1] + '/davinciApplications/' + mp[2] + '/flowPolicies', 'flowPolicies', '');
+      }
       const m = /^https:\/\/api\.pingone\.com\/v1\/environments\/([^/]+)\/flows\?attributes=id,name(?:&cursor=([0-9]+))?$/.exec(url);
-      assert.ok(m, 'only the flow list is read: ' + url);
+      assert.ok(m, 'only the flow, application and flow policy lists are read: ' + url);
       return page(m[1] === SRC ? flows : [], Number(m[2] || 0), 'https://api.pingone.com/v1/environments/' + m[1] + '/flows');
     }
     assert.ok(url.indexOf(BASE + '/') === 0, 'GitLab call to our project only: ' + url);
@@ -647,7 +683,7 @@ function common(r, label) {
       ok(keysOk(JSON.parse(req)), label + ': request.json has only the job\'s fields');
     }
   }
-  const LIMITS = { START: 0, SEARCH: 2 + 3, POLL: 4, KEEP: 4, PREVIEW: 1, SUBMIT: 1, CHECK: 5, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
+  const LIMITS = { START: 0, SEARCH: 2 + 3, SEARCH_APP: 2 + 3, POLICIES: 2 + 2, POLL: 4, KEEP: 4, PREVIEW: 1, SUBMIT: 1, CHECK: 5, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
   for (const b of r.budget) {
     const key = b.button.split(':')[0].replace(/^OPENB?$/, 'WATCH');
     const lim = lib.has(LIMITS, key) ? LIMITS[key] : 0;
@@ -1041,6 +1077,53 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     const pv = visible(r.pages[r.pages.length - 2].html);
     ok(/name does not match <id>/.test(pv), 'warnings are shown, with IDs redacted');
     common(r, 'request blockers');
+  }
+  // ---- applications and flow policies --------------------------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([
+      { click: 'EXTRAS', expect: /Applications and flow policies None\. Optional\./ },
+      { click: 'SEARCH_APP', form: { appQuery: '' } },
+      { click: 'SEARCH_APP', form: { appQuery: 'zzz' }, expect: /Type part of an application name/ },
+      { click: 'SEARCH_APP', form: { appQuery: 'partner' }, expect: /No application in dev matches .zzz./ },
+      { click: 'ADDAPP:0', expect: /2 matches\. Choose one; the app never picks for you.*Partner API.*Partner API/ },
+      { click: 'SEARCH_APP', form: { appQuery: 'mobile' }, expect: /Two applications are named .Partner API.\. The request job selects by name/ },
+      { click: 'SEARCH_APP', form: { appQuery: 'img' }, expect: /2 matches.*Mobile App.*Mobile App Beta/ },
+      { click: 'SEARCH_APP', form: { appQuery: 'admin' }, expect: /1 match.*&lt;img src=x onerror=alert\(1\)&gt; app|1 match/ },
+      { click: 'ADDAPP:0', expect: /1 match.*Admin Console/ },
+      { click: 'SEARCH_APP', form: { appQuery: 'web' }, expect: /Applications \(1 of 20\).*Admin Console.*Remove application from the request/ },
+      { click: 'POLICIES:0', expect: /1 match.*Web Portal.*Its flow policies/ },
+      { click: 'SEARCH_POL', form: { polQuery: 'sign in' }, expect: /Flow policies of Web Portal.*Recovery policy.*Registration policy.*Sign in policy.*Sign in policy - MFA/ },
+      { click: 'SEARCH_POL', form: { polQuery: 'registration' }, expect: /2 matches\. Choose one; the app never picks for you.*Sign in policy - MFA/ },
+      { click: 'ADDPOL:0', expect: /1 match.*Registration policy/ },
+      { click: 'SEARCH_APP', form: { appQuery: 'web' }, expect: /Flow policies \(1 of 20\).*Registration policy.*application Web Portal/ },
+      { click: 'ADDAPP:0' }, { click: 'EXTRAS_DONE', expect: /Applications \(2 of 20\)/ },
+      { click: 'PREVIEW', expect: /Application: Admin Console Application: Web Portal Flow policy: Registration policy \(application Web Portal\)/ },
+      auto(/Preview: ready/), { click: 'SIGNOUT', expect: /Selected: .*Web Portal.*Registration policy/ }]));
+    const reqs = commitsOf(r).map(decodeReq);
+    eq(reqs[0].applications, [{ name: 'Admin Console' }, { name: 'Web Portal' }], 'applications are sent by name');
+    eq(reqs[0].flowPolicies, [{ name: 'Registration policy' }], 'flow policies are sent by name');
+    eq(reqs[0].flows[0].name, 'Registration', 'the main flow is still sent');
+    ok(r.w.g.jobRefusals.length === 0, 'the request job accepted applications and flowPolicies');
+    eq(glCalls(r, /api\.pingone\.com.*\/davinciApplications(\?cursor=[0-9]+)?$/).length, 3, 'the application list is read once (three pages) for every application search');
+    eq(glCalls(r, /flowPolicies/).length, 2, 'flow policies: only the opened application is read (two pages)');
+    ok(glCalls(r, /flowPolicies/).every((c) => c.url.indexOf('/davinciApplications/' + dvid(21) + '/flowPolicies') > 0), 'never one call per application');
+    eq(glCalls(r, /as\/token/).length, 3, 'one worker token per list: flows, applications, flow policies');
+    ok(r.w.calls.filter((c) => c.url.indexOf('api.pingone.com') > 0).every((c) => c.method === 'GET'), 'the lists are read-only');
+    const budgets = r.budget.filter((b) => /SEARCH_APP|POLICIES|SEARCH_POL|ADD|EXTRAS|DROP/.test(b.button)).map((b) => b.button + '=' + b.calls);
+    ok(budgets.indexOf('SEARCH_APP=4') >= 0 && budgets.indexOf('POLICIES:0=3') >= 0 && budgets.every((x) => /^(SEARCH_APP=(0|4)|POLICIES:0=3|[A-Z_:0-9]+=0)$/.test(x)), 'REST calls: 1 token + pages for a first search, 0 for the rest: ' + budgets.join(' '));
+    ok(JSON.stringify(r.inst).indexOf('clientSecret') < 0 && JSON.stringify(r.pages.map((p) => p.state)).indexOf('secret-value-for-tests') < 0, 'application secrets from the list never reach the state');
+    common(r, 'applications');
+    const r2 = await run({ worldOpt: { noBlockers: true }, settings: { ppPathApplications: '' } }, toOptions.concat([{ click: 'SIGNOUT' }]));
+    ok(!buttonOf(r2.pages[r2.pages.length - 2].html, 'EXTRAS') && !/Applications and flow policies/.test(r2.pages[r2.pages.length - 2].html), 'no application path: the step is not offered');
+    common(r2, 'applications off');
+    const r3 = await run({ settings: { ppPathFlowPolicies: '/v1/environments/{envId}/policies' } }, []);
+    ok(/ppPathFlowPolicies: must be a \/v1\/\.\.\. path using .{1,6}envId.{1,6} and .{1,6}appId/.test(r3.last) && r3.last.indexOf(SRC) < 0, 'a bad path stops the app with its name, never a value');
+    common(r3, 'applications bad path');
+    const r4 = await run({ worldOpt: { noBlockers: true, manyApps: true, pageSize: 13 } }, toOptions.concat([{ click: 'EXTRAS' }, { click: 'SEARCH_APP', form: { appQuery: 'bulk' } }]
+      .concat(Array.from({ length: 21 }, (_, i) => ({ click: 'ADDAPP:' + i })))
+      .concat([{ click: 'EXTRAS_DONE', expect: /A request can hold at most 20 applications/ }, { click: 'PREVIEW', expect: /Applications and flow policies/ }, auto(/Preview: ready/), { click: 'SIGNOUT' }])));
+    eq(commitsOf(r4).map(decodeReq)[0].applications.length, 20, 'at most 20 applications are sent');
+    common(r4, 'applications limit');
   }
   // ---- artifact fallback: the download is a redirect (or 404); the job log's last line is used ------------------------------
   {

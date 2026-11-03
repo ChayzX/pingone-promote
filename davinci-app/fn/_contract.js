@@ -52,6 +52,9 @@ contract.buildRequest = (d) => {
   put('dependencyChoices', o.deps);
   put('envValues', o.env);
   put('secretMappings', o.secrets);
+  // Applications and flow policies are selected by name only (the job refuses an id for them).
+  put('applications', (o.applications || []).map((x) => ({ name: x.name })));
+  put('flowPolicies', (o.flowPolicies || []).map((x) => ({ name: x.name })));
   put('inlineValues', (o.inline || []).slice().sort());
   put('remove', (o.remove || []).slice().sort());
   r.mode = o.mode;
@@ -103,7 +106,15 @@ contract.validateRequest = (r, cfg) => {
   if (!printable(r.requestedBy, contract.LIMITS.requestedBy) || /[\n\t]/.test(r.requestedBy)) { bad('requestedBy', 'must be one line of at most 128 characters'); }
   if (!contract.RE.env.test(r.source)) { bad('source', 'must be an environment name'); }
   if (cfg.rollout.indexOf(r.source) >= 0) { bad('source', 'must not be a rollout environment'); }
-  if (!r.flows.length || r.flows.length > contract.LIMITS.refs) { bad('flows', 'choose 1 to 20 flows'); }
+  const refs = ['applications', 'flowPolicies'];
+  if (r.flows.length + refs.reduce((n, k) => n + (r[k] || []).length, 0) === 0) { bad('flows', 'select at least one flow, application or flow policy'); }
+  if (r.flows.length > contract.LIMITS.refs || refs.some((k) => (r[k] || []).length > contract.LIMITS.refs)) { bad('flows', 'at most 20 of each kind per request'); }
+  for (const k of refs) {
+    (r[k] || []).forEach((f, i) => {
+      if (f.id !== undefined) { bad(k + '[' + i + '].id', 'must be a DaVinci ID (flows only)'); }
+      if (!printable(f.name, contract.LIMITS.refName) || !String(f.name).trim()) { bad(k + '[' + i + '].name', 'must be at most 200 printable characters'); }
+    });
+  }
   r.flows.forEach((f, i) => {
     if (f.id && !contract.RE.davinciId.test(f.id)) { bad('flows[' + i + '].id', 'must be a DaVinci ID'); }
     if (f.name !== undefined && (!printable(f.name, contract.LIMITS.refName) || !f.name.trim())) { bad('flows[' + i + '].name', 'must be at most 200 printable characters'); }

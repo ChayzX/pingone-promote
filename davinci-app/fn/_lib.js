@@ -129,7 +129,7 @@ lib.ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 lib.GITLAB_API = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-]{1,64})*\/api\/v4$/;
 lib.SETTINGS = ['apiOrigin', 'authOrigin', 'workerEnvironmentId', 'sourceEnvs', 'pathFlows', 'flowsListQuery', 'rolloutEnvs', 'gitlabApi',
   'gitlabProjectId', 'defaultBranch', 'applyJobPattern', 'environmentPattern', 'mrLabel', 'allowedGroups', 'runTimeoutSeconds',
-  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines'];
+  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies'];
 lib.varName = (n) => 'pp' + n.charAt(0).toUpperCase() + n.slice(1);
 lib.checkSettings = (p) => {
   const cfg = {};
@@ -156,6 +156,19 @@ lib.checkSettings = (p) => {
   if (!/^\/v1\/[A-Za-z0-9_{}\/-]{1,200}$/.test(path) || path.indexOf('{envId}') < 0 || path.indexOf('..') >= 0 || /\{(?!envId\})/.test(path)) {
     problems.push({ name: 'pathFlows', issue: path ? 'must be a /v1/... path using only {envId}' : 'not set' });
   } else { cfg.pathFlows = path; }
+  // Optional: an empty path switches the "Add an application or flow policy" step off (DESIGN.md section 12, assumption 13).
+  const optPath = (name, vars) => {
+    const v = lib.str(p[name]);
+    if (!v) { return ''; }
+    const rest = v.replace(/\{(envId|appId)\}/g, '');
+    if (!/^\/v1\/[A-Za-z0-9_{}\/-]{1,200}$/.test(v) || v.indexOf('..') >= 0 || /[{}]/.test(rest) || vars.some((x) => v.indexOf('{' + x + '}') < 0)) {
+      problems.push({ name: name, issue: 'must be a /v1/... path using ' + vars.map((x) => '{' + x + '}').join(' and ') + ' (or empty to switch the step off)' });
+      return '';
+    }
+    return v;
+  };
+  cfg.pathApplications = optPath('pathApplications', ['envId']);
+  cfg.pathFlowPolicies = cfg.pathApplications ? optPath('pathFlowPolicies', ['envId', 'appId']) : '';
   cfg.flowsListQuery = need('flowsListQuery', /^[A-Za-z0-9_.,=&%-]{0,200}$/, 'must be a plain query string such as attributes=id,name', '');
   cfg.rollout = lib.str(p.rolloutEnvs).split(',').map((x) => x.trim()).filter((x) => x);
   if (!cfg.rollout.length || cfg.rollout.some((x) => !lib.ENV_NAME.test(x))) { problems.push({ name: 'rolloutEnvs', issue: 'must be env names in rollout order, such as qa,stage,prod' }); }
@@ -188,6 +201,17 @@ lib.flowsUrl = (cfg, source) => {
   const id = cfg.sources[source];
   if (!id) { throw new Error('unknown source env'); }
   return cfg.apiOrigin + cfg.pathFlows.replace('{envId}', id) + (cfg.flowsListQuery ? '?' + cfg.flowsListQuery : '');
+};
+// The read-only list calls: flows, applications, or one application's flow policies (PingOne lists those per application).
+lib.listUrl = (cfg, list) => {
+  const id = cfg.sources[list.source];
+  if (!id) { throw new Error('unknown source env'); }
+  if (list.kind === 'applications' && cfg.pathApplications) { return cfg.apiOrigin + cfg.pathApplications.replace('{envId}', id); }
+  if (list.kind === 'policies' && cfg.pathFlowPolicies && /^[A-Za-z0-9_-]{1,64}$/.test(String(list.appId))) {
+    return cfg.apiOrigin + cfg.pathFlowPolicies.replace('{envId}', id).replace('{appId}', lib.enc(list.appId));
+  }
+  if (list.kind === 'flows' || list.kind === undefined) { return lib.flowsUrl(cfg, list.source); }
+  throw new Error('unknown list');
 };
 lib.tokenUrl = (cfg) => cfg.authOrigin + '/' + cfg.workerEnvironmentId + '/as/token';
 lib.nextLink = (body, origin) => {
@@ -321,7 +345,7 @@ lib.searchFlows = (items, query) => {
 };
 
 // ---- options, readiness and the #57 Submit rule ---------------------------------------
-lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.remove]);
+lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.remove, o.applications, o.flowPolicies]);
 // Addresses that get a Keep Git version / Use source choice: differing dependencies (#93),
 // and any address changed in both Git and the source.
 lib.choosable = (r) => (r ? r.changes.filter((c) => contract.RE.address.test(c.address) &&

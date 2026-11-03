@@ -25,7 +25,7 @@ const text = (path, label, value, o) => {
   o = o || {};
   const id = uid('f');
   return field(id, label, '<input type="text" id="' + id + '"' + attr(path) + ' value="' + e(value) + '" autocomplete="off"' +
-    (o.placeholder ? ' placeholder="' + e(o.placeholder) + '"' : '') + described(id, o.err, o.hint) + ' />', o.err, o.hint);
+    (o.placeholder ? ' placeholder="' + e(o.placeholder) + '"' : '') + (o.enter ? ' data-pp-enter="' + e(o.enter) + '"' : '') + described(id, o.err, o.hint) + ' />', o.err, o.hint);
 };
 const area = (path, label, value, hint, err) => {
   const id = uid('f');
@@ -220,13 +220,45 @@ screens.options = () => {
         '<div class="pp-field' + (errFor('remove') ? ' has-err' : '') + '">' + (errFor('remove') ? '<p class="pp-err" id="' + confirmId + '-err">' + e(errFor('remove')) + '</p>' : '') +
         '<label class="pp-check" for="' + confirmId + '"><input type="checkbox" id="' + confirmId + '"' + attr(['removeConfirm']) + (o.removeConfirmed ? ' checked' : '') + (errFor('remove') ? ' aria-invalid="true" aria-describedby="' + confirmId + '-err"' : '') +
         ' /> I confirm: Git stops managing every resource ticked above. They keep running in PingOne.</label></div>'));
+  const extrasBlock = cfg.pathApplications ? '<h2>Applications and flow policies</h2>' +
+    (o.applications.length || o.flowPolicies.length ? '<ul class="pp-list">' + o.applications.map((x) => '<li>Application: ' + e(x.name) + '</li>').join('') +
+      o.flowPolicies.map((x) => '<li>Flow policy: ' + e(x.name) + (x.app ? ' <span class="pp-hint">(application ' + e(x.app) + ')</span>' : '') + '</li>').join('') + '</ul>' : '<p class="pp-hint">None. Optional.</p>') +
+    '<div class="pp-actions">' + button('EXTRAS', 'Add an application or flow policy', { ghost: true }) + '</div>' : '';
   return head('Review the change', 'Choose how the request is written, then preview it.') + summary() + subBanner() + errorSummary() + state +
     radios(['mode'], 'How to hand the change to GitLab', o.mode, [['mr', 'Open a merge request'], ['branch', 'Branch only (no merge request)']]) +
     '<p class="pp-hint">Request branch: <code>' + e(s.req.branch) + '</code></p>' +
     text(['title'], 'Title', o.title, { err: errFor('title'), hint: 'One line, at most 255 characters.' }) +
     area(['commitMessage'], 'Commit message', o.commitMessage, 'At most 2000 characters. The job adds the Requested-by and Request-id lines.', errFor('commitMessage')) +
     area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.', errFor('description')) +
-    depBlock + stopBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
+    extrasBlock + depBlock + stopBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
+};
+// Applications and flow policies, found by name in the source env like flows are: no guessing, every match listed.
+screens.extras = () => {
+  const o = s.req.options;
+  const ex = s.extras || {};
+  const found = (res, what, addPrefix, extraBtn) => {
+    if (!res || !res.matches) { return ''; }
+    if (!res.matches.length) { return '<p class="pp-empty" role="status">No ' + what + ' in ' + e(s.req.source) + ' matches “' + e(res.query) + '”' + (res.listed === 0 ? ' (the env has none the app can read; ask your DaVinci administrator to check the worker\'s role)' : '') + '. Try part of the name.</p>'; }
+    return '<h3 role="status">' + (res.matches.length === 1 ? '1 match' : res.total + ' matches' + (res.total > res.matches.length ? ' (first ' + res.matches.length + ' shown)' : '') + '. Choose one; the app never picks for you') + '</h3>' +
+      '<table class="pp-table"><thead><tr><th scope="col">Name</th><th scope="col">ID</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' +
+      res.matches.map((m, i) => '<tr><td>' + e(m.name) + '</td><td><code>' + e(m.id) + '</code></td><td>' +
+        button(addPrefix + i, 'Add this ' + what, { ghost: res.matches.length > 1 }) + (extraBtn ? extraBtn(i) : '') + '</td></tr>').join('') + '</tbody></table>';
+  };
+  const added = (list, drop, what) => (list.length ? '<table class="pp-table"><thead><tr><th scope="col">Name</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' +
+    list.map((x, i) => '<tr><td>' + e(x.name) + (x.app ? ' <span class="pp-hint">application ' + e(x.app) + '</span>' : '') + '</td><td>' + button(drop + i, 'Remove ' + what + ' from the request', { ghost: true }) + '</td></tr>').join('') + '</tbody></table>'
+    : '<p class="pp-empty">None added.</p>');
+  const policies = ex.pol ? '<h2>Flow policies of ' + e(ex.pol.app.name) + '</h2><p class="pp-hint">PingOne lists flow policies per application, so the app reads only this application\'s. ' +
+    'The request job finds a policy by name in the whole source env and lists the candidates if another application has one with the same name.</p>' +
+    text(['polQuery'], 'Flow policy name (leave empty to list them all)', ex.pol.query || '', { enter: 'SEARCH_POL' }) +
+    '<div class="pp-actions">' + button('SEARCH_POL', 'Search flow policies') + '</div>' + found(ex.pol, 'flow policy', 'ADDPOL:') : '';
+  return head('Add an application or flow policy', 'Optional. They are found by name in <strong>' + e(s.req.source) + '</strong>, like flows, and come with the request next to ' + e(s.req.flow.name) + '. At most ' + contract.LIMITS.refs + ' of each.') +
+    summary() + errorSummary() +
+    '<h2>In this request</h2><h3>Applications (' + o.applications.length + ' of ' + contract.LIMITS.refs + ')</h3>' + added(o.applications, 'DROPAPP:', 'application') +
+    (cfg.pathFlowPolicies ? '<h3>Flow policies (' + o.flowPolicies.length + ' of ' + contract.LIMITS.refs + ')</h3>' + added(o.flowPolicies, 'DROPPOL:', 'flow policy') : '') +
+    '<h2>Find an application</h2>' + text(['appQuery'], 'Application name or ID', (ex.apps && ex.apps.query) || '', { err: (s.errors || {}).appQuery, enter: 'SEARCH_APP' }) +
+    '<div class="pp-actions">' + button('SEARCH_APP', 'Search applications') + '</div>' +
+    found(ex.apps, 'application', 'ADDAPP:', cfg.pathFlowPolicies ? (i) => button('POLICIES:' + i, 'Its flow policies', { ghost: true }) : null) + policies +
+    '<div class="pp-actions">' + button('EXTRAS_DONE', 'Back to the options') + '</div>';
 };
 screens.working = () => {
   const run = s.run;
@@ -319,7 +351,7 @@ screens.requests = () => {
     '<div class="pp-actions">' + button('REFRESH', 'Refresh', { ghost: true }) + '</div>';
 };
 
-const screen = screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
+const screen = screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' && s.screen !== 'extras' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
 s.screen = screen;
 const nav = '<nav class="pp-nav" aria-label="App">' + button('NAV_NEW', 'New request', { ghost: screen !== 'search' }) + button('NAV_REQUESTS', 'Requests', { ghost: screen !== 'requests' }) +
   '<span class="pp-user">Signed in as ' + e(s.user.name || s.user.username) + '</span>' + button('SIGNOUT', 'Leave the app', { ghost: true }) + '</nav>';

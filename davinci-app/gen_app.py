@@ -61,6 +61,9 @@ SETTINGS = {
     "statusRefreshSeconds": "30",
     "statusMaxMinutes": "30",
     "childPipelines": "yes",
+    # Assumed paths (DESIGN.md section 12); an empty ppPathApplications switches the "Add an application or flow policy" step off.
+    "pathApplications": "/v1/environments/{envId}/davinciApplications",
+    "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies",
 }
 EMPTY_SETTINGS = ("workerEnvironmentId", "sourceEnvs", "gitlabProjectId", "allowedGroups")
 PRESETTABLE = {k for k in SETTINGS if k not in EMPTY_SETTINGS}
@@ -375,7 +378,8 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'text') {
       e.preventDefault();
-      var b = document.querySelector('[data-skbuttonvalue="SEARCH"]') || document.querySelector('[data-skbuttonvalue="PREVIEW"]:not([disabled])');
+      var want = e.target.getAttribute('data-pp-enter');
+      var b = (want && document.querySelector('[data-skbuttonvalue="' + want + '"]')) || document.querySelector('[data-skbuttonvalue="SEARCH"]') || document.querySelector('[data-skbuttonvalue="PREVIEW"]:not([disabled])');
       if (b) { collect(); b.click(); }
     }
   }, true);
