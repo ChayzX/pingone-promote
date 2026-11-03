@@ -13,6 +13,11 @@
 - **Adapt:** the app server, the GitLab client and the store.
 - **Keep:** `pingone.Client`, `logging`, `strictjson` and `buildinfo`.
 - Archive the old docs to `docs/archive/`.
+- Status of the move: the Redact name heuristics are now in
+  `internal/translate/secrets.go`, where a match raises an acknowledged
+  warning and produces a secret placeholder instead of a silent redaction.
+  The original in `internal/promotion` stays until #44 deletes the native
+  workflow.
 
 ## Alternatives
 
