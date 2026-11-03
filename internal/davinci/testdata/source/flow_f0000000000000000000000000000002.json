@@ -1,0 +1,230 @@
+{
+ "_links": {
+  "self": {
+   "href": "https://api.pingone.example/v1/environments/00000000-0000-4000-8000-0000000000a1"
+  }
+ },
+ "connectors": [
+  {
+   "id": "httpConnector"
+  }
+ ],
+ "createdAt": "2026-01-01T00:00:00Z",
+ "currentVersion": 4,
+ "description": "Second factor",
+ "dvlinterErrorCount": 0,
+ "enabled": false,
+ "environment": {
+  "id": "00000000-0000-4000-8000-0000000000a1"
+ },
+ "graphData": {
+  "allLinterErrors": [],
+  "boxSelectionEnabled": true,
+  "data": {},
+  "elements": {
+   "edges": [
+    {
+     "data": {
+      "id": "e2a",
+      "source": "n2save",
+      "target": "n2sub"
+     },
+     "grabbable": true,
+     "group": "edges",
+     "locked": false,
+     "pannable": false,
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "removed": false,
+     "selectable": true,
+     "selected": false
+    },
+    {
+     "data": {
+      "id": "e2b",
+      "source": "n2sub",
+      "target": "n2form"
+     },
+     "grabbable": true,
+     "group": "edges",
+     "locked": false,
+     "pannable": false,
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "removed": false,
+     "selectable": true,
+     "selected": false
+    }
+   ],
+   "nodes": [
+    {
+     "classes": "",
+     "data": {
+      "capabilityName": "saveValue",
+      "connectionId": "c0000000000000000000000000000001",
+      "connectorId": "variablesConnector",
+      "id": "n2save",
+      "idUnique": "computed-n2save",
+      "label": "Save",
+      "name": "computed-name",
+      "nodeType": "CONNECTION",
+      "properties": {
+       "nodeTitle": {
+        "value": "Start"
+       },
+       "saveVariables": {
+        "value": [
+         {
+          "key": 0.7604670177003245,
+          "label": "mf-configObject (object - flowInstance)",
+          "name": "mf-configObject",
+          "nameDefault": "mf-configObject",
+          "type": "object",
+          "value": "[\n  {\n    \"children\": [\n      {\n        \"text\": \"\"\n      },\n      {\n        \"text\": \"\"\n      },\n      {\n        \"type\": \"link\",\n        \"src\": \"auth.svg\",\n        \"url\": \"mf-configObject\",\n        \"data\": \"{{global.parameters.mf-configObject}}\",\n        \"tooltip\": \"{{global.parameters.mf-configObject}}\",\n        \"children\": [\n          {\n            \"text\": \"mf-configObject\"\n          }\n        ]\n      },\n      {\n        \"text\": \"\"\n      }\n    ]\n  }\n]"
+         }
+        ]
+       }
+      },
+      "status": "configured",
+      "type": "action"
+     },
+     "grabbable": true,
+     "group": "nodes",
+     "locked": false,
+     "pannable": false,
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "removed": false,
+     "selectable": true,
+     "selected": false
+    },
+    {
+     "classes": "",
+     "data": {
+      "capabilityName": "startUiSubFlow",
+      "connectionId": "c0000000000000000000000000000002",
+      "connectorId": "flowConnector",
+      "id": "n2sub",
+      "idUnique": "computed-n2sub",
+      "label": "Forgot password",
+      "name": "computed-name",
+      "nodeType": "CONNECTION",
+      "properties": {
+       "mf-configObject": {
+        "value": "[\n  {\n    \"children\": [\n      {\n        \"text\": \"\"\n      },\n      {\n        \"text\": \"\"\n      },\n      {\n        \"type\": \"link\",\n        \"src\": \"variable.svg\",\n        \"url\": \"mf-configObject\",\n        \"data\": \"{{global.variables.mf-configObject}}\",\n        \"tooltip\": \"{{global.variables.mf-configObject}}\",\n        \"children\": [\n          {\n            \"text\": \"mf-configObject\"\n          }\n        ]\n      },\n      {\n        \"text\": \"\"\n      }\n    ]\n  }\n]"
+       },
+       "nodeTitle": {
+        "value": "PingOne SSO Forgot Password subflow"
+       },
+       "subFlowId": {
+        "value": {
+         "label": "PingOne SSO Forgot Password subflow",
+         "value": "f0000000000000000000000000000001"
+        }
+       },
+       "subFlowVersionId": {
+        "value": 3
+       },
+       "username": {
+        "value": "[\n  {\n    \"children\": [\n      {\n        \"text\": \"\"\n      },\n      {\n        \"text\": \"\"\n      },\n      {\n        \"type\": \"link\",\n        \"src\": \"http.svg\",\n        \"url\": \"username\",\n        \"data\": \"{{local.wzzj7jakza.payload.output.username}}\",\n        \"tooltip\": \"{{local.wzzj7jakza.payload.output.username}}\",\n        \"children\": [\n          {\n            \"text\": \"username\"\n          }\n        ]\n      },\n      {\n        \"text\": \"\"\n      }\n    ]\n  }\n]"
+       }
+      },
+      "status": "configured",
+      "type": "action"
+     },
+     "grabbable": true,
+     "group": "nodes",
+     "locked": false,
+     "pannable": false,
+     "position": {
+      "x": 200,
+      "y": 0
+     },
+     "removed": false,
+     "selectable": true,
+     "selected": false
+    },
+    {
+     "classes": "",
+     "data": {
+      "capabilityName": "customHTMLTemplate",
+      "connectionId": "c0000000000000000000000000000001",
+      "connectorId": "httpConnector",
+      "id": "n2form",
+      "idUnique": "computed-n2form",
+      "label": "Form",
+      "name": "computed-name",
+      "nodeType": "CONNECTION",
+      "properties": {
+       "form": {
+        "value": "00000000-0000-4000-8000-00000000f001"
+       },
+       "message": {
+        "value": "Hi {{global.variables.brand}}, 100%{done} ${x}"
+       },
+       "themeId": {
+        "value": "00000000-0000-4000-8000-00000000f002"
+       }
+      },
+      "status": "configured",
+      "type": "action"
+     },
+     "grabbable": true,
+     "group": "nodes",
+     "locked": false,
+     "pannable": false,
+     "position": {
+      "x": 400,
+      "y": 0
+     },
+     "removed": false,
+     "selectable": true,
+     "selected": false
+    }
+   ]
+  },
+  "maxZoom": 1e+50,
+  "minZoom": 1e-50,
+  "pan": {
+   "x": 0,
+   "y": 0
+  },
+  "panningEnabled": true,
+  "renderer": {
+   "name": "null"
+  },
+  "userPanningEnabled": true,
+  "userZoomingEnabled": true,
+  "zoom": 1,
+  "zoomingEnabled": true
+ },
+ "id": "f0000000000000000000000000000002",
+ "inputSchema": [
+  {
+   "preferredControlType": "textField",
+   "preferredDataType": "string",
+   "propertyName": "username",
+   "required": true
+  }
+ ],
+ "name": "MFA subflow",
+ "outputSchema": {
+  "output": {
+   "additionalProperties": false,
+   "properties": {
+    "result": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "publishedVersion": 3,
+ "updatedAt": "2026-01-02T00:00:00Z"
+}
