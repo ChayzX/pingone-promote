@@ -1,0 +1,263 @@
+// Build the HTML for the current screen from the state. The one App screen
+// node shows it. All dynamic text goes through lib.esc.
+const s = lib.state(params.state);
+const cfg = s.cfg;
+const e = lib.esc;
+const now = lib.now();
+let n = 0;
+const uid = (p) => p + (++n);
+const attr = (path) => ' data-pp="' + e(JSON.stringify(path)) + '"';
+const button = (value, label, o) => {
+  o = o || {};
+  const why = o.why ? uid('why') : '';
+  return '<button type="submit" class="pp-btn' + (o.ghost ? ' ghost' : '') + (o.danger ? ' danger' : '') + '" data-id="button" data-skcomponent="skbutton" data-skbuttontype="form-submit" data-skform="ppMain" data-skbuttonvalue="' + e(value) + '"' +
+    (o.why ? ' disabled aria-disabled="true" aria-describedby="' + why + '"' + (o.onEdit ? ' data-pp-enable-on-edit="' + why + '"' : '') : '') + '>' + e(label) + '</button>' +
+    (o.why ? '<span class="pp-why" id="' + why + '">' + e(o.why) + (o.onEdit ? ' Changing an option turns Submit back on.' : '') + '</span>' : '');
+};
+const link = (url, text) => (url ? '<a href="' + e(url) + '" rel="noopener noreferrer" target="_blank">' + e(text) + '<span class="pp-sr"> (opens GitLab in a new tab)</span></a>' : '');
+const field = (id, label, input, err, hint) => '<div class="pp-field' + (err ? ' has-err' : '') + '"><label for="' + id + '">' + e(label) + '</label>' +
+  (hint ? '<p class="pp-hint" id="' + id + '-hint">' + e(hint) + '</p>' : '') + (err ? '<p class="pp-err" id="' + id + '-err">' + e(err) + '</p>' : '') + input + '</div>';
+const described = (id, err, hint) => {
+  const ids = [hint ? id + '-hint' : '', err ? id + '-err' : ''].filter((x) => x).join(' ');
+  return (ids ? ' aria-describedby="' + ids + '"' : '') + (err ? ' aria-invalid="true"' : '');
+};
+const text = (path, label, value, o) => {
+  o = o || {};
+  const id = uid('f');
+  return field(id, label, '<input type="text" id="' + id + '"' + attr(path) + ' value="' + e(value) + '" autocomplete="off"' +
+    (o.placeholder ? ' placeholder="' + e(o.placeholder) + '"' : '') + described(id, o.err, o.hint) + ' />', o.err, o.hint);
+};
+const area = (path, label, value, hint) => {
+  const id = uid('f');
+  return field(id, label, '<textarea id="' + id + '" rows="4"' + attr(path) + described(id, '', hint) + '>' + e(value) + '</textarea>', '', hint);
+};
+const radios = (path, legend, value, opts) => {
+  const name = uid('r');
+  return '<fieldset class="pp-radios"><legend>' + e(legend) + '</legend>' + opts.map((op) => {
+    const id = uid('o');
+    return '<label for="' + id + '"><input type="radio" id="' + id + '" name="' + name + '"' + attr(path) + ' value="' + e(op[0]) + '"' + (op[0] === value ? ' checked' : '') + ' /> ' + e(op[1]) + '</label>';
+  }).join('') + '</fieldset>';
+};
+const notes = () => {
+  const list = s.notes || [];
+  if (!list.length) { return ''; }
+  const bad = list.some((x) => x.kind === 'bad');
+  return '<div class="pp-notes" role="' + (bad ? 'alert' : 'status') + '">' + list.map((x) => '<p class="pp-note ' + e(x.kind) + '">' + e(x.text) + '</p>').join('') + '</div>';
+};
+const errorSummary = () => {
+  const keys = Object.keys(s.errors || {});
+  if (!keys.length) { return ''; }
+  return '<div class="pp-note bad" role="alert" data-pp-focus><strong>Fix ' + keys.length + ' field' + (keys.length > 1 ? 's' : '') + ':</strong><ul>' + keys.map((k) => '<li>' + e(s.errors[k]) + '</li>').join('') + '</ul></div>';
+};
+const auto = (value, ms, label) => '<div id="pp-auto" data-value="' + e(value) + '" data-delay="' + Math.round(ms) + '" hidden></div><p class="pp-hint" aria-live="off">' + e(label) + '</p>';
+const head = (title, lead) => '<h1 tabindex="-1"' + (Object.keys(s.errors || {}).length ? '' : ' data-pp-focus') + '>' + e(title) + '</h1>' + (lead ? '<p class="pp-lead">' + lead + '</p>' : '');
+const STATE_SYM = { Live: '✓', 'Needs approval': '⏸', Failed: '✕', Running: '●', Waiting: '○', Canceled: '–' };
+const strip = (envs, source) => '<ol class="pp-strip" aria-label="Rollout">' +
+  (source ? '<li class="pp-chip src"><span class="pp-env">' + e(source) + '</span><span class="pp-st">Source env (pipeline plan job only)</span></li>' : '') +
+  cfg.rollout.map((x) => {
+    const v = (envs && envs[x]) || { state: 'Waiting', detail: '' };
+    const cls = v.state.toLowerCase().replace(/[^a-z]+/g, '-');
+    return '<li class="pp-chip ' + cls + '"><span class="pp-env">' + e(x) + '</span><span class="pp-st"><span aria-hidden="true">' + (STATE_SYM[v.state] || '') + ' </span>' + e(v.state) + '</span>' +
+      (v.detail ? '<span class="pp-detail">' + e(v.detail) + '</span>' : '') + '</li>';
+  }).join('') + '</ol>';
+const summary = () => s.req ? '<dl class="pp-sum"><dt>Source env</dt><dd>' + e(s.req.source) + '</dd><dt>Flow</dt><dd>' + e(s.req.flow.name) +
+  '</dd><dt>Request</dt><dd><code>' + e(s.req.requestId) + '</code></dd><dt>Rollout</dt><dd>' + e(cfg.rollout.join(' → ')) + '</dd></dl>' : '';
+const changesTable = (r) => {
+  if (!r.changes.length) { return '<p class="pp-empty">The job reported no changes.</p>'; }
+  const counts = {};
+  for (const c of r.changes) { counts[c.action] = (counts[c.action] || 0) + 1; }
+  const order = ['added', 'updated', 'kept_differs', 'unknown', 'unchanged'];
+  const line = order.filter((a) => counts[a]).map((a) => counts[a] + ' ' + (contract.ACTIONS[a] ? contract.ACTIONS[a].label.toLowerCase() : 'unrecognised')).join(', ');
+  const row = (c) => {
+    const a = contract.ACTIONS[c.action] || { sym: '?', label: 'Not recognised', cls: 'warn' };
+    return '<tr><td><code>' + e(c.address) + '</code>' + (c.role === 'selected' ? ' <span class="pp-tag">selected flow</span>' : '') + '</td><td class="' + a.cls + '"><span aria-hidden="true">' + e(a.sym) + ' </span>' + e(a.label) + '</td></tr>';
+  };
+  const main = r.changes.filter((c) => c.action !== 'unchanged');
+  const same = r.changes.filter((c) => c.action === 'unchanged');
+  const table = (rows) => '<table class="pp-table"><thead><tr><th scope="col">Shared definition (address)</th><th scope="col">Predicted change</th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>';
+  return '<p>' + e(line) + '.</p>' + (main.length ? table(main) : '') + (same.length ? '<details><summary>' + same.length + ' matching Git</summary>' + table(same) + '</details>' : '');
+};
+const readiness = (r, editable) => {
+  const envs = cfg.rollout.filter((x) => x !== s.req.source);
+  const rows = envs.map((env) => {
+    const bl = (r && r.blockers[env]) || [];
+    const vals = (s.req.options.env || {})[env] || {};
+    const items = bl.map((b) => {
+      if (b.var && editable) {
+        return text(['env', env, b.var], env + ': ' + b.var, vals[b.var] || '', { err: s.errors['env.' + env + '.' + b.var], hint: b.message || 'Environment value for ' + env });
+      }
+      return '<p class="pp-note bad">' + e(b.message || b.code || 'blocked') + '</p>';
+    }).join('');
+    const extra = Object.keys(vals).filter((k) => !bl.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + k, vals[k], { err: s.errors['env.' + env + '.' + k] })).join('');
+    const ready = !bl.length;
+    return '<section class="pp-env-row"><h3>' + e(env) + ' <span class="' + (ready ? 'add' : 'bad') + '">' + (ready ? (r ? '✓ Ready' : 'Not checked yet') : '✕ ' + bl.length + ' missing') + '</span></h3>' + items + (editable ? extra : '') + '</section>';
+  }).join('');
+  return '<h2>Readiness</h2><p class="pp-hint">Environment values each rollout env needs. Missing values block the request; fill them in here and preview again.</p>' + rows;
+};
+const secretsBlock = (r, editable) => {
+  const list = (r && r.requiredSecrets) || [];
+  if (!list.length) { return ''; }
+  const o = s.req.options;
+  return '<h2>Secrets</h2><p class="pp-hint">The app never sees secret values. Map each secret to its variable and Vault field, then confirm it exists in Vault for every rollout env. Vault is not checked from here.</p>' +
+    list.map((x) => {
+      const m = (o.secrets || {})[x.key] || {};
+      const id = uid('c');
+      const err = s.errors['secret.' + x.key];
+      return '<fieldset class="pp-secret"><legend><code>' + e(x.key) + '</code></legend>' + (editable
+        ? text(['secrets', x.key, 'varName'], 'Variable name', m.varName || x.varName || x.key, { err: err }) + text(['secrets', x.key, 'field'], 'Vault field', m.field || x.field || x.key, {}) +
+          '<label class="pp-check" for="' + id + '"><input type="checkbox" id="' + id + '"' + attr(['secrets', x.key, 'ok']) + ((o.confirmed || {})[x.key] ? ' checked' : '') + ' /> It is in Vault for ' + e(cfg.rollout.join(', ')) + '</label>'
+        : '<p>' + ((o.confirmed || {})[x.key] ? '✓ Confirmed in Vault' : 'Not confirmed yet') + '</p>') + '</fieldset>';
+    }).join('');
+};
+const subBanner = () => {
+  const sub = s.sub || {};
+  if (sub.state === 'unknown') {
+    return '<div class="pp-note warn" role="alert"><strong>Outcome unknown.</strong> GitLab did not confirm what happened to your last request. Preview and Submit stay off until Check GitLab finds out.' +
+      (sub.message ? ' ' + e(sub.message) : '') + ' ' + link(sub.jobUrl, 'Open the job') + '<div class="pp-actions">' + button('CHECK', 'Check GitLab') + '</div></div>';
+  }
+  if (sub.state === 'error' && sub.error) {
+    const t = contract.ERROR_TEXT[sub.error.code] || { title: 'GitLab did not accept the request', fix: 'Change the options and submit again.' };
+    const partial = sub.error.code === 'partial' && sub.result ? link(lib.webUrl(cfg, sub.result.branchUrl), 'Open the request branch') : '';
+    return '<div class="pp-note bad" role="alert"><strong>Submit failed: ' + e(t.title) + '.</strong> ' + e(t.fix) + '<p>' + e(sub.error.message) + '</p>' + partial + ' ' + link(sub.jobUrl, 'Open the job') +
+      '<p class="pp-hint">Change any option to submit again.</p></div>';
+  }
+  return '';
+};
+const actions = () => {
+  const pw = lib.canPreview(s);
+  const sw = lib.canSubmit(s);
+  const cancel = s.req && s.req.lastCommit && s.sub.state !== 'done' && s.sub.state !== 'unknown' ? button('CANCEL', 'Cancel request', { ghost: true, danger: true }) : '';
+  return '<div class="pp-actions">' + button('PREVIEW', 'Preview', { why: pw, ghost: true }) + button('SUBMIT', s.req && s.req.options.mode === 'branch' ? 'Submit request (branch only)' : 'Submit request', { why: sw, onEdit: !!sw && !pw && s.screen === 'options' }) + cancel + '</div>';
+};
+
+const screens = {};
+screens.search = () => {
+  const sr = s.search || {};
+  const sources = Object.keys(cfg.sources);
+  const id = uid('f');
+  const select = '<select id="' + id + '"' + attr(['source']) + '>' + sources.map((x) => '<option value="' + e(x) + '"' + (x === sr.source ? ' selected' : '') + '>' + e(x) + '</option>').join('') + '</select>';
+  let results = '';
+  if (sr.matches) {
+    if (!sr.matches.length) {
+      results = '<p class="pp-empty" role="status">No flow in ' + e(sr.source) + ' matches “' + e(sr.query) + '”' + (sr.listed === 0 ? ' (the env has no flows the app can read; ask your DaVinci administrator to check the worker\'s role)' : '') + '. Try part of the name, or the flow ID.</p>';
+    } else {
+      results = '<h2 role="status">' + (sr.matches.length === 1 ? '1 match' : sr.total + ' matches' + (sr.total > sr.matches.length ? ' (first ' + sr.matches.length + ' shown)' : '') + '. Choose one; the app never picks for you') + '</h2>' +
+        '<table class="pp-table"><thead><tr><th scope="col">Main flow</th><th scope="col">Flow ID</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' +
+        sr.matches.map((f, i) => '<tr><td>' + e(f.name) + '</td><td><code>' + e(f.id) + '</code></td><td>' + button('PICK:' + i, 'Use this flow', { ghost: sr.matches.length > 1 }) + '</td></tr>').join('') + '</tbody></table>';
+    }
+  }
+  return head('New request', 'Pick the <strong>source env</strong> and the main flow to bring into Git. Its shared definitions and subflows come with it; the rollout then carries the same commit through ' + e(cfg.rollout.join(' → ')) + '.') +
+    errorSummary() + field(id, 'Source env', select, '', '') + text(['query'], 'Main flow name or ID', sr.query || '', { err: (s.errors || {}).query, placeholder: 'for example: Login' }) +
+    '<div class="pp-actions">' + button('SEARCH', 'Search flows') + '</div>' + results;
+};
+screens.options = () => {
+  const o = s.req.options;
+  const p = s.preview;
+  const r = p && p.result;
+  const cur = lib.currentPreview(s);
+  let state = '<p class="pp-note">No preview yet. Preview runs the request job without writing anything and shows the predicted changes and readiness.</p>';
+  if (p && !cur) { state = '<p class="pp-note warn">The options changed since the last preview. Preview again to see their effect.</p>'; }
+  if (cur && cur.result) { state = '<p class="pp-note ok">The preview below matches these options.</p>'; }
+  if (p && p.failed) { state = '<p class="pp-note bad">The last preview did not finish' + (p.error ? ': ' + e(p.error.message) : (p.message ? ': ' + e(p.message) : '.')) + ' ' + link(p.jobUrl, 'Open the job') + '</p>'; }
+  const deps = r ? r.changes.filter((c) => c.role !== 'selected' && (c.action === 'kept_differs' || c.action === 'updated')) : [];
+  const depBlock = '<h2>Shared definitions</h2>' + (!r ? '<p class="pp-hint">Preview to list the dependencies that differ from Git. A dependency that differs keeps the Git version unless you choose otherwise, because other flows use it too.</p>'
+    : (!deps.length ? '<p class="pp-empty">No dependency differs from Git.</p>' : deps.map((c) => radios(['deps', c.address], c.address, o.deps[c.address] || (c.action === 'kept_differs' ? 'keep' : 'update'),
+      [['keep', 'Keep Git version'], ['update', 'Use source']])).join('')));
+  return head('Review the change', 'Choose how the request is written, then preview it.') + summary() + subBanner() + errorSummary() + state +
+    radios(['mode'], 'How to hand the change to GitLab', o.mode, [['mr', 'Open a merge request'], ['branch', 'Branch only (no merge request)']]) +
+    '<p class="pp-hint">Request branch: <code>' + e(s.req.branch) + '</code></p>' +
+    text(['title'], 'Title', o.title, { err: s.errors.title }) + text(['commitMessage'], 'Commit message', o.commitMessage, {}) +
+    area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.') +
+    depBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
+};
+screens.working = () => {
+  const run = s.run;
+  const age = now - run.startedAt;
+  const what = run.kind === 'preview' ? 'Preview' : 'Submit';
+  let step = 'GitLab has the request. Waiting for the pipeline to start';
+  if (run.pipelineId && !run.jobId) { step = 'Pipeline started. Waiting for the ' + contract.REQUEST_JOB + ' job'; }
+  if (run.jobId) { step = run.waitingRunner ? 'The job is waiting for a runner' : 'The job is running'; }
+  const slow = [];
+  if (run.noPipeline) { slow.push('GitLab has not started a pipeline for the request after ' + lib.dur(age) + '. GitLab may be busy, or CI may be off for request branches.'); }
+  if (run.waitingRunner && age > cfg.pipelineAppearSeconds * 1000) { slow.push('No runner has picked up the job yet. GitLab runners may be busy.'); }
+  const delay = run.polls < 1 ? 3000 : (run.polls < 2 ? 5000 : 10000);
+  const links = [link(run.pipelineUrl, 'Open the pipeline'), link(run.jobUrl, 'Open the job')].filter((x) => x).join(' · ');
+  let body = '<div class="pp-wait" role="status" aria-live="polite"><div class="pp-spin" aria-hidden="true"></div><p><strong>' + e(step) + '</strong> (' + e(lib.dur(age)) + ')</p></div>';
+  if (slow.length) { body += '<div class="pp-note warn" role="status">' + slow.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
+  if (run.timedOut) {
+    body += '<div class="pp-note warn" role="alert"><strong>GitLab is slow.</strong> The app stopped checking after ' + e(lib.dur(age)) + '. ' +
+      (run.kind === 'submit' ? 'The outcome of your submit is unknown until GitLab answers.' : 'The preview may still finish.') + '</div>' +
+      '<div class="pp-actions">' + button('KEEP', 'Keep waiting') + button('CHECK', 'Check GitLab', { ghost: true }) + '</div>';
+  } else {
+    body += auto('POLL', delay, 'Checks again by itself in ' + Math.round(delay / 1000) + ' seconds.') + '<div class="pp-actions">' + button('POLL', 'Check now', { ghost: true }) + '</div>';
+  }
+  return head(what + ' running', run.kind === 'preview' ? 'The request job runs a preview. Nothing is written.' : 'The request job writes the change to the request branch' + (s.req.options.mode === 'mr' ? ' and opens a merge request.' : '.')) +
+    summary() + body + (links ? '<p>' + links + '</p>' : '') + '<div class="pp-actions">' + button('STOP', 'Stop waiting', { ghost: true }) + '</div>';
+};
+screens.preview = () => {
+  const p = s.preview || {};
+  const r = p.result;
+  let body = '';
+  if (p.failed) {
+    body = '<div class="pp-note bad" role="alert"><strong>The preview did not finish.</strong> ' + e(p.message || (p.error && p.error.message) || '') + ' ' + link(p.jobUrl, 'Open the job') + '</div>';
+  } else if (r) {
+    if (r.error) {
+      const t = contract.ERROR_TEXT[r.error.code] || contract.ERROR_TEXT.unknown;
+      body += '<div class="pp-note bad" role="alert"><strong>' + e(t.title) + '.</strong> ' + e(t.fix) + '<p>' + e(r.error.message) + '</p></div>';
+    }
+    if (r.problems.length) { body += '<div class="pp-note warn">' + r.problems.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
+    if (lib.onlyUnchanged(r)) { body += '<p class="pp-empty">No changes: Git already matches ' + e(s.req.source) + ' for this flow.</p>'; }
+    body += '<h2>Predicted changes</h2>' + changesTable(r) + (r.diffUrl && lib.webUrl(cfg, r.diffUrl) ? '<p>' + link(lib.webUrl(cfg, r.diffUrl), 'Review the change in GitLab') + '</p>' : '') +
+      readiness(r, false) + secretsBlock(r, false);
+  }
+  const stale = p.key && s.req && p.key !== lib.optionsKey(s.req.options) ? '<p class="pp-note warn">The options changed after this preview.</p>' : '';
+  return head(r && !r.error && !lib.blockerCount(r) ? 'Preview: ready' : 'Preview', 'Result of the request job, without writing anything. ' + link(p.jobUrl, 'Open the job')) +
+    summary() + subBanner() + stale + body + actions() + '<div class="pp-actions">' + button('EDIT', 'Edit options', { ghost: true }) + '</div>';
+};
+screens.submitted = () => {
+  const r = (s.sub && s.sub.result) || {};
+  const mr = lib.webUrl(cfg, r.mrUrl);
+  const br = lib.webUrl(cfg, r.branchUrl);
+  return head('Request submitted', mr ? 'The merge request is open. The rollout starts after it is merged.' : 'The change is on the request branch. Nothing rolls out until it is merged.') +
+    summary() + (s.sub.found ? '<p class="pp-note">Found in GitLab after Check GitLab.</p>' : '') +
+    '<p class="pp-big">' + (mr ? link(mr, 'Open merge request') : link(br, 'Open the branch')) + '</p>' +
+    (r.changes && r.changes.length ? '<h2>Changes written</h2>' + changesTable(r) : '') +
+    '<div class="pp-actions">' + button('WATCH', 'Watch the rollout') + button('NAV_NEW', 'New request', { ghost: true }) + '</div>';
+};
+screens.status = () => {
+  const st = s.st;
+  let lead = '';
+  if (!st.mr) { lead = st.mode === 'branch' ? 'Branch only. Nothing rolls out until someone opens and merges a merge request from ' + e(st.branch) + '.' : 'Looking for the merge request.'; }
+  else if (st.mr.state === 'opened') { lead = 'Waiting for the merge request to be merged. ' + link(st.mr.webUrl, 'Open merge request'); }
+  else if (st.mr.state === 'closed') { lead = 'The merge request was closed without merging. Nothing rolls out.'; }
+  else if (st.mr.state === 'merged') { lead = 'Merged. The pipeline on ' + e(cfg.defaultBranch) + ' carries the same commit through each environment. ' + link(st.mr.webUrl, 'Open merge request') + (st.pipeline ? ' · ' + link(st.pipeline.webUrl, 'Open the pipeline') : ''); }
+  const checked = st.checkedAt ? 'Last checked ' + new Date(st.checkedAt).toISOString().slice(11, 19) + ' UTC.' : '';
+  let refresh = '';
+  if (st.final) { refresh = '<p class="pp-hint">' + e(checked) + ' The rollout has finished; no more automatic checks.</p>'; }
+  else if (st.paused) { refresh = '<p class="pp-hint">' + e(checked) + ' Automatic checks are paused.</p><div class="pp-actions">' + button('RESUME', 'Resume automatic checks', { ghost: true }) + '</div>'; }
+  else if (st.expired) { refresh = '<p class="pp-note warn">' + e(checked) + ' Automatic checks stopped after ' + cfg.statusMaxMinutes + ' minutes.</p><div class="pp-actions">' + button('RESUME', 'Resume automatic checks', { ghost: true }) + '</div>'; }
+  else if (st.auto) { refresh = auto('REFRESH', cfg.statusRefreshSeconds * 1000, checked + ' Checks again every ' + cfg.statusRefreshSeconds + ' seconds.') + '<div class="pp-actions">' + button('PAUSE', 'Pause automatic checks', { ghost: true }) + '</div>'; }
+  return head('Rollout: ' + (st.title || st.branch || ''), lead) + strip(st.envs, s.req ? s.req.source : '') + refresh +
+    '<div class="pp-actions">' + button('REFRESH', 'Check now', { ghost: true }) + button('NAV_REQUESTS', 'All requests', { ghost: true }) + '</div>';
+};
+screens.requests = () => {
+  const rq = s.requests || { list: [], branches: [] };
+  const rows = rq.list.map((m, i) => '<tr><td>' + link(m.webUrl, '!' + m.iid) + '</td><td>' + e(m.title) + '</td><td>' + e(m.requestedBy || 'not recorded') + '</td><td>' + e(m.state) + '</td><td>' + e(m.updatedAt) +
+    '</td><td>' + button('OPEN:' + i, 'Rollout', { ghost: true }) + '</td></tr>').join('');
+  const KIND = { preview: 'Previewed, not submitted', submit: 'Submitted; job running or failed', written: 'Branch only' };
+  const brows = rq.branches.map((b, i) => '<tr><td>' + link(b.webUrl, b.name) + '</td><td>' + e(KIND[b.kind]) + '</td><td>' + e(b.updatedAt) + '</td><td>' +
+    (b.kind === 'written' ? button('OPENB:' + i, 'Rollout', { ghost: true }) : '') + (b.cancellable ? button('CANCELB:' + i, 'Cancel request', { ghost: true, danger: true }) : '') + '</td></tr>').join('');
+  return head('Requests', 'Requests the app has made, newest first.') +
+    (rows ? '<h2>Merge requests</h2><table class="pp-table"><thead><tr><th scope="col">MR</th><th scope="col">Title</th><th scope="col">Requested by</th><th scope="col">State</th><th scope="col">Updated (UTC)</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' + rows + '</tbody></table>'
+      : '<p class="pp-empty">No merge requests with the ' + e(cfg.mrLabel) + ' label yet.</p>') +
+    (brows ? '<h2>Request branches without a merge request</h2><table class="pp-table"><thead><tr><th scope="col">Branch</th><th scope="col">State</th><th scope="col">Updated (UTC)</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' + brows + '</tbody></table>' : '') +
+    '<div class="pp-actions">' + button('REFRESH', 'Refresh', { ghost: true }) + '</div>';
+};
+
+const screen = screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
+s.screen = screen;
+const nav = '<nav class="pp-nav" aria-label="App">' + button('NAV_NEW', 'New request', { ghost: screen !== 'search' }) + button('NAV_REQUESTS', 'Requests', { ghost: screen !== 'requests' }) +
+  '<span class="pp-user">Signed in as ' + e(s.user.name || s.user.username) + '</span>' + button('SIGNOUT', 'Leave the app', { ghost: true }) + '</nav>';
+const html = nav + '<main class="pp-main" id="pp-content">' + notes() + screens[screen]() + '</main>';
+s.notes = [];
+return { state: s, html: html };

@@ -1,0 +1,10 @@
+{
+  "httpConnectionId": "",
+  "functionsConnectionId": "",
+  "variablesConnectionId": "",
+  "apiOrigin": "https://api.pingone.com",
+  "authOrigin": "https://auth.pingone.com",
+  "gitlabApi": "https://gitlab.com/api/v4",
+  "flowTimeoutSeconds": "300",
+  "httpTimeoutSeconds": "15"
+}
