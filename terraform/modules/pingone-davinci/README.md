@@ -102,6 +102,14 @@ terraform init -backend=false
 terraform test
 ```
 
+`tests/e2e/` holds the end-to-end case. `internal/promote`'s `TestEndToEnd`
+writes `tests/e2e/promoted.auto.tfvars` from the fixture inventory (translate,
+then merge into a target environment), and the module resolves it:
+
+```sh
+terraform test -test-directory=tests/e2e
+```
+
 The tests use `mock_provider "pingone"`, so they need no credentials and make
 no PingOne calls. `tests/golden_full.auto.tfvars` is written by
 `go test ./internal/tfvars -update` and checked byte for byte against the Go

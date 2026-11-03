@@ -49,6 +49,8 @@ func targetDocument(t *testing.T) *tfvars.Document {
 	d.Connections["Flow-20Conductor"] = src.Doc.Connections["Flow-20Conductor"]
 	sso := src.Doc.Connections["PingOne"]
 	props := strings.Replace(*sso.Properties, "fake-client-id", "fake-target-client-id", 1)
+	// The target already maps its client secret to an existing pipeline name.
+	props = strings.Replace(props, "@@secret:PingOne_DaVinci_connection_PingOne_clientSecret@@", "@@secret:PingOne_DaVinci_connection_client@@", 1)
 	sso.Properties = &props
 	d.Connections["PingOne"] = sso
 	brand := src.Doc.Variables["brand_company"]
@@ -146,7 +148,7 @@ func TestMergePreservesTargetEnvironment(t *testing.T) {
 	if len(res.MissingParameters) != 0 {
 		t.Fatalf("missing params %v", res.MissingParameters)
 	}
-	wantSecrets := []string{"PingOne_DaVinci_connection_PingOne_clientSecret", "PingOne_DaVinci_flow_Login_n3sso_hmacKey"}
+	wantSecrets := []string{"PingOne_DaVinci_connection_client", "PingOne_DaVinci_flow_Login_n3sso_hmacKey"}
 	if strings.Join(res.RequiredSecrets, ",") != strings.Join(wantSecrets, ",") {
 		t.Fatalf("required secrets %v", res.RequiredSecrets)
 	}
