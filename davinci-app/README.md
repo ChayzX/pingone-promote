@@ -83,16 +83,18 @@ You can skip steps 2 and 3 by generating a private copy with your IDs filled in 
 
 ## Configure after import
 
-**Company variables** (**DaVinci → Variables**). The import creates both as empty **secret** variables. The flow never shows them, and never passes them to a function or a screen.
+**Company variables (set once; kept across re-imports)** (**DaVinci → Variables**). A re-import keeps the values of company variables and resets flow variables, so every setting is a company variable. The import declares them all **without values**; the app uses the default shown below while a variable is empty, so you only set what you need. The two secrets are secret variables: the flow never shows them and never passes them to a function or a screen.
+
+Secrets (always set these):
 
 | Variable | Value |
 | --- | --- |
 | `ppWorkerBasicAuth` | `base64(clientId:clientSecret)` of the read-only worker, for example `printf '%s:%s' "$ID" "$SECRET" \| base64` |
 | `ppGitlabToken` | The GitLab project access token (Developer, `api`) |
 
-**Flow variables** (the flow's **Variables** panel). Re-importing resets them.
+Settings (empty means the default; a variable with no default must be set):
 
-| Variable | Default | Set to |
+| Variable | Default when empty | Set to |
 | --- | --- | --- |
 | `ppWorkerEnvironmentId` | empty | the env that holds the worker app |
 | `ppSourceEnvs` | empty | the envs a person may pick as the source: `dev=<envId>`, or several separated by commas. The names must be in the job's `PINGONE_PROMOTE_SOURCES`, and must not be in the rollout |
@@ -109,7 +111,11 @@ You can skip steps 2 and 3 by generating a private copy with your IDs filled in 
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout refresh interval / how long the automatic refresh runs |
 | `ppChildPipelines` | `yes` | `no` if your env jobs are never in child pipelines |
 | `ppPathFlows` / `ppFlowsListQuery` | `/v1/environments/{envId}/flows` / `attributes=id,name` | change only if the flow-list call turns out to differ |
-| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list, for the optional "Add an application or flow policy" step. These paths are assumptions (DESIGN.md §12): change them if they differ, or leave `ppPathApplications` empty to switch the step off. They use only `{envId}` and `{appId}` |
+| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list, for the optional "Add an application or flow policy" step. These paths are assumptions (DESIGN.md §12): change them if they differ, or set `ppPathApplications` to `none` to switch the step off. They use only `{envId}` and `{appId}` |
+
+Runtime state (`ppState`, `ppFlows`, `ppUrl`, `ppBody`, `ppLastFailed`) is internal: flow-instance variables, one set per session, and they need no setup. Never make one of them a company variable; company variables are shared by every user.
+
+To switch an optional value off, set it to `none` (`ppPathApplications`, `ppPathFlowPolicies`, `ppFlowsListQuery`); empty means the default.
 
 A missing or malformed setting stops the app with "PingOne Promote is not set up yet". The screen lists the setting **names** and what is wrong with each, never the values.
 

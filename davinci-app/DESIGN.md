@@ -141,7 +141,7 @@ Each screen is a form with two fields:
 - A name shared by two listed items is refused ("Two applications are named ..."): the job selects by name and could not tell them apart.
 - PingOne lists flow policies **per application** (`.../davinciApplications/{appId}/flowPolicies`). Listing every application's policies would cost 1 + N calls in one browser request, so the step reads only the policies of the one application the person opens with **Its flow policies**. This is why it is a separate step and not part of the search screen.
 - The list responses can carry client secrets. Only `id` and `name` are kept (`p1_list`); nothing else enters the state or a screen.
-- Off when `ppPathApplications` is empty (no button, no calls).
+- Off when `ppPathApplications` is `none` (no button, no calls).
 
 ### 1.3 Working (Preview running / Submit running)
 ```
@@ -367,7 +367,7 @@ Residual risks, and what the operator should do about them:
 
 ### DaVinci variables and connections
 
-**Flow variables** (non-secret; the export ships the defaults, and the ID and group settings empty):
+**Company variables, settings** (non-secret; declared WITHOUT values, so a re-import cannot overwrite them; an empty variable means the default in `lib.DEFAULTS`, and `none` switches an optional path off). The ID and group settings have no default and must be set:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -384,9 +384,11 @@ Residual risks, and what the operator should do about them:
 | `ppRunTimeoutSeconds` / `ppPipelineAppearSeconds` | `600` / `120` | when to stop checking a job; when to say "no pipeline yet" |
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout auto-refresh interval, and how long it runs before pausing |
 | `ppChildPipelines` | `yes` | look in child pipelines (bridges) when an env's job is not in the parent |
-| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `.../davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list (assumed paths, section 12). Empty `ppPathApplications` switches the step off |
+| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `.../davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list (assumed paths, section 12). `none` in `ppPathApplications` switches the step off |
 
 **Company secrets:** `ppWorkerBasicAuth` and `ppGitlabToken`.
+
+**Trust boundary for variables.** Company variables are shared by every user and session of the company, so they hold configuration and secrets only. Per-session state is never stored there: it would leak between users and race between concurrent sessions. `check_app.py` fails the export when a state variable (`ppState`, `ppFlows`, `ppUrl`, `ppBody`, `ppForm`, `ppMain`, `ppLastFailed`) is not flow-instance, when a setting is not a company variable, or when any flow-scoped variable remains (a re-import resets those). Only the sign-in check function reads the settings; no screen, and no function other than that one, reads a company variable, and the two secrets are read only in REST headers.
 
 **Flow-instance variables:** `ppState`, `ppFlows`, `ppUrl`, `ppBody` and `ppLastFailed`.
 
@@ -618,3 +620,4 @@ Open points, none of them blocking:
 13. **Assumed (new): the application and flow policy lists.** `GET /v1/environments/{envId}/davinciApplications` (key `davinciApplications`) and `GET /v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` (key `flowPolicies`), from ADR 0007. They are taken from the SDK, not run against a tenant, and assumed readable by the DaVinci Admin Read Only worker. Both are flow variables (`ppPathApplications`, `ppPathFlowPolicies`); the response is assumed to page with `_links.next` and to carry `id` and `name`.
 14. **Assumed (new): `Range` on the job log.** `GET /jobs/:id/trace` honours `Range: bytes=-65536`. If it ignores it, the whole log reaches the function, which keeps only the last 64 KiB, but the transfer is larger. A text body is assumed to arrive as a string in `rawResponse.body`.
 15. **Assumed (new): the job only has a result line in the log when it ran far enough.** The log line may be missing after a crash; the app then reports that and offers Check GitLab.
+16. **Assumed (new): company variables survive a re-import.** Re-importing the flow keeps the values of existing company variables (it does not overwrite them with the declaration), while flow variables are reset to the export. The export therefore declares the settings as company variables with empty values; if a re-import did overwrite them, the operator would have to set them again, as before with flow variables, and the secrets (also declared empty) would show it first. We found no export in the repository (terraformer fixtures, the feasibility export) that shows company variables with values in a flow export, so this is unverified: import twice in the sandbox, set `ppMrLabel`, import again, and check that it is still set. Also check that an empty company string variable reads as an empty string (not an error) in `{{global.company.variables.X}}`, because the app relies on that to apply its defaults.

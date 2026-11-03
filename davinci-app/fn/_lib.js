@@ -119,7 +119,7 @@ lib.unb64 = (text) => {
   return s;
 };
 
-// ---- settings (flow variables the operator sets after import) ----------------
+// ---- settings (company variables the operator sets once; a re-import keeps them) ----------------
 // Returns the checked configuration and a list of problems; never the values.
 lib.API_ORIGIN = /^https:\/\/api\.pingone\.[a-z]{2,6}(\.[a-z]{2,3})?$/;
 lib.AUTH_ORIGIN = /^https:\/\/auth\.pingone\.[a-z]{2,6}(\.[a-z]{2,3})?$/;
@@ -130,8 +130,22 @@ lib.GITLAB_API = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-
 lib.SETTINGS = ['apiOrigin', 'authOrigin', 'workerEnvironmentId', 'sourceEnvs', 'pathFlows', 'flowsListQuery', 'rolloutEnvs', 'gitlabApi',
   'gitlabProjectId', 'defaultBranch', 'applyJobPattern', 'environmentPattern', 'mrLabel', 'allowedGroups', 'runTimeoutSeconds',
   'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies'];
+// The defaults live here, not in the export: the export declares the company variables without values (so a re-import cannot
+// overwrite what the operator set), and an empty variable means its default. gen_app.py reads this line. "none" switches off the
+// optional ones (an empty value cannot, because empty means the default).
+lib.DEFAULTS = {"apiOrigin": "https://api.pingone.com", "authOrigin": "https://auth.pingone.com", "pathFlows": "/v1/environments/{envId}/flows", "flowsListQuery": "attributes=id,name", "rolloutEnvs": "qa,stage,prod", "gitlabApi": "https://gitlab.com/api/v4", "defaultBranch": "main", "applyJobPattern": "apply:{env}", "environmentPattern": "{env}", "mrLabel": "pingone-promote", "runTimeoutSeconds": "600", "pipelineAppearSeconds": "120", "statusRefreshSeconds": "30", "statusMaxMinutes": "30", "childPipelines": "yes", "pathApplications": "/v1/environments/{envId}/davinciApplications", "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies"};
+lib.OFFABLE = ['flowsListQuery', 'pathApplications', 'pathFlowPolicies'];
+lib.withDefaults = (p) => {
+  const out = {};
+  for (const n of lib.SETTINGS) {
+    const v = lib.str(p && p[n]);
+    out[n] = v === '' ? (lib.DEFAULTS[n] || '') : (v === 'none' && lib.OFFABLE.indexOf(n) >= 0 ? '' : v);
+  }
+  return out;
+};
 lib.varName = (n) => 'pp' + n.charAt(0).toUpperCase() + n.slice(1);
-lib.checkSettings = (p) => {
+lib.checkSettings = (raw) => {
+  const p = lib.withDefaults(raw);
   const cfg = {};
   const problems = [];
   const need = (name, re, msg, dflt) => {
@@ -156,7 +170,7 @@ lib.checkSettings = (p) => {
   if (!/^\/v1\/[A-Za-z0-9_{}\/-]{1,200}$/.test(path) || path.indexOf('{envId}') < 0 || path.indexOf('..') >= 0 || /\{(?!envId\})/.test(path)) {
     problems.push({ name: 'pathFlows', issue: path ? 'must be a /v1/... path using only {envId}' : 'not set' });
   } else { cfg.pathFlows = path; }
-  // Optional: an empty path switches the "Add an application or flow policy" step off (DESIGN.md section 12, assumption 13).
+  // Optional: a path of none switches the "Add an application or flow policy" step off (DESIGN.md section 12, assumption 13).
   const optPath = (name, vars) => {
     const v = lib.str(p[name]);
     if (!v) { return ''; }
