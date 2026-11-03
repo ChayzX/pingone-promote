@@ -1,6 +1,6 @@
 # ADR 0013: Single-commit GitLab submission and the server-side Draft API
 
-- Status: Accepted
+- Status: Accepted (revised 2026-11-03 for v2)
 - Date: 2026-11-03
 - Issues: #3, #4, #9, #70, #72, #86, #88
 
@@ -71,3 +71,27 @@ response is scanned for secrets in tests.
 - Submitting requires a terraform or tofu binary on the operator's machine.
 - Heuristic secret warnings block submission only for secrets the promoted
   file actually uses.
+
+## Revision for v2 (2026-11-03)
+
+- **No target file.** Submissions no longer read or write a target
+  environment's tfvars; there is no `targetFile` and no source-equals-target
+  check. A change writes shared definitions and every affected overlay
+  together (ADR 0014).
+- **New path allow-list** (`gitlab.LayoutPolicy`): `<moduleDir>/*.tf`
+  (default `definitions/`, no subdirectories), the named root files
+  (`main.tf`, `variables.tf`, `secrets.tf`, `imports.tf`, `versions.tf`),
+  overlays matching the configurable pattern (default `{env}.tfvars` at the
+  root, never `*.auto.tfvars`), and `customer_secrets.yml`. CI files and dot
+  paths stay forbidden; the only dot path a request touches is the deletion
+  of `.pingone-promote/request.json`.
+- **Request-branch commits** (ADR 0017): `CommitToBranch` writes ONE commit
+  on the existing `pingone-promote/<requestId>` branch (no `start_branch`),
+  requires the branch head to be the commit the job read, uses
+  `last_commit_id` per file, and recognizes its
+  `PingOne-Promote-Request: <id>` trailer so a re-run never commits twice.
+  The default branch and branches outside `pingone-promote/` are refused.
+- The fmt gate, typed errors (`conflict`, `preflight`, `partial`) and the
+  MR description rules are unchanged; MRs gain a configurable label.
+- The Draft API reshape (step 6) replaces target fields with
+  `SourceEnvironment`, `EnvValues` and `KeepShared`.

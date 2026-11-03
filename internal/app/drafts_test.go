@@ -70,7 +70,7 @@ func newDraftHarness(t *testing.T) *draftHarness {
 	}
 	dv, _ := davincitest.New(t, filepath.Join("..", "davinci", "testdata", "source"), draftSourceEnv)
 	gl := gitlabtest.New(t, map[string]string{
-		"environments/prod.tfvars": repoFile(t, "internal/promote/testdata/e2e_target.tfvars"),
+		"environments/prod.tfvars": repoFile(t, "internal/promotelegacy/testdata/e2e_target.tfvars"),
 		"environments/dev.tfvars":  repoFile(t, "internal/tfvars/testdata/full.tfvars"),
 		"customer_secrets.yml":     repoFile(t, "internal/pipelinesecrets/testdata/customer_secrets.yml"),
 		".gitlab-ci.yml":           "include: customer_secrets.yml\n",
@@ -304,7 +304,7 @@ func TestDraftAPIEndToEnd(t *testing.T) {
 	if rev.Submission.Kind != "revert" || rev.Submission.MergeRequestIID == 0 {
 		t.Fatalf("revert %+v", rev)
 	}
-	if got, _, _ := h.gl.File(rev.Submission.Branch, "environments/prod.tfvars"); got != repoFile(t, "internal/promote/testdata/e2e_target.tfvars") {
+	if got, _, _ := h.gl.File(rev.Submission.Branch, "environments/prod.tfvars"); got != repoFile(t, "internal/promotelegacy/testdata/e2e_target.tfvars") {
 		t.Fatal("revert did not restore the target tfvars")
 	}
 	var subs []submissionRecord

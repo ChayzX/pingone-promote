@@ -50,6 +50,7 @@ type MR struct {
 	TargetBranch string
 	Title        string
 	Description  string
+	Labels       string
 	State        string
 }
 
@@ -405,7 +406,7 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		f.reply(w, 200, out)
 	case rest == "/merge_requests" && r.Method == http.MethodPost:
 		mr := &MR{ID: int64(100 + len(f.MRs)), IID: int64(1 + len(f.MRs)), SourceBranch: str("source_branch"), TargetBranch: str("target_branch"),
-			Title: str("title"), Description: str("description"), State: "opened"}
+			Title: str("title"), Description: str("description"), Labels: str("labels"), State: "opened"}
 		if _, ok := f.branches[mr.SourceBranch]; !ok {
 			f.reply(w, 400, map[string]string{"message": "source branch does not exist"})
 			return
@@ -420,4 +421,45 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 func (f *Fake) mrJSON(r *http.Request, mr *MR) map[string]any {
 	return map[string]any{"id": mr.ID, "iid": mr.IID, "source_branch": mr.SourceBranch,
 		"web_url": "https://" + r.Host + "/group/infra/-/merge_requests/" + strconv.FormatInt(mr.IID, 10)}
+}
+
+// CreateBranch creates branch from another branch's head, as DaVinci does
+// with the Commits API (start_branch). It returns the new head.
+func (f *Fake) CreateBranch(name, from string, files map[string]string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := map[string]fileState{}
+	for k, v := range f.branches[from] {
+		cp[k] = v
+	}
+	f.branches[name], f.heads[name] = cp, f.heads[from]
+	if len(files) == 0 {
+		return f.heads[name]
+	}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var actions []map[string]string
+	for _, p := range paths {
+		action := "create"
+		if _, ok := cp[p]; ok {
+			action = "update"
+		}
+		actions = append(actions, map[string]string{"action": action, "file_path": p, "content": files[p]})
+	}
+	id, _ := f.commit(name, "Add pingone-promote request", actions)
+	return id
+}
+
+// Files returns every file on a branch.
+func (f *Fake) Files(branch string) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]string{}
+	for p, s := range f.branches[branch] {
+		out[p] = s.Content
+	}
+	return out
 }

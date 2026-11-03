@@ -1,4 +1,4 @@
-package promote
+package promotelegacy
 
 import (
 	"context"

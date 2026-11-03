@@ -22,7 +22,8 @@ const (
 	checkUsage    = 2 // bad arguments, unreadable file, or formatter unavailable
 )
 
-const checkUsageText = `Usage: pingone-promote check <environments/ENV.tfvars> [--format text|json] [--required-secrets] [--terraform-fmt[=PATH]] [--customer-secrets PATH]
+const checkUsageText = `Usage: pingone-promote check --root DIR ...   (v2 config repository; see check --root --help)
+       pingone-promote check <environments/ENV.tfvars> [--format text|json] [--required-secrets] [--terraform-fmt[=PATH]] [--customer-secrets PATH]
 
 Validates a tfvars file offline. It never contacts PingOne, GitLab or any
 other network service.
@@ -90,6 +91,9 @@ const (
 )
 
 func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if hasRootFlag(args) {
+		return runRootCheck(ctx, args, stdout, stderr)
+	}
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	format := fs.String("format", "text", "")

@@ -41,15 +41,15 @@ func newSubmitter(t *testing.T, files map[string]string) (*gitlab.Submitter, *gi
 func changeSet(t *testing.T, id string, mode gitlab.Mode) gitlab.ChangeSet {
 	return gitlab.ChangeSet{ID: id, Mode: mode, Branch: "promote/" + id, CommitMessage: "Promote Login to prod", Title: "Promote Login",
 		Description: "summary", Files: []gitlab.File{
-			{Path: env, Content: []byte(testdata(t, "internal/promote/testdata/e2e_promoted.tfvars"))},
-			{Path: "secrets.tf", Content: []byte(testdata(t, "internal/promote/testdata/e2e_secrets.tf"))},
-			{Path: "customer_secrets.yml", Content: []byte(testdata(t, "internal/promote/testdata/e2e_customer_secrets.yml"))},
+			{Path: env, Content: []byte(testdata(t, "internal/promotelegacy/testdata/e2e_promoted.tfvars"))},
+			{Path: "secrets.tf", Content: []byte(testdata(t, "internal/promotelegacy/testdata/e2e_secrets.tf"))},
+			{Path: "customer_secrets.yml", Content: []byte(testdata(t, "internal/promotelegacy/testdata/e2e_customer_secrets.yml"))},
 		}}
 }
 
 func baseFiles(t *testing.T) map[string]string {
 	return map[string]string{
-		env:                    testdata(t, "internal/promote/testdata/e2e_target.tfvars"),
+		env:                    testdata(t, "internal/promotelegacy/testdata/e2e_target.tfvars"),
 		"customer_secrets.yml": testdata(t, "internal/pipelinesecrets/testdata/customer_secrets.yml"),
 		".gitlab-ci.yml":       "include: customer_secrets.yml\n",
 	}
@@ -99,7 +99,7 @@ func TestSubmitBranchModeOpensNoMR(t *testing.T) {
 func TestOptimisticConcurrency(t *testing.T) {
 	s, fake := newSubmitter(t, baseFiles(t))
 	_, baseCommit, _ := fake.File("main", env)
-	fake.Edit("main", env, testdata(t, "internal/promote/testdata/e2e_target.tfvars")+"\n")
+	fake.Edit("main", env, testdata(t, "internal/promotelegacy/testdata/e2e_target.tfvars")+"\n")
 	cs := changeSet(t, "s3", gitlab.ModeMR)
 	cs.Base = map[string]string{env: baseCommit}
 	_, err := s.Submit(context.Background(), cs)
@@ -123,7 +123,7 @@ func TestServerSideConflictIsTyped(t *testing.T) {
 	s, fake := newSubmitter(t, baseFiles(t))
 	// The file changes between our read and the commit; GitLab's own
 	// last_commit_id check rejects the commit.
-	fake.RaceBeforeCommit = map[string]string{env: testdata(t, "internal/promote/testdata/e2e_target.tfvars") + "\n"}
+	fake.RaceBeforeCommit = map[string]string{env: testdata(t, "internal/promotelegacy/testdata/e2e_target.tfvars") + "\n"}
 	_, err := s.Submit(context.Background(), changeSet(t, "s5", gitlab.ModeMR))
 	var conflict *gitlab.ConflictError
 	if !errors.As(err, &conflict) || fake.HasBranch("promote/s5") {
@@ -256,7 +256,7 @@ func TestRevert(t *testing.T) {
 	if err != nil || rev.MR == nil {
 		t.Fatalf("revert: %+v %v", rev, err)
 	}
-	original := testdata(t, "internal/promote/testdata/e2e_target.tfvars")
+	original := testdata(t, "internal/promotelegacy/testdata/e2e_target.tfvars")
 	if got, _, _ := fake.File("revert/v1", env); got != original {
 		t.Fatal("revert did not restore the tfvars")
 	}

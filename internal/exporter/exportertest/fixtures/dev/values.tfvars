@@ -1,0 +1,6 @@
+davinci_connection_PingOne_clientId = "fixture-client-id"
+davinci_connection_PingOne_clientSecret = ""
+davinci_connection_PingOne_envId = "11111111-1111-4111-8111-111111111111"
+davinci_connection_PingOne_region = "EU"
+davinci_variable_apiKey_value = ""
+davinci_variable_companyName_value = "Example Corp (dev)"

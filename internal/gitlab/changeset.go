@@ -12,8 +12,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
-	"pingone-promote/internal/tfvars"
+	"pingone-promote/internal/tffmt"
 )
 
 // Mode selects how a change set is delivered.
@@ -118,6 +119,8 @@ type ChangeSet struct {
 	Base map[string]string
 	// Resume continues a submission whose branch already carries this ID.
 	Resume bool
+	// Labels are added to the merge request.
+	Labels []string
 }
 
 // Result is a completed (or resumed) submission.
@@ -232,14 +235,16 @@ func (s *Submitter) prepare(ctx context.Context, cs *ChangeSet) error {
 		}
 		switch kind {
 		case FileTfvars:
-			if _, err := tfvars.Parse(f.Content, f.Path); err != nil {
+			// Literal-only HCL attributes: true of v1 schema files and of v2
+			// overlays. The v1 schema itself is validated by the Draft API.
+			if _, err := overlay.ParseOverlay(f.Content, f.Path); err != nil {
 				return fmt.Errorf("%s is not a valid tfvars file: %w", f.Path, err)
 			}
 			fallthrough
 		case FileSecretsTF:
 			// The real formatter is the gate: a missing binary or any
 			// difference blocks the submission.
-			out, err := tfvars.FormatWithTerraform(ctx, s.Formatter, f.Content)
+			out, err := tffmt.FormatWithTerraform(ctx, s.Formatter, f.Content)
 			if err != nil {
 				return fmt.Errorf("%s: %w", f.Path, err)
 			}
@@ -369,6 +374,9 @@ func (s *Submitter) openMR(ctx context.Context, project Project, cs ChangeSet) (
 	c := s.Client
 	payload := map[string]any{"source_branch": cs.Branch, "target_branch": project.DefaultBranch, "title": cs.Title,
 		"description": cs.Description, "remove_source_branch": true, "squash": false}
+	if len(cs.Labels) > 0 {
+		payload["labels"] = strings.Join(cs.Labels, ",")
+	}
 	var mr MergeRequest
 	if err := c.Do(ctx, http.MethodPost, c.project()+"/merge_requests", payload, &mr); err != nil {
 		return nil, err

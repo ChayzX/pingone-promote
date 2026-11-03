@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"pingone-promote/internal/keys"
+	"pingone-promote/internal/secretscan"
 )
 
 // Problem codes reported by Validate.
@@ -388,24 +389,15 @@ func (v *validator) imports() {
 // --- no-secrets scan ---
 
 var (
-	maskedRE = regexp.MustCompile(`\*{6,}`)
-	pemRE    = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
-	jwtRE    = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.`)
+	maskedRE = secretscan.Masked
+	pemRE    = secretscan.PrivateKey
+	jwtRE    = secretscan.JWT
 	// A value that is wholly a DaVinci expression is a reference, not a secret.
 	expressionRE = regexp.MustCompile(`^(\{\{[^{}]*\}\}|\$\{[^{}]*\})$`)
 	nonAlnumRE   = regexp.MustCompile(`[^a-z0-9]`)
-	secretSuffix = []string{"secret", "password", "passwd", "passphrase", "privatekey", "apikey", "token", "credential", "credentials", "sharedkey", "signingkey"}
 )
 
-func secretLookingName(name string) bool {
-	n := nonAlnumRE.ReplaceAllString(strings.ToLower(name), "")
-	for _, s := range secretSuffix {
-		if strings.HasSuffix(n, s) {
-			return true
-		}
-	}
-	return false
-}
+func secretLookingName(name string) bool { return secretscan.HasSecretSuffix(name) }
 
 func (v *validator) scanValue(path, s string) {
 	if !utf8.ValidString(s) {

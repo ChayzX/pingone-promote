@@ -1,52 +1,26 @@
-# Root variables pass the environment tfvars straight to the module, which
-# owns the typed schema v1 definitions. Secrets are declared one variable per
-# secret in secrets.tf (the pipeline sets TF_VAR_<name> for each). Collections are typed `any` here so the
-# schema lives in exactly one place (the module); the module call converts
-# and validates them.
-
-variable "tfvars_schema_version" {
-  description = "tfvars schema version; validated by the module."
-  type        = number
-}
-
 variable "pingone_environment_id" {
-  description = "PingOne environment managed by this stack."
   type        = string
+  description = "The PingOne environment ID to configure DaVinci resources in"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.pingone_environment_id))
+    error_message = "The PingOne Environment ID must be a valid PingOne resource ID (UUID format)."
+  }
 }
 
-variable "parameters" {
-  description = "Environment-local non-secret values."
-  type        = map(string)
-  default     = {}
-  nullable    = false
+variable "davinci_application_Web_oauth_redirect_uris" {
+  type        = list(string)
+  description = "Environment value for oauth.redirect_uris of pingone_davinci_application.pingcli__Web"
 }
 
-variable "davinci_connections" {
-  description = "See the module's variables.tf."
-  type        = any
-  default     = {}
-}
-
-variable "davinci_variables" {
-  description = "See the module's variables.tf."
-  type        = any
-  default     = {}
-}
-
-variable "davinci_flows" {
-  description = "See the module's variables.tf."
-  type        = any
-  default     = {}
-}
-
-variable "davinci_applications" {
-  description = "See the module's variables.tf."
-  type        = any
-  default     = {}
+variable "davinci_variable_companyName_value" {
+  type        = string
+  description = "Value for DaVinci variable companyName"
 }
 
 variable "import_ids" {
-  description = "Existing PingOne IDs to adopt, by logical key."
-  type        = any
+  description = "Existing PingOne IDs to adopt in this environment, by module address (module.<name>.<type>.<label>). The environment ID prefix is added automatically."
+  type        = map(string)
   default     = {}
+  nullable    = false
 }

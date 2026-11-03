@@ -1,4 +1,4 @@
-// Package promote computes the dependency closure of a selection from a
+// Package promotelegacy (formerly internal/promote, v1) computes the dependency closure of a selection from a
 // translated source environment and merges it into a target environment's
 // tfvars document.
 //
@@ -22,7 +22,7 @@
 //   - Blocks. Re-keying an existing resource, or moving a flow to another
 //     tier, changes its Terraform address. Those changes are refused with a
 //     moved {} snippet for the operator to apply deliberately.
-package promote
+package promotelegacy
 
 import (
 	"fmt"

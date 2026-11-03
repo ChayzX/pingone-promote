@@ -1,9 +1,7 @@
 package promote
 
 import (
-	"bytes"
 	"context"
-	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,142 +9,76 @@ import (
 	"strings"
 	"testing"
 
-	"pingone-promote/internal/pipelinesecrets"
-	"pingone-promote/internal/tfvars"
-	"pingone-promote/internal/translate"
+	"pingone-promote/internal/exporter/exportertest"
 )
 
-var update = flag.Bool("update", false, "rewrite golden files and the module e2e fixture")
-
-var (
-	moduleDir     = filepath.Join("..", "..", "terraform", "modules", "pingone-davinci")
-	moduleE2EFile = filepath.Join(moduleDir, "tests", "e2e", "promoted.auto.tfvars")
-	secretsYAML   = filepath.Join("..", "pipelinesecrets", "testdata", "customer_secrets.yml")
-)
-
-func goldenFile(t *testing.T, name string, got []byte) {
-	t.Helper()
-	path := filepath.Join("testdata", name)
-	if *update {
-		os.MkdirAll("testdata", 0o755)
-		if err := os.WriteFile(path, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("%v (run go test ./internal/promote -update)", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("%s differs; review and run with -update", path)
-	}
-}
-
-// TestEndToEnd: fixture inventory -> translate -> merge into the target ->
-// write tfvars, secrets.tf and customer_secrets.yml -> terraform fmt gate ->
-// the module's e2e terraform test consumes the promoted tfvars.
+// TestEndToEnd: fake terraformer export of Flow B -> neutralize -> merge
+// into a new config repository with overlays for qa, stage and prod ->
+// check passes -> terraform validate and terraform test (mock provider)
+// for every environment with -var-file. The terraform steps need
+// PINGONE_PROMOTE_TERRAFORM and, offline, PINGONE_PROMOTE_PLUGIN_DIR.
 func TestEndToEnd(t *testing.T) {
-	// The target starts from a checked-in tfvars file.
-	targetSrc, err := tfvars.Write(targetDocument(t))
+	exp := neutralized(t, exportertest.FixtureDir("dev"), flowB)
+	head := MapRepo{"customer_secrets.yml": []byte(fixtureCustomerSecrets)}
+	vals := envValues()
+	for env := range vals {
+		delete(vals[env], "davinci_application_Web_oauth_redirect_uris") // no application in this request
+	}
+	res, err := Merge(MergeRequest{Export: exp, Head: head, Selected: selectedFor(flowB), SourceEnv: "dev",
+		Rollout: []string{"qa", "stage", "prod"}, EnvValues: vals})
 	if err != nil {
 		t.Fatal(err)
 	}
-	goldenFile(t, "e2e_target.tfvars", targetSrc)
-	target, err := tfvars.Parse(targetSrc, "e2e_target.tfvars")
-	if err != nil {
-		t.Fatal(err)
+	if res.Blocked() {
+		t.Fatalf("blockers: %+v", res.Blockers)
 	}
+	repo := apply(head, res)
+	dir := t.TempDir()
+	writeTree(t, dir, repo)
 
-	// The target's connection already uses the existing pipeline secret
-	// PingOne_DaVinci_connection_client; the operator acknowledges the
-	// heuristic match on the HMAC key, which becomes a new pipeline secret.
-	src, err := TranslateFor(sourceInventory(t), target, translate.Options{
-		Acknowledged: map[string]bool{"node:Login/n3sso/hmacKey": true},
-	})
+	bin := os.Getenv("PINGONE_PROMOTE_TERRAFORM")
+	rep, err := CheckRoot(context.Background(), CheckOptions{Root: dir, Envs: []string{"dev", "qa", "stage", "prod"},
+		CustomerSecrets: repo["customer_secrets.yml"], TerraformFmt: bin != "", TerraformValidate: bin != "", TerraformBin: bin,
+		PluginDir: os.Getenv("PINGONE_PROMOTE_PLUGIN_DIR")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := Plan(src, target, Selection{Flows: []string{loginKey}, Applications: []string{appKey}})
-	if err != nil {
-		t.Fatal(err)
+	if !rep.OK {
+		t.Fatalf("check: %+v", rep.Problems)
 	}
-	if res.Blocked() || len(res.Problems) != 0 || len(res.MissingParameters) != 0 {
-		t.Fatalf("blocks=%+v problems=%+v missing=%v", res.Blocks, res.Problems, res.MissingParameters)
+	if bin == "" {
+		t.Skip("set PINGONE_PROMOTE_TERRAFORM to run terraform validate and test")
 	}
-
-	promoted, err := tfvars.Write(res.Doc)
-	if err != nil {
-		t.Fatal(err)
+	// terraform test with mock_provider, per environment.
+	var tests strings.Builder
+	tests.WriteString("mock_provider \"pingone\" {}\n\nvariables {\n")
+	for _, s := range res.RequiredSecrets {
+		tests.WriteString("  " + s + " = \"test-only\"\n")
 	}
-	goldenFile(t, "e2e_promoted.tfvars", promoted)
-	if *update {
-		os.MkdirAll(filepath.Dir(moduleE2EFile), 0o755)
-		if err := os.WriteFile(moduleE2EFile, promoted, 0o644); err != nil {
-			t.Fatal(err)
+	tests.WriteString("}\n\nrun \"plan\" {\n  command = plan\n}\n")
+	for _, m := range regexp.MustCompile(`(?m)^  to       = (\S+)$`).FindAllStringSubmatch(string(repo["imports.tf"]), -1) {
+		tests.WriteString("\noverride_resource {\n  target = " + m[1] + "\n  values = { id = \"mock-imported-id\" }\n}\n")
+	}
+	writeTree(t, dir, map[string][]byte{"tests/e2e.tftest.hcl": []byte(tests.String())})
+	run := func(args ...string) string {
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = dir
+		cmd.Env = append(validateEnv(t.TempDir()), "TF_DATA_DIR="+filepath.Join(dir, ".terraform"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("terraform %v: %v\n%s", args, err, out)
 		}
+		return string(out)
 	}
-	if fixture, err := os.ReadFile(moduleE2EFile); err != nil || !bytes.Equal(fixture, promoted) {
-		t.Fatalf("%s is stale; run go test ./internal/promote -update", moduleE2EFile)
+	initArgs := []string{"init", "-backend=false", "-input=false", "-no-color"}
+	if pd := os.Getenv("PINGONE_PROMOTE_PLUGIN_DIR"); pd != "" {
+		initArgs = append(initArgs, "-plugin-dir="+pd)
 	}
-
-	secretsTF, err := tfvars.WriteSecretsTF(res.RequiredSecrets)
-	if err != nil {
-		t.Fatal(err)
-	}
-	goldenFile(t, "e2e_secrets.tf", secretsTF)
-
-	yml, err := os.ReadFile(secretsYAML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ps, err := pipelinesecrets.Parse(yml)
-	if err != nil {
-		t.Fatal(err)
-	}
-	report := ps.Check(pipelinesecrets.DefaultConfig, res.RequiredSecrets)
-	var add []pipelinesecrets.NewEntry
-	for _, k := range report.Undeclared {
-		add = append(add, pipelinesecrets.NewEntry{VarName: k})
-	}
-	if strings.Join(report.Declared, ",") != "PingOne_DaVinci_connection_client" || len(add) != 1 {
-		t.Fatalf("customer secrets report %+v", report)
-	}
-	updated, err := ps.Add(pipelinesecrets.DefaultConfig, add)
-	if err != nil {
-		t.Fatal(err)
-	}
-	goldenFile(t, "e2e_customer_secrets.yml", updated)
-
-	// No source secret reaches any output.
-	re := regexp.MustCompile(`LEAKCANARY-[a-z-]+-[0-9]{4}`)
-	for name, out := range map[string][]byte{"tfvars": promoted, "secrets.tf": secretsTF, "customer_secrets.yml": updated} {
-		if m := re.Find(out); m != nil || bytes.Contains(out, []byte("******")) {
-			t.Fatalf("%s leaked a source secret", name)
+	run(initArgs...)
+	run("validate", "-no-color")
+	for _, env := range []string{"dev", "qa", "stage", "prod"} {
+		if out := run("test", "-no-color", "-var-file="+env+".tfvars"); !strings.Contains(out, "1 passed, 0 failed") {
+			t.Fatalf("%s: %s", env, out)
 		}
-	}
-
-	// terraform fmt gate, when a formatter is available.
-	if _, err := tfvars.ResolveFormatter(""); err == nil {
-		for name, out := range map[string][]byte{"tfvars": promoted, "secrets.tf": secretsTF, "target": targetSrc} {
-			if _, err := tfvars.FormatWithTerraform(context.Background(), "", out); err != nil {
-				t.Fatalf("%s: %v", name, err)
-			}
-		}
-	}
-
-	// The module test needs the provider in its .terraform directory, which
-	// may require a download, so it runs only on request.
-	if os.Getenv("PINGONE_PROMOTE_TF_E2E") != "1" {
-		t.Log("set PINGONE_PROMOTE_TF_E2E=1 to also run terraform test -test-directory=tests/e2e")
-		return
-	}
-	bin, err := tfvars.ResolveFormatter("")
-	if err != nil {
-		t.Skip("terraform not on PATH")
-	}
-	cmd := exec.Command(bin, "test", "-no-color", "-test-directory=tests/e2e")
-	cmd.Dir = moduleDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("terraform test: %v\n%s", err, out)
 	}
 }
