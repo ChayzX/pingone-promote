@@ -22,7 +22,7 @@ class SourceReleaseTests(unittest.TestCase):
         self.repo = self.root / "repo"
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        for name in ("go.mod", "cmd/pingone-promote/main.go", "cmd/pingone-runner/main.go", "README.md"):
+        for name in ("go.mod", "cmd/pingone-promote/main.go", "README.md"):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("tracked source\n", encoding="utf-8")
@@ -40,7 +40,7 @@ class SourceReleaseTests(unittest.TestCase):
         source = output / "pingone-promote-v0.2.0-rc.1-source.tar.gz"
         with tarfile.open(source) as archive:
             names = archive.getnames()
-            self.assertIn("pingone-promote-v0.2.0-rc.1/cmd/pingone-runner/main.go", names)
+            self.assertIn("pingone-promote-v0.2.0-rc.1/cmd/pingone-promote/main.go", names)
             self.assertFalse(any("profiles.json" in name or "/.git/" in name for name in names))
         formula = (output / "pingone-promote.rb").read_text()
         self.assertIn(hashlib.sha256(source.read_bytes()).hexdigest(), formula)
@@ -116,7 +116,7 @@ class BuildMetadataTests(unittest.TestCase):
             subprocess.run(["sh", "scripts/build.sh"], cwd=root, env={**os.environ, "VERSION": version}, check=True, capture_output=True, text=True)
             arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
             system = {"Linux": "linux", "Darwin": "darwin"}[platform.system()]
-            for command in ("pingone-promote", "pingone-runner"):
+            for command in ("pingone-promote",):
                 config = root / "must-not-create"
                 result = subprocess.run([str(root / "dist" / f"{command}-{system}-{arch}"), "--version"], env={**os.environ, "XDG_CONFIG_HOME": str(config)}, check=True, capture_output=True, text=True)
                 self.assertEqual(result.stdout, f"{command} {version}\n")
@@ -133,9 +133,9 @@ class BuildMetadataTests(unittest.TestCase):
                 with tarfile.open(archive) as bundle:
                     members = bundle.getnames()
                     self.assertTrue(any(name.startswith("pingone-promote-") for name in members))
-                    self.assertTrue(any(name.startswith("pingone-runner-") for name in members))
-                    self.assertIn("docs/gitlab.md", members)
-                    self.assertIn("examples/gitlab/.gitlab-ci.yml", members)
+                    self.assertFalse(any(name.startswith("pingone-runner-") for name in members))
+                    self.assertIn("docs/gitlab-ci-integration.md", members)
+                    self.assertIn("examples/gitlab-ci/pingone-promote.yml", members)
                     self.assertFalse(any(name.endswith("profiles.json") or "/.git/" in name for name in members))
 
 

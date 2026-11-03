@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
 """Run an isolated, real Homebrew install/upgrade/uninstall lifecycle test.
 
-This harness uses a temporary local tap and temporary app data. It refuses to
+This harness uses a temporary local tap. It refuses to
 run if the formula or tap name it needs is already present in Homebrew.
 """
 import argparse
-import http.cookiejar
 import json
 import os
 from pathlib import Path
-import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 
 from release import valid_version
@@ -26,7 +19,6 @@ from release import valid_version
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 FORMULA_NAME = "pingone-promote"
-STARTUP = re.compile(r"Open: (http://127\.0\.0\.1:(\d+)/\?token=([^\s]+))")
 
 
 def run(argv, *, cwd=None, check=True, capture=False):
@@ -124,145 +116,17 @@ def release_source(repo, ref, version, destination):
     return formula_path
 
 
-def seed_external_data(data_dir):
-    data_dir.mkdir(mode=0o700)
-    profiles = b"[]\n"
-    history = b"[{}]\n"
-    marker = b"homebrew-lifecycle-data-marker\x00\xff\n"
-    (data_dir / "profiles.json").write_bytes(profiles)
-    (data_dir / "records.json").write_bytes(history)
-    (data_dir / "lifecycle-marker.bin").write_bytes(marker)
-    return {
-        "profiles.json": profiles,
-        "records.json": history,
-        "lifecycle-marker.bin": marker,
-    }
-
-
-def assert_external_data(data_dir, expected):
-    for name, contents in expected.items():
-        actual = (data_dir / name).read_bytes()
-        if actual != contents:
-            raise RuntimeError(f"external app data changed: {name}")
-
-
-def http_request(opener, url, *, headers=None, expected_status=200):
-    request = urllib.request.Request(url, headers=headers or {})
-    try:
-        response = opener.open(request, timeout=5)
-    except urllib.error.HTTPError as error:
-        if error.code != expected_status:
-            raise RuntimeError(f"GET {redact_url(url)} returned {error.code}; expected {expected_status}") from error
-        return error.code, error.read()
-    except urllib.error.URLError as error:
-        raise RuntimeError(f"request to {redact_url(url)} failed: {error.reason}") from error
-    if response.status != expected_status:
-        raise RuntimeError(f"GET {redact_url(url)} returned {response.status}; expected {expected_status}")
-    return response.status, response.read()
-
-
-def redact_url(url):
-    parts = urllib.parse.urlsplit(url)
-    if not parts.query:
-        return url
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "<redacted>", ""))
-
-
-def redact_log(contents):
-    return STARTUP.sub("Open: <bootstrap URL redacted>", contents)
-
-
-def app_startup_probe(binary, data_dir, log_path):
-    with log_path.open("w+b") as log:
-        process = subprocess.Popen(
-            [str(binary), "--no-browser", "--listen", "127.0.0.1:0", "--data-dir", str(data_dir)],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-        startup_url = None
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                break
-            log.flush()
-            contents = log_path.read_text(encoding="utf-8", errors="replace")
-            match = STARTUP.search(contents)
-            if match:
-                startup_url = match.group(1)
-                break
-            time.sleep(0.1)
-        if startup_url is None:
-            if process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            logs = log_path.read_text(encoding="utf-8", errors="replace")
-            raise RuntimeError("application did not print its loopback startup URL:\n" + redact_log(logs))
-
-        cookie_jar = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(cookie_jar))
-        base_url = f"http://127.0.0.1:{match.group(2)}"
-        try:
-            # No bootstrap cookie is allowed before using the one-time startup link.
-            unauth = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            http_request(unauth, base_url + "/api/session", expected_status=401)
-            http_request(opener, startup_url)
-            if not any(cookie.name == "pingone_local" for cookie in cookie_jar):
-                raise RuntimeError("bootstrap link did not establish the local session cookie")
-
-            status, session_raw = http_request(opener, base_url + "/api/session")
-            session = json.loads(session_raw)
-            csrf = session.get("csrf")
-            if status != 200 or not isinstance(csrf, str) or not csrf:
-                raise RuntimeError("authenticated session probe did not return a CSRF token")
-            if session.get("localTargets"):
-                raise RuntimeError("app unexpectedly enabled direct promotion targets")
-
-            # The probes are read-only. An attempted write without CSRF must be blocked.
-            request = urllib.request.Request(
-                base_url + "/api/profiles",
-                data=b"{}",
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            try:
-                opener.open(request, timeout=5)
-            except urllib.error.HTTPError as error:
-                if error.code != 403:
-                    raise RuntimeError(f"POST without CSRF returned {error.code}; expected 403") from error
-            else:
-                raise RuntimeError("POST without CSRF was not rejected")
-
-            # Cross-site requests must be rejected even with the local session cookie.
-            request = urllib.request.Request(base_url + "/api/session", headers={"Sec-Fetch-Site": "cross-site"})
-            try:
-                opener.open(request, timeout=5)
-            except urllib.error.HTTPError as error:
-                if error.code != 403:
-                    raise RuntimeError(f"cross-site probe returned {error.code}; expected 403") from error
-            else:
-                raise RuntimeError("cross-site request was not rejected")
-
-            _, profiles = http_request(opener, base_url + "/api/profiles")
-            _, history = http_request(opener, base_url + "/api/history")
-            if json.loads(profiles) != []:
-                raise RuntimeError("unexpected profiles appeared during read-only probes")
-            if len(json.loads(history)) != 1:
-                raise RuntimeError("history read probe did not return the seeded history marker")
-        finally:
-            if process.poll() is None:
-                process.send_signal(signal.SIGTERM)
-            try:
-                exit_code = process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-                raise RuntimeError("application did not stop after SIGTERM")
-            if exit_code != 0:
-                raise RuntimeError(f"application exited with status {exit_code} after SIGTERM")
+def cli_probe(binary):
+    """Read-only checks that the installed binary is the v2 CLI, not a server."""
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)
+    if result.returncode != 2 or "Usage: pingone-promote" not in result.stderr:
+        raise RuntimeError(f"running with no subcommand must print usage and exit 2; got {result.returncode}: {result.stderr!r}")
+    for subcommand in ("check", "export", "request"):
+        if subcommand not in result.stderr:
+            raise RuntimeError(f"usage does not list the {subcommand} subcommand")
+    result = subprocess.run([str(binary), "check"], capture_output=True, text=True, timeout=20)
+    if result.returncode != 2:
+        raise RuntimeError(f"check without --root must exit 2; got {result.returncode}")
 
 
 def initialize_local_tap(tap_source, formula_path, tap_name):
@@ -324,8 +188,6 @@ def main():
             first_output = root / "release-first"
             second_output = root / "release-upgrade"
             tap_source = root / "tap-source"
-            data_dir = root / "app-data"
-            expected_data = seed_external_data(data_dir)
 
             first_formula = release_source(repo, args.ref, args.version, first_output)
             second_formula = release_source(repo, args.ref, upgraded_version, second_output)
@@ -350,14 +212,13 @@ def main():
             prefix = Path(output([brew, "--prefix", FORMULA_NAME]))
             main_binary = prefix / "bin" / FORMULA_NAME
             if (prefix / "bin" / "pingone-runner").exists():
-                raise RuntimeError("Homebrew must not install the GitLab runner")
+                raise RuntimeError("Homebrew must not install pingone-runner (retired)")
             for binary, expected in ((main_binary, f"pingone-promote {args.version}\n"),):
                 actual = run([binary, "--version"], capture=True).stdout
                 if actual != expected:
                     raise RuntimeError(f"unexpected --version output from {binary}: {actual!r}")
 
-            app_startup_probe(main_binary, data_dir, root / "app-first.log")
-            assert_external_data(data_dir, expected_data)
+            cli_probe(main_binary)
 
             commit_tap_formula(tap_source, second_formula, upgraded_version)
             run(["git", "-C", tap_checkout, "pull", "--ff-only"])
@@ -372,8 +233,7 @@ def main():
             actual = run([upgraded_binary, "--version"], capture=True).stdout
             if actual != f"pingone-promote {upgraded_version}\n":
                 raise RuntimeError(f"upgraded binary reports an unexpected version: {actual!r}")
-            app_startup_probe(upgraded_binary, data_dir, root / "app-upgraded.log")
-            assert_external_data(data_dir, expected_data)
+            cli_probe(upgraded_binary)
 
             if not formula_owned_by_tap(brew, tap_name):
                 raise RuntimeError(f"refusing to uninstall {FORMULA_NAME}; installed formula is not owned by temporary tap {tap_name}")
@@ -382,8 +242,7 @@ def main():
                 raise RuntimeError(f"{FORMULA_NAME} remains installed after uninstall")
             installed_formula = False
             install_attempted = False
-            assert_external_data(data_dir, expected_data)
-            print(f"Homebrew lifecycle passed: {args.version} -> {upgraded_version}; external app data/history remained byte-identical")
+            print(f"Homebrew lifecycle passed: {args.version} -> {upgraded_version}")
     finally:
         if install_attempted or installed_formula:
             try:
