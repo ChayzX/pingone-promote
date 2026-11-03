@@ -247,12 +247,13 @@ func TestAmbiguousFlowNameListsCandidates(t *testing.T) {
 
 func TestParseIsStrict(t *testing.T) {
 	cases := map[string][]byte{
-		"unknown field": requestJSON(func(m map[string]any) { m["target"] = "prod" }),
-		"old version":   requestJSON(func(m map[string]any) { m["requestVersion"] = 0 }),
-		"bad id":        requestJSON(func(m map[string]any) { m["requestId"] = "../x" }),
-		"bad branch":    requestJSON(func(m map[string]any) { m["branchName"] = "main" }),
-		"bad mode":      requestJSON(func(m map[string]any) { m["mode"] = "push" }),
-		"bad choice":    requestJSON(func(m map[string]any) { m["dependencyChoices"] = map[string]string{"pingone_davinci_flow.x": "maybe"} }),
+		"unknown field":  requestJSON(func(m map[string]any) { m["target"] = "prod" }),
+		"remove is gone": requestJSON(func(m map[string]any) { m["remove"] = []string{"pingone_davinci_flow.pingcli__Old"} }),
+		"old version":    requestJSON(func(m map[string]any) { m["requestVersion"] = 0 }),
+		"bad id":         requestJSON(func(m map[string]any) { m["requestId"] = "../x" }),
+		"bad branch":     requestJSON(func(m map[string]any) { m["branchName"] = "main" }),
+		"bad mode":       requestJSON(func(m map[string]any) { m["mode"] = "push" }),
+		"bad choice":     requestJSON(func(m map[string]any) { m["dependencyChoices"] = map[string]string{"pingone_davinci_flow.x": "maybe"} }),
 		"secret value": requestJSON(func(m map[string]any) {
 			m["envValues"] = map[string]any{"qa": map[string]any{"davinci_variable_x_value": "-----BEGIN RSA PRIVATE KEY-----"}}
 		}),

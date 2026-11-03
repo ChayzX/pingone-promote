@@ -5,9 +5,8 @@
 // The merge is ADDITIVE and SURGICAL:
 //   - only blocks whose addresses are in the export are inserted or
 //     replaced; every other block, comment and file keeps its bytes;
-//   - a resource missing from a partial export is never deleted; removal is
-//     an explicit de-manage operation that emits
-//     removed { lifecycle { destroy = false } };
+//   - a resource missing from a partial export is never deleted (removing
+//     a resource from Git is a manual change);
 //   - root variables, secrets.tf, imports.tf, overlays and
 //     customer_secrets.yml only receive what the written blocks need.
 package promote

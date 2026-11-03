@@ -171,7 +171,6 @@ Unknown fields fail. Maximum 256 KiB.
   "secretMappings": { "davinci_connection_PingOne_clientSecret": "PingOne_DaVinci_connection_PingOne_clientSecret" },
   "connectorEnvLocal": { "pingcli__PingOne": ["clientId"] },
   "inlineValues": ["davinci_variable_companyName_value"],
-  "remove": ["pingone_davinci_flow.pingcli__Old-0020-Flow"],
   "baseCommit": "0123456789abcdef0123456789abcdef01234567",
   "mode": "mr",
   "branchName": "pingone-promote/20261103-120000-abc123",
@@ -195,7 +194,6 @@ Unknown fields fail. Maximum 256 KiB.
 | `secretMappings` | no | terraformer secret variable (`requiredSecrets[].key`) -> declared `customer_secrets.yml` variable name |
 | `connectorEnvLocal` | no | connector label -> property names kept as environment values |
 | `inlineValues` | no | DaVinci variable value variables that are the same in every environment |
-| `remove` | no | addresses to de-manage (`removed { lifecycle { destroy = false } }`) |
 | `baseCommit` | no | commit SHA for three-way status (the commit last rolled out to the source) |
 | `mode` | no | `mr` (default) or `branch` |
 | `branchName` | no | if set, must be `pingone-promote/<requestId>` |
@@ -226,7 +224,7 @@ Unknown fields fail. Maximum 256 KiB.
     { "address": "pingone_davinci_flow.pingcli__Flow-0020-B", "role": "selected", "action": "updated", "status": "changed-in-source", "file": "definitions/pingone_davinci_flow.tf" },
     { "address": "pingone_davinci_connector_instance.pingcli__PingOne", "role": "dependency", "action": "kept_differs", "status": "changed-in-source", "file": "definitions/pingone_davinci_connector_instance.tf", "reason": "differs from Git; kept because it is a shared dependency (choose update to use the source version)" }
   ],
-  "summary": { "added": 3, "updated": 1, "kept_differs": 1, "unchanged": 6, "removed": 0, "moved": 0 },
+  "summary": { "added": 3, "updated": 1, "kept_differs": 1, "unchanged": 6, "moved": 0 },
   "files": [{ "path": "definitions/pingone_davinci_flow.tf", "action": "update" }, { "path": ".pingone-promote/request.json", "action": "delete" }],
   "requiredSecrets": [{ "key": "davinci_variable_apiKey_value", "varName": "davinci_variable_apiKey_value", "field": "davinci_variable_apiKey_value", "declared": false, "vault": "apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/davinci_variable_apiKey_value@secret" }],
   "blockers": { "testing": [{ "code": "missing_value", "var": "davinci_variable_companyName_value", "message": "testing.tfvars must set davinci_variable_companyName_value" }] },
@@ -241,7 +239,7 @@ Unknown fields fail. Maximum 256 KiB.
 | --- | --- |
 | `status` | `previewed` (dryRun), `submitted`, `no_changes` (only the request file was deleted, no MR), `already_submitted` (this `requestId` was committed before; the existing commit and MR are reported), `blocked`, `failed` |
 | `mrUrl`, `mrIid`, `branchUrl`, `diffUrl` | links; `diffUrl` is the commit when one was made, otherwise the compare view of the branch |
-| `changes[]` | one per address in the export, plus de-managed ones. `role`: `selected` or `dependency`. `action`: `added`, `updated`, `kept_differs`, `unchanged`, `removed` (de-managed), `moved` (relabelled; `from` is the old address). `status`: `new`, `changed-in-source`, `matches`, `git-newer`, `changed-in-both` |
+| `changes[]` | one per address in the export. `role`: `selected` or `dependency`. `action`: `added`, `updated`, `kept_differs`, `unchanged`, `moved` (relabelled; `from` is the old address). `status`: `new`, `changed-in-source`, `matches`, `git-newer`, `changed-in-both` |
 | `summary` | counts per action |
 | `files[]` | `create`, `update` or `delete` per path |
 | `requiredSecrets[]` | secrets the written blocks need. `key`: terraformer's name, the key of `secretMappings`. `varName`: the Terraform variable after mapping (`TF_VAR_<varName>`). `field`: the Vault field. `declared: false` means this request adds the `customer_secrets.yml` entry and the Vault value must exist for every environment |

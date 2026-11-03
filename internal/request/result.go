@@ -46,7 +46,7 @@ type Selected struct {
 type ChangeOut struct {
 	Address string `json:"address"`
 	Role    string `json:"role"`   // selected | dependency
-	Action  string `json:"action"` // added | updated | kept_differs | unchanged | removed | moved
+	Action  string `json:"action"` // added | updated | kept_differs | unchanged | moved
 	Status  string `json:"status"` // new | changed-in-source | matches | git-newer | changed-in-both
 	File    string `json:"file,omitempty"`
 	From    string `json:"from,omitempty"`
@@ -99,7 +99,6 @@ type Summary struct {
 	Updated     int `json:"updated"`
 	KeptDiffers int `json:"kept_differs"`
 	Unchanged   int `json:"unchanged"`
-	Removed     int `json:"removed"`
 	Moved       int `json:"moved"`
 }
 
@@ -157,8 +156,6 @@ func (r *Result) setChanges(changes []promote.Change) {
 			r.Summary.KeptDiffers++
 		case promote.ActionUnchanged:
 			r.Summary.Unchanged++
-		case promote.ActionRemoved:
-			r.Summary.Removed++
 		case promote.ActionMoved:
 			r.Summary.Moved++
 		}

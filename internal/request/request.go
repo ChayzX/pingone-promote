@@ -63,8 +63,6 @@ type Request struct {
 	// InlineValues: DaVinci variable value variables that are the same in
 	// every environment.
 	InlineValues []string `json:"inlineValues,omitempty"`
-	// Remove de-manages addresses (removed { lifecycle { destroy = false } }).
-	Remove []string `json:"remove,omitempty"`
 	// BaseCommit enables three-way status (the commit last rolled out to
 	// the source environment).
 	BaseCommit string `json:"baseCommit,omitempty"`
@@ -250,11 +248,6 @@ func (r *Request) Validate() error {
 	for _, v := range r.InlineValues {
 		if !identRE.MatchString(v) {
 			return invalid("inlineValues", v+" is not a variable name")
-		}
-	}
-	for _, a := range r.Remove {
-		if !addressRE.MatchString(a) {
-			return invalid("remove", a+" is not a resource address")
 		}
 	}
 	if r.BaseCommit != "" && !shaRE.MatchString(r.BaseCommit) {

@@ -44,7 +44,6 @@ const (
 	ActionUpdated     Action = "updated"
 	ActionKeptDiffers Action = "kept_differs"
 	ActionUnchanged   Action = "unchanged"
-	ActionRemoved     Action = "removed" // de-managed
 	ActionMoved       Action = "moved"
 )
 
@@ -102,10 +101,7 @@ type MergeRequest struct {
 	// its deploy/enable companions). Everything else is a dependency.
 	Selected []string
 	// Choices override the default per address.
-	Choices map[string]Choice
-	// Remove de-manages addresses: the block is deleted and
-	// removed { lifecycle { destroy = false } } keeps the live resource.
-	Remove    []string
+	Choices   map[string]Choice
 	SourceEnv string
 	// Rollout lists the environments after the source, in order.
 	Rollout []string
@@ -207,7 +203,7 @@ func Merge(req MergeRequest) (*MergeResult, error) {
 			}
 		}
 	}
-	steps := []func() error{m.renames, m.blocks, m.removals, m.declarations, m.imports, m.overlays, m.customerSecrets, m.finish}
+	steps := []func() error{m.renames, m.blocks, m.declarations, m.imports, m.overlays, m.customerSecrets, m.finish}
 	for _, s := range steps {
 		if err := s(); err != nil {
 			return nil, err
@@ -262,14 +258,7 @@ func (m *merger) status(addr string, live []byte) Status {
 }
 
 func (m *merger) blocks() error {
-	removing := map[string]bool{}
-	for _, a := range m.req.Remove {
-		removing[a] = true
-	}
 	for _, b := range m.req.Export.Blocks {
-		if removing[b.Address] {
-			continue
-		}
 		role := RoleDependency
 		if m.selected[b.Address] {
 			role = RoleSelected
@@ -368,17 +357,12 @@ func (m *merger) write(b neutralize.Block, ch *Change) error {
 	return nil
 }
 
-// --- renames and removals ---
+// --- renames ---
 
-func (m *merger) movedFile() string   { return path.Join(m.l.ModuleDir, "moved.tf") }
-func (m *merger) removedFile() string { return path.Join(m.l.ModuleDir, "removed.tf") }
+func (m *merger) movedFile() string { return path.Join(m.l.ModuleDir, "moved.tf") }
 
 func movedBlock(from, to string) []byte {
 	return []byte("moved {\n  from = " + from + "\n  to   = " + to + "\n}")
-}
-
-func removedBlock(addr string) []byte {
-	return []byte("removed {\n  from = " + addr + "\n\n  lifecycle {\n    destroy = false\n  }\n}")
 }
 
 // renames records neutralizer relabels whose old address is in Git: the
@@ -417,45 +401,6 @@ func (m *merger) renames() error {
 		if err := m.dropImportBlock(m.l.ModuleAddress(rn.From)); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (m *merger) removals() error {
-	for _, a := range m.req.Remove {
-		p, ok := m.head.defs[a]
-		if !ok {
-			m.res.Warnings = append(m.res.Warnings, a+" is not managed in Git; nothing to remove")
-			continue
-		}
-		f, err := m.file(p)
-		if err != nil {
-			return err
-		}
-		if err := f.Remove(resourceKey(a)); err != nil {
-			return err
-		}
-		m.save(f)
-		rf, err := m.file(m.removedFile())
-		if err != nil {
-			return err
-		}
-		if err := rf.AppendText(removedBlock(a)); err != nil {
-			return err
-		}
-		m.save(rf)
-		if err := m.dropImportBlock(m.l.ModuleAddress(a)); err != nil {
-			return err
-		}
-		if err := m.renameImportKey(m.l.ModuleAddress(a), ""); err != nil {
-			return err
-		}
-		role := RoleDependency
-		if m.selected[a] {
-			role = RoleSelected
-		}
-		m.res.Changes = append(m.res.Changes, Change{Address: a, Role: role, Status: StatusMatches, Action: ActionRemoved, File: p,
-			Reason: "de-managed: removed from the definitions; the live resource is kept (destroy = false)"})
 	}
 	return nil
 }

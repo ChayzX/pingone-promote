@@ -117,8 +117,8 @@ surgical at the resource-block level.
    terraformer sorts). Every other block, comment and file stays
    byte-identical. A new resource type creates `<type>.tf`, terraformer's
    file name. **A resource missing from a partial export is never a
-   deletion**; removal is an explicit de-manage operation that deletes the
-   block and adds `removed { from = ...  lifecycle { destroy = false } }`.
+   deletion**; the request job has no remove operation, so taking a resource
+   out of Git is a manual change.
    Root `variables.tf`, `secrets.tf`, `imports.tf`, the module call,
    overlays and `customer_secrets.yml` only receive what the written blocks
    need; existing entries are untouched.
