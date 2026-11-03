@@ -29,7 +29,7 @@ Files:
 | --- | --- |
 | `fn/_contract.js` | **The contract with the request job, in one place**: branch prefix, file path, job name, artifact name, request fields, commit body, result normalisation, typed-error copy. |
 | `fn/_lib.js` | Helpers: parsing, escaping, redaction, base64, settings check, the **GitLab URL allow-list** (`lib.gl`), the read queue, search, and the Preview/Submit rules. |
-| `fn/<step>.js` | One custom function each: `signin`, `render`, `handle`, `p1_token`, `p1_list`, `gl_commit`, `gl_read`, `gl_delete`. |
+| `fn/<step>.js` | One custom function each: `signin`, `render`, `handle`, `p1_token`, `p1_list`, `gl_commit`, `gl_read`, `gl_trace`, `gl_delete`. |
 | `gen_app.py` | Builds `flow/pingone-promote-app.flow.json` from the sources. The output is deterministic. |
 | `check_app.py` | Validator for wiring, the trust boundary and a repo-wide secret and ID scan. `--self-test` checks that broken copies of the export are refused. |
 | `test_app.js` | Runs the exported graph against a fake PingOne and a fake GitLab, with a simulated person clicking through the screens. |
@@ -115,6 +115,39 @@ Each screen is a form with two fields:
 - Env values are text, or JSON when they start with `[` or `{`, for lists such as redirect URIs.
 - The app applies the job's request rules before any commit (`contract.validateRequest`). Examples: a one-line title of at most 255 characters, a commit message of at most 2000 characters, env values only for the source or rollout envs, and no secret-looking values.
 
+### 1.2a Options added to the review screen
+```
+│ Applications and flow policies   Application: Admin Console                          │
+│                                  [Add an application or flow policy]                 │
+│ Stop managing                                                                       │
+│   [ ] pingone_davinci_variable.pingcli__lang  Stop managing (keeps it in PingOne)   │
+│   [ ] I confirm: Git stops managing every resource ticked above. They keep running.  │
+│ Readiness                                                                           │
+│   qa  ✕ 1 to fix  qa: base_url [            ]                                       │
+│   [ ] Same in all environments: use the source value for base_url                   │
+│       identical everywhere: qa, stage, prod all get the same value; not asked per env│
+```
+- **Same in all environments (`inlineValues`).** Each value row of the readiness list has the tick. The source value becomes a literal in every env, so the per-env value is not asked. Typed values for that variable are dropped before the commit. The boxes for one variable move together (the screen script). After a preview the variable stays listed under "Same in all environments" so it can be taken back. The job decides whether the variable can be inlined; if not, it names `inlineValues` in `error.field`.
+- **Stop managing (`remove`).** Offered for the rows of the last preview that are dependencies, that Git already manages (status is not `new`), and that are not `added`, `moved` or already `removed`. The selected flow is never offered, and a forced click is dropped on the server (`contract.removeChoices`). Ticking needs the confirm box, or Preview and Submit are refused ("Tick the confirmation ..."). The job reports the address with the action `removed`, which the app shows as **Stop managing (keeps it in PingOne)**.
+  - Limit: `result.json` lists only the addresses in the export plus the de-managed ones. A resource that Git manages but the export no longer mentions has no row, so the app cannot offer it (ask 12 below).
+
+### 1.2b Add an application or flow policy (optional step)
+```
+│ Add an application or flow policy                                                  │
+│ In this request: Applications (1 of 20) Admin Console [Remove ...]                 │
+│ Find an application  [ web      ] [Search applications]                            │
+│ 1 match   Web Portal  <id>   [Add this application] [Its flow policies]            │
+│ Flow policies of Web Portal  [ sign in ] [Search flow policies]                    │
+│ 2 matches. Choose one; the app never picks for you                                 │
+│ [Back to the options]                                                              │
+```
+- Search is the flow search: case-insensitive substring or exact ID, every match listed, nothing picked. Empty result: "No application in dev matches ...".
+- Sent as `applications` / `flowPolicies`: `{name}` only (the job refuses an id), at most 20 each.
+- A name shared by two listed items is refused ("Two applications are named ..."): the job selects by name and could not tell them apart.
+- PingOne lists flow policies **per application** (`.../davinciApplications/{appId}/flowPolicies`). Listing every application's policies would cost 1 + N calls in one browser request, so the step reads only the policies of the one application the person opens with **Its flow policies**. This is why it is a separate step and not part of the search screen.
+- The list responses can carry client secrets. Only `id` and `name` are kept (`p1_list`); nothing else enters the state or a screen.
+- Off when `ppPathApplications` is empty (no button, no calls).
+
 ### 1.3 Working (Preview running / Submit running)
 ```
 │ Submit running                                                                     │
@@ -128,6 +161,13 @@ Each screen is a form with two fields:
  timeout: "GitLab is slow. The app stopped checking after 10m 0s. The outcome of your submit is
            unknown until GitLab answers."  [Keep waiting] [Check GitLab]   (no automatic checks)
 ```
+
+### 1.3a When result.json cannot be downloaded
+If `GET /jobs/:id/artifacts/result.json` answers a redirect (3xx) or 404 for a finished job, the app reads the job log:
+- `GET /jobs/:id/trace` on its own REST node, with `Range: bytes=-65536`; the function cuts the text to its last 64 KiB again in case the header is ignored;
+- the LAST line starting `PINGONE_PROMOTE_RESULT ` is parsed (`contract.resultFromLog`): status, links, summary counts, blocked envs and the typed error;
+- the screens show a "Summary only" notice: the change list, the diff and the required-secrets list are not available in this mode. Submit stays possible; the person must check Vault for new secrets themselves;
+- no log text is kept or shown. With no usable line (none, invalid, or for another request) the screen says the job log has no result line and offers **Check GitLab**.
 
 ### 1.4 Preview
 ```
@@ -254,13 +294,14 @@ The server always enforces this table: `lib.canPreview` and `lib.canSubmit` run 
    │  │                                                                         → fn p1_list ─list (next page)→ ↺
    │  ├─ commit → REST GitLab: commit request file (POST) → fn gl_commit
    │  ├─ read   → REST GitLab: read (GET)                 → fn gl_read  ─read→ ↺ (queue)  ─delete→
+   │  │             ─trace→ REST GitLab: read job log (GET, Range) → fn gl_trace (artifact 3xx or 404 only)
    │  │                                                     REST GitLab: delete request branch (DELETE) → fn gl_delete
    │  ├─ signout → [Left the app] (end screen)
    │  └─ render (default)
    └────────── every handler routes back to Render screen
 ```
-- 76 nodes: 39 steps, 37 evaluators.
-- There are 5 REST nodes, 8 custom functions, 2 screens that continue (App screen, and Render's save) and 2 end screens.
+- 86 nodes: 44 steps, 42 evaluators.
+- There are 6 REST nodes (the sixth reads the job log), 9 custom functions, 2 screens that continue (App screen, and Render's save) and 2 end screens.
 - Every REST call's false branch goes through a "call failed, continue" save into the same handler, which reads the status code. This is the feasibility pattern.
 - The URL of every REST node is `{{global.variables.ppUrl}}`. A function builds it, and only through `lib.gl`, the allow-list of GitLab endpoints, or the PingOne URL builders.
 
@@ -348,6 +389,7 @@ Residual risks, and what the operator should do about them:
 | `ppRunTimeoutSeconds` / `ppPipelineAppearSeconds` | `600` / `120` | when to stop checking a job; when to say "no pipeline yet" |
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout auto-refresh interval, and how long it runs before pausing |
 | `ppChildPipelines` | `yes` | look in child pipelines (bridges) when an env's job is not in the parent |
+| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `.../davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list (assumed paths, section 12). Empty `ppPathApplications` switches the step off |
 
 **Company secrets:** `ppWorkerBasicAuth` and `ppGitlabToken`.
 
@@ -380,8 +422,8 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
     - `envValues: {<env>: {<root variable>: <JSON value>}}`, for the source or rollout envs only, never `import_ids`, never secret-looking;
     - `secretMappings: {<terraformer secret var>: <customer_secrets.yml name>}`;
     - `commitMessage` (at most 2000 characters), `title` (one line, at most 255) and `description` (at most 64 KiB).
-  - Supported by the contract but not yet on a screen: `inlineValues` and `remove` (de-manage).
-  - Not sent: `applications`, `flowPolicies`, `connectorEnvLocal` and `baseCommit`. They are optional in the job and can be added in `contract.buildRequest` without other changes.
+  - `inlineValues` (names, sorted) and `remove` (addresses, sorted), from the review screen (section 1.2a); `applications` and `flowPolicies` (`{name}` only, at most 20 each), from section 1.2b.
+  - Not sent: `connectorEnvLocal` and `baseCommit`. They are optional in the job and can be added in `contract.buildRequest` without other changes.
   - `contract.validateRequest` applies all of these rules before any commit, using the job's field paths.
 - **Preview:**
   - the first Preview runs `POST /repository/commits` with `{branch, start_branch: <default>, commit_message, actions: [{action: "create", file_path, encoding: "base64", content}]}`;
@@ -404,7 +446,7 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
   - Links: `mrUrl`, `mrIid`, `branchUrl`, and `diffUrl` (the commit when one was made, otherwise the compare view).
   - `changes[]`:
     - `{address, role: selected|dependency, action, status, file?, from?, reason?}`;
-    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged`, `removed` (no longer managed, not destroyed) or `moved` (shown with `from`);
+    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged`, `removed` (shown as "Stop managing (keeps it in PingOne)": de-managed, not destroyed) or `moved` (shown with `from`);
     - `status` is one of `new`, `changed-in-source`, `matches`, `git-newer` or `changed-in-both`, and has its own column.
     - Dependencies that differ, and any address `changed-in-both`, get Keep Git version / Use source.
   - `summary`: counts per action, used for the summary line.
@@ -444,8 +486,11 @@ REST calls per browser request (one screen submission). The "measured" column is
 | Search again in the same env | 0 | 0 | — |
 | Use this flow, Edit, Back, Pause | 0 | 0 | — |
 | Preview / Submit | 1 (the commit) | 1 | request.json, 1 to 5 KB |
-| Working, automatic check | ≤ 3: pipelines by ref and sha → jobs → result.json | 2 | jobs page ≤ 100 jobs; result.json, **up to about 1 MiB** because of its `diff` (dropped on read, never kept in state) |
-| Check GitLab | ≤ 3 (file → branch → MRs), then the working check | 3 | small |
+| Search applications, first time for a source env | 1 token + 1 per page (budget 2 + pages; capped at 20 pages) | 4 (3 test pages) | applications can be large; only `id,name` are kept |
+| Its flow policies (one application) | 1 token + 1 per page of that application's policies | 3 | names only |
+| Search flow policies / Search applications again / Add / Remove / Back to the options | 0 | 0 | — |
+| Working, automatic check | ≤ 3: pipelines by ref and sha → jobs → result.json; **4** when result.json is a redirect or 404 and the job log is read | 3 | jobs page ≤ 100 jobs; result.json, **up to about 1 MiB** because of its `diff` (dropped on read, never kept in state) |
+| Check GitLab | ≤ 3 (file → branch → MRs), or file → pipelines → jobs → result.json (→ job log): ≤ 5 | 5 | small; job log: last 64 KiB |
 | Cancel | 2 (branch, then delete) | 2 | small |
 | Requests | 2 (MRs by label, request branches) | 2 | ≤ 20 rows each |
 | Rollout, each check | 3 base (MR → pipeline → jobs) + bridges/child jobs + ≤ 2 per unsettled env; hard cap `lib.MAX_CALLS` = 10 | 9 (with a child pipeline and "Live via !N") | jobs ≤ 100; deployments 5 per env |
@@ -454,7 +499,7 @@ Other budgets:
 - The flow-instance state stays under about 20 KB: no flow bodies, no diffs, no job logs.
 - Each function returns in milliseconds; there is no JSON larger than one GitLab page.
 - One browser request makes at most 10 GitLab reads. Above the cap, the screen says "some details were not checked this time" and the next check carries on.
-- Export size: about 400 KB, because each of the 8 functions embeds the contract and the helpers, as the feasibility flow did.
+- Export size: about 600 KB, because each of the 9 functions embeds the contract and the helpers, as the feasibility flow did.
 
 ## 7. Polling and timeouts
 
@@ -552,8 +597,9 @@ The backend (PR #96) accepted all eleven asks. The app now uses them as follows:
 | 11 | Job in the parent pipeline | `.pre`, parent pipeline, push rules plus `exists: [.pingone-promote/request.json]` | the job-finding path needs no bridges |
 
 Open points, none of them blocking:
-- `inlineValues` ("same value in every env") and `remove` (de-manage) are in the contract but have no screen yet.
-- `applications`, `flowPolicies`, `connectorEnvLocal` and `baseCommit` are not sent.
+- `connectorEnvLocal` and `baseCommit` are not sent.
+- Ask 12 (new): `result.json` has no list of addresses that Git manages but the export does not contain, so "Stop managing" is offered only for dependency rows the export does contain. A `gitOnly[]` list would let the app offer the rest.
+- Ask 13 (new): `PINGONE_PROMOTE_RESULT` carries no `requiredSecrets`, so a submit read from the log cannot be gated on the Vault tick.
 
 ## 12. Assumptions to verify in a live tenant
 1. A `startUiSubFlow` node returns the subflow's outputs as `{{local.<node>.payload.output.<field>}}`, and the sign-in subflow can return `userId`, `username`, `name` and `groups`.
@@ -563,7 +609,7 @@ Open points, none of them blocking:
 3. Once the script removes `disabled` from Submit, DaVinci submits it like any other button.
 4. DaVinci does not resolve `{{…}}` inside substituted values. If it does, the brace escaping already prevents it on screens, and the commit body carries user text only as base64.
 5. The REST connector sends `DELETE`. It returns `rawResponse.statusCode` on 204 with an empty body. A non-2xx response takes the false branch, with the status code still set; the feasibility flow found this for GET and POST.
-6. `GET /jobs/:id/artifacts/result.json` with a `PRIVATE-TOKEN` returns the JSON directly. If your GitLab redirects artifact downloads to object storage, the REST node must follow the redirect. Otherwise the fallback is the job log's last line, `PINGONE_PROMOTE_RESULT {...}` (compact: status, links, summary, blocked envs, error), read with `GET /jobs/:id/trace`. The app does not do this today.
+6. `GET /jobs/:id/artifacts/result.json` with a `PRIVATE-TOKEN` returns the JSON directly. If your GitLab redirects artifact downloads to object storage, the REST node must follow the redirect. Otherwise the fallback is the job log's last line, `PINGONE_PROMOTE_RESULT {...}` (compact: status, links, summary, blocked envs, error), read with `GET /jobs/:id/trace`. The app now does this: `contract.resultFromLog` reads the last `PINGONE_PROMOTE_RESULT` line from the last 64 KiB. It assumes the REST node does not follow the redirect (the 3xx reaches the function) and that the project token may read `GET /jobs/:id/trace`.
 7. The project token, at Developer level with `api` scope, can do all of these:
    - create a branch through the Commits API (`start_branch`);
    - read pipelines, jobs, artifacts, environments and deployments;
@@ -573,4 +619,7 @@ Open points, none of them blocking:
 9. Job names follow `ppApplyJobPattern` (`apply:{env}`) and environment names follow `ppEnvironmentPattern`. Adjust both to the real enterprise pipeline.
 10. Check whether the DaVinci flow timeout (1800 s in the export) counts from the start of the flow or from the last interaction. If it counts from the start, a long rollout watch ends: raise the timeout, or reopen the app and use Requests.
 11. The PingOne flow list honours `attributes=id,name` and pages with `_links.next`.
-12. Function code size, about 45 KB per function, is within DaVinci's limit. The feasibility flow imported functions of about 37 KB.
+12. Function code size, now about 72 KB for the largest function (the contract and helpers are embedded in each), is within DaVinci's limit. The feasibility flow imported functions of about 37 KB; if the import refuses large functions, this is the first thing to shrink.
+13. **Assumed (new): the application and flow policy lists.** `GET /v1/environments/{envId}/davinciApplications` (key `davinciApplications`) and `GET /v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` (key `flowPolicies`), from ADR 0007. They are taken from the SDK, not run against a tenant, and assumed readable by the DaVinci Admin Read Only worker. Both are flow variables (`ppPathApplications`, `ppPathFlowPolicies`); the response is assumed to page with `_links.next` and to carry `id` and `name`.
+14. **Assumed (new): `Range` on the job log.** `GET /jobs/:id/trace` honours `Range: bytes=-65536`. If it ignores it, the whole log reaches the function, which keeps only the last 64 KiB, but the transfer is larger. A text body is assumed to arrive as a string in `rawResponse.body`.
+15. **Assumed (new): the job only has a result line in the log when it ran far enough.** The log line may be missing after a crash; the app then reports that and offers Check GitLab.
