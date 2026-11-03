@@ -28,7 +28,8 @@ blocks addressed as `module.davinci.*`.
 **Verified minimum Terraform version: 1.15.0.** Terraform 1.7.0 through
 1.14.0 reject import blocks inside a child module at `init` ("Import blocks
 are only allowed in the root module"). 1.15.0, 1.16.0, 1.17.0 and 1.17.1
-accept them. The module and root stack declare `required_version >= 1.15.0`.
+accept them. The module and root stack declare `required_version >= 1.15.0`. The
+enterprise pipeline runs Terraform 1.16, which is supported.
 
 ## Alternatives
 

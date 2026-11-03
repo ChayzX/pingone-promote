@@ -23,6 +23,55 @@ var moduleFixtures = []string{
 	filepath.Join("..", "..", "terraform", "root", "tests", "golden_full.auto.tfvars"),
 }
 
+// rootSecretsFile is the reference root stack's secrets.tf, generated from the
+// full golden's required secrets.
+var rootSecretsFile = filepath.Join("..", "..", "terraform", "root", "secrets.tf")
+
+func TestRootSecretsFileMatchesGolden(t *testing.T) {
+	got, err := WriteSecretsTF(SecretKeysOf(fullDocument()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *update {
+		if err := os.WriteFile(rootSecretsFile, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(rootSecretsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s is stale; run go test ./internal/tfvars -update", rootSecretsFile)
+	}
+	if _, err := ResolveFormatter(""); err == nil {
+		if _, err := FormatWithTerraform(context.Background(), "", got); err != nil {
+			t.Fatalf("secrets.tf is not terraform fmt clean: %v", err)
+		}
+	}
+}
+
+func TestWriteSecretsTF(t *testing.T) {
+	out, err := WriteSecretsTF([]string{"b_key", "A_Key", "b_key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Count(s, "variable \"") != 2 || strings.Index(s, "\"A_Key\"") > strings.Index(s, "\"b_key\"") || !strings.Contains(s, "sensitive   = true") || !strings.Contains(s, "default     = null") {
+		t.Fatalf("unexpected secrets.tf:\n%s", s)
+	}
+	for _, bad := range []string{"1abc", "has-dash", "parameters", "count", "pingone_secrets"} {
+		var e *SecretsFileError
+		if _, err := WriteSecretsTF([]string{bad}); !errors.As(err, &e) {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	empty, err := WriteSecretsTF(nil)
+	if err != nil || !strings.Contains(string(empty), "pingone_secrets = {}") {
+		t.Fatalf("empty: %v %s", err, empty)
+	}
+}
+
 var goldens = map[string]func() *Document{
 	"full":    fullDocument,
 	"minimal": emptyDocument,
@@ -114,7 +163,7 @@ func TestFullGoldenRequirements(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := Validate(doc)
-	want := []string{"dv_api_token", "login_hmac_key", "pingone_sso_client_secret"}
+	want := []string{"PingOne_DaVinci_connection_PingOne_clientSecret", "davinci_variable_apiToken_value", "login_hmac_key"}
 	if len(r.RequiredSecrets) != len(want) {
 		t.Fatalf("required secrets %v, want %v", r.RequiredSecrets, want)
 	}

@@ -21,7 +21,7 @@ Decisions behind it are in [docs/adr](../../../docs/adr/README.md).
 | --- | --- | --- |
 | `tfvars_schema_version` | number | must be `1` |
 | `pingone_environment_id` | string | lowercase UUID |
-| `pingone_secrets` | map(string), sensitive | from the pipeline (`TF_VAR_pingone_secrets`); keys `^[a-z0-9_]{1,128}$` |
+| `pingone_secrets` | map(string), sensitive | built by the root `secrets.tf` from one `TF_VAR_<key>` per secret; keys `^[A-Za-z][A-Za-z0-9_]{0,127}$`; null counts as missing |
 | `parameters` | map(string) | environment-local, non-secret values |
 | `davinci_connections` | map(object) | `name`, `connector`, optional `properties` JSON |
 | `davinci_variables` | map(object) | keys are `<name>_<context>[_<flowKey>]` |

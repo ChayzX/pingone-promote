@@ -44,7 +44,7 @@ func TestCheckValidGolden(t *testing.T) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	code, out, _ = check(t, "--required-secrets", goldenFull)
-	if code != checkOK || !strings.Contains(out, "required pingone_secrets keys (3):\n  dv_api_token\n  login_hmac_key\n  pingone_sso_client_secret\n") {
+	if code != checkOK || !strings.Contains(out, "required pingone_secrets keys (3):\n  PingOne_DaVinci_connection_PingOne_clientSecret\n  davinci_variable_apiToken_value\n  login_hmac_key\n") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }

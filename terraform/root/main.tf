@@ -19,7 +19,7 @@ module "davinci" {
 
   tfvars_schema_version  = var.tfvars_schema_version
   pingone_environment_id = var.pingone_environment_id
-  pingone_secrets        = var.pingone_secrets
+  pingone_secrets        = local.pingone_secrets # secrets.tf
   parameters             = var.parameters
   davinci_connections    = var.davinci_connections
   davinci_variables      = var.davinci_variables

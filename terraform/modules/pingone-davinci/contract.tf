@@ -8,7 +8,7 @@
 # safely in the pipeline.
 
 locals {
-  ref_token_pattern = "^(|env:id|(secret|param):[a-z0-9_]{1,128}|(connection|flow|variable):[A-Za-z0-9_-]{1,128})$"
+  ref_token_pattern = "^(|env:id|secret:[A-Za-z][A-Za-z0-9_]{0,127}|param:[a-z0-9_]{1,128}|(connection|flow|variable):[A-Za-z0-9_-]{1,128})$"
 
   # Placeholder kinds allowed per JSON field scope.
   ref_scopes = {
@@ -43,7 +43,9 @@ locals {
 
   valid_refs = [for r in local.json_refs : r if r.valid]
 
-  supplied_secret_keys = nonsensitive(keys(var.pingone_secrets))
+  # A null value counts as missing: the root stack declares one variable per
+  # secret with default = null, and passes all of them in this map.
+  supplied_secret_keys = nonsensitive([for k, v in var.pingone_secrets : k if v != null])
 
   referenced_secrets = distinct(concat(
     [for r in local.valid_refs : r.key if r.kind == "secret"],
@@ -104,7 +106,7 @@ resource "terraform_data" "contract_secrets" {
   lifecycle {
     precondition {
       condition     = length(local.missing_secrets) == 0
-      error_message = "pingone_secrets is missing ${length(local.missing_secrets)} key(s) referenced by the tfvars: ${join(", ", local.missing_secrets)}. Supply them through TF_VAR_pingone_secrets."
+      error_message = "pingone_secrets is missing ${length(local.missing_secrets)} key(s) referenced by the tfvars: ${join(", ", local.missing_secrets)}. Set TF_VAR_<key> for each (see the root stack secrets.tf)."
     }
     precondition {
       condition     = length(local.missing_parameters) == 0
