@@ -16,6 +16,28 @@ type Config struct {
 	ProjectID   string `json:"projectId"`
 	TokenEnv    string `json:"tokenEnv"`
 	Environment string `json:"environment"`
+	// Terraform submission settings (all optional). Paths are the only files
+	// a submission may write; TerraformBin is the terraform or tofu binary
+	// used for the fmt gate (empty searches PATH).
+	EnvironmentsDir     string `json:"environmentsDir,omitempty"`
+	SecretsTFPath       string `json:"secretsTfPath,omitempty"`
+	CustomerSecretsPath string `json:"customerSecretsPath,omitempty"`
+	TerraformBin        string `json:"terraformBin,omitempty"`
+}
+
+// Paths returns the submission path policy, with defaults.
+func (c Config) Paths() PathPolicy {
+	p := DefaultPathPolicy
+	if c.EnvironmentsDir != "" {
+		p.EnvironmentsDir = c.EnvironmentsDir
+	}
+	if c.SecretsTFPath != "" {
+		p.SecretsTFPath = c.SecretsTFPath
+	}
+	if c.CustomerSecretsPath != "" {
+		p.CustomerSecretsPath = c.CustomerSecretsPath
+	}
+	return p
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -50,6 +72,12 @@ func (c Config) Validate() error {
 	}
 	if c.Environment != "" && !safeEnvironment.MatchString(c.Environment) {
 		return errors.New("GitLab environment name is invalid")
+	}
+	if err := c.Paths().Validate(); err != nil {
+		return err
+	}
+	if c.TerraformBin != "" && (strings.ContainsRune(c.TerraformBin, 0) || !filepath.IsAbs(c.TerraformBin) && strings.ContainsRune(c.TerraformBin, filepath.Separator)) {
+		return errors.New("terraformBin must be an absolute path or a bare command name")
 	}
 	return nil
 }

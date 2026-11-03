@@ -94,9 +94,18 @@ func (c *Client) apiURL(rel string) (*url.URL, error) {
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
+	return c.DoQuery(ctx, method, path, nil, body, out)
+}
+
+// DoQuery is Do with query parameters, which apiURL never accepts inside the
+// path itself.
+func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	u, err := c.apiURL(path)
 	if err != nil {
 		return err
+	}
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
 	}
 	var reader io.Reader
 	if body != nil {
@@ -127,7 +136,10 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("GitLab returned HTTP %d", res.StatusCode)
+		// The body is read only to classify conflicts; it is never relayed,
+		// because GitLab error text can echo request content.
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+		return &HTTPError{Status: res.StatusCode, Conflict: isConflict(res.StatusCode, raw)}
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
 	if err != nil || len(data) > maxResponse {

@@ -833,3 +833,40 @@ func TestSaveProfileRejectsOversizedAndControlCharacterNames(t *testing.T) {
 		t.Fatalf("rejected profiles were persisted: %v", profiles)
 	}
 }
+
+func TestDocumentsRoundTripAndValidation(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	type doc struct {
+		ID       string `json:"id"`
+		Revision int    `json:"revision"`
+	}
+	if err := s.SaveDocument(KindDrafts, "draft-0001", doc{ID: "draft-0001", Revision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	var got doc
+	if err := s.LoadDocument(KindDrafts, "draft-0001", &got); err != nil || got.Revision != 2 {
+		t.Fatalf("load: %+v %v", got, err)
+	}
+	ids, err := s.ListDocuments(KindDrafts)
+	if err != nil || len(ids) != 1 || ids[0] != "draft-0001" {
+		t.Fatalf("list: %v %v", ids, err)
+	}
+	info, _ := os.Stat(filepath.Join(s.Directory(), KindDrafts, "draft-0001.json"))
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode %v", info.Mode())
+	}
+	if err := s.LoadDocument(KindDrafts, "missing-0001", &got); !errors.Is(err, ErrRecordNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	for _, bad := range []string{"../escape", "short", "a/b-cdefgh", ""} {
+		if err := s.SaveDocument(KindDrafts, bad, got); err == nil {
+			t.Errorf("accepted id %q", bad)
+		}
+	}
+	if err := s.SaveDocument("profiles", "draft-0001", got); err == nil {
+		t.Fatal("accepted unknown kind")
+	}
+}
