@@ -7,6 +7,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	github.com/zclconf/go-cty v1.19.0
 	golang.org/x/text v0.31.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

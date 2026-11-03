@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"pingone-promote/internal/pipelinesecrets"
 	"pingone-promote/internal/tfvars"
 )
 
@@ -21,7 +22,7 @@ const (
 	checkUsage    = 2 // bad arguments, unreadable file, or formatter unavailable
 )
 
-const checkUsageText = `Usage: pingone-promote check <environments/ENV.tfvars> [--format text|json] [--required-secrets] [--terraform-fmt[=PATH]]
+const checkUsageText = `Usage: pingone-promote check <environments/ENV.tfvars> [--format text|json] [--required-secrets] [--terraform-fmt[=PATH]] [--customer-secrets PATH]
 
 Validates a tfvars file offline. It never contacts PingOne, GitLab or any
 other network service.
@@ -32,6 +33,12 @@ other network service.
                          "tofu fmt -") and require identical output; PATH
                          names the binary, otherwise terraform then tofu are
                          looked up on PATH
+  --customer-secrets PATH
+                         require every @@secret: key to be declared as
+                         TF_VAR_<key> in the pipeline's customer_secrets.yml;
+                         commented-out entries do not count. Unused entries
+                         and entries outside the standard Vault path are
+                         warnings
 
 Exit status: 0 valid, 1 problems found, 2 usage or environment error.
 `
@@ -59,13 +66,15 @@ func (f *fmtFlag) Set(v string) error {
 }
 
 type checkOutput struct {
-	File               string           `json:"file"`
-	OK                 bool             `json:"ok"`
-	Canonical          bool             `json:"canonical"`
-	TerraformFmt       string           `json:"terraform_fmt,omitempty"`
-	Problems           []tfvars.Problem `json:"problems"`
-	RequiredSecrets    []string         `json:"required_secrets"`
-	RequiredParameters []string         `json:"required_parameters"`
+	File               string                  `json:"file"`
+	OK                 bool                    `json:"ok"`
+	Canonical          bool                    `json:"canonical"`
+	TerraformFmt       string                  `json:"terraform_fmt,omitempty"`
+	Problems           []tfvars.Problem        `json:"problems"`
+	RequiredSecrets    []string                `json:"required_secrets"`
+	RequiredParameters []string                `json:"required_parameters"`
+	Warnings           []tfvars.Problem        `json:"warnings"`
+	CustomerSecrets    *pipelinesecrets.Report `json:"customer_secrets,omitempty"`
 }
 
 // Problem codes added by the check command on top of tfvars.Validate.
@@ -73,6 +82,11 @@ const (
 	codeParse        = "parse"
 	codeNotCanonical = "not_canonical"
 	codeTerraformFmt = "terraform_fmt"
+
+	codeSecretUndeclared = "secret_undeclared"
+	codeSecretCommented  = "secret_commented_out"
+	codeSecretUnused     = "secret_unused"
+	codeSecretPath       = "secret_path_unusual"
 )
 
 func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -80,6 +94,7 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.SetOutput(io.Discard)
 	format := fs.String("format", "text", "")
 	requiredSecrets := fs.Bool("required-secrets", false, "")
+	customerSecrets := fs.String("customer-secrets", "", "")
 	var tfFmt fmtFlag
 	fs.Var(&tfFmt, "terraform-fmt", "")
 	usage := func(msg string) int {
@@ -118,7 +133,19 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return checkUsage
 	}
 
-	out := checkOutput{File: path, Problems: []tfvars.Problem{}, RequiredSecrets: []string{}, RequiredParameters: []string{}}
+	var secretsFile *pipelinesecrets.File
+	if *customerSecrets != "" {
+		raw, err := readBounded(*customerSecrets)
+		if err == nil {
+			secretsFile, err = pipelinesecrets.Parse(raw)
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "pingone-promote check:", err)
+			return checkUsage
+		}
+	}
+
+	out := checkOutput{File: path, Problems: []tfvars.Problem{}, Warnings: []tfvars.Problem{}, RequiredSecrets: []string{}, RequiredParameters: []string{}}
 	doc, err := tfvars.Parse(src, path)
 	if err != nil {
 		out.Problems = append(out.Problems, tfvars.Problem{Code: codeParse, Message: err.Error()})
@@ -136,6 +163,27 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		default:
 			out.Problems = append(out.Problems, tfvars.Problem{Code: codeNotCanonical,
 				Message: "file differs from the canonical pingone-promote layout at line " + strconv.Itoa(firstDifferentLine(canonical, src)) + "; regenerate it instead of editing by hand"})
+		}
+	}
+	if secretsFile != nil && doc != nil {
+		r := secretsFile.Check(pipelinesecrets.DefaultConfig, out.RequiredSecrets)
+		out.CustomerSecrets = &r
+		where := *customerSecrets
+		for _, k := range r.Undeclared {
+			out.Problems = append(out.Problems, tfvars.Problem{Code: codeSecretUndeclared, Path: where,
+				Message: "secret " + k + " is not declared; add TF_VAR_" + k + " or map the key to an existing entry"})
+		}
+		for _, k := range r.CommentedOut {
+			out.Problems = append(out.Problems, tfvars.Problem{Code: codeSecretCommented, Path: where,
+				Message: "secret " + k + " is declared only in a comment; uncomment TF_VAR_" + k})
+		}
+		for _, k := range r.Unused {
+			out.Warnings = append(out.Warnings, tfvars.Problem{Code: codeSecretUnused, Path: where,
+				Message: "TF_VAR_" + k + " is declared but this file does not use it"})
+		}
+		for _, k := range r.PatternMismatch {
+			out.Warnings = append(out.Warnings, tfvars.Problem{Code: codeSecretPath, Path: where,
+				Message: "TF_VAR_" + k + " is not at " + pipelinesecrets.DefaultConfig.PathPrefix + "/<field>@" + pipelinesecrets.DefaultConfig.Mount})
 		}
 	}
 	if tfFmt.enabled {
@@ -186,10 +234,19 @@ func writeCheckText(w io.Writer, out checkOutput, listSecrets bool) {
 			fmt.Fprintf(w, "  %s: %s [%s]\n", loc, p.Message, p.Code)
 		}
 	}
+	for _, p := range out.Warnings {
+		fmt.Fprintf(w, "  warning: %s: %s [%s]\n", p.Path, p.Message, p.Code)
+	}
 	if listSecrets {
 		fmt.Fprintf(w, "required pingone_secrets keys (%d):\n", len(out.RequiredSecrets))
 		for _, k := range out.RequiredSecrets {
 			fmt.Fprintf(w, "  %s\n", k)
+		}
+		if out.CustomerSecrets != nil && len(out.CustomerSecrets.Candidates) > 0 {
+			fmt.Fprintf(w, "declared pipeline secrets (candidates for mapping):\n")
+			for _, k := range out.CustomerSecrets.Candidates {
+				fmt.Fprintf(w, "  %s\n", k)
+			}
 		}
 	}
 }

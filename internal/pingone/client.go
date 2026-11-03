@@ -25,6 +25,17 @@ type Client struct {
 	expires     time.Time
 }
 
+// HTTPError is a non-2xx PingOne API response. Its message is the same
+// sanitized text Do has always returned; Status and the allow-listed Codes
+// let callers classify failures without parsing text.
+type HTTPError struct {
+	Status int
+	Codes  []string
+	msg    string
+}
+
+func (e *HTTPError) Error() string { return e.msg }
+
 func NewClient(p Profile, secret string) (*Client, error) {
 	domain, ok := RegionDomains[p.Region]
 	if !ok {
@@ -187,7 +198,7 @@ func (c *Client) Do(ctx context.Context, method, path, contentType string, body,
 		if e.Code != "" {
 			codes[0] = code
 		}
-		return fmt.Errorf("PingOne HTTP %d (%s): %s", res.StatusCode, strings.Join(codes, ", "), message)
+		return &HTTPError{Status: res.StatusCode, Codes: codes, msg: fmt.Sprintf("PingOne HTTP %d (%s): %s", res.StatusCode, strings.Join(codes, ", "), message)}
 	}
 	if output != nil && len(bytes.TrimSpace(raw)) > 0 {
 		if err = json.Unmarshal(raw, output); err != nil {

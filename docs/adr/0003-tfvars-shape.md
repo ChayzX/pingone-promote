@@ -26,9 +26,9 @@ tfvars schema v1 (`internal/tfvars/schema.go` is authoritative):
 
 ### Logical keys (#66)
 
-- Keys match `^[A-Za-z0-9_-]{1,128}$`. Secret and parameter keys match
-  `^[a-z0-9_]{1,128}$` (no dots, so that they can map onto pipeline variable
-  names; see ADR 0009).
+- Keys match `^[A-Za-z0-9_-]{1,128}$`. Parameter keys match
+  `^[a-z0-9_]{1,128}$`. Secret keys match `^[A-Za-z][A-Za-z0-9_]{0,127}$`
+  (Terraform variable names; see ADR 0009).
 - Key encoding is lossless and depends only on the resource's identity, never
   on order or PingOne IDs (`internal/keys`). `A-Z a-z 0-9 _` are kept,
   `-` becomes `--`, and every other byte becomes `-XX` (uppercase hex).

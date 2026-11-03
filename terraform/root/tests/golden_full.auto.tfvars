@@ -44,7 +44,7 @@ davinci_connections = {
         },
         "clientSecret": {
           "type": "string",
-          "value": "@@secret:pingone_sso_client_secret@@"
+          "value": "@@secret:PingOne_DaVinci_connection_PingOne_clientSecret@@"
         },
         "envId": {
           "type": "string",
@@ -61,7 +61,7 @@ davinci_variables = {
     context   = "company"
     data_type = "secret"
     mutable   = false
-    secret    = "dv_api_token"
+    secret    = "davinci_variable_apiToken_value"
   }
   "attempts_company" = {
     name      = "attempts"

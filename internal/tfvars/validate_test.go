@@ -75,7 +75,7 @@ func TestValidateProblems(t *testing.T) {
 			d.Connections["http"] = c
 		}, CodeRefKind},
 		{"unbalanced", func(d *Document) { setNodeProps(d, "login", "j0eval", `{"x": "a@@b"}`) }, CodeRefUnbalanced},
-		{"malformed", func(d *Document) { setNodeProps(d, "login", "j0eval", `{"x": "@@secret:UPPER@@"}`) }, CodeRefMalformed},
+		{"malformed", func(d *Document) { setNodeProps(d, "login", "j0eval", `{"x": "@@secret:has-dash@@"}`) }, CodeRefMalformed},
 		{"dotted secret key", func(d *Document) { setNodeProps(d, "login", "j0eval", `{"x": "@@secret:pingone_sso.client_secret@@"}`) }, CodeRefMalformed},
 		{"dotted variable secret", func(d *Document) {
 			v := d.Variables["apiToken_company"]

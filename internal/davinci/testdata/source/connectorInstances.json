@@ -1,0 +1,77 @@
+{
+ "_embedded": {
+  "connectorInstances": [
+   {
+    "connector": {
+     "id": "httpConnector"
+    },
+    "id": "c0000000000000000000000000000001",
+    "metadata": {
+     "type": "core"
+    },
+    "name": "Http",
+    "properties": {}
+   },
+   {
+    "connector": {
+     "id": "flowConnector"
+    },
+    "id": "c0000000000000000000000000000002",
+    "name": "Flow Conductor",
+    "properties": {}
+   },
+   {
+    "connector": {
+     "id": "pingOneSSOConnector"
+    },
+    "id": "c0000000000000000000000000000003",
+    "name": "PingOne",
+    "properties": {
+     "clientId": {
+      "type": "string",
+      "value": "fake-client-id"
+     },
+     "clientSecret": {
+      "type": "string",
+      "value": "******"
+     },
+     "envId": {
+      "type": "string",
+      "value": "00000000-0000-4000-8000-0000000000a1"
+     },
+     "region": {
+      "type": "string",
+      "value": "NA"
+     }
+    }
+   },
+   {
+    "connector": {
+     "id": "genericConnector"
+    },
+    "id": "c0000000000000000000000000000004",
+    "name": "Custom API",
+    "properties": {
+     "apiKey": {
+      "type": "string",
+      "value": "LEAKCANARY-plain-apikey-0001"
+     },
+     "baseUrl": {
+      "type": "string",
+      "value": "https://api.example.com"
+     },
+     "loginHint": {
+      "secure": true,
+      "type": "string",
+      "value": "LEAKCANARY-secure-0002"
+     }
+    }
+   }
+  ]
+ },
+ "_links": {
+  "self": {
+   "href": "https://api.pingone.example/v1/environments/00000000-0000-4000-8000-0000000000a1"
+  }
+ }
+}

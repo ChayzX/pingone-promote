@@ -263,8 +263,8 @@ func (v *validator) variables() {
 		if dv.DataType == "secret" {
 			if dv.Secret == nil {
 				v.add(CodeVariableRules, p+".secret", "is required when data_type is \"secret\"")
-			} else if !IsValueKey(*dv.Secret) {
-				v.add(CodeKeyFormat, p+".secret", "secret keys must match %s", valueKeyRE)
+			} else if !IsSecretKey(*dv.Secret) {
+				v.add(CodeKeyFormat, p+".secret", "secret keys must match %s", secretKeyRE)
 			} else {
 				v.secrets[*dv.Secret] = true
 			}

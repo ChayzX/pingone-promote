@@ -18,7 +18,7 @@ func TestDiff(t *testing.T) {
 	n.Properties = nil
 	newDoc.Flows["login"].Graph.Nodes["j0eval"] = n
 	c := newDoc.Connections["pingone_sso"]
-	c.Properties = ptr(`{"envId":{"value":"@@env:id@@","type":"string"},"clientSecret":{"type":"string","value":"@@secret:pingone_sso_client_secret@@"},"clientId":{"type":"string","value":"fake-client-id"},"baseUrl":{"type":"string","value":"@@param:idp_base_url@@/as"}}`)
+	c.Properties = ptr(`{"envId":{"value":"@@env:id@@","type":"string"},"clientSecret":{"type":"string","value":"@@secret:PingOne_DaVinci_connection_PingOne_clientSecret@@"},"clientId":{"type":"string","value":"fake-client-id"},"baseUrl":{"type":"string","value":"@@param:idp_base_url@@/as"}}`)
 	newDoc.Connections["pingone_sso"] = c
 	if got := Diff(oldDoc, newDoc); len(got) != 0 {
 		t.Fatalf("cosmetic edits reported as changes: %+v", got)

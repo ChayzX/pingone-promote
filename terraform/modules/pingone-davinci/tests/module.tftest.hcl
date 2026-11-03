@@ -9,9 +9,9 @@ variables {
   # Fake secrets that need JSON escaping: quotes, backslashes, and an escaped
   # trailing quote (the case trim() would get wrong).
   pingone_secrets = {
-    "pingone_sso_client_secret" = "fake\"secret\\with\\\\escapes"
-    "login_hmac_key"            = "fake-key-ending-in-quote\""
-    "dv_api_token"              = "fake-api-token"
+    "PingOne_DaVinci_connection_PingOne_clientSecret" = "fake\"secret\\with\\\\escapes"
+    "login_hmac_key"                                  = "fake-key-ending-in-quote\""
+    "davinci_variable_apiToken_value"                 = "fake-api-token"
   }
 }
 
@@ -86,7 +86,7 @@ run "resolves_references" {
 
   # Connector properties: secret with quotes and backslashes, env:id, param.
   assert {
-    condition     = jsondecode(nonsensitive(pingone_davinci_connector_instance.this["pingone_sso"].properties)).clientSecret.value == nonsensitive(var.pingone_secrets["pingone_sso_client_secret"])
+    condition     = jsondecode(nonsensitive(pingone_davinci_connector_instance.this["pingone_sso"].properties)).clientSecret.value == nonsensitive(var.pingone_secrets["PingOne_DaVinci_connection_PingOne_clientSecret"])
     error_message = "secret with quote and backslash was not JSON-escaped correctly"
   }
   assert {
@@ -185,7 +185,7 @@ run "resolves_references" {
   }
 
   assert {
-    condition     = jsonencode(output.required_secret_keys) == jsonencode(["dv_api_token", "login_hmac_key", "pingone_sso_client_secret"])
+    condition     = jsonencode(output.required_secret_keys) == jsonencode(["PingOne_DaVinci_connection_PingOne_clientSecret", "davinci_variable_apiToken_value", "login_hmac_key"])
     error_message = "required secret key names differ from the Go validator"
   }
 }
@@ -251,8 +251,8 @@ run "missing_secret_fails" {
 
   variables {
     pingone_secrets = {
-      "login_hmac_key" = "fake"
-      "dv_api_token"   = "fake"
+      "login_hmac_key"                  = "fake"
+      "davinci_variable_apiToken_value" = "fake"
     }
   }
 
@@ -311,4 +311,20 @@ run "import_without_definition_fails" {
   }
 
   expect_failures = [terraform_data.contract_imports]
+}
+
+# The root stack passes every declared secret variable, so an unset one
+# arrives as null and must count as missing.
+run "null_secret_counts_as_missing" {
+  command = plan
+
+  variables {
+    pingone_secrets = {
+      "PingOne_DaVinci_connection_PingOne_clientSecret" = "fake"
+      "davinci_variable_apiToken_value"                 = "fake"
+      "login_hmac_key"                                  = null
+    }
+  }
+
+  expect_failures = [terraform_data.contract_secrets]
 }

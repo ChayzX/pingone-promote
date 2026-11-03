@@ -11,9 +11,9 @@ mock_provider "pingone" {}
 
 variables {
   pingone_secrets = {
-    "pingone_sso_client_secret" = "fake"
-    "login_hmac_key"            = "fake"
-    "dv_api_token"              = "fake"
+    "PingOne_DaVinci_connection_PingOne_clientSecret" = "fake"
+    "login_hmac_key"                                  = "fake"
+    "davinci_variable_apiToken_value"                 = "fake"
   }
 }
 

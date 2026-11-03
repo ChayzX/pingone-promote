@@ -21,6 +21,7 @@ const (
 var (
 	logicalKeyRE   = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 	valueKeyRE     = regexp.MustCompile(`^[a-z0-9_]{1,128}$`)
+	secretKeyRE    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,127}$`)
 	uuidRE         = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	importIDRE     = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 	policyIDRE     = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}/[A-Za-z0-9-]{1,64}$`)
@@ -31,8 +32,17 @@ var (
 // variables, flows, applications, flow policies, graph nodes and edges.
 func IsLogicalKey(k string) bool { return logicalKeyRE.MatchString(k) }
 
-// IsValueKey reports whether k is a valid secret or parameter key.
+// IsValueKey reports whether k is a valid parameter key.
 func IsValueKey(k string) bool { return valueKeyRE.MatchString(k) }
+
+// IsSecretKey reports whether k is a valid pingone_secrets key. Secret keys
+// are case-preserving Terraform identifiers so that each one can be a root
+// variable fed by a pipeline TF_VAR_<key> environment variable, and can equal
+// an existing enterprise secret name such as davinci_variable_X_value.
+func IsSecretKey(k string) bool { return secretKeyRE.MatchString(k) }
+
+// SecretKeyPattern is the secret key rule as a regular expression.
+const SecretKeyPattern = `^[A-Za-z][A-Za-z0-9_]{0,127}$`
 
 // Ref is one parsed placeholder.
 type Ref struct {
@@ -62,7 +72,9 @@ func parseRef(tok string) (Ref, bool) {
 	switch kind {
 	case KindEnv:
 		return Ref{Kind: kind, Key: key}, key == "id"
-	case KindSecret, KindParam:
+	case KindSecret:
+		return Ref{Kind: kind, Key: key}, IsSecretKey(key)
+	case KindParam:
 		return Ref{Kind: kind, Key: key}, IsValueKey(key)
 	case KindConnection, KindFlow, KindVariable:
 		return Ref{Kind: kind, Key: key}, IsLogicalKey(key)

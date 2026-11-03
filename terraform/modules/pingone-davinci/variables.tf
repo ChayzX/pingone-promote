@@ -24,16 +24,16 @@ variable "pingone_environment_id" {
 }
 
 variable "pingone_secrets" {
-  description = "Secret values by key, supplied by the pipeline (TF_VAR_pingone_secrets). Never put these in tfvars."
+  description = "Secret values by key. The root stack builds this map from one sensitive variable per secret (pipeline TF_VAR_<key>); null values count as missing. Never put these in tfvars."
   type        = map(string)
   default     = {}
   nullable    = false
   sensitive   = true
 
   validation {
-    # Conservative so keys can map onto enterprise pipeline variable names.
-    condition     = alltrue([for k in nonsensitive(keys(var.pingone_secrets)) : can(regex("^[a-z0-9_]{1,128}$", k))])
-    error_message = "pingone_secrets keys must match ^[a-z0-9_]{1,128}$ (lowercase letters, digits and underscores)."
+    # Each key is also a root variable name fed by TF_VAR_<key>.
+    condition     = alltrue([for k in nonsensitive(keys(var.pingone_secrets)) : can(regex("^[A-Za-z][A-Za-z0-9_]{0,127}$", k))])
+    error_message = "pingone_secrets keys must match ^[A-Za-z][A-Za-z0-9_]{0,127}$ (a Terraform variable name)."
   }
 }
 

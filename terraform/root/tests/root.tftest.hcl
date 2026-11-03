@@ -3,16 +3,13 @@
 # inside the child module work (Terraform >= 1.15.0).
 # Inputs come from golden_full.auto.tfvars (written by internal/tfvars).
 
-mock_provider "pingone" {
-  override_during = plan
-}
+mock_provider "pingone" {}
 
+# One root variable per secret, as the pipeline's TF_VAR_<name> sets them.
 variables {
-  pingone_secrets = {
-    "pingone_sso_client_secret" = "fake-secret"
-    "login_hmac_key"            = "fake-key"
-    "dv_api_token"              = "fake-token"
-  }
+  PingOne_DaVinci_connection_PingOne_clientSecret = "fake-secret"
+  davinci_variable_apiToken_value                 = "fake-token"
+  login_hmac_key                                  = "fake-key"
 }
 
 # Mock providers can import only overridden resources.
@@ -108,7 +105,7 @@ run "apply_with_child_module_imports" {
     error_message = "every flow should be managed"
   }
   assert {
-    condition     = jsonencode(output.required_secret_keys) == jsonencode(["dv_api_token", "login_hmac_key", "pingone_sso_client_secret"])
+    condition     = jsonencode(output.required_secret_keys) == jsonencode(["PingOne_DaVinci_connection_PingOne_clientSecret", "davinci_variable_apiToken_value", "login_hmac_key"])
     error_message = "required secret keys differ"
   }
 }

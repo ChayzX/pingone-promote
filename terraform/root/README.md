@@ -19,6 +19,7 @@ enterprise pipeline.
 | `main.tf` | calls the `pingone-davinci` module; the only place its `source` appears |
 | `providers.tf` | `required_version >= 1.15.0` and the `pingone` provider, configured from the environment |
 | `variables.tf` | pass-through variables for the tfvars; the module owns the types |
+| `secrets.tf` | one sensitive variable per secret (generated; this copy matches the test golden) |
 | `backend.tf.example` | GitLab-managed state over the `http` backend |
 | `imports.tf.example` | root-level import blocks addressed as `module.davinci.*` |
 | `.terraform.lock.hcl` | provider checksums for linux, darwin and windows |
@@ -27,8 +28,9 @@ enterprise pipeline.
 
 - The environment's tfvars file, `environments/<env>.tfvars`, which
   pingone-promote writes.
-- `TF_VAR_pingone_secrets`: a JSON object mapping secret keys
-  (`^[a-z0-9_]{1,128}$`) to values. `pingone-promote check --required-secrets`
+- One `TF_VAR_<key>` per secret, from `customer_secrets.yml`. `secrets.tf`
+  declares each key as a sensitive variable (default `null`) and builds
+  `local.pingone_secrets`. pingone-promote generates it. `pingone-promote check --required-secrets`
   lists the keys a file needs.
 - `PINGONE_CLIENT_ID`, `PINGONE_CLIENT_SECRET`, `PINGONE_ENVIRONMENT_ID` (the
   worker's authentication environment) and `PINGONE_REGION_CODE`.

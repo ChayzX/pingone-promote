@@ -14,7 +14,7 @@ format decision / alternatives / consequences.
 | [0006](0006-hcl-io.md) | HCL I/O with hashicorp/hcl/v2, app-canonical files, terraform fmt gate |
 | [0007](0007-inventory.md) | Inventory from the PingOne Platform DaVinci admin APIs |
 | [0008](0008-adoption-imports.md) | Adoption with for_each import blocks driven by import_ids |
-| [0009](0009-secrets.md) | Secrets come only from pingone_secrets |
+| [0009](0009-secrets.md) | Secrets come from pipeline-injected variables, never from tfvars |
 | [0010](0010-versioning-source-switch.md) | Module versioning and the module source switch |
 | [0011](0011-drift-and-diffs.md) | Drift and diffs |
 | [0012](0012-package-fate.md) | Fate of existing packages |

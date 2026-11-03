@@ -1,0 +1,28 @@
+{
+ "_embedded": {
+  "flowPolicies": [
+   {
+    "_links": {
+     "self": {
+      "href": "https://api.pingone.example/v1/environments/00000000-0000-4000-8000-0000000000a1"
+     }
+    },
+    "flowDistributions": [
+     {
+      "id": "f0000000000000000000000000000003",
+      "version": 7,
+      "weight": 100
+     }
+    ],
+    "id": "b0000000000000000000000000000001",
+    "name": "Login policy",
+    "status": "enabled"
+   }
+  ]
+ },
+ "_links": {
+  "self": {
+   "href": "https://api.pingone.example/v1/environments/00000000-0000-4000-8000-0000000000a1"
+  }
+ }
+}

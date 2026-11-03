@@ -44,7 +44,7 @@ func TestCheckValidGolden(t *testing.T) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	code, out, _ = check(t, "--required-secrets", goldenFull)
-	if code != checkOK || !strings.Contains(out, "required pingone_secrets keys (3):\n  dv_api_token\n  login_hmac_key\n  pingone_sso_client_secret\n") {
+	if code != checkOK || !strings.Contains(out, "required pingone_secrets keys (3):\n  PingOne_DaVinci_connection_PingOne_clientSecret\n  davinci_variable_apiToken_value\n  login_hmac_key\n") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }
@@ -213,5 +213,47 @@ func TestValidationPackagesDoNotLinkNetworking(t *testing.T) {
 		if dep == "net" || strings.HasPrefix(dep, "net/") || dep == "crypto/tls" {
 			t.Fatalf("validation packages depend on %s", dep)
 		}
+	}
+}
+
+var customerSecretsAdded = filepath.Join("..", "..", "internal", "pipelinesecrets", "testdata", "customer_secrets_added.yml")
+
+func TestCheckCustomerSecrets(t *testing.T) {
+	// The fixture declares two of the golden's three secrets.
+	code, out, _ := check(t, "--format=json", "--customer-secrets", customerSecretsAdded, goldenFull)
+	if code != checkProblems {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	var got checkOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Problems) != 1 || got.Problems[0].Code != codeSecretUndeclared || !strings.Contains(got.Problems[0].Message, "login_hmac_key") {
+		t.Fatalf("problems %+v", got.Problems)
+	}
+	if got.CustomerSecrets == nil || len(got.CustomerSecrets.Candidates) != 5 || len(got.Warnings) != 3 {
+		t.Fatalf("report %+v warnings %+v", got.CustomerSecrets, got.Warnings)
+	}
+
+	// Declared only in a comment: still a failure, with a pointer to uncomment.
+	src, _ := os.ReadFile(customerSecretsAdded)
+	commented := strings.Replace(string(src), "# TF_VAR_basicAuthCredDV:", "# TF_VAR_login_hmac_key:", 1)
+	p := filepath.Join(t.TempDir(), "customer_secrets.yml")
+	os.WriteFile(p, []byte(commented), 0o600)
+	code, text, _ := check(t, "--customer-secrets", p, goldenFull)
+	if code != checkProblems || !strings.Contains(text, "[secret_commented_out]") {
+		t.Fatalf("code=%d out=%s", code, text)
+	}
+
+	// All declared: passes, with unused entries as warnings only.
+	all := strings.Replace(string(src), "    # TF_VAR_basicAuthCredDV:", "    TF_VAR_login_hmac_key:\n      vault: apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/login_hmac_key@secret\n      file: false\n\n    # TF_VAR_basicAuthCredDV:", 1)
+	os.WriteFile(p, []byte(all), 0o600)
+	code, text, _ = check(t, "--customer-secrets", p, "--required-secrets", goldenFull)
+	if code != checkOK || !strings.Contains(text, "warning:") || !strings.Contains(text, "[secret_unused]") || !strings.Contains(text, "candidates for mapping") {
+		t.Fatalf("code=%d out=%s", code, text)
+	}
+
+	if code, _, _ := check(t, "--customer-secrets", filepath.Join(t.TempDir(), "missing.yml"), goldenFull); code != checkUsage {
+		t.Fatalf("missing customer_secrets.yml: code=%d", code)
 	}
 }

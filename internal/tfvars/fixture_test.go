@@ -37,7 +37,7 @@ func fullDocument() *Document {
 		"flow_conductor": {Name: "Flow Conductor", Connector: "flowConnector"},
 		"pingone_sso": {Name: "PingOne", Connector: "pingOneSSOConnector", Properties: ptr(`{
 			"clientId": {"type": "string", "value": "fake-client-id"},
-			"clientSecret": {"type": "string", "value": "@@secret:pingone_sso_client_secret@@"},
+			"clientSecret": {"type": "string", "value": "@@secret:PingOne_DaVinci_connection_PingOne_clientSecret@@"},
 			"envId": {"type": "string", "value": "@@env:id@@"},
 			"baseUrl": {"type": "string", "value": "@@param:idp_base_url@@/as"}
 		}`)},
@@ -49,7 +49,7 @@ func fullDocument() *Document {
 		"brand_company": {Name: "brand", Context: "company", DataType: "string", Mutable: true,
 			DisplayName: ptr("Brand"), Value: &VariableValue{String: ptr("acme")}},
 		"apiToken_company": {Name: "apiToken", Context: "company", DataType: "secret", Mutable: false,
-			Secret: ptr("dv_api_token")},
+			Secret: ptr("davinci_variable_apiToken_value")},
 		"attempts_company": {Name: "attempts", Context: "company", DataType: "number", Mutable: true,
 			Min: ptr(0.0), Max: ptr(10.0), Value: &VariableValue{Float32: ptr(3.0)}},
 		"attempts_flow_login": {Name: "attempts", Context: "flow", Flow: ptr("login"), DataType: "number", Mutable: true,

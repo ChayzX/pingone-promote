@@ -26,7 +26,7 @@ locals {
     { "env:id" = var.pingone_environment_id, "" = "@@" },
   )
 
-  refs_secrets = { for k, v in var.pingone_secrets : "secret:${k}" => substr(jsonencode(v), 1, length(jsonencode(v)) - 2) }
+  refs_secrets = { for k, v in var.pingone_secrets : "secret:${k}" => substr(jsonencode(v), 1, length(jsonencode(v)) - 2) if v != null }
 
   # Connector instance properties may use env, param and secret references.
   refs_connection = merge(local.refs_static, local.refs_secrets)
