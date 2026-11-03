@@ -49,3 +49,15 @@ step 10, so the v1 code still builds:
   allow-list and branch commits), `internal/store`.
 - **Rule:** nothing in the v2 path imports `davinci`, `translate`, `keys`
   or `promotelegacy`.
+
+## Completion (issue #44, tracker #92)
+
+The deletions listed above are done. `internal/tfvars` was removed
+entirely rather than trimmed: nothing in the v2 path imported it (the `fmt`
+shim moved to `internal/tffmt`, and the secrets and overlay logic live in
+`internal/secretscan`, `internal/pipelinesecrets` and `internal/promote`).
+`internal/pingone`, `internal/store`, `internal/logging` and
+`internal/strictjson` were also removed because only the retired code used
+them, and `internal/app` (the local server and the Draft API) is gone. The
+`check` subcommand now requires `--root`; the single-file tfvars mode went
+with `internal/tfvars`. Old documents are in `docs/archive/`.

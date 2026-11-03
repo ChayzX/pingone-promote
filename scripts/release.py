@@ -73,10 +73,10 @@ def formula(version, archive, local=False):
 
   def caveats
     <<~EOS
-      Preview release. Native PingOne promotion and rollback still need live acceptance.
-      Run pingone-promote to open the local browser interface.
-      Profiles and history are stored outside Homebrew and are preserved on uninstall.
-      Production planning, deployment and rollback remain controlled by GitLab.
+      Preview release. pingone-promote is a command-line tool with the
+      subcommands check, export and request; it does not start a server.
+      The request subcommand runs in a GitLab CI job (see docs/gitlab-ci-integration.md).
+      Deployment stays in the enterprise Terraform pipeline.
     EOS
   end
 

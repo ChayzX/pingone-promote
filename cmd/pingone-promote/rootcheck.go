@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"pingone-promote/internal/promote"
@@ -141,4 +142,28 @@ func runRootCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return checkProblems
 	}
 	return checkOK
+}
+
+// maxFileSize bounds a file read by the check command.
+const maxFileSize = 32 << 20
+
+// readBounded reads a regular file of at most maxFileSize bytes.
+func readBounded(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open %s", path)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s", path)
+	}
+	if len(data) > maxFileSize {
+		return nil, fmt.Errorf("%s exceeds the maximum file size", path)
+	}
+	return data, nil
 }

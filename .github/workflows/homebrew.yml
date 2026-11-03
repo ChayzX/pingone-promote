@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: brew update
 
-      - name: Run real Homebrew install, upgrade, app safety probes, and uninstall
+      - name: Run real Homebrew install, upgrade, CLI probes, and uninstall
         shell: bash
         run: python3 scripts/test_homebrew.py --version "$RELEASE_VERSION" --ref "$RELEASE_REF"
 

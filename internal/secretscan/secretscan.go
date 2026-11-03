@@ -1,8 +1,6 @@
 // Package secretscan holds the secret-detection heuristics shared by the
-// translator (v1), the tfvars checker, the terraformer exporter and the
-// neutralizer. They moved here from internal/translate/secrets.go (which
-// took them from promotion.Redact) so the v2 path does not depend on the
-// retired packages.
+// terraformer exporter, the neutralizer, the merge and the request job.
+// They originated in the retired v1 translator and promotion packages.
 //
 // Every function reports positions and kinds, never values.
 package secretscan
