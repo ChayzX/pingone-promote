@@ -1,0 +1,116 @@
+# pingone-promote jobs for a config repository (ADR 0017).
+#
+# Copy this file to .gitlab/pingone-promote.yml in the config repository and
+# add one line to its .gitlab-ci.yml, after the existing enterprise include:
+#
+#   include:
+#     - project: '<group>/<terraform-pipeline-templates>'
+#       ref: '<pinned-ref>'
+#       file: '/<terraform-module-application-template>.yml'
+#     - local: '/.gitlab/pingone-promote.yml'
+#
+# Both jobs run in the .pre stage, which exists whatever stages the
+# enterprise template defines. They run in the PARENT pipeline (no child
+# pipeline). Neither job plans or applies anything:
+#
+#   pingone-promote:request  only on a push to pingone-promote/<requestId>
+#                            that contains .pingone-promote/request.json
+#                            (DaVinci creates that branch). It previews
+#                            (dryRun) or makes ONE commit on the same branch
+#                            that deletes the request file, so the next
+#                            pipeline skips it, and opens a merge request.
+#   pingone-promote:check    only in merge request pipelines.
+#
+# Both build the tool and pingcli-terraformer from pinned sources in the job,
+# so they do not depend on a compile job that runs only on MRs or the default
+# branch. Go module downloads are verified against go.sum and the Go checksum
+# database (GOFLAGS=-mod=readonly; GONOSUMDB/GONOSUMCHECK must stay unset).
+#
+# CI/CD variables to set in the project (Settings > CI/CD > Variables); see
+# docs/gitlab-ci-integration.md for scopes and protection:
+#   PINGONE_PROMOTE_WORKER_CLIENT_ID        masked, protected
+#   PINGONE_PROMOTE_WORKER_CLIENT_SECRET    masked, protected
+#   PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID   protected
+#   PINGONE_PROMOTE_REGION_CODE             e.g. NA
+#   PINGONE_PROMOTE_GITLAB_TOKEN            masked, protected (project access
+#                                           token: Developer role, api scope)
+#   PINGONE_PROMOTE_TERRAFORMER_SHA256      sha256 of the terraformer this job
+#                                           builds with the pinned image
+
+variables:
+  PINGONE_PROMOTE_GO_IMAGE: "golang:1.27"                       # pin by digest in production: golang:1.27@sha256:<digest>
+  PINGONE_PROMOTE_REPO_URL: "https://github.com/<owner>/pingone-promote.git"
+  PINGONE_PROMOTE_REF: "0000000000000000000000000000000000000000" # the tool's pinned 40-character commit
+  TERRAFORMER_VERSION: "v0.6.0"
+  TERRAFORMER_COMMIT: "9aa51edd1930b1b2724183f7c56911aad0c47556" # tag v0.6.0
+  TERRAFORM_VERSION: "1.16.7"
+  TERRAFORM_SHA256: "5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b" # terraform_1.16.7_linux_amd64.zip
+  PINGONE_PROMOTE_RUNNER_TAG: "<runner-tag>"
+  # Environments: the source is exported and never rolled out to; the
+  # rollout is the chain the enterprise pipeline applies, in order. Overlays
+  # are <env>.tfvars at the repository root.
+  PINGONE_PROMOTE_SOURCES: "development"
+  PINGONE_PROMOTE_ROLLOUT: "testing,production"
+  PINGONE_PROMOTE_OVERLAY_PATTERN: "{env}.tfvars"
+  PINGONE_PROMOTE_MR_LABELS: "pingone-promote"
+
+.pingone_promote_build:
+  image: $PINGONE_PROMOTE_GO_IMAGE
+  # Replace this list with the runner tags your project uses.
+  tags:
+    - $PINGONE_PROMOTE_RUNNER_TAG
+  variables:
+    CGO_ENABLED: "0"
+    GOTOOLCHAIN: "local"
+    GOFLAGS: "-mod=readonly"
+  before_script:
+    - set -eu
+    - mkdir -p /tmp/pp/bin
+    # The tool, at its pinned commit.
+    - git clone --quiet --no-checkout "$PINGONE_PROMOTE_REPO_URL" /tmp/pp/tool
+    - git -C /tmp/pp/tool checkout --quiet --detach "$PINGONE_PROMOTE_REF"
+    - test "$(git -C /tmp/pp/tool rev-parse HEAD)" = "$PINGONE_PROMOTE_REF"
+    - (cd /tmp/pp/tool && go build -trimpath -ldflags="-s -w" -o /tmp/pp/bin/pingone-promote ./cmd/pingone-promote)
+    # pingcli-terraformer, from its tag, checked against the tag's commit.
+    # "go install ...@v0.6.0" also works but reports version "dev", which the
+    # tool's version check rejects, so the version is set with ldflags here.
+    - git clone --quiet --depth 1 --branch "$TERRAFORMER_VERSION" https://github.com/pingidentity/pingcli-plugin-terraformer.git /tmp/pp/terraformer
+    - test "$(git -C /tmp/pp/terraformer rev-parse HEAD)" = "$TERRAFORMER_COMMIT"
+    - (cd /tmp/pp/terraformer && go build -trimpath -ldflags="-s -w -X main.version=${TERRAFORMER_VERSION#v} -X main.commit=${TERRAFORMER_COMMIT}" -o /tmp/pp/bin/pingcli-terraformer .)
+    # terraform for the fmt gate, checked against the published checksum.
+    # The golang image has no unzip, so Go's archive/zip extracts it.
+    - curl -fsSLo /tmp/pp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+    - echo "${TERRAFORM_SHA256}  /tmp/pp/terraform.zip" | sha256sum -c -
+    - (cd /tmp/pp/tool && go run ./scripts/unzip-one /tmp/pp/terraform.zip terraform /tmp/pp/bin/terraform)
+    - export PATH="/tmp/pp/bin:$PATH"
+    - export PINGONE_PROMOTE_TERRAFORMER_PATH=/tmp/pp/bin/pingcli-terraformer
+    - export PINGONE_PROMOTE_TERRAFORMER_VERSION="$TERRAFORMER_VERSION"
+    - export PINGONE_PROMOTE_TERRAFORM_BIN=/tmp/pp/bin/terraform
+
+pingone-promote:request:
+  extends: .pingone_promote_build
+  stage: .pre
+  # One request at a time, so two requests never race on the same files.
+  resource_group: pingone-promote-requests
+  interruptible: false
+  variables:
+    GIT_DEPTH: "50" # enough history to find an earlier commit of this request
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^pingone-promote\//'
+      exists:
+        - .pingone-promote/request.json
+  script:
+    - pingone-promote request --workspace "$CI_PROJECT_DIR" --result "$CI_PROJECT_DIR/result.json"
+  artifacts:
+    when: always
+    paths:
+      - result.json
+    expire_in: 30 days
+
+pingone-promote:check:
+  extends: .pingone_promote_build
+  stage: .pre
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - pingone-promote check --root . --customer-secrets customer_secrets.yml --terraform-fmt="$PINGONE_PROMOTE_TERRAFORM_BIN" --envs "${PINGONE_PROMOTE_SOURCES},${PINGONE_PROMOTE_ROLLOUT}"
