@@ -35,7 +35,7 @@ func goldenFile(t *testing.T, name string, got []byte) {
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("%v (run go test ./internal/promote -update)", err)
+		t.Fatalf("%v (run go test ./internal/promotelegacy -update)", err)
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("%s differs; review and run with -update", path)
@@ -86,7 +86,7 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}
 	if fixture, err := os.ReadFile(moduleE2EFile); err != nil || !bytes.Equal(fixture, promoted) {
-		t.Fatalf("%s is stale; run go test ./internal/promote -update", moduleE2EFile)
+		t.Fatalf("%s is stale; run go test ./internal/promotelegacy -update", moduleE2EFile)
 	}
 
 	secretsTF, err := tfvars.WriteSecretsTF(res.RequiredSecrets)

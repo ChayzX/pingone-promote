@@ -72,7 +72,9 @@ func CheckRoot(ctx context.Context, o CheckOptions) (*CheckReport, error) {
 	}
 	repo := DirRepo(o.Root)
 	rep := &CheckReport{Root: o.Root, Problems: []Problem{}, Warnings: []Problem{}, RequiredSecrets: []string{}}
-	add := func(code, p, env, msg string) { rep.Problems = append(rep.Problems, Problem{Code: code, Path: p, Env: env, Message: msg}) }
+	add := func(code, p, env, msg string) {
+		rep.Problems = append(rep.Problems, Problem{Code: code, Path: p, Env: env, Message: msg})
+	}
 	ix, err := loadIndex(repo, l)
 	if err != nil {
 		add("parse", "", "", err.Error())
