@@ -1,0 +1,349 @@
+# --- pingone_davinci_connector_instance.tf pingone_davinci_connector_instance.pingcli__Http
+# refs: 
+resource "pingone_davinci_connector_instance" "pingcli__Http" {
+  environment_id = var.pingone_environment_id
+  name           = "Http"
+
+  connector = {
+    id = "httpConnector"
+  }
+}
+
+# --- pingone_davinci_connector_instance.tf pingone_davinci_connector_instance.pingcli__PingOne
+# refs: 
+resource "pingone_davinci_connector_instance" "pingcli__PingOne" {
+  environment_id = var.pingone_environment_id
+  name           = "PingOne"
+
+  connector = {
+    id = "pingOneSSOConnector"
+  }
+  properties = jsonencode({
+    "clientId" : {
+      "type" : "string",
+      "value" : var.davinci_connection_PingOne_clientId
+    },
+    "clientSecret" : {
+      "type" : "string",
+      "value" : var.davinci_connection_PingOne_clientSecret
+    },
+    "envId" : {
+      "type" : "string",
+      "value" : var.pingone_environment_id
+    },
+    "region" : {
+      "type" : "string",
+      "value" : "EU"
+    }
+  })
+}
+
+# --- pingone_davinci_flow.tf pingone_davinci_flow.pingcli__Flow-0020-B
+# refs: pingone_davinci_connector_instance.pingcli__Http, pingone_davinci_connector_instance.pingcli__PingOne, pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow, pingone_davinci_variable.pingcli__apiKey_company, pingone_davinci_variable.pingcli__attempts_flowInstance, pingone_davinci_variable.pingcli__companyName_company
+resource "pingone_davinci_flow" "pingcli__Flow-0020-B" {
+  environment_id = var.pingone_environment_id
+  name           = "Flow B"
+  description    = "Flow B for the fixture"
+  color          = "#E3F0FF"
+
+  settings = {
+    csp               = "worker-src 'self' blob:;"
+    log_level         = 4
+    use_custom_css    = false
+    use_custom_script = false
+    css_links         = []
+  }
+
+  graph_data = {
+    data = jsonencode({})
+    renderer = jsonencode({
+      "name" : "null"
+    })
+    elements = {
+      nodes = {
+        "n1aaaaaaaa" = {
+          data = {
+            id              = "n1aaaaaaaa"
+            node_type       = "CONNECTION"
+            connection_id   = pingone_davinci_connector_instance.pingcli__PingOne.id
+            connector_id    = "pingOneSSOConnector"
+            name            = "PingOne"
+            label           = "PingOne"
+            capability_name = "userLookup"
+            type            = "action"
+            status          = "configured"
+            properties = jsonencode({
+              "nodeTitle" : {
+                "value" : "Look up the user (v2)"
+              },
+              "message" : {
+                "value" : "Welcome to {{global.variables.companyName}}"
+              }
+            })
+          }
+          position = {
+            x = 100
+            y = 200
+          }
+          group      = "nodes"
+          removed    = false
+          selected   = false
+          selectable = true
+          locked     = false
+          grabbable  = true
+          pannable   = false
+          classes    = ""
+        }
+        "n2bbbbbbbb" = {
+          data = {
+            id              = "n2bbbbbbbb"
+            node_type       = "CONNECTION"
+            connection_id   = pingone_davinci_connector_instance.pingcli__Http.id
+            connector_id    = "flowConnector"
+            name            = "Flow Conductor"
+            label           = "Flow Conductor"
+            capability_name = "startUiSubFlow"
+            type            = "trigger"
+            status          = "configured"
+            properties = jsonencode({
+              "subFlowId" : {
+                "value" : {
+                  "label" : "Flow B Subflow",
+                  "value" : "${pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.id}"
+                }
+              },
+              "subFlowVersionId" : {
+                "value" : -1
+              }
+            })
+          }
+          position = {
+            x = 300
+            y = 200
+          }
+          group      = "nodes"
+          removed    = false
+          selected   = false
+          selectable = true
+          locked     = false
+          grabbable  = true
+          pannable   = false
+          classes    = ""
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    pingone_davinci_variable.pingcli__apiKey_company,
+    pingone_davinci_variable.pingcli__attempts_flowInstance,
+    pingone_davinci_variable.pingcli__companyName_company,
+  ]
+}
+
+# --- pingone_davinci_flow.tf pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow
+# refs: pingone_davinci_connector_instance.pingcli__Http, pingone_davinci_variable.pingcli__companyName_company
+resource "pingone_davinci_flow" "pingcli__Flow-0020-B-0020-Subflow" {
+  environment_id = var.pingone_environment_id
+  name           = "Flow B Subflow"
+  description    = "Flow B Subflow for the fixture"
+  color          = "#CACED3"
+
+  settings = {
+    csp               = "worker-src 'self' blob:;"
+    log_level         = 4
+    use_custom_css    = false
+    use_custom_script = false
+    css_links         = []
+  }
+
+  graph_data = {
+    data = jsonencode({})
+    renderer = jsonencode({
+      "name" : "null"
+    })
+    elements = {
+      nodes = {
+        "n1aaaaaaaa" = {
+          data = {
+            id              = "n1aaaaaaaa"
+            node_type       = "CONNECTION"
+            connection_id   = pingone_davinci_connector_instance.pingcli__Http.id
+            connector_id    = "httpConnector"
+            name            = "Http"
+            label           = "Http"
+            capability_name = "createRandomString"
+            type            = "action"
+            status          = "configured"
+            properties = jsonencode({
+              "nodeTitle" : {
+                "value" : "Subflow step"
+              },
+              "message" : {
+                "value" : "Welcome to {{global.variables.companyName}}"
+              }
+            })
+          }
+          position = {
+            x = 100
+            y = 200
+          }
+          group      = "nodes"
+          removed    = false
+          selected   = false
+          selectable = true
+          locked     = false
+          grabbable  = true
+          pannable   = false
+          classes    = ""
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    pingone_davinci_variable.pingcli__companyName_company,
+  ]
+}
+
+# --- pingone_davinci_flow_deploy.tf pingone_davinci_flow_deploy.pingcli__Flow-0020-B
+# refs: pingone_davinci_flow.pingcli__Flow-0020-B
+resource "pingone_davinci_flow_deploy" "pingcli__Flow-0020-B" {
+  environment_id = var.pingone_environment_id
+  flow_id        = pingone_davinci_flow.pingcli__Flow-0020-B.id
+
+  deploy_trigger_values = {
+    deployed_version = pingone_davinci_flow.pingcli__Flow-0020-B.current_version
+  }
+}
+
+# --- pingone_davinci_flow_deploy.tf pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow
+# refs: pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow
+resource "pingone_davinci_flow_deploy" "pingcli__Flow-0020-B-0020-Subflow" {
+  environment_id = var.pingone_environment_id
+  flow_id        = pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.id
+
+  deploy_trigger_values = {
+    deployed_version = pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.current_version
+  }
+}
+
+# --- pingone_davinci_flow_enable.tf pingone_davinci_flow_enable.pingcli__Flow-0020-B
+# refs: pingone_davinci_flow.pingcli__Flow-0020-B
+resource "pingone_davinci_flow_enable" "pingcli__Flow-0020-B" {
+  environment_id = var.pingone_environment_id
+  flow_id        = pingone_davinci_flow.pingcli__Flow-0020-B.id
+  enabled        = true
+}
+
+# --- pingone_davinci_flow_enable.tf pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow
+# refs: pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow
+resource "pingone_davinci_flow_enable" "pingcli__Flow-0020-B-0020-Subflow" {
+  environment_id = var.pingone_environment_id
+  flow_id        = pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.id
+  enabled        = true
+}
+
+# --- pingone_davinci_variable.tf pingone_davinci_variable.pingcli__apiKey_company
+# refs: 
+resource "pingone_davinci_variable" "pingcli__apiKey_company" {
+  environment_id = var.pingone_environment_id
+  name           = "apiKey"
+  context        = "company"
+  data_type      = "secret"
+  mutable        = true
+
+  value = {
+    secret_string = var.davinci_variable_apiKey_value
+  }
+}
+
+# --- pingone_davinci_variable.tf pingone_davinci_variable.pingcli__attempts_flowInstance
+# refs: 
+resource "pingone_davinci_variable" "pingcli__attempts_flowInstance" {
+  environment_id = var.pingone_environment_id
+  name           = "attempts"
+  context        = "flowInstance"
+  data_type      = "number"
+  mutable        = true
+  min            = 0
+  max            = 2000
+}
+
+# --- pingone_davinci_variable.tf pingone_davinci_variable.pingcli__companyName_company
+# refs: 
+resource "pingone_davinci_variable" "pingcli__companyName_company" {
+  environment_id = var.pingone_environment_id
+  name           = "companyName"
+  context        = "company"
+  data_type      = "string"
+  mutable        = true
+  min            = 0
+  max            = 2000
+
+  value = {
+    string = var.davinci_variable_companyName_value
+  }
+}
+
+# --- variables
+# env_local (origin davinci_connection_PingOne_clientId)
+variable "davinci_connection_PingOne_clientId" {
+  type        = string
+  description = "clientId property for PingOne connector"
+}
+
+# secret (origin davinci_connection_PingOne_clientSecret)
+variable "davinci_connection_PingOne_clientSecret" {
+  type        = string
+  description = "PingOne secret davinci_connection_PingOne_clientSecret (pipeline: TF_VAR_davinci_connection_PingOne_clientSecret)."
+  sensitive   = true
+}
+
+# secret (origin davinci_variable_apiKey_value)
+variable "davinci_variable_apiKey_value" {
+  type        = string
+  description = "PingOne secret davinci_variable_apiKey_value (pipeline: TF_VAR_davinci_variable_apiKey_value)."
+  sensitive   = true
+}
+
+# env_local (origin davinci_variable_companyName_value)
+variable "davinci_variable_companyName_value" {
+  type        = string
+  description = "Value for DaVinci variable companyName"
+}
+
+# environment_id (origin )
+variable "pingone_environment_id" {
+  type        = string
+  description = "The PingOne environment ID to configure DaVinci resources in"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.pingone_environment_id))
+    error_message = "The PingOne Environment ID must be a valid PingOne resource ID (UUID format)."
+  }
+}
+
+# --- source overlay
+# Environment values for one environment. Shared definitions live in definitions/.
+
+pingone_environment_id              = "11111111-1111-4111-8111-111111111111"
+davinci_connection_PingOne_clientId = "fixture-client-id"
+davinci_variable_companyName_value  = "Example Corp (dev)"
+
+# --- source ids
+# pingone_davinci_connector_instance.pingcli__Http = c0000000000000000000000000000001
+# pingone_davinci_connector_instance.pingcli__PingOne = c0000000000000000000000000000002
+# pingone_davinci_flow.pingcli__Flow-0020-B = f0000000000000000000000000000002
+# pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow = f0000000000000000000000000000003
+# pingone_davinci_flow_deploy.pingcli__Flow-0020-B = f0000000000000000000000000000002
+# pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow = f0000000000000000000000000000003
+# pingone_davinci_flow_enable.pingcli__Flow-0020-B = f0000000000000000000000000000002
+# pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow = f0000000000000000000000000000003
+# pingone_davinci_variable.pingcli__apiKey_company = d0000000000000000000000000000001
+# pingone_davinci_variable.pingcli__attempts_flowInstance = d0000000000000000000000000000002
+# pingone_davinci_variable.pingcli__companyName_company = d0000000000000000000000000000003
+# --- global variable refs
+# pingone_davinci_flow.pingcli__Flow-0020-B: companyName
+# pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow: companyName
+# --- missing: 
