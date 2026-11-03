@@ -50,6 +50,7 @@ type MR struct {
 	TargetBranch string
 	Title        string
 	Description  string
+	Labels       string
 	State        string
 }
 
@@ -405,7 +406,7 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		f.reply(w, 200, out)
 	case rest == "/merge_requests" && r.Method == http.MethodPost:
 		mr := &MR{ID: int64(100 + len(f.MRs)), IID: int64(1 + len(f.MRs)), SourceBranch: str("source_branch"), TargetBranch: str("target_branch"),
-			Title: str("title"), Description: str("description"), State: "opened"}
+			Title: str("title"), Description: str("description"), Labels: str("labels"), State: "opened"}
 		if _, ok := f.branches[mr.SourceBranch]; !ok {
 			f.reply(w, 400, map[string]string{"message": "source branch does not exist"})
 			return

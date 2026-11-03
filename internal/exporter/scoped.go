@@ -110,6 +110,11 @@ func LooksLikeID(q string) bool { return hexIDRE.MatchString(strings.TrimSpace(q
 // exact ID match wins. Results are sorted by name then address; callers
 // must treat more than one result as ambiguous and never guess.
 func Search(resources []Resource, query string) []Resource {
+	return SearchType(resources, neutralize.TypeFlow, query)
+}
+
+// SearchType is Search for any resource type.
+func SearchType(resources []Resource, typ, query string) []Resource {
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return nil
@@ -117,7 +122,7 @@ func Search(resources []Resource, query string) []Resource {
 	var byID, byName []Resource
 	lq := strings.ToLower(q)
 	for _, r := range resources {
-		if r.Type != neutralize.TypeFlow {
+		if r.Type != typ {
 			continue
 		}
 		if r.ID != "" && strings.EqualFold(r.ID, q) {

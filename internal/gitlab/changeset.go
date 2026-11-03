@@ -118,6 +118,8 @@ type ChangeSet struct {
 	Base map[string]string
 	// Resume continues a submission whose branch already carries this ID.
 	Resume bool
+	// Labels are added to the merge request.
+	Labels []string
 }
 
 // Result is a completed (or resumed) submission.
@@ -369,6 +371,9 @@ func (s *Submitter) openMR(ctx context.Context, project Project, cs ChangeSet) (
 	c := s.Client
 	payload := map[string]any{"source_branch": cs.Branch, "target_branch": project.DefaultBranch, "title": cs.Title,
 		"description": cs.Description, "remove_source_branch": true, "squash": false}
+	if len(cs.Labels) > 0 {
+		payload["labels"] = strings.Join(cs.Labels, ",")
+	}
 	var mr MergeRequest
 	if err := c.Do(ctx, http.MethodPost, c.project()+"/merge_requests", payload, &mr); err != nil {
 		return nil, err

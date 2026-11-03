@@ -42,7 +42,7 @@ type Action string
 const (
 	ActionAdded       Action = "added"
 	ActionUpdated     Action = "updated"
-	ActionKeptDiffers Action = "kept-differs"
+	ActionKeptDiffers Action = "kept_differs"
 	ActionUnchanged   Action = "unchanged"
 	ActionRemoved     Action = "removed" // de-managed
 	ActionMoved       Action = "moved"

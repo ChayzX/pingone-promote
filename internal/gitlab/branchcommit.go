@@ -79,8 +79,8 @@ type BranchCommit struct {
 	// commit so the next pipeline does not run the job again.
 	DeleteRequestFile bool
 	Policy            LayoutPolicy
-	// Formatter is the terraform or tofu binary for the fmt gate.
-	Formatter string
+	// Labels are added to a merge request this call opens.
+	Labels []string
 }
 
 // AlreadyCommittedError means the branch head already carries this
@@ -122,6 +122,11 @@ func (s *Submitter) prepareBranchCommit(ctx context.Context, bc *BranchCommit) e
 	}
 	if bc.Mode == ModeMR && strings.TrimSpace(bc.Title) == "" {
 		bc.Title = strings.SplitN(strings.TrimSpace(bc.CommitMessage), "\n", 2)[0]
+	}
+	for _, l := range bc.Labels {
+		if l == "" || len(l) > 100 || strings.ContainsAny(l, ",\n") {
+			return errors.New("merge request labels must be short and must not contain commas")
+		}
 	}
 	if len(bc.Description) > 1<<20 || len(bc.Title) > 255 {
 		return errors.New("merge request title or description is too long")
@@ -200,7 +205,7 @@ func (s *Submitter) CommitToBranch(ctx context.Context, bc BranchCommit) (Result
 	if carriesRequest(branch.Commit.Message, bc.RequestID) {
 		res := Result{Branch: bc.Branch, CommitID: branch.Commit.ID, MR: mr, Resumed: true}
 		if bc.Mode == ModeMR && mr == nil {
-			if res.MR, err = s.openMR(ctx, project, ChangeSet{Branch: bc.Branch, Title: bc.Title, Description: bc.Description}); err != nil {
+			if res.MR, err = s.openMR(ctx, project, ChangeSet{Branch: bc.Branch, Title: bc.Title, Description: bc.Description, Labels: bc.Labels}); err != nil {
 				return Result{}, &PartialError{Branch: bc.Branch, CommitID: branch.Commit.ID, Stage: "merge_request_failed", Resumable: true}
 			}
 		}
@@ -226,7 +231,7 @@ func (s *Submitter) CommitToBranch(ctx context.Context, bc BranchCommit) (Result
 	}
 	commit := map[string]any{
 		"branch":         bc.Branch,
-		"commit_message": strings.TrimRight(bc.CommitMessage, "\n") + "\n\n" + RequestTrailer + bc.RequestID,
+		"commit_message": withTrailer(bc.CommitMessage, RequestTrailer+bc.RequestID),
 		"actions":        actions,
 	}
 	var created struct {
@@ -248,11 +253,34 @@ func (s *Submitter) CommitToBranch(ctx context.Context, bc BranchCommit) (Result
 	}
 	res := Result{Branch: bc.Branch, CommitID: created.ID, MR: mr}
 	if bc.Mode == ModeMR && mr == nil {
-		if res.MR, err = s.openMR(ctx, project, ChangeSet{Branch: bc.Branch, Title: bc.Title, Description: bc.Description}); err != nil {
+		if res.MR, err = s.openMR(ctx, project, ChangeSet{Branch: bc.Branch, Title: bc.Title, Description: bc.Description, Labels: bc.Labels}); err != nil {
 			return Result{}, &PartialError{Branch: bc.Branch, CommitID: created.ID, Stage: "merge_request_failed", Resumable: true}
 		}
 	}
 	return res, nil
+}
+
+// withTrailer appends a trailer line to the message's trailer block.
+func withTrailer(msg, trailer string) string {
+	msg = strings.TrimRight(msg, "\n")
+	lines := strings.Split(msg, "\n")
+	if isTrailerBlock(lines) {
+		return msg + "\n" + trailer
+	}
+	return msg + "\n\n" + trailer
+}
+
+func isTrailerBlock(lines []string) bool {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i] == "" {
+			return i > 0
+		}
+		k, _, ok := strings.Cut(lines[i], ": ")
+		if !ok || strings.ContainsAny(k, " \t") {
+			return false
+		}
+	}
+	return false
 }
 
 func short(id string) string {
