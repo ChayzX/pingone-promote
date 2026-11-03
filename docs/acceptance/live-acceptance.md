@@ -11,7 +11,14 @@ Fill in the [results form](#results-form-send-this-back) at the end and send it 
 
 **Stop rule.** If any **[STOP]** test fails, stop there and send the results. Later tests depend on it.
 
-> Tests marked **(engine PR)** depend on the request job from the v2 engine PR. Run groups 0–2 now. Run groups 3–6 after that PR merges. Exact CLI flags are in `docs/gitlab-ci-integration.md` once it lands.
+> Tests marked **(engine PR)** depend on the request job from the v2 engine PR (#96). Run groups 0–2 now, and groups 3–6 after that PR merges.
+>
+> Groups 3–6 use the names from that PR:
+> - the CI file: `examples/gitlab-ci/pingone-promote.yml`, installed as `.gitlab/pingone-promote.yml`;
+> - the jobs: `pingone-promote:request` and `pingone-promote:check`;
+> - the variables, artifact and log line: `PINGONE_PROMOTE_*`, `result.json` and `PINGONE_PROMOTE_RESULT`.
+>
+> `docs/gitlab-ci-integration.md` is the reference for all of them.
 
 ---
 
@@ -25,7 +32,7 @@ Fill in the [results form](#results-form-send-this-back) at the end and send it 
 | A PingOne **SSO application and group** for the DaVinci app | See `davinci-app/README.md` §1. Add yourself to the group. |
 | A **disposable copy** of your config repo in GitLab | It must not be the production config repo. It needs the same enterprise `include:` and protected `main`, and its environments must point at the non-prod envs above. |
 | Runner access with your tags | The same runners your pipeline uses today. |
-| Two GitLab project access tokens on the disposable repo | Both Developer role with `api` scope. Token **A** is for the CI request job. Token **B** is for DaVinci. |
+| Two GitLab project access tokens on the disposable repo | Both Developer role with `api` scope. Token **A** is for the CI request job (CI variable `PINGONE_PROMOTE_GITLAB_TOKEN`). Token **B** is for DaVinci (company variable `ppGitlabToken`). |
 
 Timing: groups 0–2 take about 1 hour. Groups 3–6 take about 2–3 hours, including waiting on pipelines.
 
@@ -38,8 +45,8 @@ Timing: groups 0–2 take about 1 hour. Groups 3–6 take about 2–3 hours, inc
 | **S-1 [STOP]** | Follow `davinci-app/README.md` §1–2. Create the SSO app, policy and group. Import `davinci-app/flow/pingone-promote-app.flow.json`. | The import succeeds with no errors. The flow shows about 76 nodes. | Pass/fail. Paste any import error text. |
 | **S-2 [STOP]** | Set the company variables `ppWorkerBasicAuth` and `ppGitlabToken` (token **B**). Set the flow variables from README "Configure after import". Use `ppRolloutEnvs` = your real order, e.g. `qa,stage,prod`, and set `ppApplyJobPattern` / `ppEnvironmentPattern` to match your pipeline's job and environment names. | Saved. | The values of `ppApplyJobPattern`, `ppEnvironmentPattern` and `ppRolloutEnvs` (these names are not secret). |
 | **S-3** | Open the app before setting one variable, e.g. temporarily blank `ppGitlabProjectId`. | You see "PingOne Promote is not set up yet", the setting **name** is listed, and no value is shown. Restore the variable afterwards. | Screenshot with values blurred. |
-| **S-4 (engine PR)** | In the disposable repo: add the CI file and variables from `docs/gitlab-ci-integration.md` (the `.pre` request and check jobs plus the `local:` include). Make `pingone-promote/*` a protected-branch wildcard with Developer push. Add the PingOne worker variables and token **A**, masked and protected. | The MR pipeline adding the file passes `pingone-promote:check`. Enterprise jobs behave as before. | Pipeline status. Job names that ran. |
-| **S-5 (engine PR)** | Run the existing pipeline once on `main` without any request. | `pingone-promote:request` does **not** run. Your normal jobs run, and deploys stay manual. | List of jobs that ran. |
+| **S-4 (engine PR)** | In the disposable repo, follow these steps. (1) Copy `examples/gitlab-ci/pingone-promote.yml` to `.gitlab/pingone-promote.yml`. (2) Add `- local: '/.gitlab/pingone-promote.yml'` after the enterprise `include:`. (3) In that file, set `PINGONE_PROMOTE_SOURCES` (your source, e.g. `dev`) and `PINGONE_PROMOTE_ROLLOUT` (e.g. `qa,stage,prod`) to the same names as `ppSourceEnvs` and `ppRolloutEnvs`, and set `PINGONE_PROMOTE_REPO_URL`, `PINGONE_PROMOTE_REF` and `PINGONE_PROMOTE_RUNNER_TAG`. (4) Add the masked, protected project variables `PINGONE_PROMOTE_WORKER_CLIENT_ID`, `PINGONE_PROMOTE_WORKER_CLIENT_SECRET`, `PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID`, `PINGONE_PROMOTE_GITLAB_TOKEN` (token **A**) and `PINGONE_PROMOTE_TERRAFORMER_SHA256`, plus `PINGONE_PROMOTE_REGION_CODE`. (5) Protect the wildcard `pingone-promote/*` with Developers + Maintainers allowed to push and merge. | The MR pipeline that adds the file passes `pingone-promote:check`. Enterprise jobs behave as before. | Pipeline status. Job names that ran. Whether the first run printed `terraformer binary checksum does not match` (record the digest it printed, then set `PINGONE_PROMOTE_TERRAFORMER_SHA256`). |
+| **S-5 (engine PR)** | Run the existing pipeline once on `main` without any request. | Neither `pingone-promote:request` nor `pingone-promote:check` runs. Your normal jobs run, and the env jobs stay manual. | List of jobs that ran. |
 | **S-6** | Check your GitLab tier and whether `qa`/`stage`/`prod` are **protected environments** with approvals or manual jobs. | Either is fine; just record which. | Tier. Gate type per env. |
 
 ---
@@ -67,11 +74,12 @@ These tests check the 12 DaVinci assumptions in `davinci-app/DESIGN.md` §12. Th
 
 | ID | Do | Expect | Capture |
 | --- | --- | --- | --- |
-| **E-01 [STOP] (A7)** | Pick a flow that has a subflow, a connection and a variable. Click **Preview**. | A branch `pingone-promote/<id>` appears in GitLab, containing `.pingone-promote/request.json`. A branch pipeline starts, and `pingone-promote:request` runs in `.pre`. | Seconds until the pipeline appeared. Seconds the job ran. |
-| **E-02 [STOP] (A6)** | Wait on the Preview screen. | It shows a list of changes, each one added, updated, kept-differs or unchanged. The selected flow is marked. Blockers per env and any required secrets are listed. | Screenshot of the summary with names only. Total seconds from click to preview. |
-| **E-03** | Open the request job log in GitLab. | It shows a pinned build, the terraformer export of **only** the selected flow and its dependencies, and `terraform fmt` passing. No secret values appear in the log. | Pass/fail. Paste any line that looks like a secret, redacted. |
-| **E-04** | Check the branch after the preview. | **No** generated commit. Only the request commit is there, because preview never commits. | Pass/fail. |
-| **E-05** | Check enterprise jobs in the request branch pipeline. | They behave as on any branch: plan at most, and **no apply runs**, since deploys are manual. | Jobs that ran. Confirm nothing applied. |
+| **E-01 [STOP] (A7)** | Pick a flow that has a subflow, a connection and a variable. Click **Preview**. | A branch `pingone-promote/<requestId>` appears, created from `main` by one commit (`pingone-promote: preview request <requestId>`) that adds `.pingone-promote/request.json`. A push pipeline starts, and `pingone-promote:request` runs in `.pre` (resource group `pingone-promote-requests`). | Seconds until the pipeline appeared. Seconds the job ran. |
+| **E-02 [STOP] (A6)** | Wait on the Preview screen. | The job's artifact `result.json` has `resultVersion: 1` and `status: previewed`, or `blocked` if values are missing. The screen shows the changes, each with an action (added, updated, kept differs, unchanged, removed, moved) and a status (new, changed in source, matches, Git is newer, changed in both). The selected flow is marked. Readiness lists blockers per env (`missing_value` rows are inline inputs, `_request` shows as "Whole request"). Required secrets show the Vault path and whether `customer_secrets.yml` declares them. | Screenshot of the summary with names only. Total seconds from click to preview. |
+| **E-03** | Open the `pingone-promote:request` job log in GitLab. | The log shows the pinned build (`PINGONE_PROMOTE_REF`, `TERRAFORMER_VERSION`/`TERRAFORMER_COMMIT`, the `TERRAFORM_SHA256` check), the terraformer export of **only** the selected flow and its dependencies, and `terraform fmt`. The last line is `PINGONE_PROMOTE_RESULT {...}`. No secret values appear. | Pass/fail. Paste any line that looks like a secret, redacted. |
+| **E-04** | Check the branch after the preview. | Only the request commit is there, and `.pingone-promote/request.json` is still present: a preview never commits. | Pass/fail. |
+| **E-05** | Check the enterprise jobs in the request branch pipeline. | They behave as on any branch: plan at most, and **no apply runs**, since the env jobs are manual. `pingone-promote:check` does not run (it runs only in MR pipelines). | Jobs that ran. Confirm nothing applied. |
+| **E-05b** | Fill in a readiness value, then preview again. | A second commit on the same branch updates `request.json` (the Commits API `update` with `last_commit_id`), and a new job runs. Entering a secret-looking value, or a title longer than 255 characters, is refused on the screen before anything is committed. | Pass/fail each. |
 
 ---
 
@@ -79,14 +87,15 @@ These tests check the 12 DaVinci assumptions in `davinci-app/DESIGN.md` §12. Th
 
 | ID | Do | Expect | Capture |
 | --- | --- | --- | --- |
-| **E-06 [STOP]** | Click **Submit** (MR mode). | There is one generated commit on the branch, and `request.json` is deleted in it. An MR to `main` opens with the label `pingone-promote` and the `Requested-by` / `Request-id` lines. The app shows the MR link. | Seconds to MR. MR files-changed count. |
-| **E-07 [STOP]** | Review the MR diff. | Only blocks for the selected flow, its **new** dependencies, and the variables and overlay values they need have changed. Every other flow and connection is **unchanged**. Nothing is deleted. | Files changed. Confirm "no unrelated changes" and "no deletions". |
-| **E-08** | In the MR, check the root `{env}.tfvars` files, `secrets.tf` and `customer_secrets.yml`. | Each env file gets only new required values. `secrets.tf` gets new secret variables, if any. `customer_secrets.yml` gets new `TF_VAR_` entries at `apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/<field>@secret`, and existing entries and comments are untouched. | Pass/fail per file. |
-| **E-09** | The MR pipeline runs `pingone-promote:check` and the enterprise plan jobs. | Check passes. Plans for downstream envs show only the expected adds and changes. | Plan summary per env, as add/change/destroy counts. |
-| **E-10** | Before merging, change a **shared** connection used by the flow in dev, then do a new request for the same flow. | The connection shows as **kept-differs** (the Git version is kept). You can switch it to Update, and the default stays Keep. | Pass/fail. |
-| **E-11** | Repeat E-06 with **Branch only** mode on another flow. | A branch with one generated commit. No MR. The app shows the branch link and "Not in rollout until merged". | Pass/fail. |
-| **E-12** | Submit the same request twice: click Submit again, or use Check GitLab after a refresh. | No second commit and no second MR. The app shows the existing one. | Pass/fail. |
-| **E-13** | Run a request for the **same flow again** with no changes in dev. | The preview shows no changes, and submitting produces an empty or no-op result with no new commit. | Pass/fail. |
+| **E-06 [STOP]** | Click **Submit** (MR mode). | `result.json` has `status: submitted`, `commitId`, `mrUrl`, `mrIid` and `diffUrl` (the commit page). The branch has ONE generated commit with the `Requested-by:`, `Request-id:` and `PingOne-Promote-Request:` trailers, and that commit deletes `.pingone-promote/request.json`. An MR to `main` opens, labelled `pingone-promote` (`PINGONE_PROMOTE_MR_LABELS`), whose description ends with the `Requested-by:` and `Request-id:` lines. The next pipeline on the branch does not run `pingone-promote:request`. The app shows the MR link. | Seconds to MR. MR files-changed count. |
+| **E-07 [STOP]** | Review the MR diff (or `files[]` in `result.json`). | Only allow-listed paths change: `definitions/*.tf`, the root `.tf` files, `<env>.tfvars` (`PINGONE_PROMOTE_OVERLAY_PATTERN`, default `{env}.tfvars`) and `customer_secrets.yml`, plus the deletion of the request file. Only blocks for the selected flow, its **new** dependencies, and the variables and overlay values they need have changed. Every other flow and connection is **unchanged**. Nothing is deleted. | Files changed. Confirm "no unrelated changes" and "no deletions". |
+| **E-08** | In the MR, check the `<env>.tfvars` files, `secrets.tf` and `customer_secrets.yml`. | Each env file gets only new required values. `secrets.tf` gets new secret variables, if any. `customer_secrets.yml` gets new `TF_VAR_` entries at `apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/<field>@secret` only for secrets that were `declared: false`. Existing entries and comments are untouched. | Pass/fail per file. |
+| **E-09** | The MR pipeline runs `pingone-promote:check` and the enterprise plan jobs. | `pingone-promote:check` passes (fmt, overlays complete for `PINGONE_PROMOTE_SOURCES` and `PINGONE_PROMOTE_ROLLOUT`, secrets declared). The plans for rollout envs show only the expected adds and changes. | Plan summary per env, as add/change/destroy counts. |
+| **E-10** | Before merging, change a **shared** connection used by the flow in dev, then do a new request for the same flow. | The connection shows as **kept differs** (the Git version is kept), with the reason from `changes[].reason`. You can switch it to Use source (`dependencyChoices: update`), and the default stays Keep. An address changed in both Git and the source shows "changed in both" and offers the same choice. | Pass/fail. |
+| **E-11** | Repeat E-06 with **Branch only** mode on another flow. | `status: submitted`, `branchUrl` set, no `mrUrl`. One generated commit, and no MR. The app shows the branch link and "Nothing rolls out until it is merged". | Pass/fail. |
+| **E-12** | Submit the same request twice: click Submit again, or use Check GitLab after a refresh. | The second run reports `status: already_submitted`, with the existing `commitId` and `mrUrl`. There is no second commit and no second MR. The app shows "already submitted" and the existing link. | Pass/fail. |
+| **E-13** | Run a request for the **same flow again** with no changes in dev. | The preview shows every row as matches Git, and Submit is off ("Nothing to change"). If submitted anyway, `status: no_changes`: the job only deletes the request file and opens no MR, and the app shows "No changes". | Pass/fail. |
+| **E-14** | The app always sends the flow ID, so this one is done by hand. Push a branch `pingone-promote/test-2` whose `.pingone-promote/request.json` selects `flows: [{"name": "<a word two dev flows share>"}]`, with no ID. | `status: failed`, `error.code: preflight`, `error.type: validation`, with `candidates`. The app lists the candidates by name. | Pass/fail. |
 
 ---
 
@@ -94,12 +103,12 @@ These tests check the 12 DaVinci assumptions in `davinci-app/DESIGN.md` §12. Th
 
 | ID | Do | Expect | Capture |
 | --- | --- | --- | --- |
-| **P-01 [STOP]** | Merge the MR from E-06. | The post-merge pipeline starts on `main`. In the app, the request shows the rollout strip: qa Waiting/Running, the rest Waiting. | Pass/fail. |
-| **P-02 (A8)** | Run or approve the qa deploy (manual job or protected-env approval). | qa goes **Needs approval** (with "n of m" if approvals are used), then **Running**, then **Live**. The flow appears in qa. | Seconds per state change in the app versus GitLab. Does "n of m" show? |
-| **P-03 (A9)** | Leave stage or prod un-approved. | The strip shows them as **Needs approval** or **Waiting**. | Pass/fail. |
-| **P-04** | Check that dev was **not** applied (dev is plan-only). | No apply job ran for dev. | Pass/fail. |
-| **P-05** | Make a downstream apply fail on purpose in a safe way, e.g. remove the Vault value for a new secret in `stage`, if you have one. | The app shows **Failed at stage** with the job link, and says later envs were not changed. The plan error lists the missing secret **name** only. | Screenshot. |
-| **P-06** | The Requests page. | Your requests are listed with source, rollout chips and MR state. Branch-only requests are marked. | Screenshot with names only. |
+| **P-01 [STOP]** | Merge the MR from E-06. | The post-merge pipeline starts on `main`. GitLab deletes the request branch on merge. In the app, the request shows the rollout strip: qa Waiting/Running, the rest Waiting. | Pass/fail. |
+| **P-02 (A8)** | Run or approve the qa env job (manual job or protected-environment approval). | qa goes **Needs approval** (with "n of m approvals" if approvals are used), then **Running**, then **Live**. The flow appears in qa. | Seconds per state change in the app versus GitLab. Does "n of m" show? |
+| **P-03 (A9)** | Leave stage or prod unapproved. | The strip shows them as **Needs approval** or **Waiting**. | Pass/fail. |
+| **P-04** | Check that dev was **not** applied (dev is in `PINGONE_PROMOTE_SOURCES` only, never in `PINGONE_PROMOTE_ROLLOUT`). | No apply job ran for dev. | Pass/fail. |
+| **P-05** | Make a rollout apply fail on purpose in a safe way, e.g. remove the Vault value for a new secret in `stage`, if you have one. | The app shows stage as **Failed**, with the job link, and later envs stay Waiting. The plan error lists the missing secret **name** only. | Screenshot. |
+| **P-06** | The Requests page. | Your MRs labelled `pingone-promote` are listed with *Requested by* (from the MR description's `Requested-by:` line) and their state. Request branches without an MR are listed separately. | Screenshot with names only. |
 
 ---
 
@@ -107,13 +116,13 @@ These tests check the 12 DaVinci assumptions in `davinci-app/DESIGN.md` §12. Th
 
 | ID | Do | Expect | Capture |
 | --- | --- | --- | --- |
-| **X-01** | Start a Preview, then cancel the GitLab pipeline before the job runs. | After about 2 minutes the app shows "no pipeline yet / Check GitLab". Check GitLab recovers or explains the state. Submit is never stuck disabled. | Pass/fail. |
-| **X-02** | Two people (or two browser sessions) request the **same flow** at the same time and both submit. | One succeeds. The other gets a **conflict** with "Regenerate/Preview again". Nothing is overwritten. | Pass/fail. |
-| **X-03 (A5)** | Preview a request, then **Cancel** it in the app. | The request branch is deleted. Cancel is refused if the branch has a generated commit. | Pass/fail both cases. |
-| **X-04** | Make an edit after an error, e.g. change the branch name after a "branch exists" error. | The error clears and Submit re-enables. | Pass/fail. |
-| **X-05** | Search the job logs, MR description, `result.json` artifact and DaVinci screens for any secret: client secret, tokens, `******`-masked values resolved to real ones. | None found. | Pass/fail. |
-| **X-06** | Try to push a branch named `pingone-promote/test` containing a request file that targets `main` directly, or with `branchName: main`. | The job refuses: it never commits to the default branch or a protected branch. | Pass/fail. |
-| **X-07** | Revert the merged MR from E-06 in GitLab (normal revert MR). | The revert rolls through the envs again. qa removes the flow. Removing a whole resource means a destroy, so check that the plan says so before you approve. | Plan summary. Pass/fail. |
+| **X-01** | Start a Preview, then cancel the GitLab pipeline before `pingone-promote:request` runs. | After `ppPipelineAppearSeconds` (120 s) or `ppRunTimeoutSeconds` (600 s), the app shows "no pipeline yet" or "GitLab is slow", with **Check GitLab**. Check GitLab recovers or explains the state. Submit is never stuck disabled. | Pass/fail. |
+| **X-02** | Two people (or two browser sessions) request the **same flow** at the same time, and both submit. | The two jobs run one at a time (`resource_group: pingone-promote-requests`; the app shows "waiting for another request to finish"). If the second one's base has moved, it gets `error.code: conflict`. The app shows the error, with "Review the options and preview again", and nothing is overwritten. | Pass/fail. |
+| **X-03 (A5)** | Preview a request, then **Cancel** it in the app. | The request branch is deleted, or, with `pingone-promote/*` protected, the app explains that a Maintainer must delete it (HTTP 403). Cancel is refused if the branch already has the job's generated commit. | Pass/fail each case. Which one applied. |
+| **X-04** | After a typed error on Submit (e.g. `preflight` or `conflict`), change any option. | The error clears and Submit is enabled again. If `result.json` had `error.retryable: true`, Submit stays enabled without an edit. If it had `error.field`, the app points at that field. | Pass/fail. |
+| **X-05** | Search the `pingone-promote:request` job logs, the MR description, the `result.json` artifact and the DaVinci screens for any secret: client secret, tokens, or `******`-masked values resolved to real ones. | None found. | Pass/fail. |
+| **X-06** | Push, by hand, a branch `pingone-promote/test-1` with a `.pingone-promote/request.json` whose `branchName` is `main`, or whose `source` is a rollout env, or with an unknown field. | `pingone-promote:request` refuses it (`status: failed`, `error.type: validation`, with `error.field` naming the field) and commits nothing. It never commits to `main` or to a protected branch outside `pingone-promote/`. | Pass/fail per case. |
+| **X-07** | Revert the merged MR from E-06 in GitLab (a normal revert MR). | The revert rolls through the envs again. qa removes the flow. Removing a whole resource means a destroy, so check that the plan says so before you approve. | Plan summary. Pass/fail. |
 
 ---
 
@@ -154,6 +163,7 @@ E-02
 E-03
 E-04
 E-05
+E-05b
 E-06
 E-07
 E-08
@@ -162,6 +172,7 @@ E-10
 E-11
 E-12
 E-13
+E-14
 P-01
 P-02
 P-03
