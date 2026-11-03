@@ -13,8 +13,8 @@ import (
 
 	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/neutralize"
+	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
-	"pingone-promote/internal/tfvars"
 )
 
 // Choice is the operator's per-address decision.
@@ -510,7 +510,7 @@ func (m *merger) renameImportKey(from, to string) error {
 		if err != nil {
 			return err
 		}
-		o, err := tfvars.ParseOverlay(src, p)
+		o, err := overlay.ParseOverlay(src, p)
 		if err != nil {
 			return err
 		}
@@ -538,7 +538,7 @@ func (m *merger) renameImportKey(from, to string) error {
 		if len(mp) > 0 {
 			val = cty.ObjectVal(mp)
 		}
-		out, err := tfvars.SetOverlay(src, p, map[string]cty.Value{"import_ids": val})
+		out, err := overlay.SetOverlay(src, p, map[string]cty.Value{"import_ids": val})
 		if err != nil {
 			return err
 		}
@@ -756,9 +756,9 @@ func (m *merger) overlays() error {
 		if err != nil {
 			return err
 		}
-		cur := &tfvars.Overlay{Values: map[string]cty.Value{}}
+		cur := &overlay.Overlay{Values: map[string]cty.Value{}}
 		if exists {
-			if cur, err = tfvars.ParseOverlay(src, p); err != nil {
+			if cur, err = overlay.ParseOverlay(src, p); err != nil {
 				return err
 			}
 		}
@@ -792,9 +792,9 @@ func (m *merger) overlays() error {
 		}
 		var out []byte
 		if exists {
-			out, err = tfvars.SetOverlay(src, p, set)
+			out, err = overlay.SetOverlay(src, p, set)
 		} else {
-			out, err = tfvars.RenderOverlay(set)
+			out, err = overlay.RenderOverlay(set)
 		}
 		if err != nil {
 			return err

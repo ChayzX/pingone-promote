@@ -14,8 +14,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/secretscan"
-	"pingone-promote/internal/tfvars"
 )
 
 // EnvironmentIDVariable is the root and child variable for the managed
@@ -308,7 +308,7 @@ func (s *state) readValues() error {
 			s.res.Warnings = append(s.res.Warnings, "ignored "+p+" (not at the export root)")
 			continue
 		}
-		o, err := tfvars.ParseOverlay(src, p)
+		o, err := overlay.ParseOverlay(src, p)
 		if err != nil {
 			return fmt.Errorf("neutralize: %w (a duplicate key means two resources share a variable name)", err)
 		}

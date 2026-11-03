@@ -17,7 +17,7 @@ import (
 	"pingone-promote/internal/exporter/exportertest"
 	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/neutralize"
-	"pingone-promote/internal/tfvars"
+	"pingone-promote/internal/overlay"
 )
 
 const (
@@ -201,7 +201,7 @@ func TestRegenerateRepoFixture(t *testing.T) {
 	}
 	repo["imports.tf"] = append(bytes.Join(keep, []byte("\n\n")), '\n')
 	// The dev overlay must not adopt the subflow yet.
-	ov, err := tfvars.ParseOverlay(repo["dev.tfvars"], "dev.tfvars")
+	ov, err := overlay.ParseOverlay(repo["dev.tfvars"], "dev.tfvars")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestRegenerateRepoFixture(t *testing.T) {
 			ids[k.AsString()] = v
 		}
 	}
-	if repo["dev.tfvars"], err = tfvars.SetOverlay(repo["dev.tfvars"], "dev.tfvars", map[string]cty.Value{"import_ids": cty.ObjectVal(ids)}); err != nil {
+	if repo["dev.tfvars"], err = overlay.SetOverlay(repo["dev.tfvars"], "dev.tfvars", map[string]cty.Value{"import_ids": cty.ObjectVal(ids)}); err != nil {
 		t.Fatal(err)
 	}
 	// Hand comments and a hand-maintained block the merge must keep.

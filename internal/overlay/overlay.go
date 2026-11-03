@@ -1,4 +1,5 @@
-package tfvars
+// Package overlay reads and writes flat environment overlays (v2).
+package overlay
 
 // Flat environment overlays (v2): environments/<env>.tfvars holds only
 // top-level literal attributes, one per root variable of the config repo:
@@ -22,6 +23,9 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
+
+// maxFileSize bounds an overlay.
+const maxFileSize = 32 << 20
 
 // OverlayError is a problem in an overlay file. It never quotes values.
 type OverlayError struct {
@@ -62,7 +66,7 @@ func (o *Overlay) Keys() []string {
 // ParseOverlay parses a flat overlay. Blocks, duplicate keys and
 // non-literal expressions are errors.
 func ParseOverlay(src []byte, filename string) (*Overlay, error) {
-	if len(src) > MaxFileSize {
+	if len(src) > maxFileSize {
 		return nil, &OverlayError{File: filename, Msg: "exceeds the maximum size"}
 	}
 	f, diags := hclsyntax.ParseConfig(src, filename, hcl.InitialPos)

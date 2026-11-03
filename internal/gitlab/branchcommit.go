@@ -10,8 +10,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
-	"pingone-promote/internal/tfvars"
+	"pingone-promote/internal/tffmt"
 )
 
 // RequestTrailer marks the commit a request job made (ADR 0017).
@@ -149,12 +150,12 @@ func (s *Submitter) prepareBranchCommit(ctx context.Context, bc *BranchCommit) e
 		}
 		switch kind {
 		case FileTfvars:
-			if _, err := tfvars.ParseOverlay(f.Content, f.Path); err != nil {
+			if _, err := overlay.ParseOverlay(f.Content, f.Path); err != nil {
 				return err
 			}
 			fallthrough
 		case FileSecretsTF:
-			out, err := tfvars.FormatWithTerraform(ctx, s.Formatter, f.Content)
+			out, err := tffmt.FormatWithTerraform(ctx, s.Formatter, f.Content)
 			if err != nil {
 				return fmt.Errorf("%s: %w", f.Path, err)
 			}

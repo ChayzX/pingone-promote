@@ -13,9 +13,10 @@ import (
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/neutralize"
+	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
 	"pingone-promote/internal/promote"
-	"pingone-promote/internal/tfvars"
+	"pingone-promote/internal/tffmt"
 )
 
 // Exporter is the subset of *exporter.Runner the engine uses.
@@ -196,7 +197,7 @@ func (r *runner) run(ctx context.Context) {
 		if !strings.HasSuffix(p, ".tf") && !strings.HasSuffix(p, ".tfvars") {
 			continue
 		}
-		out, err := tfvars.FormatWithTerraform(ctx, r.env.TerraformBin, m.Files[p])
+		out, err := tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, m.Files[p])
 		if err != nil {
 			res.fail(ErrPreflight, "merge", p+": "+err.Error(), false)
 			return
@@ -294,7 +295,7 @@ func (r *runner) sourceEnvironmentID() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%s does not exist, so the source environment ID is unknown", p)
 	}
-	o, err := tfvars.ParseOverlay(src, p)
+	o, err := overlay.ParseOverlay(src, p)
 	if err != nil {
 		return "", err
 	}

@@ -7,8 +7,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/secretscan"
-	"pingone-promote/internal/tfvars"
 )
 
 // ValidateOverlays checks every environment's overlay against the root
@@ -62,7 +62,7 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 			out = append(out, Blocker{Env: env, Code: BlockMissingOverlay, Message: p + " does not exist; it must set " + strings.Join(required, ", ")})
 			continue
 		}
-		o, err := tfvars.ParseOverlay(src, p)
+		o, err := overlay.ParseOverlay(src, p)
 		if err != nil {
 			out = append(out, Blocker{Env: env, Code: BlockUndeclaredKey, Message: err.Error()})
 			continue

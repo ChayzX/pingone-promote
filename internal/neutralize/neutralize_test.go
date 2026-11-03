@@ -16,7 +16,8 @@ import (
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/exporter/exportertest"
 	"pingone-promote/internal/neutralize"
-	"pingone-promote/internal/tfvars"
+	"pingone-promote/internal/overlay"
+	"pingone-promote/internal/tffmt"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -62,7 +63,7 @@ func render(t *testing.T, r *neutralize.Result) []byte {
 		b.Write(neutralize.ChildVariableBlock(v))
 		b.WriteString("\n\n")
 	}
-	src, err := tfvars.RenderOverlay(r.SourceValues)
+	src, err := overlay.RenderOverlay(r.SourceValues)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +156,7 @@ func TestNeutralizedOutputPassesTerraformFmt(t *testing.T) {
 	if bin == "" {
 		bin = "terraform"
 	}
-	if _, err := tfvars.ResolveFormatter(bin); err != nil {
+	if _, err := tffmt.ResolveFormatter(bin); err != nil {
 		t.Skip("terraform not found; set PINGONE_PROMOTE_TERRAFORM")
 	}
 	r, err := neutralize.Neutralize(export(t), neutralize.Options{SourceEnvironmentID: devEnv})
@@ -163,7 +164,7 @@ func TestNeutralizedOutputPassesTerraformFmt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, blk := range r.Blocks {
-		if _, err := tfvars.FormatWithTerraform(context.Background(), bin, append(append([]byte(nil), blk.Text...), '\n')); err != nil {
+		if _, err := tffmt.FormatWithTerraform(context.Background(), bin, append(append([]byte(nil), blk.Text...), '\n')); err != nil {
 			t.Fatalf("%s: %v", blk.Address, err)
 		}
 	}

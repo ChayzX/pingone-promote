@@ -28,8 +28,6 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"pingone-promote/internal/tfvars"
 )
 
 // Config is the fixed location of PingOne secrets in Vault: only the field
@@ -41,6 +39,13 @@ type Config struct {
 
 // DefaultConfig is where every PingOne secret lives.
 var DefaultConfig = Config{PathPrefix: "apps/pingone-davinci/${VAULT_PATH_ENV}/pingone", Mount: "secret"}
+
+// SecretNamePattern is the rule for secret variable names (ADR 0009); it
+// equals tfvars.SecretKeyPattern and is kept here so this package does not
+// depend on the v1 tfvars schema.
+const SecretNamePattern = `^[A-Za-z][A-Za-z0-9_]{0,127}$`
+
+var secretNameRE = regexp.MustCompile(SecretNamePattern)
 
 // EnvPrefix is the GitLab variable prefix Terraform reads.
 const EnvPrefix = "TF_VAR_"
@@ -325,8 +330,8 @@ func (f *File) Add(cfg Config, add []NewEntry) ([]byte, error) {
 	var block []string
 	adding := map[string]bool{}
 	for _, n := range add {
-		if !tfvars.IsSecretKey(n.VarName) {
-			return nil, &EditError{n.VarName, "not a valid secret name (" + tfvars.SecretKeyPattern + ")"}
+		if !secretNameRE.MatchString(n.VarName) {
+			return nil, &EditError{n.VarName, "not a valid secret name (" + SecretNamePattern + ")"}
 		}
 		field := n.Field
 		if field == "" {

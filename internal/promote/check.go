@@ -16,7 +16,7 @@ import (
 	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/pipelinesecrets"
 	"pingone-promote/internal/secretscan"
-	"pingone-promote/internal/tfvars"
+	"pingone-promote/internal/tffmt"
 )
 
 // CheckOptions configure CheckRoot.
@@ -186,8 +186,8 @@ func CheckRoot(ctx context.Context, o CheckOptions) (*CheckReport, error) {
 		rep.TerraformFmt = "ok"
 		for _, p := range files.formattable {
 			src, _, _ := repo.Read(p)
-			if _, err := tfvars.FormatWithTerraform(ctx, o.TerraformBin, src); err != nil {
-				var nf *tfvars.FormatterNotFoundError
+			if _, err := tffmt.FormatWithTerraform(ctx, o.TerraformBin, src); err != nil {
+				var nf *tffmt.FormatterNotFoundError
 				if errors.As(err, &nf) {
 					return nil, ErrToolMissing
 				}
@@ -259,7 +259,7 @@ func tfFiles(r Repo, l Layout) (tfSet, error) {
 // directory and runs init (no backend) and validate there, so the working
 // tree is never modified.
 func terraformValidate(ctx context.Context, o CheckOptions) (string, error) {
-	bin, err := tfvars.ResolveFormatter(o.TerraformBin)
+	bin, err := tffmt.ResolveFormatter(o.TerraformBin)
 	if err != nil {
 		return "", ErrToolMissing
 	}
