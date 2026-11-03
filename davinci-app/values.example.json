@@ -1,0 +1,14 @@
+{
+  "httpConnectionId": "",
+  "functionsConnectionId": "",
+  "variablesConnectionId": "",
+  "flowConnectionId": "",
+  "signinFlowId": "",
+  "apiOrigin": "https://api.pingone.com",
+  "authOrigin": "https://auth.pingone.com",
+  "gitlabApi": "https://gitlab.com/api/v4",
+  "rolloutEnvs": "qa,stage,prod",
+  "defaultBranch": "main",
+  "applyJobPattern": "apply:{env}",
+  "environmentPattern": "{env}"
+}

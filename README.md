@@ -2,7 +2,9 @@
 
 > **Direction change in progress:** pingone-promote is moving from the native Configuration Management API to Terraform. Per-environment tfvars files feed versioned modules, which the enterprise GitLab Terraform pipeline applies. See [docs/adr/](docs/adr/README.md) for the decisions, and `terraform/` and `pingone-promote check` for the first pieces. The native workflow below keeps working until that migration lands.
 
-> Production promotions are GitLab-only. The current standard tool is integrated on `main`; `feat/davinci-request-flow` is an alternate maintained design. See [docs/HANDOFF.md](docs/HANDOFF.md) for current verification status and remaining acceptance work. Local execution is limited to explicitly allowlisted non-production environments.
+> **DaVinci-hosted front end (priority):** [`davinci-app/`](davinci-app/README.md) is the PingOne DaVinci app people sign in to: pick a source environment, search a main flow, preview, submit, and watch the rollout. The export runs as a GitLab request job (see epic #92 / #94). [`davinci-feasibility/`](davinci-feasibility/README.md) is the standalone load test that measures what DaVinci can handle.
+
+> Production promotions are GitLab-only. See [docs/HANDOFF.md](docs/HANDOFF.md) for current verification status and remaining acceptance work. Local execution is limited to explicitly allowlisted non-production environments.
 
 PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It requires Go 1.27.3 or newer to build and has no third-party runtime dependencies. The API must be enabled for the tenant.
 
