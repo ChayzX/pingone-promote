@@ -252,3 +252,35 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(out)
 	return out
 }
+
+// referenceRoot is testdata/repo after the Flow B request: the content of
+// terraform/root (the reference root).
+func referenceRoot(t *testing.T) MapRepo {
+	t.Helper()
+	head := readTree(t, filepath.Join("testdata", "repo"))
+	exp := neutralized(t, exportertest.FixtureDir("dev"), "pingone_davinci_flow.pingcli__Flow-0020-B")
+	res, err := Merge(MergeRequest{Export: exp, Head: head, SourceEnv: "dev", Rollout: []string{"qa", "stage", "prod"},
+		Selected: []string{"pingone_davinci_flow.pingcli__Flow-0020-B", "pingone_davinci_flow_deploy.pingcli__Flow-0020-B", "pingone_davinci_flow_enable.pingcli__Flow-0020-B"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return apply(head, res)
+}
+
+const referenceRootDir = "../../terraform/root"
+
+// TestReferenceRootIsCurrent keeps terraform/root in step with the merge:
+// it must equal the fixture repository after the Flow B request.
+// PINGONE_PROMOTE_REGEN_FIXTURE=1 rewrites it.
+func TestReferenceRootIsCurrent(t *testing.T) {
+	want := referenceRoot(t)
+	if os.Getenv("PINGONE_PROMOTE_REGEN_FIXTURE") != "" {
+		writeTree(t, referenceRootDir, want)
+	}
+	for _, p := range sortedKeys(want) {
+		got, err := os.ReadFile(filepath.Join(referenceRootDir, filepath.FromSlash(p)))
+		if err != nil || !bytes.Equal(got, want[p]) {
+			t.Fatalf("terraform/root/%s is stale; run PINGONE_PROMOTE_REGEN_FIXTURE=1 go test ./internal/promote -run ReferenceRoot", p)
+		}
+	}
+}

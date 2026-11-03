@@ -20,12 +20,13 @@ var update = flag.Bool("update", false, "rewrite golden files (and the module te
 // schema v1.
 var moduleFixtures = []string{
 	filepath.Join("..", "..", "terraform", "modules", "pingone-davinci", "tests", "golden_full.auto.tfvars"),
-	filepath.Join("..", "..", "terraform", "root", "tests", "golden_full.auto.tfvars"),
 }
 
 // rootSecretsFile is the reference root stack's secrets.tf, generated from the
 // full golden's required secrets.
-var rootSecretsFile = filepath.Join("..", "..", "terraform", "root", "secrets.tf")
+// (The v2 reference root in terraform/root no longer uses this format; the
+// v1 golden lives in testdata until the v1 code is deleted.)
+var rootSecretsFile = filepath.Join("testdata", "v1_root_secrets.tf")
 
 func TestRootSecretsFileMatchesGolden(t *testing.T) {
 	got, err := WriteSecretsTF(SecretKeysOf(fullDocument()))

@@ -1,76 +1,44 @@
-# Reference root stack
+# Reference root (v2)
 
-This is the root configuration the enterprise GitLab Terraform pipeline runs
-once per environment:
+This is the shape of a config repository that pingone-promote maintains
+(ADR 0014, 0015, 0016). It is generated: it equals
+`internal/promote/testdata/repo` after the Flow B request from the fixture
+source environment, and `TestReferenceRootIsCurrent` keeps it in step.
+
+The enterprise pipeline runs ONE commit through the environments in order,
+with that environment's overlay:
 
 ```sh
 terraform init
-terraform plan  -var-file=environments/<env>.tfvars
-terraform apply -var-file=environments/<env>.tfvars
+terraform plan  -var-file=<env>.tfvars
+terraform apply -var-file=<env>.tfvars   # manual job; never run by pingone-promote
 ```
-
-This repository ships no deployment pipeline. Plans and applies run in the
-enterprise pipeline.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `main.tf` | calls the `pingone-davinci` module; the only place its `source` appears |
-| `providers.tf` | `required_version >= 1.15.0` and the `pingone` provider, configured from the environment |
-| `variables.tf` | pass-through variables for the tfvars; the module owns the types |
-| `secrets.tf` | one sensitive variable per secret (generated; this copy matches the test golden) |
+| `definitions/` | shared definitions: a neutralized pingcli-terraformer child module, one `<type>.tf` per resource type. Only pingone-promote edits it, block by block. |
+| `main.tf` | `module "davinci" { source = "./definitions" ... }`, passing every variable |
+| `variables.tf` | environment-local root variables (no defaults: every overlay must set them) and `import_ids` |
+| `secrets.tf` | one sensitive, non-nullable variable per secret; the pipeline sets `TF_VAR_<name>` from `customer_secrets.yml` |
+| `imports.tf` | one conditional import per address, driven by `var.import_ids` (spike S1, ADR 0016) |
+| `versions.tf` | Terraform `>= 1.16.0` and the `pingone` provider, configured from the environment |
+| `<env>.tfvars` | one flat overlay per environment: `pingone_environment_id`, environment values, `import_ids` |
+| `customer_secrets.yml` | the pipeline's Vault declarations (ADR 0009) |
 | `backend.tf.example` | GitLab-managed state over the `http` backend |
-| `imports.tf.example` | root-level import blocks addressed as `module.davinci.*` |
-| `.terraform.lock.hcl` | provider checksums for linux, darwin and windows |
+| `tests/root.tftest.hcl` | mock-provider plan, run once per overlay |
 
-## Pipeline inputs
+No `*.auto.tfvars` file may exist: Terraform loads it automatically, and an
+empty secret there would override the pipeline's `TF_VAR_` value.
 
-- The environment's tfvars file, `environments/<env>.tfvars`, which
-  pingone-promote writes.
-- One `TF_VAR_<key>` per secret, from `customer_secrets.yml`. `secrets.tf`
-  declares each key as a sensitive variable (default `null`) and builds
-  `local.pingone_secrets`. pingone-promote generates it. `pingone-promote check --required-secrets`
-  lists the keys a file needs.
-- `PINGONE_CLIENT_ID`, `PINGONE_CLIENT_SECRET`, `PINGONE_ENVIRONMENT_ID` (the
-  worker's authentication environment) and `PINGONE_REGION_CODE`.
-- Backend settings (`TF_HTTP_*`) when `backend.tf.example` is used.
-
-State contains secrets (the provider has no write-only attributes). Use an
-encrypted, access-controlled backend.
-
-## Switching the module source
-
-During development `main.tf` uses the in-repo module:
-
-```hcl
-source = "../modules/pingone-davinci"
-```
-
-To consume the released module, change only that line (and add `version`
-for a registry source).
-
-Enterprise GitLab Terraform module registry:
-
-```hcl
-source  = "gitlab.example.com/<group>/pingone-davinci/pingone"
-version = "~> 0.1"
-```
-
-Git tag in the enterprise GitLab repository:
-
-```hcl
-source = "git::https://gitlab.example.com/<group>/pingone-promote.git//terraform/modules/pingone-davinci?ref=pingone-davinci/v0.1.0"
-```
-
-tfvars files never contain module paths or sources, so no environment file
-changes when the source moves. Run `terraform init -upgrade` after changing
-it.
-
-## Verification
+## Checks
 
 ```sh
-terraform init -backend=false
-terraform validate
-terraform test     # mock provider; needs no credentials
+pingone-promote check --root . --customer-secrets customer_secrets.yml \
+  --terraform-fmt --terraform-validate --envs dev,qa,stage,prod
+for env in dev qa stage prod; do terraform test -var-file=$env.tfvars; done
 ```
+
+State contains secret values (the provider has no write-only attributes).
+Use an encrypted, access-controlled backend.

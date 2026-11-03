@@ -1,111 +1,127 @@
-# The reference root stack with the module as a CHILD module, which is how
-# the enterprise pipeline runs it. This proves that for_each import blocks
-# inside the child module work (Terraform >= 1.15.0).
-# Inputs come from golden_full.auto.tfvars (written by internal/tfvars).
+# Reference root with mock_provider, run once per environment the way the
+# pipeline runs a plan, with that environment's overlay:
+#
+#   terraform test -var-file=qa.tfvars   (and dev, stage, prod)
+#
+# The overlay supplies the environment ID and environment values; the
+# pipeline supplies secrets as TF_VAR_<name> (here: test values).
 
 mock_provider "pingone" {}
 
-# One root variable per secret, as the pipeline's TF_VAR_<name> sets them.
 variables {
-  PingOne_DaVinci_connection_PingOne_clientSecret = "fake-secret"
-  davinci_variable_apiToken_value                 = "fake-token"
-  login_hmac_key                                  = "fake-key"
+  PingOne_DaVinci_connection_PingOne_clientSecret = "test-only"
+  davinci_variable_apiKey_value                   = "test-only"
 }
 
-# Mock providers can import only overridden resources.
-override_resource {
-  target = module.davinci.pingone_davinci_connector_instance.this["pingone_sso"]
-  values = { id = "conn-sso" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_flow.t0["error_leaf"]
-  values = { id = "flow-error-leaf" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_flow.t2["mfa_subflow"]
-  values = { id = "flow-mfa-subflow" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_flow.t3["login"]
-  values = { id = "flow-login" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_variable.global["brand_company"]
-  values = { id = "var-brand", min = 0, max = 0 }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_variable.flow_scoped["attempts_flow_login"]
-  values = { id = "var-attempts-login", min = 0, max = 10 }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_flow_enable.this["login"]
-  values = { id = "enable-login" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_flow_enable.this["mfa_subflow"]
-  values = { id = "enable-mfa" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_flow_enable.this["error_leaf"]
-  values = { id = "enable-error" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_application.this["web_login"]
-  values = { id = "app-web-login" }
-}
-
-override_resource {
-  target = module.davinci.pingone_davinci_application_flow_policy.this["web_login/default"]
-  values = { id = "policy-web-login-default" }
-}
-
-run "plan_with_child_module_imports" {
+run "plan_environment" {
   command = plan
 
-  # Only resource kinds the mock provider can import are used here. An
-  # imported pingone_davinci_flow, flow-scoped variable or flow policy
-  # refreshes with unknown computed values under mock_provider, which
-  # Terraform rejects ("returned state contains unknown values"); their
-  # import selection is covered by the module tests, and real imports are
-  # exercised in the Phase 0 spike (#61, #62).
-  variables {
-    import_ids = {
-      davinci_connections  = { pingone_sso = "fake-conn-0001" }
-      davinci_variables    = { brand_company = "fake-var-0001" }
-      davinci_applications = { web_login = "fake-app-0001" }
-    }
+  assert {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.pingone_environment_id))
+    error_message = "the overlay must set pingone_environment_id"
   }
 
   assert {
-    condition     = jsonencode(keys(var.import_ids.davinci_variables)) == jsonencode(["brand_company"])
-    error_message = "import_ids were not passed through"
+    condition     = alltrue([for u in var.davinci_application_Web_oauth_redirect_uris : startswith(u, "https://auth.pingone.com/${var.pingone_environment_id}/")])
+    error_message = "redirect URIs must belong to this environment (never another environment's URL)"
   }
+
 }
 
-run "apply_with_child_module_imports" {
-  variables {
-    import_ids = {
-      davinci_connections  = { pingone_sso = "fake-conn-0001" }
-      davinci_variables    = { brand_company = "fake-var-0001" }
-      davinci_applications = { web_login = "fake-app-0001" }
-    }
-  }
+# Mock providers import only overridden resources (the dev overlay adopts
+# every managed resource through import_ids).
 
-  assert {
-    condition     = length(output.flow_ids) == 4
-    error_message = "every flow should be managed"
-  }
-  assert {
-    condition     = jsonencode(output.required_secret_keys) == jsonencode(["PingOne_DaVinci_connection_PingOne_clientSecret", "davinci_variable_apiToken_value", "login_hmac_key"])
-    error_message = "required secret keys differ"
-  }
+override_resource {
+  target = module.davinci.pingone_davinci_application.pingcli__Web
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_connector_instance.pingcli__Http
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_connector_instance.pingcli__PingOne
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow.pingcli__Flow-0020-A
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow.pingcli__Flow-0020-B
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow.pingcli__Flow-0020-C
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-A
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-B
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-C
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-A
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-B
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-C
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_variable.pingcli__apiKey_company
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_variable.pingcli__attempts_flowInstance
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_variable.pingcli__companyName_company
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow
+  values = { id = "mock-imported-id" }
+}
+
+override_resource {
+  target = module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow
+  values = { id = "mock-imported-id" }
 }
