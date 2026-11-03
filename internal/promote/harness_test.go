@@ -55,20 +55,31 @@ var testSecretNames = map[string]string{"davinci_connection_PingOne_clientSecret
 // neutralized exports seeds (or everything) from a fixture environment.
 func neutralized(t *testing.T, fixture string, seeds ...string) *neutralize.Result {
 	t.Helper()
+	return neutralizedExcluding(t, fixture, nil, seeds...)
+}
+
+// neutralizedExcluding is neutralized with excluded resources. managed
+// lists the excluded addresses that are already managed in Git.
+func neutralizedExcluding(t *testing.T, fixture string, excluded []neutralize.Excluded, seeds ...string) *neutralize.Result {
+	t.Helper()
 	f := fakeFor(t, fixture)
 	r := &exporter.Runner{Config: exporter.Config{Version: f.Version, SHA256: f.SHA256, Path: f.Path}}
+	var patterns []string
+	for _, e := range excluded {
+		patterns = append(patterns, e.Address)
+	}
 	var exp *exporter.Export
 	var err error
 	if len(seeds) == 0 {
-		exp, err = r.Export(context.Background(), testCreds, exporter.ExportOptions{Include: []string{"*"}, Imports: true})
+		exp, err = r.WholeExport(context.Background(), testCreds, patterns)
 	} else {
-		exp, err = r.ScopedExport(context.Background(), testCreds, seeds, nil)
+		exp, err = r.ScopedExport(context.Background(), testCreds, seeds, patterns)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	res, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName},
-		neutralize.Options{SourceEnvironmentID: devEnv, SecretNames: testSecretNames})
+		neutralize.Options{SourceEnvironmentID: devEnv, SecretNames: testSecretNames, Excluded: excluded})
 	if err != nil {
 		t.Fatal(err)
 	}

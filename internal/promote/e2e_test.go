@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"pingone-promote/internal/exporter/exportertest"
+	"pingone-promote/internal/neutralize"
 )
 
 // TestEndToEnd: fake terraformer export of Flow B -> neutralize -> merge
@@ -33,6 +34,13 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("blockers: %+v", res.Blockers)
 	}
 	repo := apply(head, res)
+	endToEnd(t, repo, res.RequiredSecrets)
+}
+
+// endToEnd checks a merged root and, when terraform is available, runs
+// validate and a mock-provider plan with -var-file for every environment.
+func endToEnd(t *testing.T, repo MapRepo, secrets []string) {
+	t.Helper()
 	dir := t.TempDir()
 	writeTree(t, dir, repo)
 
@@ -52,7 +60,7 @@ func TestEndToEnd(t *testing.T) {
 	// terraform test with mock_provider, per environment.
 	var tests strings.Builder
 	tests.WriteString("mock_provider \"pingone\" {}\n\nvariables {\n")
-	for _, s := range res.RequiredSecrets {
+	for _, s := range secrets {
 		tests.WriteString("  " + s + " = \"test-only\"\n")
 	}
 	tests.WriteString("}\n\nrun \"plan\" {\n  command = plan\n}\n")
@@ -81,4 +89,31 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("%s: %s", env, out)
 		}
 	}
+}
+
+// TestEndToEndExcludedDependency: Flow B is requested with the PingOne
+// connection excluded and not in Git. The shared definitions refer to it by
+// the root variable <type>_<label>_id; every environment's -var-file sets the
+// ID that exists there, and each plans.
+func TestEndToEndExcludedDependency(t *testing.T) {
+	exp := neutralizedExcluding(t, exportertest.FixtureDir("dev"), []neutralize.Excluded{{Address: pingOneAddr}}, flowB)
+	head := MapRepo{"customer_secrets.yml": []byte(fixtureCustomerSecrets)}
+	res, err := Merge(MergeRequest{Export: exp, Head: head, Selected: selectedFor(flowB), SourceEnv: "dev", Rollout: rollout,
+		EnvValues: idVarValues(""), Choices: map[string]Choice{pingOneAddr: ChoiceExclude}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Blocked() {
+		t.Fatalf("blockers: %+v", res.Blockers)
+	}
+	repo := apply(head, res)
+	for env, id := range map[string]string{"dev": "c0000000000000000000000000000002", "qa": "c2000000000000000000000000000002"} {
+		if !strings.Contains(string(repo[env+".tfvars"]), pingOneIDVar+" = \""+id+"\"") {
+			t.Fatalf("%s.tfvars lacks the ID:\n%s", env, repo[env+".tfvars"])
+		}
+	}
+	if strings.Contains(string(repo["definitions/pingone_davinci_connector_instance.tf"]), "PingOne") {
+		t.Fatal("the excluded connection must not be written")
+	}
+	endToEnd(t, repo, res.RequiredSecrets)
 }
