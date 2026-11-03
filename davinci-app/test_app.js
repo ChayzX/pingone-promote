@@ -100,17 +100,57 @@ const flowsFake = [{ id: 'a1', name: 'Login' }, { id: 'a2', name: 'Login - MFA' 
 eq(lib.searchFlows(flowsFake, 'LOGIN').matches.map((f) => f.id), ['a1', 'a2'], 'search is a case-insensitive substring; ambiguous lists all');
 eq(lib.searchFlows(flowsFake, 'a3').matches.map((f) => f.id), ['a3'], 'search by exact ID');
 eq(lib.searchFlows(flowsFake, 'zzz').total, 0, 'no match');
-const req0 = contract.buildRequest({ requestId: rid, requestedBy: 'pat', source: 'dev', flow: { id: 'a1', name: 'Login' },
-  options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {} }, dryRun: true });
-const REQUEST_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'dependencyChoices', 'envValues', 'secretMappings', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
-eq(Object.keys(req0), REQUEST_KEYS, 'request.json has exactly the contract fields, in order');
+const req0 = contract.buildRequest({ requestId: rid, requestedBy: 'pat', source: 'dev', flow: { id: dvid(1), name: 'Login' },
+  options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {}, inline: [], remove: [] }, dryRun: true });
+// Every field the job's Request struct accepts (internal/request/request.go); unknown fields fail there.
+const ALLOWED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'applications', 'flowPolicies', 'dependencyChoices', 'envValues', 'secretMappings',
+  'connectorEnvLocal', 'inlineValues', 'remove', 'baseCommit', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
+const REQUIRED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'mode', 'branchName', 'dryRun'];
+const keysOk = (r) => Object.keys(r).every((k) => ALLOWED_KEYS.indexOf(k) >= 0) && REQUIRED_KEYS.every((k) => lib.has(r, k));
+ok(keysOk(req0) && !lib.has(req0, 'dependencyChoices') && !lib.has(req0, 'secretMappings') && !lib.has(req0, 'remove'), 'request.json: only known fields; empty optional ones are left out');
+eq(req0.flows, [{ id: dvid(1), name: 'Login' }], 'a DaVinci flow ID is sent with the name');
+eq(contract.buildRequest({ requestId: rid, requestedBy: 'p', source: 'dev', flow: { id: 'not-hex', name: 'X' }, options: { mode: 'mr', deps: {}, env: {}, secrets: {} }, dryRun: true }).flows,
+  [{ name: 'X' }], 'a flow ID the job would refuse is left out; the name selects');
+const cfgV = { rollout: ['qa', 'stage', 'prod'] };
+eq(contract.validateRequest(req0, cfgV), [], 'a normal request passes the job rules');
+const vbad = (patch, field) => {
+  const r = Object.assign(JSON.parse(JSON.stringify(req0)), patch);
+  const got = contract.validateRequest(r, cfgV).map((x) => x.field);
+  ok(got.indexOf(field) >= 0, 'client-side check refuses ' + field + ' (' + JSON.stringify(patch).slice(0, 60) + ')');
+};
+vbad({ requestId: 'x' }, 'requestId');
+vbad({ branchName: 'pingone-promote/other' }, 'branchName');
+vbad({ source: 'qa' }, 'source');
+vbad({ title: 'x'.repeat(256) }, 'title');
+vbad({ title: 'a\nb' }, 'title');
+vbad({ commitMessage: 'x'.repeat(2001) }, 'commitMessage');
+vbad({ requestedBy: 'x'.repeat(129) }, 'requestedBy');
+vbad({ flows: [] }, 'flows');
+vbad({ flows: Array(21).fill({ name: 'a' }) }, 'flows');
+vbad({ envValues: { other: { a: 'b' } } }, 'envValues.other');
+vbad({ envValues: { qa: { import_ids: 'x' } } }, 'envValues.qa.import_ids');
+vbad({ envValues: { qa: { key: GLTOKEN } } }, 'envValues.qa.key');
+vbad({ secretMappings: { a: '1bad' } }, 'secretMappings.a');
+vbad({ dependencyChoices: { 'not.an_address': 'keep' } }, 'dependencyChoices');
+vbad({ remove: ['bad'] }, 'remove');
+ok(contract.validateRequest(Object.assign({}, req0, { envValues: { dev: { a: 'b' }, prod: { uris: ['https://x.example.com/cb'] } } }), cfgV).length === 0, 'env values may name the source and rollout envs, and be JSON lists');
+ok(lib.checkSettings({ apiOrigin: 'https://api.pingone.com', authOrigin: 'https://auth.pingone.com', workerEnvironmentId: WORKER, sourceEnvs: 'qa=' + SRC,
+  pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*' }).problems.some((x) => x.name === 'sourceEnvs'), 'a source env that is also in the rollout is a settings problem');
 const cb = contract.commitBody(req0, 'main', '');
 ok(cb.start_branch === 'main' && cb.actions[0].action === 'create' && !cb.actions[0].last_commit_id && cb.branch === 'pingone-promote/' + rid, 'first commit creates the branch');
+ok(cb.commit_message.indexOf('PingOne-Promote-Request') < 0, 'the request commit never carries the job\'s idempotency trailer');
 const cb2 = contract.commitBody(req0, 'main', 'f'.repeat(40));
 ok(!cb2.start_branch && cb2.actions[0].action === 'update' && cb2.actions[0].last_commit_id === 'f'.repeat(40), 'later commits update with last_commit_id');
 eq(JSON.parse(Buffer.from(cb.actions[0].content, 'base64').toString('utf8')), req0, 'the commit carries request.json as base64');
-const nr = contract.normalizeResult({ status: 'ok', changes: [{ address: 'a.b', action: 'weird' }, {}], blockers: { qa: ['x', { var: 'v', message: 'm' }], prod: [] }, requiredSecrets: ['k'], error: { code: 'nope', message: 'm ' + GLTOKEN } });
-ok(nr.problems.length === 2 && nr.blockers.qa.length === 2 && !nr.blockers.prod && nr.requiredSecrets[0].key === 'k' && nr.error.code === 'unknown' && nr.error.message.indexOf(GLTOKEN) < 0, 'result normalisation keeps problems visible and redacts');
+const nr = contract.normalizeResult({ resultVersion: 1, status: 'failed', diff: 'x'.repeat(5000), changes: [{ address: 'a.b', action: 'weird' }, {}, { address: 'pingone_x.y', action: 'moved', from: 'pingone_x.z', status: 'matches' }],
+  blockers: { qa: ['x', { code: 'missing_value', var: 'v', message: 'm' }], prod: [], _request: [{ code: 'secret_finding', message: 'found' }] },
+  requiredSecrets: [{ key: 'k', varName: 'k', field: 'f', declared: false, vault: 'apps/x/${VAULT_PATH_ENV}/f@secret' }],
+  error: { code: 'nope', type: 'merge', message: 'm ' + GLTOKEN, retryable: true, field: 'flows[0]', candidates: [{ query: 'q', name: 'A', address: 'pingone_davinci_flow.a' }] } });
+ok(nr.problems.length === 2 && nr.blockers.qa.length === 2 && !nr.blockers.prod && nr.blockers._request[0].code === 'secret_finding', 'blockers by env and _request');
+ok(nr.requiredSecrets[0].declared === false && /VAULT_PATH_ENV/.test(nr.requiredSecrets[0].vault), 'required secrets keep declared and the vault path');
+ok(nr.error.code === 'unknown' && nr.error.type === 'merge' && nr.error.retryable && nr.error.field === 'flows[0]' && nr.error.candidates[0].name === 'A' && nr.error.message.indexOf(GLTOKEN) < 0, 'typed error fields, redacted');
+ok(nr.changes[1].action === 'moved' && nr.changes[1].from === 'pingone_x.z' && nr.summary.moved === 1 && JSON.stringify(nr).indexOf('xxxxx') < 0, 'moved rows keep from; the diff text is dropped');
+ok(contract.normalizeResult({ resultVersion: 1, status: 'blocked', blockers: { qa: [{ code: 'missing_value', var: 'a', message: 'm' }] } }).error.code === 'blocked', 'status blocked reads as a blocked error');
 eq(contract.footerOf('x\nRequested-by: pat\nRequest-id: ' + rid), { requestedBy: 'pat', requestId: rid }, 'MR footer parsed');
 eq(contract.mrIid(GLWEB + '/-/merge_requests/17'), '17', 'MR iid from URL');
 
@@ -129,17 +169,64 @@ function makeFlows() {
     { id: dvid(5), name: '<img src=x onerror=alert(1)> evil' }, { id: dvid(6), name: '{{global.company.variables.ppGitlabToken}}' }, { id: dvid(7), name: 'Account recovery' }
   ];
 }
-const PREVIEW = (req) => {
+// The request job's own request rules (internal/request/request.go), written
+// independently of fn/_contract.js so the two cross-check each other.
+const JOB_RE = { requestId: /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/, env: /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/, ident: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
+  secretName: /^[A-Za-z][A-Za-z0-9_]{0,127}$/, address: /^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$/, id: /^[0-9a-fA-F]{32}$/ };
+const JOB_SOURCES = ['dev', 'sandbox'];
+const JOB_ROLLOUT = ['qa', 'stage', 'prod'];
+function jobValidate(req, branch) {
+  const fail = (field, msg) => ({ field: field, msg: msg });
+  for (const k of Object.keys(req)) { if (ALLOWED_KEYS.indexOf(k) < 0) { return fail('', 'unknown field ' + k); } }
+  if (req.requestVersion !== 1) { return fail('requestVersion', 'must be 1'); }
+  if (!JOB_RE.requestId.test(req.requestId)) { return fail('requestId', 'bad'); }
+  if (branch !== 'pingone-promote/' + req.requestId || (req.branchName && req.branchName !== branch)) { return fail('branchName', 'must be the request branch'); }
+  if (typeof req.requestedBy !== 'string' || req.requestedBy.length > 128 || /[\n\t]/.test(req.requestedBy)) { return fail('requestedBy', 'bad'); }
+  if (JOB_SOURCES.indexOf(req.source) < 0 || JOB_ROLLOUT.indexOf(req.source) >= 0) { return fail('source', 'not an allowed source'); }
+  if (!req.flows.length || req.flows.length > 20 || req.flows.some((f) => (f.id && !JOB_RE.id.test(f.id)) || (!f.id && !f.name))) { return fail('flows', 'bad'); }
+  for (const a of Object.keys(req.dependencyChoices || {})) { if (!JOB_RE.address.test(a) || ['update', 'keep'].indexOf(req.dependencyChoices[a]) < 0) { return fail('dependencyChoices', a); } }
+  for (const env of Object.keys(req.envValues || {})) {
+    if ([req.source].concat(JOB_ROLLOUT).indexOf(env) < 0) { return fail('envValues', env + ' is not the source or a rollout env'); }
+    for (const k of Object.keys(req.envValues[env])) {
+      const v = req.envValues[env][k];
+      if (!JOB_RE.ident.test(k) || k === 'import_ids' || v === null) { return fail('envValues.' + env + '.' + k, 'bad'); }
+      if (/glpat-|BEGIN/.test(JSON.stringify(v))) { return fail('envValues.' + env + '.' + k, 'looks like a secret'); }
+    }
+  }
+  for (const k of Object.keys(req.secretMappings || {})) { if (!JOB_RE.ident.test(k) || typeof req.secretMappings[k] !== 'string' || !JOB_RE.secretName.test(req.secretMappings[k])) { return fail('secretMappings.' + k, 'keys and values must be variable names'); } }
+  if (['mr', 'branch'].indexOf(req.mode) < 0) { return fail('mode', 'bad'); }
+  if ((req.title || '').length > 255 || /\n/.test(req.title || '')) { return fail('title', 'one line of at most 255'); }
+  if ((req.commitMessage || '').length > 2000) { return fail('commitMessage', 'at most 2000'); }
+  return null;
+}
+const SEL = 'pingone_davinci_flow.pingcli__Registration';
+const PREVIEW = (req, o) => {
   const env = req.envValues || {};
   const blockers = {};
-  for (const e of ['qa', 'stage', 'prod']) {
-    if (!(env[e] && env[e].base_url)) { blockers[e] = [{ code: 'missing_env_value', var: 'base_url', message: 'base_url has no value for ' + e }]; }
+  for (const e of JOB_ROLLOUT) {
+    if (!(env[e] && env[e].base_url)) { blockers[e] = [{ code: 'missing_value', var: 'base_url', message: e + '.tfvars must set base_url' }]; }
   }
-  return { status: 'ok', diffUrl: GLWEB + '/-/compare/main...' + req.branchName,
-    changes: [{ address: 'pingone_davinci_flow.login', action: 'updated', role: 'selected' }, { address: 'pingone_davinci_flow.mfa_sub', action: 'added', role: 'dependency' },
-      { address: 'pingone_davinci_connector_instance.http', action: 'kept_differs', role: 'dependency' }, { address: 'pingone_davinci_variable.theme', action: 'unchanged' }],
-    requiredSecrets: [{ key: 'davinci_variable_PingFedAuthNCreds_value', varName: 'davinci_variable_PingFedAuthNCreds_value', field: 'pingfed_authn_creds' }],
-    blockers: blockers };
+  if (o.requestBlocker) { blockers._request = [{ code: 'customer_secrets', message: 'customer_secrets.yml is not valid YAML' }]; }
+  const unchanged = o.noChanges;
+  const changes = unchanged ? [{ address: SEL, role: 'selected', action: 'unchanged', status: 'matches', file: 'definitions/pingone_davinci_flow.tf' }] : [
+    { address: SEL, role: 'selected', action: 'updated', status: 'changed-in-source', file: 'definitions/pingone_davinci_flow.tf' },
+    { address: 'pingone_davinci_flow.pingcli__MFA-0020-sub', role: 'dependency', action: 'added', status: 'new', file: 'definitions/pingone_davinci_flow.tf' },
+    { address: 'pingone_davinci_connector_instance.pingcli__Http', role: 'dependency', action: 'kept_differs', status: 'changed-in-source', reason: 'differs from Git; kept because it is a shared dependency (choose update to use the source version)' },
+    { address: 'pingone_davinci_variable.pingcli__color', role: 'dependency', action: 'kept_differs', status: 'changed-in-both' },
+    { address: 'pingone_davinci_variable.pingcli__theme_new', role: 'dependency', action: 'moved', status: 'matches', from: 'pingone_davinci_variable.pingcli__theme' },
+    { address: 'pingone_davinci_flow.pingcli__Old', role: 'dependency', action: 'removed', status: 'matches' },
+    { address: 'pingone_davinci_variable.pingcli__lang', role: 'dependency', action: 'unchanged', status: 'matches' }];
+  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, removed: 0, moved: 0 };
+  for (const c of changes) { summary[c.action] += 1; }
+  const res = { resultVersion: 1, requestId: req.requestId, requestedBy: req.requestedBy, status: 'previewed', dryRun: true, mode: req.mode, source: req.source, branch: req.branchName,
+    commitId: '', mrUrl: '', mrIid: 0, branchUrl: GLWEB + '/-/tree/' + encodeURIComponent(req.branchName), diffUrl: GLWEB + '/-/compare/main...' + encodeURIComponent(req.branchName),
+    selected: [{ query: req.flows[0].id || req.flows[0].name, address: SEL, name: req.flows[0].name, id: req.flows[0].id }], changes: changes, summary: summary, files: [],
+    requiredSecrets: [{ key: 'davinci_variable_PingFedAuthNCreds_value', varName: 'davinci_variable_PingFedAuthNCreds_value', field: 'davinci_variable_PingFedAuthNCreds_value', declared: false,
+      vault: 'apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/davinci_variable_PingFedAuthNCreds_value@secret' }],
+    blockers: blockers, warnings: o.warning ? ['flows[0]: name does not match ' + SRC] : [], diff: '--- a/definitions/pingone_davinci_flow.tf\n' + '+ x\n'.repeat(4000), diffTruncated: false, error: null };
+  if (o.noBlockers) { res.blockers = o.requestBlocker ? { _request: blockers._request } : {}; res.requiredSecrets = []; }
+  if (Object.keys(res.blockers).length) { res.status = 'blocked'; res.error = { code: 'blocked', type: 'validation', message: 'readiness blockers', retryable: false }; }
+  return res;
 };
 
 function world(opt) {
@@ -147,7 +234,7 @@ function world(opt) {
     commitFail: null, noBlockers: false, artifactAsText: false, identity: { userId: 'u-1', username: 'pat.operator', name: 'Pat Operator', groups: ['Promote Operators'] } }, opt || {});
   const flows = makeFlows();
   const calls = [];
-  const g = { branches: { main: { commits: [newSha()] } }, files: {}, pipelines: [], mrs: [], deployments: [], commits: [], nextPipe: 500, nextJob: 9000, nextMr: 40, deletes: [] };
+  const g = { branches: { main: { commits: [newSha()] } }, files: {}, pipelines: [], mrs: [], deployments: [], commits: [], nextPipe: 500, nextJob: 9000, nextMr: 40, deletes: [], jobRefusals: [], submitted: {} };
   const head = (b) => g.branches[b].commits[g.branches[b].commits.length - 1];
   const branchObj = (b) => ({ name: b, web_url: GLWEB + '/-/tree/' + b, commit: { id: head(b), title: g.branches[b].titles[g.branches[b].titles.length - 1], committed_date: '2026-11-03T09:00:00Z' } });
   g.branches.main.titles = ['init'];
@@ -161,27 +248,49 @@ function world(opt) {
   const runJob = (p) => {
     // The request job finishes: decide the result and do what the backend would do.
     const req = p.req;
+    const failed = (code, type, message, extra) => Object.assign(PREVIEW(req, o), { status: 'failed', dryRun: req.dryRun, changes: [], blockers: {},
+      error: Object.assign({ code: code, type: type, message: message, retryable: false }, extra || {}) });
+    const bad = jobValidate(req, p.ref);
     let res;
-    if (req.dryRun) {
-      res = PREVIEW(req);
-      if (o.noBlockers) { res.blockers = {}; res.requiredSecrets = []; }
-      if (o.previewError) { res.error = o.previewError; }
-    } else if (o.submitError) {
-      const code = o.submitError.shift ? o.submitError.shift() : o.submitError;
-      if (o.submitError.length === 0) { o.submitError = null; }
-      res = { status: 'error', changes: [], error: { code: code, message: code + ' reported by the request job for ' + req.branchName } };
+    if (bad) {
+      g.jobRefusals.push(bad);
+      res = failed('preflight', 'validation', 'request: ' + bad.field + ': ' + bad.msg, { field: bad.field });
+    } else if (req.dryRun) {
+      res = PREVIEW(req, o);
+      if (o.previewError) { res = failed(o.previewError.code, o.previewError.type || 'export', o.previewError.message, o.previewError); }
+    } else if (o.submitError && o.submitError.length) {
+      const e = o.submitError.shift();
+      const code = typeof e === 'string' ? e : e.code;
+      res = failed(code, code === 'conflict' ? 'gitlab' : 'merge', code + ' reported by the request job for ' + req.branchName, typeof e === 'string' ? {} : e);
       if (code === 'partial') { commitTo(req.branchName, 'pingone-promote: generated change'); res.branchUrl = GLWEB + '/-/tree/' + req.branchName; }
-      if (code === 'blocked') { res.blockers = { prod: [{ code: 'missing_env_value', var: 'base_url', message: 'base_url has no value for prod' }] }; }
-    } else {
-      commitTo(req.branchName, 'pingone-promote: generated change for ' + req.flows[0].name);
+      if (code === 'blocked') { res.status = 'blocked'; res.blockers = { prod: [{ code: 'missing_value', var: 'base_url', message: 'prod.tfvars must set base_url' }] }; }
+    } else if (o.noChanges) {
+      commitTo(req.branchName, 'pingone-promote: delete request file');
       delete g.files[req.branchName];
-      res = { status: 'ok', changes: PREVIEW(req).changes };
-      if (req.mode === 'mr') {
-        g.nextMr += 1;
-        g.mrs.push({ iid: g.nextMr, title: req.title, state: 'opened', web_url: GLWEB + '/-/merge_requests/' + g.nextMr, source_branch: req.branchName,
-          description: req.description + '\n\nRequested-by: ' + req.requestedBy + '\nRequest-id: ' + req.requestId + '\n', labels: ['pingone-promote'], updated_at: '2026-11-03T09:10:00Z' });
-        res.mrUrl = GLWEB + '/-/merge_requests/' + g.nextMr;
-      } else { res.branchUrl = GLWEB + '/-/tree/' + req.branchName; }
+      res = Object.assign(PREVIEW(req, o), { status: 'no_changes', dryRun: false, blockers: {}, error: null });
+    } else {
+      const prior = g.mrs.filter((m) => m.source_branch === req.branchName)[0];
+      res = Object.assign(PREVIEW(req, o), { dryRun: false, blockers: {}, error: null, diff: 'x'.repeat(1000) });
+      if (prior || g.submitted[req.requestId]) {
+        // The PingOne-Promote-Request trailer is already in the branch history: report it, write nothing.
+        res.status = 'already_submitted';
+        res.commitId = g.submitted[req.requestId];
+        if (prior) { res.mrUrl = prior.web_url; res.mrIid = prior.iid; }
+      } else {
+        const sha = commitTo(req.branchName, 'PingOne: ' + req.flows[0].name + ' from ' + req.source);
+        g.submitted[req.requestId] = sha;
+        delete g.files[req.branchName];
+        res.status = 'submitted';
+        res.commitId = sha;
+        res.diffUrl = GLWEB + '/-/commit/' + sha;
+        if (req.mode === 'mr') {
+          g.nextMr += 1;
+          g.mrs.push({ iid: g.nextMr, title: req.title, state: 'opened', web_url: GLWEB + '/-/merge_requests/' + g.nextMr, source_branch: req.branchName,
+            description: req.description + '\n\n| change table |\n\nRequested-by: ' + req.requestedBy + '\nRequest-id: ' + req.requestId + '\n', labels: ['pingone-promote'], updated_at: '2026-11-03T09:10:00Z' });
+          res.mrUrl = GLWEB + '/-/merge_requests/' + g.nextMr;
+          res.mrIid = g.nextMr;
+        }
+      }
     }
     p.result = res;
   };
@@ -238,6 +347,7 @@ function world(opt) {
       if (fail) { return { status: fail.status, body: { message: 'Bad gateway' } }; }
       return { status: 201, body: { id: sha, short_id: sha.slice(0, 8), title: b.commit_message.split('\n')[0], web_url: GLWEB + '/-/commit/' + sha } };
     }
+    if (method === 'DELETE' && o.protectedBranches) { return { status: 403, body: { message: '403 Forbidden' } }; }
     if (method === 'DELETE') {
       const m = /^\/repository\/branches\/(.+)$/.exec(bare);
       assert.ok(m && contract.isRequestBranch(rb(m[1])), 'only request branches are deleted');
@@ -271,8 +381,15 @@ function world(opt) {
       const j = p.job;
       const st = j.statuses[Math.min(j.i, j.statuses.length - 1)];
       j.i += 1;
-      if (['success', 'failed', 'canceled'].indexOf(st) >= 0 && !p.result) { runJob(p); p.status = st; }
-      return { status: 200, body: [{ id: 1, name: 'lint', status: 'success' }, { id: j.id, name: 'pingone-promote:request', status: st, started_at: '2026-11-03T09:00:05Z', web_url: GLWEB + '/-/jobs/' + j.id, pipeline: { id: p.id, status: p.status } }] };
+      let st2 = st;
+      if (['success', 'failed', 'canceled'].indexOf(st) >= 0 && !p.result) {
+        runJob(p);
+        // blocked and failed exit 1, so the job and pipeline fail; result.json is still uploaded.
+        if (['blocked', 'failed'].indexOf(p.result.status) >= 0) { j.statuses = j.statuses.slice(0, j.i).concat(['failed']); st2 = 'failed'; }
+        p.status = st2;
+      }
+      if (p.result && ['blocked', 'failed'].indexOf(p.result.status) >= 0) { st2 = 'failed'; }
+      return { status: 200, body: [{ id: 1, name: 'lint', status: 'success' }, { id: j.id, name: 'pingone-promote:request', status: st2, started_at: '2026-11-03T09:00:05Z', web_url: GLWEB + '/-/jobs/' + j.id, pipeline: { id: p.id, status: p.status } }] };
     }
     if ((m = /^\/pipelines\/([0-9]+)\/bridges$/.exec(bare))) {
       const p = g.pipelines.filter((x) => x.id === Number(m[1]))[0];
@@ -298,7 +415,7 @@ function world(opt) {
   return { o: o, handler: handler, calls: calls, g: g, flows: flows };
 }
 
-const SETTINGS = { ppWorkerEnvironmentId: WORKER, ppSourceEnvs: 'dev=' + SRC + ', qa=' + QAENV, ppGitlabApi: GLAPI, ppGitlabProjectId: PROJECT, ppAllowedGroups: 'Promote Operators' };
+const SETTINGS = { ppWorkerEnvironmentId: WORKER, ppSourceEnvs: 'dev=' + SRC + ', sandbox=' + QAENV, ppGitlabApi: GLAPI, ppGitlabProjectId: PROJECT, ppAllowedGroups: 'Promote Operators' };
 const unesc = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#123;/g, '{').replace(/&#125;/g, '}').replace(/&amp;/g, '&');
 // What the App screen's script would post: every data-pp control's value, then the test's edits.
 function formOf(html, edits) {
@@ -456,6 +573,8 @@ const BANNED = /\b(target|targets|deploy\w*|promotion|destination|digest|fingerp
 const ALL_RUNS = [];
 function common(r, label) {
   ALL_RUNS.push(r);
+  if (!r.allowRefusal) { eq(r.w.g.jobRefusals, [], label + ': the request job accepted every request (client-side checks match its rules)'); }
+  ok(JSON.stringify(r.inst.ppState || {}).length < 40000, label + ': the flow-instance state stays small (no diff text)');
   for (const pg of r.pages) {
     const v = visible(pg.html);
     for (const s of SECRETS) { ok(pg.html.indexOf(s) < 0, label + ': no secret or token on screen "' + pg.title + '"'); }
@@ -472,7 +591,7 @@ function common(r, label) {
     if (c.method === 'POST' && c.url.indexOf('gitlab') > 0) {
       const req = Buffer.from(JSON.parse(c.body).actions[0].content, 'base64').toString('utf8');
       for (const s of SECRETS) { ok(req.indexOf(s) < 0 && c.body.indexOf(s) < 0, label + ': no secret in request.json or the commit'); }
-      eq(Object.keys(JSON.parse(req)), REQUEST_KEYS, label + ': request.json has exactly the contract fields');
+      ok(keysOk(JSON.parse(req)), label + ': request.json has only the job\'s fields');
     }
   }
   const LIMITS = { START: 0, SEARCH: 2 + 3, POLL: 3, KEEP: 3, PREVIEW: 1, SUBMIT: 1, CHECK: 4, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
@@ -485,8 +604,10 @@ function common(r, label) {
 const decodeReq = (c) => JSON.parse(Buffer.from(JSON.parse(c.body).actions[0].content, 'base64').toString('utf8'));
 const commitsOf = (r) => r.w.calls.filter((c) => c.method === 'POST' && c.url.indexOf('/repository/commits') > 0);
 const glCalls = (r, re) => r.w.calls.filter((c) => re.test(c.url));
-const ENV_FORM = { env: { qa: { base_url: 'https://qa.example.com' }, stage: { base_url: 'https://stage.example.com' }, prod: { base_url: 'https://www.example.com' } },
-  secrets: { davinci_variable_PingFedAuthNCreds_value: { ok: true } } };
+const ENV_FORM = { env: { qa: { base_url: 'https://qa.example.com' }, stage: { base_url: 'https://stage.example.com' }, prod: { base_url: '["https://www.example.com","https://example.com"]' } },
+  secrets: { davinci_variable_PingFedAuthNCreds_value: { ok: true, mapTo: 'PingFedAuthNCreds' } } };
+const HTTP = 'pingone_davinci_connector_instance.pingcli__Http';
+const COLOR = 'pingone_davinci_variable.pingcli__color';
 const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click: 'PICK:0', expect: /1 match/ }];
 
 (async () => {
@@ -530,7 +651,7 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     const r2 = await run({ worldOpt: { tokenStatus: 401 } }, [{ click: 'SEARCH', form: { query: 'x' } }, { click: 'SIGNOUT', expect: /did not let the app read flows \(HTTP 401\)/ }]);
     ok(r2.pages[1].html.indexOf(WORKER) < 0, 'a token failure message is redacted');
     common(r2, 'token failure');
-    const r3 = await run({}, [{ click: 'SEARCH', form: { source: 'qa', query: 'login' } }, { click: 'SIGNOUT', expect: /No flow in qa matches/ }]);
+    const r3 = await run({}, [{ click: 'SEARCH', form: { source: 'sandbox', query: 'login' } }, { click: 'SIGNOUT', expect: /No flow in sandbox matches/ }]);
     common(r3, 'empty env');
   }
   // ---- preview -> edit -> preview -> submit (MR) -> rollout with approval and failure ----------------------
@@ -540,8 +661,8 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     const r = await run({ world: w }, toOptions.concat([
       { click: 'PREVIEW', expect: /No preview yet/, form: { title: 'Bring Registration from dev', description: 'Ticket ABC-1' } },
       auto(/Preview$|Predicted changes/),
-      { click: 'EDIT', expect: /Predicted changes 1 new, 1 changed in source, 1 differs; git version kept, 1 matches git/i },
-      { click: 'PREVIEW', expect: /Keep Git version/, form: Object.assign({ deps: { 'pingone_davinci_connector_instance.http': 'update' } }, ENV_FORM) },
+      { click: 'EDIT', expect: /Predicted changes 1 new, 1 changed in source, 2 differs; git version kept, 1 moved \(new address\), 1 no longer managed \(not destroyed\), 1 matches git/i },
+      { click: 'PREVIEW', expect: /Keep Git version/, form: Object.assign({ deps: { [HTTP]: 'update' } }, ENV_FORM) },
       auto(/Preview: ready/),
       { click: 'SUBMIT', expect: /qa ✓ Ready/ },
       auto(/Request submitted/),
@@ -575,18 +696,21 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     eq(reqs.map((x) => x.dryRun), [true, true, false], 'Preview is dryRun true; Submit is dryRun false');
     eq(reqs.map((x) => x.requestId).filter((x, i, a) => a.indexOf(x) === i).length, 1, 'one requestId across preview and submit');
     ok(reqs.every((x) => x.requestedBy === 'pat.operator') && /Requested-by: pat\.operator/.test(bodies[2].commit_message), 'requestedBy in request.json and in the commit message');
-    eq(reqs[2].dependencyChoices, { 'pingone_davinci_connector_instance.http': 'update' }, 'the dependency choice is sent');
-    eq(reqs[2].envValues, ENV_FORM.env, 'environment values per rollout env are sent');
-    eq(reqs[2].secretMappings, { davinci_variable_PingFedAuthNCreds_value: { varName: 'davinci_variable_PingFedAuthNCreds_value', field: 'pingfed_authn_creds' } }, 'secret mappings: names only');
+    eq(reqs[2].dependencyChoices, { [HTTP]: 'update', [COLOR]: 'keep' }, 'dependency choices are sent: the changed one, and the changed-in-both default');
+    eq(reqs[2].envValues, { qa: ENV_FORM.env.qa, stage: ENV_FORM.env.stage, prod: { base_url: ['https://www.example.com', 'https://example.com'] } }, 'environment values per rollout env are sent; JSON text becomes a list');
+    eq(reqs[2].secretMappings, { davinci_variable_PingFedAuthNCreds_value: 'PingFedAuthNCreds' }, 'secret mappings: terraformer name to customer_secrets name');
     ok(reqs[0].title === 'Bring Registration from dev' && reqs[0].description === 'Ticket ABC-1' && reqs[0].mode === 'mr' && reqs[0].source === 'dev' && reqs[0].flows[0].name === 'Registration', 'request fields');
     ok(bodies[1].actions[0].last_commit_id && bodies[2].actions[0].last_commit_id && bodies[1].actions[0].last_commit_id !== bodies[2].actions[0].last_commit_id, 'each update names the previous request commit');
     const pv = r.pages.filter((p) => /Predicted changes/.test(p.html))[0];
-    ok(/pingone_davinci_flow\.login.*selected flow/.test(visible(pv.html)) && /Readiness/.test(pv.html) && /base_url has no value for qa/.test(pv.html) && /davinci_variable_PingFedAuthNCreds_value/.test(pv.html), 'preview shows per-address changes, blockers and required secrets');
+    ok(/pingcli__Registration selected flow/.test(visible(pv.html)) && /Readiness/.test(pv.html) && /qa\.tfvars must set base_url/.test(pv.html) && /davinci_variable_PingFedAuthNCreds_value/.test(pv.html), 'preview shows per-address changes, blockers and required secrets');
     ok(/Review the change in GitLab/.test(pv.html), 'preview links to the diff');
     ok(buttonOf(pv.html, 'SUBMIT').disabled && /Readiness: 3 environment\(s\) are missing values/.test(pv.html), 'blockers disable Submit, with the reason');
     const opt = r.pages.filter((p) => /Keep Git version/.test(p.html))[0].html;
     ok(/name="r\d+"[^>]*value="keep" checked/.test(opt), 'a dependency that differs defaults to Keep Git version (#93)');
-    ok(!/pingone_davinci_flow\.login/.test(opt.split('Shared definitions')[1].split('Readiness')[0]), 'the selected flow has no keep/update choice');
+    const depPart = opt.split('Shared definitions')[1].split('Readiness')[0];
+    ok(!/pingcli__Registration/.test(depPart) && /changed in both Git and the source/.test(depPart), 'the selected flow has no choice; a changed-in-both address does');
+    ok(/moved \(new address\).*was pingone_davinci_variable\.pingcli__theme/i.test(visible(pv.html).replace(/\s+/g, ' ')) || /was pingone_davinci_variable\.pingcli__theme/.test(visible(pv.html)), 'a moved row shows its old address');
+    ok(/declared|customer_secrets\.yml/.test(pv.html) && /VAULT_PATH_ENV/.test(visible(pv.html)), 'required secrets show the Vault path and that the request adds them');
     const working = r.pages.filter((p) => /running/.test(p.title + visible(p.html)) && autoOf(p.html));
     ok(working.length >= 3 && working.every((p) => /aria-live="polite"/.test(p.html)), 'working screens announce progress politely');
     ok(glCalls(r, /\/artifacts\/result\.json$/).length === 3, 'one result.json read per job');
@@ -744,6 +868,88 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
       { click: 'WATCH' }, { click: 'SIGNOUT', expect: /qa ✓ Live stage ✓ Live via !77 prod – Canceled/ }]));
     ok(glCalls(r, /\/bridges/).length === 1 && glCalls(r, /pipelines\/802\/jobs/).length === 1, 'jobs in a child pipeline are found through its bridge');
     common(r, 'live via newer');
+  }
+  // ---- final contract: ambiguous name with candidates ---------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, previewError: { code: 'preflight', type: 'validation', message: 'flows[0]: "Reg" matches 2 flows', retryable: false, field: 'flows[0]',
+      candidates: [{ query: 'Reg', name: 'Registration', address: SEL }, { query: 'Reg', name: 'Registration v2', address: 'pingone_davinci_flow.pingcli__Registration-0020-v2' }] } } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/did not pass the checks/),
+      { click: 'SIGNOUT', expect: /Several flows match\. Search again and choose one of these: Registration .*Registration v2.*Field: flows\[0\].*\(in the request itself\)|Several flows match/ }]));
+    const pv = r.pages[r.pages.length - 2].html;
+    ok(/Registration v2/.test(pv) && /Several flows match/.test(pv) && /Field: <code>flows\[0\]<\/code>/.test(pv), 'an ambiguous name shows the candidates and the field');
+    common(r, 'candidates');
+  }
+  // ---- already_submitted: the existing MR is shown, nothing new is opened ------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/),
+      { do: (wd) => { const b = Object.keys(wd.g.branches).filter((x) => x !== 'main')[0]; wd.g.nextMr += 1; wd.g.mrs.push({ iid: wd.g.nextMr, title: 'earlier', state: 'opened', web_url: GLWEB + '/-/merge_requests/' + wd.g.nextMr, source_branch: b, description: '' }); } },
+      { click: 'SUBMIT' }, auto(/Request submitted/),
+      { click: 'WATCH', expect: /This request was already submitted\. Nothing new was written; this is the existing merge request/ },
+      { click: 'SIGNOUT', expect: /Waiting for the merge request to be merged/ }]));
+    eq(r.w.g.mrs.length, 1, 'already_submitted: no second merge request');
+    common(r, 'already submitted');
+  }
+  // ---- no_changes: preview says so and Submit is off; a direct submit ends with "No changes" -------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, noChanges: true } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/No changes: Git already matches dev/),
+      { click: 'SIGNOUT', expect: /Nothing to change: Git already matches the source/ }]));
+    ok(buttonOf(r.pages[r.pages.length - 2].html, 'SUBMIT').disabled, 'no changes: Submit is off');
+    common(r, 'no changes preview');
+    const r2 = await run({ worldOpt: { noBlockers: true, noChanges: true } }, toOptions.concat([
+      { click: 'SUBMIT' }, auto(/^.*No changes Git already matches dev/), { click: 'SIGNOUT', expect: /wrote nothing and opened no merge request/ }]));
+    ok(!buttonOf(r2.pages[r2.pages.length - 2].html, 'WATCH') && r2.w.g.mrs.length === 0, 'no_changes ends the request without a rollout to watch');
+    common(r2, 'no changes submit');
+  }
+  // ---- a retryable error needs no edit ---------------------------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, submitError: [{ code: 'conflict', type: 'gitlab', retryable: true }] } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'SUBMIT' }, auto(/Submit failed/),
+      { click: 'SUBMIT', expect: /GitLab says this may work if you try again.*You can submit again as it is/ }, auto(/Request submitted/), { click: 'SIGNOUT' }]));
+    eq(commitsOf(r).length, 3, 'a retryable error allows the same submit again');
+    common(r, 'retryable');
+  }
+  // ---- the job names a field: it is pointed out next to that field -------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, submitError: [{ code: 'preflight', type: 'validation', field: 'title', message: 'title must not mention prod' }] } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'SUBMIT' }, auto(/Submit failed/),
+      { click: 'EDIT' },
+      { click: 'SUBMIT', form: { title: 'Registration for the rollout' }, expect: /Title One line, at most 255 characters\. GitLab: title must not mention prod/ },
+      auto(/Request submitted/), { click: 'SIGNOUT' }]));
+    common(r, 'job field');
+  }
+  // ---- client-side checks: the job's rules are applied before any commit ---------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([
+      { click: 'PREVIEW', form: { title: 'x'.repeat(300) } },
+      { click: 'PREVIEW', form: { title: 'Short title', commitMessage: 'y'.repeat(2100) }, expect: /Fix 1 field: must be one line of at most 255 characters/ },
+      { click: 'PREVIEW', form: { commitMessage: 'ok' }, expect: /Fix 1 field: must be at most 2000 characters/ },
+      auto(/Preview: ready/), { click: 'SIGNOUT' }]));
+    eq(commitsOf(r).length, 1, 'invalid options never reach GitLab');
+    common(r, 'client checks');
+    const r2 = await run({}, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Predicted changes/), { click: 'EDIT' },
+      { click: 'PREVIEW', form: { env: { qa: { base_url: GLTOKEN } } } },
+      { click: 'SIGNOUT', expect: /This looks like a secret/ }]));
+    eq(commitsOf(r2).length, 1, 'a secret-looking env value is refused before the commit');
+    common(r2, 'secret value');
+  }
+  // ---- _request blockers, warnings, one-at-a-time jobs -----------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, requestBlocker: true, warning: true, jobStatuses: ['waiting_for_resource', 'waiting_for_resource', 'running', 'success'] } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/waiting for another request to finish/), auto(/Predicted changes/),
+      { click: 'SIGNOUT', expect: /Whole request ✕ 1 to fix customer_secrets\.yml problem\. customer_secrets\.yml is not valid YAML/ }]));
+    const pv = visible(r.pages[r.pages.length - 2].html);
+    ok(/name does not match <id>/.test(pv), 'warnings are shown, with IDs redacted');
+    common(r, 'request blockers');
+  }
+  // ---- cancel on protected request branches -------------------------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, protectedBranches: true } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'CANCEL' }, { click: 'SIGNOUT', expect: /refused to delete .* \(HTTP 403\): request branches are protected here/ }]));
+    eq(r.w.g.deletes.length, 0, 'nothing deleted');
+    common(r, 'protected cancel');
   }
   // ---- validator agrees -------------------------------------------------------------------------------------------------------
   {
