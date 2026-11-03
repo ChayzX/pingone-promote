@@ -264,27 +264,4 @@ func (c *Client) Pages(ctx context.Context, path, key string) ([]json.RawMessage
 	}
 	return all, nil
 }
-func (c *Client) GetPromotion(ctx context.Context, env, id string) (Promotion, error) {
-	var p Promotion
-	err := c.Do(ctx, "GET", EnvPath(env)+"/promotions/"+url.PathEscape(id), "", nil, &p)
-	if err == nil && p.ID != id {
-		err = errors.New("promotion identity did not match request")
-	}
-	return p, err
-}
-func (c *Client) Steps(ctx context.Context, env, id string) ([]Step, error) {
-	raw, err := c.Pages(ctx, EnvPath(env)+"/promotions/"+url.PathEscape(id)+"/promotionSteps", "promotionSteps")
-	if err != nil {
-		return nil, err
-	}
-	steps := make([]Step, 0, len(raw))
-	for _, r := range raw {
-		var s Step
-		if err = json.Unmarshal(r, &s); err != nil {
-			return nil, err
-		}
-		steps = append(steps, s)
-	}
-	return steps, nil
-}
 func EnvPath(env string) string { return "/v1/environments/" + url.PathEscape(env) }
