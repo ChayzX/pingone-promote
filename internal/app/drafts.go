@@ -29,7 +29,7 @@ import (
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/pipelinesecrets"
-	"pingone-promote/internal/promote"
+	promote "pingone-promote/internal/promotelegacy"
 	"pingone-promote/internal/store"
 	"pingone-promote/internal/tfvars"
 	"pingone-promote/internal/translate"

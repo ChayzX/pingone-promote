@@ -1,0 +1,199 @@
+--- a/definitions/pingone_davinci_flow.tf
++++ b/definitions/pingone_davinci_flow.tf
+@@ -96,7 +96,7 @@
+             status          = "configured"
+             properties = jsonencode({
+               "nodeTitle" : {
+-                "value" : "Look up the user"
++                "value" : "Look up the user (v2)"
+               },
+               "message" : {
+                 "value" : "Welcome to {{global.variables.companyName}}"
+@@ -116,6 +116,42 @@
+           pannable   = false
+           classes    = ""
+         }
++        "n2bbbbbbbb" = {
++          data = {
++            id              = "n2bbbbbbbb"
++            node_type       = "CONNECTION"
++            connection_id   = pingone_davinci_connector_instance.pingcli__Http.id
++            connector_id    = "flowConnector"
++            name            = "Flow Conductor"
++            label           = "Flow Conductor"
++            capability_name = "startUiSubFlow"
++            type            = "trigger"
++            status          = "configured"
++            properties = jsonencode({
++              "subFlowId" : {
++                "value" : {
++                  "label" : "Flow B Subflow",
++                  "value" : "${pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.id}"
++                }
++              },
++              "subFlowVersionId" : {
++                "value" : -1
++              }
++            })
++          }
++          position = {
++            x = 300
++            y = 200
++          }
++          group      = "nodes"
++          removed    = false
++          selected   = false
++          selectable = true
++          locked     = false
++          grabbable  = true
++          pannable   = false
++          classes    = ""
++        }
+       }
+     }
+   }
+@@ -127,6 +163,69 @@
+   ]
+ }
+ 
++resource "pingone_davinci_flow" "pingcli__Flow-0020-B-0020-Subflow" {
++  environment_id = var.pingone_environment_id
++  name           = "Flow B Subflow"
++  description    = "Flow B Subflow for the fixture"
++  color          = "#CACED3"
++
++  settings = {
++    csp               = "worker-src 'self' blob:;"
++    log_level         = 4
++    use_custom_css    = false
++    use_custom_script = false
++    css_links         = []
++  }
++
++  graph_data = {
++    data = jsonencode({})
++    renderer = jsonencode({
++      "name" : "null"
++    })
++    elements = {
++      nodes = {
++        "n1aaaaaaaa" = {
++          data = {
++            id              = "n1aaaaaaaa"
++            node_type       = "CONNECTION"
++            connection_id   = pingone_davinci_connector_instance.pingcli__Http.id
++            connector_id    = "httpConnector"
++            name            = "Http"
++            label           = "Http"
++            capability_name = "createRandomString"
++            type            = "action"
++            status          = "configured"
++            properties = jsonencode({
++              "nodeTitle" : {
++                "value" : "Subflow step"
++              },
++              "message" : {
++                "value" : "Welcome to {{global.variables.companyName}}"
++              }
++            })
++          }
++          position = {
++            x = 100
++            y = 200
++          }
++          group      = "nodes"
++          removed    = false
++          selected   = false
++          selectable = true
++          locked     = false
++          grabbable  = true
++          pannable   = false
++          classes    = ""
++        }
++      }
++    }
++  }
++
++  depends_on = [
++    pingone_davinci_variable.pingcli__companyName_company,
++  ]
++}
++
+ resource "pingone_davinci_flow" "pingcli__Flow-0020-C" {
+   environment_id = var.pingone_environment_id
+   name           = "Flow C"
+--- a/definitions/pingone_davinci_flow_deploy.tf
++++ b/definitions/pingone_davinci_flow_deploy.tf
+@@ -16,6 +16,15 @@
+   }
+ }
+ 
++resource "pingone_davinci_flow_deploy" "pingcli__Flow-0020-B-0020-Subflow" {
++  environment_id = var.pingone_environment_id
++  flow_id        = pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.id
++
++  deploy_trigger_values = {
++    deployed_version = pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.current_version
++  }
++}
++
+ resource "pingone_davinci_flow_deploy" "pingcli__Flow-0020-C" {
+   environment_id = var.pingone_environment_id
+   flow_id        = pingone_davinci_flow.pingcli__Flow-0020-C.id
+--- a/definitions/pingone_davinci_flow_enable.tf
++++ b/definitions/pingone_davinci_flow_enable.tf
+@@ -10,6 +10,12 @@
+   enabled        = true
+ }
+ 
++resource "pingone_davinci_flow_enable" "pingcli__Flow-0020-B-0020-Subflow" {
++  environment_id = var.pingone_environment_id
++  flow_id        = pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow.id
++  enabled        = true
++}
++
+ resource "pingone_davinci_flow_enable" "pingcli__Flow-0020-C" {
+   environment_id = var.pingone_environment_id
+   flow_id        = pingone_davinci_flow.pingcli__Flow-0020-C.id
+--- a/dev.tfvars
++++ b/dev.tfvars
+@@ -10,12 +10,15 @@
+   "module.davinci.pingone_davinci_connector_instance.pingcli__PingOne"              = "c0000000000000000000000000000002"
+   "module.davinci.pingone_davinci_flow.pingcli__Flow-0020-A"                        = "f0000000000000000000000000000001"
+   "module.davinci.pingone_davinci_flow.pingcli__Flow-0020-B"                        = "f0000000000000000000000000000002"
++  "module.davinci.pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow"           = "f0000000000000000000000000000003"
+   "module.davinci.pingone_davinci_flow.pingcli__Flow-0020-C"                        = "f0000000000000000000000000000004"
+   "module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-A"                 = "f0000000000000000000000000000001"
+   "module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-B"                 = "f0000000000000000000000000000002"
++  "module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow"    = "f0000000000000000000000000000003"
+   "module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-C"                 = "f0000000000000000000000000000004"
+   "module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-A"                 = "f0000000000000000000000000000001"
+   "module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-B"                 = "f0000000000000000000000000000002"
++  "module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow"    = "f0000000000000000000000000000003"
+   "module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-C"                 = "f0000000000000000000000000000004"
+   "module.davinci.pingone_davinci_variable.pingcli__apiKey_company"                 = "d0000000000000000000000000000001"
+   "module.davinci.pingone_davinci_variable.pingcli__attempts_flowInstance"          = "d0000000000000000000000000000002"
+--- a/imports.tf
++++ b/imports.tf
+@@ -93,3 +93,21 @@
+   to       = module.davinci.pingone_davinci_variable.pingcli__companyName_company
+   id       = "${var.pingone_environment_id}/${each.value}"
+ }
++
++import {
++  for_each = { for k, v in var.import_ids : k => v if k == "module.davinci.pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow" }
++  to       = module.davinci.pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow
++  id       = "${var.pingone_environment_id}/${each.value}"
++}
++
++import {
++  for_each = { for k, v in var.import_ids : k => v if k == "module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow" }
++  to       = module.davinci.pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow
++  id       = "${var.pingone_environment_id}/${each.value}"
++}
++
++import {
++  for_each = { for k, v in var.import_ids : k => v if k == "module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow" }
++  to       = module.davinci.pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow
++  id       = "${var.pingone_environment_id}/${each.value}"
++}
