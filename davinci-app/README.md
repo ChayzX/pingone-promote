@@ -20,7 +20,7 @@ The flow does light work only. It writes a single file, `.pingone-promote/reques
 2. **A read-only DaVinci worker.** Add a **Worker** application in the env that will hold it.
    - Give it **only** the **DaVinci Admin Read Only** role, on each source env.
    - Note its client ID and secret. The secret goes into DaVinci only (see [Configure](#configure-after-import)).
-3. **The config repo in GitLab**, with the enterprise pipeline and the **request job** `pingone-promote:request`. The request job comes from the backend work on `terraform/v2-engine`. To try the app before that job exists, see [End-to-end test](#end-to-end-test-against-a-disposable-gitlab-project).
+3. **The config repo in GitLab**, with the enterprise pipeline and the **request job** `pingone-promote:request`. The request job is installed from `examples/gitlab-ci/pingone-promote.yml` (backend PR #96); see [§3](#3-gitlab-setup-config-repo).
 4. **A GitLab project access token** on the config repo, set up as follows:
    - role **Developer**;
    - scope **`api`**;
@@ -95,8 +95,8 @@ You can skip steps 2 and 3 by generating a private copy with your IDs filled in 
 | Variable | Default | Set to |
 | --- | --- | --- |
 | `ppWorkerEnvironmentId` | empty | the env that holds the worker app |
-| `ppSourceEnvs` | empty | the envs a person may pick as the source: `dev=<envId>`, or several separated by commas |
-| `ppRolloutEnvs` | `qa,stage,prod` | the rollout order of your pipeline |
+| `ppSourceEnvs` | empty | the envs a person may pick as the source: `dev=<envId>`, or several separated by commas. The names must be in the job's `PINGONE_PROMOTE_SOURCES`, and must not be in the rollout |
+| `ppRolloutEnvs` | `qa,stage,prod` | the rollout order of your pipeline. It must equal the job's `PINGONE_PROMOTE_ROLLOUT` |
 | `ppAllowedGroups` | empty | `Promote Operators` (comma-separated names), or `*` |
 | `ppApiOrigin` / `ppAuthOrigin` | `https://api.pingone.com` / `https://auth.pingone.com` | your region, for example `.eu`, `.ca` or `.asia` |
 | `ppGitlabApi` | `https://gitlab.com/api/v4` | your GitLab API base |
@@ -104,7 +104,7 @@ You can skip steps 2 and 3 by generating a private copy with your IDs filled in 
 | `ppDefaultBranch` | `main` | the protected default branch |
 | `ppApplyJobPattern` | `apply:{env}` | the name of each env's job in the post-merge pipeline |
 | `ppEnvironmentPattern` | `{env}` | the GitLab environment name for each env |
-| `ppMrLabel` | `pingone-promote` | the label the request job puts on its MRs |
+| `ppMrLabel` | `pingone-promote` | the label the request job puts on its MRs (`PINGONE_PROMOTE_MR_LABELS`) |
 | `ppRunTimeoutSeconds` / `ppPipelineAppearSeconds` | `600` / `120` | how long to wait for a request job / when to say "no pipeline yet" |
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout refresh interval / how long the automatic refresh runs |
 | `ppChildPipelines` | `yes` | `no` if your env jobs are never in child pipelines |
@@ -114,46 +114,46 @@ A missing or malformed setting stops the app with "PingOne Promote is not set up
 
 ## 3. GitLab setup (config repo)
 
-1. **Project access token.** Go to **Settings → Access tokens**, choose role *Developer* and scope `api`, and set an expiry. Store the token only in `ppGitlabToken`.
+The request job's side is specified in the backend's `docs/gitlab-ci-integration.md` and ADR 0017. The steps below are what the app depends on.
+
+1. **DaVinci's project access token.** Go to **Settings → Access tokens**, choose role *Developer* and scope `api`, and set an expiry. Store it only in `ppGitlabToken`.
    - The app uses it for exactly three kinds of call: `POST /repository/commits` (the request file), `GET` status reads, and `DELETE` of a `pingone-promote/<requestId>` branch.
    - The validator and the tests enforce this; see DESIGN.md §4.
-2. **Protect `main`.** Allow nobody to push, require MR approval, and do not let the token's bot approve.
-3. **Protect every rollout environment.** Only Maintainers or a release group may run its jobs, and **prod** needs an approval. The manual env jobs and these approvals are the safety boundary, not DaVinci.
-4. **PingOne write credentials.** Keep them as **protected, masked** CI variables, scoped to the protected environments. They never go into DaVinci. The request job's read-only export credentials are CI variables too.
-5. **The request job** must run on push to `pingone-promote/*` branches, as the `.pre` job `pingone-promote:request`, and upload `result.json` with `artifacts: when: always`. Request branches run whatever CI configuration they carry, so:
-   - keep the export credentials read-only;
-   - optionally protect `pingone-promote/*`, with push allowed only for the token's bot user and Maintainers.
-6. **Label.** Create the label `pingone-promote`, or whatever you set in `ppMrLabel`.
+2. **The job's own token.** This is a **different** project access token, also Developer with `api`, stored as the masked, protected CI variable `PINGONE_PROMOTE_GITLAB_TOKEN`. DaVinci never holds it.
+3. **The CI file.**
+   1. Copy the backend's `examples/gitlab-ci/pingone-promote.yml` to `.gitlab/pingone-promote.yml`.
+   2. Add `- local: '/.gitlab/pingone-promote.yml'` after the existing enterprise `include:`.
+   3. That file defines:
+      - `pingone-promote:request`: runs in `.pre` on push to `pingone-promote/*` when `.pingone-promote/request.json` exists. It uploads `result.json` `when: always`, and uses `resource_group: pingone-promote-requests`;
+      - `pingone-promote:check`: runs in MR pipelines.
+4. **CI/CD variables.** Set these as `docs/gitlab-ci-integration.md` lists them:
+   - `PINGONE_PROMOTE_WORKER_CLIENT_ID`, `PINGONE_PROMOTE_WORKER_CLIENT_SECRET` and `PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID`: the read-only worker for the source env;
+   - `PINGONE_PROMOTE_REGION_CODE`;
+   - `PINGONE_PROMOTE_GITLAB_TOKEN`;
+   - `PINGONE_PROMOTE_TERRAFORMER_SHA256`.
+   In the CI file, set `PINGONE_PROMOTE_SOURCES` and `PINGONE_PROMOTE_ROLLOUT` to the same env names as `ppSourceEnvs` and `ppRolloutEnvs`.
+5. **Protect `pingone-promote/*`** as a wildcard, with Developers and Maintainers allowed to push and merge (the backend's recommendation). Protected variables then reach the request job, and only project members can create request branches.
+   - On a protected branch, DaVinci's Developer token cannot **delete** it. Cancel then says so (HTTP 403), and a Maintainer deletes the branch.
+6. **Protect `main`.** Allow nobody to push, require MR approval, and do not let either token's bot approve.
+7. **Protect every rollout environment.** Only Maintainers or a release group may run its jobs, and **prod** needs an approval. The manual env jobs and these approvals are the safety boundary, not DaVinci.
+8. **Label.** Create `pingone-promote`, matching `ppMrLabel` and `PINGONE_PROMOTE_MR_LABELS`.
 
 ## End-to-end test against a disposable GitLab project
 
 Use a **private, disposable** project and a **sandbox** PingOne env. Never use production.
 
-**Before the backend job exists**, a stub request job tests sign-in, search, preview and every waiting state. Submit needs the real job, because the stub cannot commit or open an MR. GitLab needs a job outside `.pre`, so the stub adds a no-op job:
+**Setup.**
+1. Copy a small terraformer-shaped config into the project.
+2. Install the request job as in [§3](#3-gitlab-setup-config-repo): `.gitlab/pingone-promote.yml`, the `local:` include and the CI/CD variables.
+3. Add stub env jobs. Each one (`apply:qa`, `apply:stage`, `apply:prod`) should be `when: manual`, carry `environment: { name: <env> }`, and have `script: [echo applied]`.
+4. Protect `prod` with one required approval.
 
-```yaml
-stages: [check]
-pingone-promote:request:
-  stage: .pre
-  rules: [{ if: '$CI_COMMIT_BRANCH =~ /^pingone-promote\//' }]
-  image: alpine:3.20
-  script:
-    - apk add --no-cache jq >/dev/null
-    - jq -e '.requestVersion == 1' .pingone-promote/request.json
-    - jq '{status: "ok", changes: [{address: "pingone_davinci_flow.example", action: "updated", role: "selected"}], requiredSecrets: [], blockers: {}}' .pingone-promote/request.json > result.json
-  artifacts: { when: always, paths: [result.json], expire_in: 1 week }
-request-noop:
-  stage: check
-  rules: [{ if: '$CI_COMMIT_BRANCH =~ /^pingone-promote\//' }]
-  script: [echo ok]
-```
-
-**With the backend job.** Copy a small terraformer-shaped config into the project, with the request job and stub env jobs. Each env job (`apply:qa`, `apply:stage`, `apply:prod`) should be `when: manual`, carry `environment: { name: <env> }`, and have `script: [echo applied]`. Protect `prod` with one required approval. Then:
+The full operator test plan, with the exact names, is `docs/acceptance/live-acceptance.md`. A short version:
 
 1. **Search.** Open the launch link and sign in. Search for a name that matches nothing, then one that matches two flows, then one exact flow ID. The two-flow search must list both, and the app must not pick one.
-2. **Preview.** Preview with the defaults. The commit appears on `pingone-promote/<requestId>`, the `.pre` job runs, and Predicted changes, Readiness and Secrets appear. Nothing else is committed.
+2. **Preview.** Preview with the defaults. The commit appears on `pingone-promote/<requestId>`, `pingone-promote:request` runs in `.pre`, and Predicted changes, Readiness and Secrets appear. `result.json` has `status: previewed` or `blocked`. Nothing else is committed.
 3. **Readiness.** Fill in the env values, tick each secret, choose Use source for one differing dependency, and preview again. The same branch gets an update commit (`last_commit_id`).
-4. **Submit.** Submit (mode MR). The job commits the change, deletes `request.json`, and opens a labelled MR. The app shows **Open merge request**.
+4. **Submit.** Submit (mode MR). The job makes one commit that adds the change and deletes `request.json`, and opens a labelled MR (`status: submitted`). The app shows **Open merge request**. Submitting the same request again shows "already submitted" and the same MR.
 5. **Rollout.** Choose **Watch the rollout**, then merge the MR in GitLab. qa shows **Needs approval** (a manual job) until you run it, then **Live**. prod shows **Needs approval (n of m approvals)**. Make one env job fail (`exit 1`) and check that it shows **Failed**.
 6. **Branch mode.** Repeat steps 2 to 4 with **Branch only**. You get a branch link and no MR. The rollout shows "branch only" until you open an MR by hand.
 7. **Cancel.** Preview a new request and choose **Cancel request**: the branch is deleted. Push a commit to another request branch by hand and try again: the app refuses.

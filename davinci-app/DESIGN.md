@@ -109,7 +109,11 @@ Each screen is a form with two fields:
   - a new dependency is added;
   - a dependency that differs defaults to **Keep Git version**.
 - Env values are asked for every rollout env except the source. A value that looks like a credential is refused with "Secrets come from Vault".
-- The secret mapping sends names only (`varName`, `field`), never values. The Vault tick is an operator checklist, required before Submit.
+- Secrets: each required secret shows its Terraform variable, Vault field and Vault path, and whether `customer_secrets.yml` already declares it.
+  - An optional input maps it to an existing `customer_secrets.yml` name (`secretMappings`: names only, never values).
+  - For a secret this request adds (`declared: false`), the Vault tick is an operator checklist, required before Submit.
+- Env values are text, or JSON when they start with `[` or `{`, for lists such as redirect URIs.
+- The app applies the job's request rules before any commit (`contract.validateRequest`). Examples: a one-line title of at most 255 characters, a commit message of at most 2000 characters, env values only for the source or rollout envs, and no secret-looking values.
 
 ### 1.3 Working (Preview running / Submit running)
 ```
@@ -319,11 +323,11 @@ What the app itself guarantees (enforced by `check_app.py` and `test_app.js`):
 
 Residual risks, and what the operator should do about them:
 - **A Developer `api` token can do more than the app does.** Keep it in a project, not a group, and give it the shortest practical expiry. Protect every rollout environment, and let only Maintainers or a release group run its jobs. Require MR approval on `main`.
-- **Request branches are unprotected, and their pipelines run whatever `.gitlab-ci.yml` the branch has.** Anyone who can push to them can change what the `.pre` job runs.
-  - Scope the request job's read-only PingOne export credentials so they are as harmless as possible.
-  - Optionally protect `pingone-promote/*`, allowing push only for the project token's bot user and Maintainers.
-  - Make protected variables available only to protected refs.
-- `requestedBy` is asserted by DaVinci after SSO. GitLab sees the token's bot as the author. Trust in the field rests on the token living only in DaVinci. See ask 4 for a signed form.
+- **Request branch pipelines run whatever `.gitlab-ci.yml` the branch has.** The backend recommends (ADR 0017) protecting the wildcard `pingone-promote/*` with Developers and Maintainers allowed to push and merge. That makes the protected CI variables available to the request job, and lets only project members create request branches.
+  - Keep the request job's PingOne worker read-only. The job only reads the source env.
+  - The job's own token (`PINGONE_PROMOTE_GITLAB_TOKEN`) is a second project token, masked and protected. It is never DaVinci's token.
+  - On protected request branches, a Developer token cannot delete a branch. Cancel then explains this (HTTP 403) and asks for a Maintainer.
+- `requestedBy` is asserted by DaVinci after SSO. GitLab sees the token's bot as the author. Trust in the field rests on the token living only in DaVinci. The backend kept it a plain username (ask 4).
 
 ### DaVinci variables and connections
 
@@ -360,36 +364,59 @@ Residual risks, and what the operator should do about them:
 
 The export carries placeholder connection IDs, as the feasibility flow does. Point them at your connections after import, or generate a private copy with `--values`.
 
-## 5. The contract (provisional, in `fn/_contract.js` only)
+## 5. The contract (final: requestVersion 1, resultVersion 1, in `fn/_contract.js` only)
 
-- **Branch:** `pingone-promote/<requestId>`, where `requestId` is `YYYYMMDD-HHMMSS-xxxxxx` (UTC and 6 random base-36 characters). It is safe in branch names and carries no tenant data.
-- **File:** `.pingone-promote/request.json`. It has exactly these fields, in this order:
-  - `requestVersion: 1`, `requestId`, `requestedBy`, `source`;
-  - `flows: [{id, name}]`;
-  - `dependencyChoices: {<address>: "update"|"keep"}`;
-  - `envValues: {<env>: {<var>: <value>}}`;
-  - `secretMappings: {<key>: {varName, field}}`;
-  - `mode: "mr"|"branch"`;
-  - `branchName` (the request branch);
-  - `commitMessage`, `title`, `description`, `dryRun`.
+Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-integration.md` and ADR 0017 (PR #96).
+
+- **Branch:** `pingone-promote/<requestId>`.
+  - `requestId` must match `^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$`. The app makes `YYYYMMDD-HHMMSS-xxxxxx` (UTC and 6 random base-36 characters), which is safe in branch names and carries no tenant data.
+  - `branchName` is always sent, and always equals the branch.
+- **File:** `.pingone-promote/request.json`. The job refuses unknown fields and anything over 256 KiB.
+  - Always sent: `requestVersion: 1`, `requestId`, `requestedBy` (one line, at most 128 characters), `source`, `flows`, `mode: "mr"|"branch"`, `branchName` and `dryRun`.
+  - `source` must not be a rollout env. The settings check refuses a `ppSourceEnvs` name that is also in `ppRolloutEnvs`.
+  - `flows` holds at most 20 entries of `{id, name}`. The `id` is sent only when it is a DaVinci ID (32 hex or a UUID); the name is checked by the job.
+  - Sent when set:
+    - `dependencyChoices: {<address>: "update"|"keep"}` (the address must match `^pingone_[a-z0-9_]+\.…`);
+    - `envValues: {<env>: {<root variable>: <JSON value>}}`, for the source or rollout envs only, never `import_ids`, never secret-looking;
+    - `secretMappings: {<terraformer secret var>: <customer_secrets.yml name>}`;
+    - `commitMessage` (at most 2000 characters), `title` (one line, at most 255) and `description` (at most 64 KiB).
+  - Supported by the contract but not yet on a screen: `inlineValues` and `remove` (de-manage).
+  - Not sent: `applications`, `flowPolicies`, `connectorEnvLocal` and `baseCommit`. They are optional in the job and can be added in `contract.buildRequest` without other changes.
+  - `contract.validateRequest` applies all of these rules before any commit, using the job's field paths.
 - **Preview:**
   - the first Preview runs `POST /repository/commits` with `{branch, start_branch: <default>, commit_message, actions: [{action: "create", file_path, encoding: "base64", content}]}`;
   - later Previews and the Submit send the same call with `action: "update"` and `last_commit_id: <the app's last request commit>`.
-- **Submit:** the same as a later Preview, with `dryRun: false`.
-- **Commit message:** `pingone-promote: preview|submit request <id>`, followed by the trailers `Requested-by: <username>` and `Request-id: <id>`.
+- **Submit:** the same as a later Preview, with `dryRun: false`. The job then makes ONE commit that deletes `request.json`, so the next pipeline skips the job.
+- **Commit message:** `pingone-promote: preview|submit request <id>`, followed by the trailers `Requested-by: <username>` and `Request-id: <id>`. The app never writes `PingOne-Promote-Request:`; that trailer marks the job's own commit, for idempotency.
 - **Finding the job:**
   1. `GET /pipelines?ref=<branch>&sha=<commit>`;
   2. `GET /pipelines/:id/jobs`;
-  3. the job named `pingone-promote:request` (the highest id, if retried);
-  4. when that job is `success`, `failed` or `canceled`, `GET /jobs/:id/artifacts/result.json`.
-- **`result.json`:**
-  - `status`;
-  - `mrUrl` or `branchUrl`;
-  - `changes: [{address, action: added|updated|kept_differs|unchanged}]`;
-  - `requiredSecrets`;
-  - `blockers: {<env>: [...]}`;
-  - `error: {code: conflict|preflight|partial|blocked, message}`.
-  - The app also accepts and uses `diffUrl`, `changes[].role` and structured blockers `{code, var, message}`; see the asks in section 11. Unknown actions or codes stay visible as problems; they are never dropped.
+  3. the job named `pingone-promote:request` in `.pre` of the parent pipeline (the highest id, if retried). It is in `resource_group: pingone-promote-requests`, so `waiting_for_resource` reads as "waiting for another request to finish";
+  4. when that job is `success`, `failed` or `canceled`, `GET /jobs/:id/artifacts/result.json`. The job uploads it `when: always`, and exits 1 for `blocked` and `failed`.
+- **`result.json` (resultVersion 1):**
+  - `status`:
+    - `previewed`: a Preview;
+    - `submitted`: done;
+    - `already_submitted`: done, showing the existing commit and MR;
+    - `no_changes`: done; the screen says "No changes", with no rollout to watch;
+    - `blocked`: shows Readiness;
+    - `failed`: shows the typed error.
+  - Links: `mrUrl`, `mrIid`, `branchUrl`, and `diffUrl` (the commit when one was made, otherwise the compare view).
+  - `changes[]`:
+    - `{address, role: selected|dependency, action, status, file?, from?, reason?}`;
+    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged`, `removed` (no longer managed, not destroyed) or `moved` (shown with `from`);
+    - `status` is one of `new`, `changed-in-source`, `matches`, `git-newer` or `changed-in-both`, and has its own column.
+    - Dependencies that differ, and any address `changed-in-both`, get Keep Git version / Use source.
+  - `summary`: counts per action, used for the summary line.
+  - `requiredSecrets[]`: `{key, varName, field, declared, vault}`. `key` is the `secretMappings` key.
+  - `blockers`: keyed by env or `_request` (shown as "Whole request"). Each item is `{code, var, address, message}`. A `missing_value` with a `var` becomes an inline input; every other code is explained in words (`contract.BLOCKER_TEXT`).
+  - `error`: `{code: conflict|preflight|partial|blocked, type: validation|export|merge|gitlab|internal, message, retryable, field?, candidates?}`.
+    - `candidates` (an ambiguous name) are listed.
+    - `field` is pointed out next to that input, without blocking it.
+    - A `retryable` error lets the same Submit run again without an edit.
+  - `warnings` are shown, redacted.
+  - `diff` (up to 1 MiB) is dropped on read and never kept in state; the screens link to `diffUrl`.
+  - An unknown status, action or code stays visible as a problem. It is never dropped.
 - **Status:**
   1. `GET /merge_requests/:iid`, or by `source_branch` in branch mode;
   2. `merge_commit_sha` (or `squash_commit_sha`);
@@ -417,7 +444,7 @@ REST calls per browser request (one screen submission). The "measured" column is
 | Search again in the same env | 0 | 0 | — |
 | Use this flow, Edit, Back, Pause | 0 | 0 | — |
 | Preview / Submit | 1 (the commit) | 1 | request.json, 1 to 5 KB |
-| Working, automatic check | ≤ 3: pipelines by ref and sha → jobs → result.json | 2 | jobs page ≤ 100 jobs; result.json |
+| Working, automatic check | ≤ 3: pipelines by ref and sha → jobs → result.json | 2 | jobs page ≤ 100 jobs; result.json, **up to about 1 MiB** because of its `diff` (dropped on read, never kept in state) |
 | Check GitLab | ≤ 3 (file → branch → MRs), then the working check | 3 | small |
 | Cancel | 2 (branch, then delete) | 2 | small |
 | Requests | 2 (MRs by label, request branches) | 2 | ≤ 20 rows each |
@@ -465,7 +492,14 @@ DaVinci limits:
 | **conflict** (typed, or a GitLab 400 on `last_commit_id` / branch exists) | "Submit failed: GitLab changed while this request was open." | edit (re-enables Submit), Preview |
 | **preflight** | "Submit failed: The request did not pass the checks", with the job message | edit, Preview |
 | **partial** | "The request was only partly written", with a branch link | edit to submit again, or open the branch; Cancel is refused because the branch has moved on |
-| **blocked** | "Readiness: some environments are missing values", with the readiness rows | fill them in |
+| **blocked** | "Readiness: some environments are missing values", with the readiness rows. `_request` blockers show as "Whole request" | fill them in |
+| Ambiguous flow name (`preflight` with `candidates`) | the candidates by name and address | search again and choose one |
+| A field the job refused (`error.field`) | the message next to that input, "GitLab: …" | edit it |
+| `retryable: true` | "GitLab says this may work if you try again"; Submit stays on for the same options | Submit again |
+| `already_submitted` | "This request was already submitted. Nothing new was written", with the existing MR or branch | Watch the rollout |
+| `no_changes` (on submit) | "No changes: … The job wrote nothing and opened no merge request." | New request |
+| The app's own checks (title, commit message, env values, secret mappings) | the error summary and the field, before any commit | edit (the buttons turn back on) |
+| Cancel on a protected request branch (HTTP 403) | "request branches are protected here. Ask a Maintainer to delete it" | GitLab |
 | Unknown outcome | "Outcome unknown … Preview and Submit stay off until Check GitLab finds out." | Check GitLab |
 | Branch deleted elsewhere | "The request branch no longer exists. Start a new request." | New request |
 | Requests list empty | "No merge requests with the pingone-promote label yet." | — |
@@ -499,18 +533,27 @@ The **#57 rule** is in section 2.2:
 - Used: Source env, Rollout, Shared definitions, Readiness, Request, Predicted changes, Keep Git version / Use source, Live / Needs approval / Failed / Waiting.
 - Never on a screen: the words the v2 plan bans (the `BANNED` list in `test_app.js`), and "plan" only in "pipeline plan job". `test_app.js` checks the visible text of every screen.
 
-## 11. Contract asks for the backend engineer
-1. **`changes[].role: "selected"|"dependency"`.** The app has to know which address is the chosen flow, which never gets a keep/update choice (#93). Without the field, every differing row gets a choice.
-2. **Structured blockers `{code, var, message}`.** With a `var`, the readiness row becomes an inline input. Plain strings are shown, but cannot be fixed inline.
-3. **`requiredSecrets` as `[{key, varName, field}]`.** The app's suggested names and Vault fields come from here. Please also say whether `secretMappings` keys are these `key`s.
-4. **`requestedBy`.** The app sends the PingOne username as a string. It also writes `Requested-by:` and `Request-id:` trailers in the commit message, and expects the job to copy both lines into the MR description, which the Requests list reads. If you want it structured (`{id, username}`), or signed, tell us. A signed form needs a shared secret in DaVinci, which the trust model currently avoids.
-5. **`diffUrl`** (or a compare URL) in `result.json`, for "Review the change in GitLab".
-6. **Always upload `result.json`** (`artifacts: when: always`). On a typed error (other than `partial`), commit nothing and **leave `request.json` in place**, so that the next Submit can update it with `last_commit_id`.
-7. **MR label.** Label the MR `pingone-promote` (configurable as `ppMrLabel`); the Requests list filters on it.
-8. **`commitMessage`.** The update list in the change message omitted `commitMessage`, but also said the schema is unchanged. The app sends it; confirm the job uses it for the generated commit.
-9. **Branch mode.** When the job leaves the branch, is `request.json` deleted there too? Check GitLab treats "branch exists, file gone" as "the job took it". Please keep that true.
-10. **Idempotency.** If the same `requestId` with `dryRun: false` is pushed twice (for example a retried commit), the second run should report the existing MR rather than open another.
-11. **Job name.** It is `pingone-promote:request`, in the `.pre` stage of the branch push pipeline, and the app depends on that. If the job runs in a child pipeline, the app needs the parent's bridge to point to it. Today only status reads look at bridges.
+## 11. Contract asks for the backend engineer: resolved
+
+The backend (PR #96) accepted all eleven asks. The app now uses them as follows:
+
+| # | Ask | Resolution in the final contract | Used by the app |
+| --- | --- | --- | --- |
+| 1 | `changes[].role` | `role: selected|dependency` on every change | the selected flow never gets a keep/update choice |
+| 2 | Structured blockers | `{code, var, address, message}`, keyed by env or `_request`, with a fixed code list | `missing_value` becomes an inline input; other codes are explained |
+| 3 | `requiredSecrets` shape | `{key, varName, field, declared, vault}`; `key` is the `secretMappings` key, and `secretMappings` is a name-to-name map | mapping input; the Vault tick only for `declared: false` |
+| 4 | `requestedBy` | stays a username string (at most 128 characters, one line); the job writes `Requested-by:` and `Request-id:` trailers and repeats them in the MR description | Requests list reads both from the MR description |
+| 5 | `diffUrl` | the commit page when the job committed, otherwise the compare view | "Review the change / commit in GitLab" |
+| 6 | Always upload `result.json`; leave `request.json` on a typed error | `artifacts: when: always`; on any typed error except `partial`, nothing is committed and the request file stays | the next Submit updates it with `last_commit_id` |
+| 7 | MR label | `pingone-promote` by default (`PINGONE_PROMOTE_MR_LABELS`) | `ppMrLabel` must match |
+| 8 | `commitMessage` | supported, at most 2000 characters; default `PingOne: <flow names> from <source>`; trailers are appended | sent from the options screen |
+| 9 | Branch mode deletes `request.json` | the one job commit always deletes it, in both modes | Check GitLab's "branch exists, file gone" means the job took the request |
+| 10 | Idempotency | `PingOne-Promote-Request:` trailer; a repeat reports `already_submitted` with the existing commit and MR | shown as done, with the existing link |
+| 11 | Job in the parent pipeline | `.pre`, parent pipeline, push rules plus `exists: [.pingone-promote/request.json]` | the job-finding path needs no bridges |
+
+Open points, none of them blocking:
+- `inlineValues` ("same value in every env") and `remove` (de-manage) are in the contract but have no screen yet.
+- `applications`, `flowPolicies`, `connectorEnvLocal` and `baseCommit` are not sent.
 
 ## 12. Assumptions to verify in a live tenant
 1. A `startUiSubFlow` node returns the subflow's outputs as `{{local.<node>.payload.output.<field>}}`, and the sign-in subflow can return `userId`, `username`, `name` and `groups`.
@@ -520,7 +563,7 @@ The **#57 rule** is in section 2.2:
 3. Once the script removes `disabled` from Submit, DaVinci submits it like any other button.
 4. DaVinci does not resolve `{{…}}` inside substituted values. If it does, the brace escaping already prevents it on screens, and the commit body carries user text only as base64.
 5. The REST connector sends `DELETE`. It returns `rawResponse.statusCode` on 204 with an empty body. A non-2xx response takes the false branch, with the status code still set; the feasibility flow found this for GET and POST.
-6. `GET /jobs/:id/artifacts/result.json` with a `PRIVATE-TOKEN` returns the JSON directly. If your GitLab redirects artifact downloads to object storage, the REST node must follow the redirect, or the job must also publish the result where a GET can read it (ask 6).
+6. `GET /jobs/:id/artifacts/result.json` with a `PRIVATE-TOKEN` returns the JSON directly. If your GitLab redirects artifact downloads to object storage, the REST node must follow the redirect. Otherwise the fallback is the job log's last line, `PINGONE_PROMOTE_RESULT {...}` (compact: status, links, summary, blocked envs, error), read with `GET /jobs/:id/trace`. The app does not do this today.
 7. The project token, at Developer level with `api` scope, can do all of these:
    - create a branch through the Commits API (`start_branch`);
    - read pipelines, jobs, artifacts, environments and deployments;
