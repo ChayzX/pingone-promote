@@ -210,16 +210,6 @@ screens.options = () => {
   const depBlock = '<h2>Shared definitions</h2>' + (!r ? '<p class="pp-hint">Preview to list the dependencies that differ from Git. A dependency that differs keeps the Git version unless you choose otherwise, because other flows use it too.</p>'
     : (!deps.length ? '<p class="pp-empty">No dependency differs from Git.</p>' : deps.map((c) => radios(['deps', c.address], c.address + (c.status === 'changed-in-both' ? ' (changed in both Git and the source)' : ''), o.deps[c.address] || (c.action === 'kept_differs' ? 'keep' : 'update'),
       [['keep', 'Keep Git version'], ['update', 'Use source']])).join('')));
-  const offered = contract.removeChoices(r, o);
-  const confirmId = uid('c');
-  const stopBlock = '<h2>Stop managing</h2>' + (!r ? '<p class="pp-hint">Preview to list the shared definitions Git already manages. You can then stop managing one without destroying it in PingOne.</p>'
-    : (!offered.length ? '<p class="pp-empty">No shared definition in this export can be stopped. The selected flow never can.</p>'
-      : '<p class="pp-hint">These are managed in Git. Stopping removes the definition from Git; the live resource stays in PingOne and nothing is destroyed. The selected flow is never offered.</p>' +
-        offered.map((a) => { const id = uid('c'); return '<label class="pp-check" for="' + id + '"><input type="checkbox" id="' + id + '"' + attr(['remove', a]) + (o.remove.indexOf(a) >= 0 ? ' checked' : '') +
-          ' /> <code>' + e(a) + '</code> ' + e(contract.STOP_MANAGING) + '</label>'; }).join('') +
-        '<div class="pp-field' + (errFor('remove') ? ' has-err' : '') + '">' + (errFor('remove') ? '<p class="pp-err" id="' + confirmId + '-err">' + e(errFor('remove')) + '</p>' : '') +
-        '<label class="pp-check" for="' + confirmId + '"><input type="checkbox" id="' + confirmId + '"' + attr(['removeConfirm']) + (o.removeConfirmed ? ' checked' : '') + (errFor('remove') ? ' aria-invalid="true" aria-describedby="' + confirmId + '-err"' : '') +
-        ' /> I confirm: Git stops managing every resource ticked above. They keep running in PingOne.</label></div>'));
   const extrasBlock = cfg.pathApplications ? '<h2>Applications and flow policies</h2>' +
     (o.applications.length || o.flowPolicies.length ? '<ul class="pp-list">' + o.applications.map((x) => '<li>Application: ' + e(x.name) + '</li>').join('') +
       o.flowPolicies.map((x) => '<li>Flow policy: ' + e(x.name) + (x.app ? ' <span class="pp-hint">(application ' + e(x.app) + ')</span>' : '') + '</li>').join('') + '</ul>' : '<p class="pp-hint">None. Optional.</p>') +
@@ -230,7 +220,7 @@ screens.options = () => {
     text(['title'], 'Title', o.title, { err: errFor('title'), hint: 'One line, at most 255 characters.' }) +
     area(['commitMessage'], 'Commit message', o.commitMessage, 'At most 2000 characters. The job adds the Requested-by and Request-id lines.', errFor('commitMessage')) +
     area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.', errFor('description')) +
-    extrasBlock + depBlock + stopBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
+    extrasBlock + depBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
 };
 // Applications and flow policies, found by name in the source env like flows are: no guessing, every match listed.
 screens.extras = () => {

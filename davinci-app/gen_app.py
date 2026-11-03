@@ -40,38 +40,28 @@ CONN = {
 }
 CONNECTION_KEYS = {"httpConnectionId": "http", "functionsConnectionId": "fn", "variablesConnectionId": "var", "flowConnectionId": "flow"}
 
-# Flow variables (Flow -> Variables), named pp<Setting>. IDs and the group list are empty on purpose.
-SETTINGS = {
-    "apiOrigin": "https://api.pingone.com",
-    "authOrigin": "https://auth.pingone.com",
-    "workerEnvironmentId": "",
-    "sourceEnvs": "",
-    "pathFlows": "/v1/environments/{envId}/flows",
-    "flowsListQuery": "attributes=id,name",
-    "rolloutEnvs": "qa,stage,prod",
-    "gitlabApi": "https://gitlab.com/api/v4",
-    "gitlabProjectId": "",
-    "defaultBranch": "main",
-    "applyJobPattern": "apply:{env}",
-    "environmentPattern": "{env}",
-    "mrLabel": "pingone-promote",
-    "allowedGroups": "",
-    "runTimeoutSeconds": "600",
-    "pipelineAppearSeconds": "120",
-    "statusRefreshSeconds": "30",
-    "statusMaxMinutes": "30",
-    "childPipelines": "yes",
-    # Assumed paths (DESIGN.md section 12); an empty ppPathApplications switches the "Add an application or flow policy" step off.
-    "pathApplications": "/v1/environments/{envId}/davinciApplications",
-    "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies",
-}
+# Settings are COMPANY variables (DaVinci -> Variables), named pp<Setting>: a re-import keeps their values, a flow variable would be reset.
+# They are declared WITHOUT values (a private copy may preset some from values.json), so importing can never overwrite what the operator
+# set. The defaults live in fn/_lib.js (lib.DEFAULTS): an empty variable means its default.
+def _lib_defaults():
+    m = re.search(r"^lib\.DEFAULTS = (\{.*\});$", (FN / "_lib.js").read_text(encoding="utf-8"), re.M)
+    return json.loads(m.group(1))
+
+
+DEFAULTS = _lib_defaults()
+SETTINGS = {k: DEFAULTS.get(k, "") for k in (
+    "apiOrigin", "authOrigin", "workerEnvironmentId", "sourceEnvs", "pathFlows", "flowsListQuery", "rolloutEnvs", "gitlabApi", "gitlabProjectId",
+    "defaultBranch", "applyJobPattern", "environmentPattern", "mrLabel", "allowedGroups", "runTimeoutSeconds", "pipelineAppearSeconds",
+    "statusRefreshSeconds", "statusMaxMinutes", "childPipelines", "pathApplications", "pathFlowPolicies")}
+assert set(DEFAULTS) <= set(SETTINGS), "lib.DEFAULTS names a setting the export does not declare"
 EMPTY_SETTINGS = ("workerEnvironmentId", "sourceEnvs", "gitlabProjectId", "allowedGroups")
 PRESETTABLE = {k for k in SETTINGS if k not in EMPTY_SETTINGS}
 COMPANY_SECRETS = {
     "ppWorkerBasicAuth": "PingOne Promote: read-only DaVinci worker, base64(clientId:clientSecret). Flow search only.",
     "ppGitlabToken": "PingOne Promote: GitLab project access token on the config repo (Developer, api scope).",
 }
-# Per-run state lives in flow-instance variables, so concurrent users never share it.
+# Per-run state lives in flow-instance variables, so concurrent users never share it. NEVER make one of these a company variable:
+# company variables are shared by every user and session (check_app.py enforces it).
 INSTANCE_VARS = {"ppState": "object", "ppFlows": "object", "ppUrl": "string", "ppBody": "string", "ppLastFailed": "string"}
 # Identity fields the sign-in subflow returns (DESIGN.md, "Sign-in subflow").
 IDENTITY = ("userId", "username", "name", "groups")
@@ -112,10 +102,6 @@ def slate(*parts):
             children.extend([{"text": ""}, {"type": "link", "src": src, "url": label, "data": "{{" + ref + "}}",
                                             "tooltip": "{{" + ref + "}}", "children": [{"text": label}]}, {"text": ""}])
     return json.dumps([{"children": children}], indent=2)
-
-
-def fv(name):
-    return ("flow", f"global.flow.variables.{name}", name)
 
 
 def iv(name):
@@ -242,9 +228,9 @@ class Flow:
         variables = []
         for name in sorted(SETTINGS):
             vname = setting_var(name)
-            variables.append({"context": "flow", "fields": {"type": "string", "displayName": vname, "value": VALUES_SETTINGS.get(name, SETTINGS[name]),
-                                                            "mutable": True, "min": 0, "max": 2000},
-                              "flowId": FLOW_ID, "type": "property", "visibility": "private", "name": f"{vname}##SK##flow##SK##{FLOW_ID}", "companyId": COMPANY})
+            variables.append({"context": "company", "fields": {"type": "string", "displayName": vname, "value": VALUES_SETTINGS.get(name, ""),
+                                                               "mutable": True, "min": 0, "max": 2000},
+                              "type": "property", "visibility": "private", "name": f"{vname}##SK##company", "companyId": COMPANY})
         for name, display in COMPANY_SECRETS.items():
             variables.append({"context": "company", "fields": {"type": "secret", "displayName": display, "value": "", "mutable": True, "min": 0, "max": 2000},
                               "type": "property", "visibility": "private", "name": f"{name}##SK##company", "companyId": COMPANY})
@@ -407,7 +393,7 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
 def build():
     f = Flow()
     sub = f.subflow("Sign in with PingOne SSO (your sign-in subflow)")
-    settings_in = [(n, "string", fv(setting_var(n))) for n in SETTINGS]
+    settings_in = [(n, "string", cv(setting_var(n))) for n in SETTINGS]
     signin = f.fn("Check sign-in and settings", "signin", [(k, "string", out(sub, k)) for k in IDENTITY] + settings_in, dict(STD_OUT, html="string"))
     f.link(sub, signin)
     stop = f.page("Cannot continue", stop_html(signin), [])

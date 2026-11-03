@@ -62,5 +62,5 @@ the source overlay's `import_ids`.
 ## Consequences
 
 - Adopting an environment is a values-only change to its overlay.
-- De-managing an address removes its import block and its `import_ids`
-  keys (ADR 0015).
+- A relabelled address moves its import block and its `import_ids` key
+  (`moved {}`, ADR 0015).

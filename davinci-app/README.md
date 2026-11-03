@@ -2,7 +2,7 @@
 
 **PingOne Promote - request app** is a DaVinci flow. People sign in to it with PingOne SSO. In the flow they:
 1. pick a **source env** and a **main flow**;
-2. preview the change, optionally with applications and flow policies, values that are the same in every env, and resources to stop managing;
+2. preview the change, optionally with applications and flow policies and values that are the same in every env;
 3. submit it as a request to the config repo in GitLab;
 4. watch its **rollout** (qa → stage → prod).
 
@@ -83,16 +83,18 @@ You can skip steps 2 and 3 by generating a private copy with your IDs filled in 
 
 ## Configure after import
 
-**Company variables** (**DaVinci → Variables**). The import creates both as empty **secret** variables. The flow never shows them, and never passes them to a function or a screen.
+**Company variables (set once; kept across re-imports)** (**DaVinci → Variables**). A re-import keeps the values of company variables and resets flow variables, so every setting is a company variable. The import declares them all **without values**; the app uses the default shown below while a variable is empty, so you only set what you need. The two secrets are secret variables: the flow never shows them and never passes them to a function or a screen.
+
+Secrets (always set these):
 
 | Variable | Value |
 | --- | --- |
 | `ppWorkerBasicAuth` | `base64(clientId:clientSecret)` of the read-only worker, for example `printf '%s:%s' "$ID" "$SECRET" \| base64` |
 | `ppGitlabToken` | The GitLab project access token (Developer, `api`) |
 
-**Flow variables** (the flow's **Variables** panel). Re-importing resets them.
+Settings (empty means the default; a variable with no default must be set):
 
-| Variable | Default | Set to |
+| Variable | Default when empty | Set to |
 | --- | --- | --- |
 | `ppWorkerEnvironmentId` | empty | the env that holds the worker app |
 | `ppSourceEnvs` | empty | the envs a person may pick as the source: `dev=<envId>`, or several separated by commas. The names must be in the job's `PINGONE_PROMOTE_SOURCES`, and must not be in the rollout |
@@ -109,7 +111,11 @@ You can skip steps 2 and 3 by generating a private copy with your IDs filled in 
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout refresh interval / how long the automatic refresh runs |
 | `ppChildPipelines` | `yes` | `no` if your env jobs are never in child pipelines |
 | `ppPathFlows` / `ppFlowsListQuery` | `/v1/environments/{envId}/flows` / `attributes=id,name` | change only if the flow-list call turns out to differ |
-| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list, for the optional "Add an application or flow policy" step. These paths are assumptions (DESIGN.md §12): change them if they differ, or leave `ppPathApplications` empty to switch the step off. They use only `{envId}` and `{appId}` |
+| `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list, for the optional "Add an application or flow policy" step. These paths are assumptions (DESIGN.md §12): change them if they differ, or set `ppPathApplications` to `none` to switch the step off. They use only `{envId}` and `{appId}` |
+
+Runtime state (`ppState`, `ppFlows`, `ppUrl`, `ppBody`, `ppLastFailed`) is internal: flow-instance variables, one set per session, and they need no setup. Never make one of them a company variable; company variables are shared by every user.
+
+To switch an optional value off, set it to `none` (`ppPathApplications`, `ppPathFlowPolicies`, `ppFlowsListQuery`); empty means the default.
 
 A missing or malformed setting stops the app with "PingOne Promote is not set up yet". The screen lists the setting **names** and what is wrong with each, never the values.
 
@@ -158,7 +164,7 @@ The full operator test plan, with the exact names, is `docs/acceptance/live-acce
 5. **Rollout.** Choose **Watch the rollout**, then merge the MR in GitLab. qa shows **Needs approval** (a manual job) until you run it, then **Live**. prod shows **Needs approval (n of m approvals)**. Make one env job fail (`exit 1`) and check that it shows **Failed**.
 6. **Branch mode.** Repeat steps 2 to 4 with **Branch only**. You get a branch link and no MR. The rollout shows "branch only" until you open an MR by hand.
 7. **Cancel.** Preview a new request and choose **Cancel request**: the branch is deleted. Push a commit to another request branch by hand and try again: the app refuses.
-8. **Options.** After a preview that asks for an env value, tick *Same in all environments* and preview again: `request.json` has `inlineValues` and no per-env value for it. Tick *Stop managing (keeps it in PingOne)* on a dependency row plus the confirm box: the result shows that row as stopped, and the resource is still in PingOne. Add an application and one of its flow policies by name.
+8. **Options.** After a preview that asks for an env value, tick *Same in all environments* and preview again: `request.json` has `inlineValues` and no per-env value for it. Add an application and one of its flow policies by name.
 9. **Result download fallback.** If your GitLab redirects artifact downloads, the screens show "Summary only" (read from the job log's last line) instead of the change list.
 10. **Slow GitLab.** Pause the project's runners and submit. The working screen says "waiting for a runner", and after `ppRunTimeoutSeconds` it shows "GitLab is slow" with **Keep waiting** and **Check GitLab**. Resume the runners and choose Check GitLab: the app resumes.
 11. **Requests.** The list shows the MR with *Requested by*, and the open request branches.

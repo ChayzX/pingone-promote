@@ -15,8 +15,12 @@ Structure (as ../davinci-feasibility/check_flow.py, adapted to the app):
   them, and every routed action is one the code can return
 - no <style>/<script> inside Custom HTML
 Trust boundary (DESIGN.md, "Trust boundary"):
-- exactly two company secrets, both empty: the worker credential and the
+- two company secrets, both empty secrets: the worker credential and the
   GitLab project token
+- configuration is COMPANY-scoped (kept across re-imports), declared without
+  values for the IDs and groups; per-session state is flow-INSTANCE scoped.
+  A state variable that is company-scoped (shared by every user) or a
+  configuration setting that is flow-scoped (reset on re-import) fails
 - the worker credential is used only by the PingOne token call, the access
   token only by the PingOne list call, the GitLab token only by GitLab calls
 - no secret or token reference in any function input, screen or saved value
@@ -46,6 +50,17 @@ SCREEN = "customHTMLTemplate"
 CAPS = {"customFunction", "AEqualsB", "saveValue", "makeRestApiCall", SCREEN, "startUiSubFlow"}
 EMPTY_SETTINGS = {"ppWorkerEnvironmentId", "ppSourceEnvs", "ppGitlabProjectId", "ppAllowedGroups"}
 SECRETS = {"ppWorkerBasicAuth", "ppGitlabToken"}
+# Per-session state: flow-instance variables only. Company variables are shared by every user and session.
+STATE = {"ppState", "ppFlows", "ppUrl", "ppBody", "ppForm", "ppMain", "ppLastFailed"}
+
+
+def setting_names():
+    """The operator settings, from the app's own list (fn/_lib.js lib.SETTINGS), as pp<Name>."""
+    m = re.search(r"^lib\.SETTINGS = \[(.*?)\];", (HERE / "fn" / "_lib.js").read_text(encoding="utf-8"), re.M | re.S)
+    return {"pp" + n[0].upper() + n[1:] for n in re.findall(r"'([A-Za-z]+)'", m.group(1))}
+
+
+SETTINGS = setting_names()
 SCANS = [
     ("UUID", re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")),
     ("32-hex ID", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")),
@@ -130,13 +145,23 @@ def check_export(path, allow_conn_ids):
         declared[v["context"]][v["name"].split("##SK##")[0]] = v
         if v["context"] == "flow" and not v["name"].endswith("##SK##flow##SK##" + f["flowId"]):
             problems.append(f"flow variable {v['name']} not bound to this flow")
-    if set(declared["company"]) != SECRETS:
-        problems.append(f"company variables must be exactly {sorted(SECRETS)}")
+    for v in f["variables"]:
+        base = v["name"].split("##SK##")[0]
+        if base in STATE and v["context"] != "flowInstance":
+            problems.append(f"state variable {base} is {v['context']}-scoped; state must be flow-instance (company variables are shared by every user)")
+        if base in SETTINGS and v["context"] != "company":
+            problems.append(f"setting {base} is {v['context']}-scoped; settings must be company variables (a re-import resets flow variables)")
+    if set(declared["company"]) != SECRETS | SETTINGS:
+        problems.append(f"company variables must be exactly the two secrets and the settings; differences: {sorted(set(declared['company']) ^ (SECRETS | SETTINGS))}")
+    if declared["flow"]:
+        problems.append(f"flow variables are not used (configuration is company-scoped): {sorted(declared['flow'])}")
     for name, v in declared["company"].items():
-        if v["fields"].get("type") != "secret" or v["fields"].get("value") not in ("", None):
+        if name in SECRETS and (v["fields"].get("type") != "secret" or v["fields"].get("value") not in ("", None)):
             problems.append(f"company variable {name} must be an empty secret")
+        if name in SETTINGS and v["fields"].get("type") != "string":
+            problems.append(f"company setting {name} must be a string")
     for name in EMPTY_SETTINGS:
-        if declared["flow"].get(name, {}).get("fields", {}).get("value", "") != "":
+        if declared["company"].get(name, {}).get("fields", {}).get("value", "") != "":
             problems.append(f"{name} must be empty in the export (set it in DaVinci)")
     written = collections.defaultdict(set)
     outputs = {}
@@ -175,14 +200,18 @@ def check_export(path, allow_conn_ids):
                 problems.append(f"{i} reads undeclared flow-instance variable {var}")
             elif not (written[var] & anc):
                 problems.append(f"{i} ({title(i)}) reads {var} before any node writes it")
+        if re.search(r"global\.flow\.variables\.", blob):
+            problems.append(f"{i} ({title(i)}) reads a flow-scoped variable; configuration is company-scoped, state is flow-instance")
         for ctx, rx in (("flow", r"global\.flow\.variables\.([A-Za-z0-9_]+)"), ("company", r"global\.company\.variables\.([A-Za-z0-9_]+)")):
             for var in set(re.findall(rx, blob)):
                 if var not in declared[ctx]:
                     problems.append(f"{i} reads undeclared {ctx} variable {var}")
         # Trust boundary: secrets and the access token appear only in REST headers.
         if cap != "makeRestApiCall":
-            if re.search(r"global\.company\.variables\.", blob):
-                problems.append(f"{i} ({title(i)}) reads a company secret outside a REST call header")
+            for var in set(re.findall(r"global\.company\.variables\.([A-Za-z0-9_]+)", blob)):
+                # Settings (never secrets) go to the sign-in check, the one function that builds the configuration.
+                if var in SECRETS or var not in SETTINGS or cap != "customFunction":
+                    problems.append(f"{i} ({title(i)}) reads company variable {var} outside a REST call header")
             if "access_token" in blob and cap != "customFunction":
                 problems.append(f"{i} ({title(i)}) reads the PingOne access token")
             if cap == "customFunction" and any("access_token" in x["value"] for x in p["variableInputList"]["value"]):
@@ -314,6 +343,14 @@ def self_test(export):
     def preset_env(f):
         next(v for v in f["variables"] if v["name"].startswith("ppSourceEnvs##"))["fields"]["value"] = "dev=x"
 
+    def state_in_company(f):
+        v = next(v for v in f["variables"] if v["name"].startswith("ppState##"))
+        v["context"], v["name"] = "company", "ppState##SK##company"
+
+    def setting_in_flow(f):
+        v = next(v for v in f["variables"] if v["name"].startswith("ppMrLabel##"))
+        v["context"], v["name"], v["flowId"] = "flow", "ppMrLabel##SK##flow##SK##" + f["flowId"], f["flowId"]
+
     def secret_in_body(f):
         node(f, "GitLab: commit request file")["properties"]["raw"]["value"] = "{{global.company.variables.ppGitlabToken}}"
 
@@ -330,7 +367,7 @@ def self_test(export):
         node(f, "GitLab: read job log (last 64 KiB)")["properties"]["httpMethod"]["value"] = "POST"
 
     failures = 0
-    for case in (job_log_write, secret_into_function, gitlab_token_to_pingone, pingone_write, preset_env, secret_in_body, token_on_screen, extra_gitlab_post, fixed_url):
+    for case in (job_log_write, state_in_company, setting_in_flow, secret_into_function, gitlab_token_to_pingone, pingone_write, preset_env, secret_in_body, token_on_screen, extra_gitlab_post, fixed_url):
         data = copy.deepcopy(base)
         case(data["flows"][0])
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:

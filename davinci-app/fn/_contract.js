@@ -41,7 +41,7 @@ contract.isRequestBranch = (b) => {
 };
 
 // ---- request.json -------------------------------------------------------------------
-// d: { requestId, requestedBy, source, flow:{id,name}, options:{deps, env, secrets, remove, inline, mode, title,
+// d: { requestId, requestedBy, source, flow:{id,name}, options:{deps, env, secrets, inline, mode, title,
 //      description, commitMessage}, dryRun }. Optional fields are sent only when they hold something
 // (the job refuses unknown fields; empty optional ones are simply left out).
 contract.buildRequest = (d) => {
@@ -56,7 +56,6 @@ contract.buildRequest = (d) => {
   put('applications', (o.applications || []).map((x) => ({ name: x.name })));
   put('flowPolicies', (o.flowPolicies || []).map((x) => ({ name: x.name })));
   put('inlineValues', (o.inline || []).slice().sort());
-  put('remove', (o.remove || []).slice().sort());
   r.mode = o.mode;
   r.branchName = contract.branchFor(d.requestId);
   if (o.commitMessage) { r.commitMessage = o.commitMessage; }
@@ -65,7 +64,7 @@ contract.buildRequest = (d) => {
   r.dryRun = !!d.dryRun;
   return r;
 };
-// ---- same in all environments (inlineValues) and de-manage (remove) ---------------------------
+// ---- same in all environments (inlineValues) ---------------------------
 // inlineValues: variables whose SOURCE value becomes a literal in every environment, so no per-environment
 // value is asked or sent for them. Offered for a variable the readiness list asks for, or already inlined.
 contract.inlineChoices = (r, o) => {
@@ -82,17 +81,6 @@ contract.withoutInlined = (env, inline) => {
     for (const k of Object.keys(env[e])) { if (inline.indexOf(k) < 0) { (out[e] = out[e] || {})[k] = env[e][k]; } }
   }
   return out;
-};
-// remove: stop managing a resource in Git without destroying it. Only rows the preview shows that Git manages
-// (status is not "new") and that are dependencies: never the selected flow, never one already de-managed.
-contract.STOP_MANAGING = 'Stop managing (keeps it in PingOne)';
-contract.canDemanage = (c) => !!c && contract.RE.address.test(c.address) && c.role === 'dependency' && c.status !== 'new' &&
-  ['added', 'removed', 'moved', 'unknown'].indexOf(c.action) < 0;
-contract.isSelected = (r, a) => !!r && (r.changes.some((c) => c.address === a && c.role === 'selected') || r.selected.some((x) => x.address === a));
-// The addresses to list on the review screen: the offered rows, plus ones already ticked (so they can be taken back).
-contract.removeChoices = (r, o) => {
-  const names = ((r && r.changes) || []).filter(contract.canDemanage).map((c) => c.address).concat((o.remove || []).filter((a) => contract.RE.address.test(a)));
-  return names.filter((a, i) => names.indexOf(a) === i && !contract.isSelected(r, a)).sort();
 };
 // The same checks the job makes, so a person never waits for a pipeline to
 // learn about avoidable input. Returns [{field, message}] using the job's
@@ -137,7 +125,6 @@ contract.validateRequest = (r, cfg) => {
     if (!contract.RE.ident.test(k) || !contract.RE.secretName.test(r.secretMappings[k])) { bad('secretMappings.' + k, 'keys and values must be variable names'); }
   }
   for (const v of r.inlineValues || []) { if (!contract.RE.ident.test(v)) { bad('inlineValues', v + ' is not a variable name'); } }
-  for (const a of r.remove || []) { if (!contract.RE.address.test(a)) { bad('remove', a + ' is not a resource address'); } }
   if (r.baseCommit !== undefined && !contract.RE.sha.test(r.baseCommit)) { bad('baseCommit', 'must be a commit SHA'); }
   if (contract.MODES.indexOf(r.mode) < 0) { bad('mode', 'must be mr or branch'); }
   if (r.commitMessage !== undefined && !printable(r.commitMessage.replace(/[\n\t]/g, ' '), contract.LIMITS.commitMessage)) { bad('commitMessage', 'must be at most 2000 characters'); }
@@ -179,13 +166,12 @@ contract.ACTIONS = {
   updated: { sym: '~', label: 'Changed in source', cls: 'chg' },
   kept_differs: { sym: '!', label: 'Differs; Git version kept', cls: 'warn' },
   unchanged: { sym: '=', label: 'Matches Git', cls: 'same' },
-  removed: { sym: '−', label: 'Stop managing (keeps it in PingOne)', count: 'stopped managing', cls: 'warn' },
   moved: { sym: '→', label: 'Moved (new address)', cls: 'chg' }
 };
 contract.ROW_STATUS = {
   'new': 'new', 'changed-in-source': 'changed in source', matches: 'matches Git', 'git-newer': 'Git is newer', 'changed-in-both': 'changed in both'
 };
-contract.ACTION_ORDER = ['added', 'updated', 'kept_differs', 'moved', 'removed', 'unknown', 'unchanged'];
+contract.ACTION_ORDER = ['added', 'updated', 'kept_differs', 'moved', 'unknown', 'unchanged'];
 contract.ERROR_CODES = ['conflict', 'preflight', 'partial', 'blocked'];
 contract.ERROR_TYPES = ['validation', 'export', 'merge', 'gitlab', 'internal'];
 contract.REQUEST_BLOCKERS = '_request';

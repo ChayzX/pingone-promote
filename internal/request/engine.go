@@ -171,7 +171,7 @@ func (r *runner) run(ctx context.Context) {
 		choices[a] = promote.Choice(c)
 	}
 	head := promote.DirRepo(r.env.Workspace)
-	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, Remove: req.Remove,
+	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices,
 		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig}
 	if req.BaseCommit != "" {
 		if r.env.BaseRepo == nil {

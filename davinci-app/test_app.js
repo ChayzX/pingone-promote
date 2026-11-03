@@ -87,7 +87,7 @@ const rid = contract.newRequestId(Date.UTC(2026, 10, 3, 14, 5, 1), 'k3j9q2');
 eq(rid, '20261103-140501-k3j9q2', 'request id format');
 ok(contract.isRequestBranch('pingone-promote/' + rid) && !contract.isRequestBranch('main') && !contract.isRequestBranch('pingone-promote/x') && !contract.isRequestBranch('pingone-promote/' + rid + '/../main'), 'request branch check');
 const cfg0 = lib.checkSettings({ apiOrigin: 'https://api.pingone.com', authOrigin: 'https://auth.pingone.com', workerEnvironmentId: WORKER, sourceEnvs: 'dev=' + SRC,
-  pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,stage,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*' }).cfg;
+  pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,stage,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*', pathApplications: 'none', pathFlowPolicies: 'none' }).cfg;
 assert.throws(() => lib.gl(cfg0, 'deleteBranch', { branch: 'main' })); passed += 1;
 assert.throws(() => lib.gl(cfg0, 'jobs', { id: '1/../../x' })); passed += 1;
 assert.throws(() => lib.gl(cfg0, 'pipelines/1/play')); passed += 1;
@@ -96,6 +96,16 @@ eq(lib.webUrl(cfg0, 'https://evil.example/x'), '', 'links to other hosts are dro
 eq(lib.webUrl(cfg0, 'javascript:alert(1)'), '', 'script links are dropped');
 const baseSettings = { apiOrigin: 'https://api.pingone.com', authOrigin: 'https://auth.pingone.com', workerEnvironmentId: WORKER, sourceEnvs: 'dev=' + SRC,
   pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,stage,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*' };
+// Company variables are declared without values, so an empty one means its default (lib.DEFAULTS) and a re-import cannot overwrite a value.
+const onlyIds = lib.checkSettings({ workerEnvironmentId: WORKER, sourceEnvs: 'dev=' + SRC, gitlabProjectId: PROJECT, allowedGroups: 'Promote Operators' });
+ok(onlyIds.problems.length === 0 && onlyIds.cfg.apiOrigin === 'https://api.pingone.com' && onlyIds.cfg.rollout.join() === 'qa,stage,prod' && onlyIds.cfg.mrLabel === 'pingone-promote' &&
+  onlyIds.cfg.gitlabApi === 'https://gitlab.com/api/v4' && onlyIds.cfg.runTimeoutSeconds === 600 && !!onlyIds.cfg.pathApplications, 'an app with only the ID and group settings set runs on the defaults');
+eq(lib.checkSettings({ workerEnvironmentId: WORKER, sourceEnvs: 'dev=' + SRC, gitlabProjectId: PROJECT, allowedGroups: '*', pathApplications: 'none', flowsListQuery: 'none' }).cfg.pathApplications, '', '"none" switches an optional path off');
+eq(Object.keys(lib.DEFAULTS).filter((k) => lib.SETTINGS.indexOf(k) < 0), [], 'every default belongs to a declared setting');
+eq(flow.variables.filter((v) => v.context === 'company' && /^pp/.test(v.name) && lib.SETTINGS.map(lib.varName).indexOf(v.name.split('##SK##')[0]) >= 0).map((v) => v.fields.value).filter((x) => x !== ''), [], 'the export declares every setting without a value');
+eq(flow.variables.filter((v) => v.context === 'flow').length, 0, 'no flow-scoped variable: configuration would be reset by a re-import');
+eq(flow.variables.filter((v) => v.context === 'company').length, lib.SETTINGS.length + 2, 'company variables: every setting plus the two secrets');
+eq(flow.variables.filter((v) => v.context === 'flowInstance').map((v) => v.name.split('##SK##')[0]).sort(), ['ppBody', 'ppFlows', 'ppLastFailed', 'ppState', 'ppUrl'], 'per-session state stays in flow-instance variables');
 const PA = '/v1/environments/{envId}/davinciApplications';
 const PP = '/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies';
 const cfgA = lib.checkSettings(Object.assign({}, baseSettings, { pathApplications: PA, pathFlowPolicies: PP }));
@@ -109,16 +119,16 @@ for (const bad of [{ pathApplications: 'http://evil.example/x' }, { pathApplicat
   ok(lib.checkSettings(Object.assign({}, baseSettings, bad)).problems.some((x) => /^path(Applications|FlowPolicies)$/.test(x.name)), 'a bad list path is a settings problem: ' + JSON.stringify(bad).slice(0, 60));
 }
 const p1 = lib.checkSettings({});
-ok(p1.problems.length >= 6 && JSON.stringify(p1).indexOf('not set') > 0, 'missing settings are listed');
+eq(p1.problems.map((x) => x.name).sort(), ['allowedGroups', 'gitlabProjectId', 'sourceEnvs', 'workerEnvironmentId'], 'missing settings are listed: only those without a default');
 const flowsFake = [{ id: 'a1', name: 'Login' }, { id: 'a2', name: 'Login - MFA' }, { id: 'a3', name: 'Registration' }];
 eq(lib.searchFlows(flowsFake, 'LOGIN').matches.map((f) => f.id), ['a1', 'a2'], 'search is a case-insensitive substring; ambiguous lists all');
 eq(lib.searchFlows(flowsFake, 'a3').matches.map((f) => f.id), ['a3'], 'search by exact ID');
 eq(lib.searchFlows(flowsFake, 'zzz').total, 0, 'no match');
 const req0 = contract.buildRequest({ requestId: rid, requestedBy: 'pat', source: 'dev', flow: { id: dvid(1), name: 'Login' },
-  options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {}, inline: [], remove: [] }, dryRun: true });
+  options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {}, inline: [] }, dryRun: true });
 // Every field the job's Request struct accepts (internal/request/request.go); unknown fields fail there.
 const ALLOWED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'applications', 'flowPolicies', 'dependencyChoices', 'envValues', 'secretMappings',
-  'connectorEnvLocal', 'inlineValues', 'remove', 'baseCommit', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
+  'connectorEnvLocal', 'inlineValues', 'baseCommit', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
 const REQUIRED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'mode', 'branchName', 'dryRun'];
 const keysOk = (r) => Object.keys(r).every((k) => ALLOWED_KEYS.indexOf(k) >= 0) && REQUIRED_KEYS.every((k) => lib.has(r, k));
 ok(keysOk(req0) && !lib.has(req0, 'dependencyChoices') && !lib.has(req0, 'secretMappings') && !lib.has(req0, 'remove'), 'request.json: only known fields; empty optional ones are left out');
@@ -146,7 +156,6 @@ vbad({ envValues: { qa: { import_ids: 'x' } } }, 'envValues.qa.import_ids');
 vbad({ envValues: { qa: { key: GLTOKEN } } }, 'envValues.qa.key');
 vbad({ secretMappings: { a: '1bad' } }, 'secretMappings.a');
 vbad({ dependencyChoices: { 'not.an_address': 'keep' } }, 'dependencyChoices');
-vbad({ remove: ['bad'] }, 'remove');
 vbad({ inlineValues: ['1bad'] }, 'inlineValues');
 vbad({ applications: Array(21).fill({ name: 'a' }) }, 'flows');
 vbad({ flowPolicies: Array(21).fill({ name: 'a' }) }, 'flows');
@@ -229,7 +238,7 @@ function jobValidate(req, branch) {
     }
   }
   for (const v of req.inlineValues || []) { if (!JOB_RE.ident.test(v)) { return fail('inlineValues', v + ' is not a variable name'); } }
-  for (const a of req.remove || []) { if (!JOB_RE.address.test(a)) { return fail('remove', a + ' is not a resource address'); } }
+  if (lib.has(req, 'remove')) { return fail('', 'unknown field remove'); }
   for (const a of Object.keys(req.dependencyChoices || {})) { if (!JOB_RE.address.test(a) || ['update', 'keep'].indexOf(req.dependencyChoices[a]) < 0) { return fail('dependencyChoices', a); } }
   for (const env of Object.keys(req.envValues || {})) {
     if ([req.source].concat(JOB_ROLLOUT).indexOf(env) < 0) { return fail('envValues', env + ' is not the source or a rollout env'); }
@@ -261,15 +270,8 @@ const PREVIEW = (req, o) => {
     { address: 'pingone_davinci_connector_instance.pingcli__Http', role: 'dependency', action: 'kept_differs', status: 'changed-in-source', reason: 'differs from Git; kept because it is a shared dependency (choose update to use the source version)' },
     { address: 'pingone_davinci_variable.pingcli__color', role: 'dependency', action: 'kept_differs', status: 'changed-in-both' },
     { address: 'pingone_davinci_variable.pingcli__theme_new', role: 'dependency', action: 'moved', status: 'matches', from: 'pingone_davinci_variable.pingcli__theme' },
-    { address: 'pingone_davinci_flow.pingcli__Old', role: 'dependency', action: 'removed', status: 'matches' },
     { address: 'pingone_davinci_variable.pingcli__lang', role: 'dependency', action: 'unchanged', status: 'matches' }];
-  for (const a of req.remove || []) {
-    // De-managed: the job reports the address as removed (the live resource is kept).
-    const row = { address: a, role: 'dependency', action: 'removed', status: 'matches', file: 'definitions/pingone_davinci_flow.tf', reason: 'de-managed: removed from the definitions; the live resource is kept (destroy = false)' };
-    const i = changes.findIndex((c) => c.address === a);
-    if (i >= 0) { changes[i] = row; } else { changes.push(row); }
-  }
-  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, removed: 0, moved: 0 };
+  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, moved: 0 };
   for (const c of changes) { summary[c.action] += 1; }
   const res = { resultVersion: 1, requestId: req.requestId, requestedBy: req.requestedBy, status: 'previewed', dryRun: true, mode: req.mode, source: req.source, branch: req.branchName,
     commitId: '', mrUrl: '', mrIid: 0, branchUrl: GLWEB + '/-/tree/' + encodeURIComponent(req.branchName), diffUrl: GLWEB + '/-/compare/main...' + encodeURIComponent(req.branchName),
@@ -540,10 +542,14 @@ const visible = (html) => unesc(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, '
 async function run(opt, steps) {
   const o = Object.assign({ strings: false, settings: {} }, opt);
   const w = o.world || world(o.worldOpt);
-  const flowVars = {};
-  for (const v of flow.variables) { if (v.context === 'flow') { flowVars[v.name.split('##SK##')[0]] = v.fields.value; } }
-  Object.assign(flowVars, SETTINGS, o.settings);
-  const company = { ppWorkerBasicAuth: BASIC, ppGitlabToken: GLTOKEN };
+  // Company variables are what DaVinci keeps across re-imports: the settings the operator set (empty in the export, so defaults
+  // apply for the rest) and the two secrets. Nothing is flow-scoped, and the flow can only write flow-instance variables.
+  const company = o.sharedCompany || {};
+  for (const v of flow.variables) {
+    assert.ok(v.context !== 'flow', 'no flow-scoped variable in the export: ' + v.name);
+    if (v.context === 'company') { company[v.name.split('##SK##')[0]] = v.fields.value; }
+  }
+  Object.assign(company, SETTINGS, o.settings, { ppWorkerBasicAuth: BASIC, ppGitlabToken: GLTOKEN });
   const inst = {};
   const outputs = {};
   const pages = [];
@@ -556,7 +562,7 @@ async function run(opt, steps) {
       for (const k of p.slice(4)) { v = v === undefined || v === null ? undefined : v[k]; }
       return v;
     }
-    if (p[1] === 'flow') { return flowVars[p[3]]; }
+    assert.ok(p[1] !== 'flow', 'reads a flow-scoped variable: ' + ref);
     if (p[1] === 'company') { return company[p[3]]; }
     if (p[1] === 'variables') { assert.ok(p[2] in inst, 'reads unset flow-instance variable ' + p[2]); return inst[p[2]]; }
     throw new Error('unknown reference ' + ref);
@@ -716,6 +722,24 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     ok(/You have left PingOne Promote/.test(r4.last), '* admits every signed-in user; leaving ends the flow');
     common(r4, 'star');
   }
+  // ---- two concurrent sessions share the company variables, never the state -------------------------------------
+  {
+    const shared = {};
+    const A = { identity: { userId: 'u-a', username: 'alice.a', name: 'Alice Anders', groups: ['Promote Operators'] } };
+    const B = { identity: { userId: 'u-b', username: 'bob.b', name: 'Bob Brandt', groups: ['Promote Operators'] } };
+    const [ra, rb] = await Promise.all([
+      run({ sharedCompany: shared, worldOpt: A }, [{ click: 'SEARCH', form: { query: 'registration' } }, { click: 'PICK:0', expect: /1 match/ }, { click: 'PREVIEW' }, auto(/Predicted changes/), { click: 'SIGNOUT' }]),
+      run({ sharedCompany: shared, worldOpt: B }, [{ click: 'SEARCH', form: { query: 'password' } }, { click: 'PICK:0', expect: /1 match/ }, { click: 'SIGNOUT' }])]);
+    const stateOf = (r) => JSON.stringify(r.pages.map((p) => p.state));
+    ok(/Alice Anders/.test(visible(ra.pages[0].html)) && /Bob Brandt/.test(visible(rb.pages[0].html)), 'each session shows its own user');
+    ok(ra.pages.every((p) => p.html.indexOf('Bob') < 0 && p.html.indexOf('bob.b') < 0 && stateOf(ra).indexOf('u-b') < 0), 'session A never sees session B');
+    ok(rb.pages.every((p) => p.html.indexOf('Alice') < 0 && p.html.indexOf('alice.a') < 0) && stateOf(rb).indexOf('u-a') < 0, 'session B never sees session A');
+    ok(stateOf(ra).indexOf('Registration') > 0 && stateOf(rb).indexOf('Registration') < 0 && stateOf(rb).indexOf('Password reset') > 0, 'each session keeps its own selected flow');
+    ok(JSON.stringify(ra.inst) !== JSON.stringify(rb.inst) && ra.inst.ppState.req.requestId !== rb.inst.ppState.req.requestId || !rb.inst.ppState.req, 'the flow-instance state of the two sessions differs');
+    eq(Object.keys(shared).sort(), Object.keys(shared).filter((k) => /^pp/.test(k)).sort(), 'only pp settings and secrets are company variables');
+    ok(!('ppState' in shared) && !('ppFlows' in shared) && !('ppUrl' in shared) && !('ppBody' in shared) && !('ppLastFailed' in shared), 'no per-session state is stored in a company variable');
+    common(ra, 'concurrent A'); common(rb, 'concurrent B');
+  }
   // ---- search: none, ambiguous, one, by ID, same env without calls, token failure --------------------
   {
     const r = await run({}, [
@@ -751,7 +775,7 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     const r = await run({ world: w }, toOptions.concat([
       { click: 'PREVIEW', expect: /No preview yet/, form: { title: 'Bring Registration from dev', description: 'Ticket ABC-1' } },
       auto(/Preview$|Predicted changes/),
-      { click: 'EDIT', expect: /Predicted changes 1 new, 1 changed in source, 2 differs; git version kept, 1 moved \(new address\), 1 stopped managing, 1 matches git/i },
+      { click: 'EDIT', expect: /Predicted changes 1 new, 1 changed in source, 2 differs; git version kept, 1 moved \(new address\), 1 matches git/i },
       { click: 'PREVIEW', expect: /Keep Git version/, form: Object.assign({ deps: { [HTTP]: 'update' } }, ENV_FORM) },
       auto(/Preview: ready/),
       { click: 'SUBMIT', expect: /qa ✓ Ready/ },
@@ -1047,28 +1071,6 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     eq(commitsOf(r2).map(decodeReq).map((x) => x.inlineValues), [undefined, ['base_url'], undefined], 'unticking takes the variable out of inlineValues');
     common(r2, 'inline off');
   }
-  // ---- de-manage (remove) -------------------------------------------------------------------------------------------
-  {
-    const r = await run({}, toOptions.concat([
-      { click: 'PREVIEW' }, auto(/Predicted changes/), { click: 'EDIT', expect: /Predicted changes/ },
-      { click: 'PREVIEW', form: { remove: { [LANG]: true } }, expect: /Stop managing/ },
-      { click: 'PREVIEW', form: { remove: { [SEL]: true }, removeConfirm: true }, expect: /Fix 1 field: Tick the confirmation before you stop managing a resource/ },
-      auto(/Predicted changes/),
-      { click: 'EDIT', expect: /Stop managing \(keeps it in PingOne\)/ },
-      { click: 'PREVIEW', form: { remove: { [LANG]: false } }, expect: /I confirm: Git stops managing/ }, auto(/Predicted changes/), { click: 'SIGNOUT' }]));
-    const cs = commitsOf(r).map(decodeReq);
-    eq(cs.length, 3, 'a request without the confirmation is not committed');
-    eq(cs.map((x) => x.remove), [undefined, [LANG], undefined], 'remove is sent when ticked and confirmed, and withdrawn when unticked');
-    ok(r.pages.some((p) => p.state && p.state.req && p.state.req.options && p.state.req.options.removeConfirmed === false), 'the confirmation resets when nothing is ticked');
-    const opts = r.pages.filter((p) => /<h2>Stop managing<\/h2>/.test(p.html) && /I confirm/.test(p.html));
-    const offered = opts[0].html.split('<h2>Stop managing</h2>')[1].split('<h2>Readiness</h2>')[0];
-    ok(offered.indexOf(SEL) < 0 && offered.indexOf(HTTP) > 0 && offered.indexOf(COLOR) > 0 && offered.indexOf(LANG) > 0, 'Stop managing is offered for Git-managed dependencies, never for the selected flow');
-    ok(offered.indexOf('MFA-0020-sub') < 0 && offered.indexOf('theme_new') < 0 && offered.indexOf('pingcli__Old') < 0, 'not offered for new, moved or already de-managed rows');
-    ok(!buttonOf(opts[0].html, 'PREVIEW').disabled, 'the confirmation error does not lock the screen');
-    const done = r.pages.filter((p) => /Predicted changes/.test(p.html) && /pingcli__lang<\/code>[^]{0,300}Stop managing \(keeps it in PingOne\)/.test(p.html))[0];
-    ok(done && /2 stopped managing/.test(visible(done.html)), 'the result action removed is shown as "Stop managing (keeps it in PingOne)"');
-    common(r, 'de-manage');
-  }
   // ---- _request blockers, warnings, one-at-a-time jobs -----------------------------------------------------------------------
   {
     const r = await run({ worldOpt: { noBlockers: true, requestBlocker: true, warning: true, jobStatuses: ['waiting_for_resource', 'waiting_for_resource', 'running', 'success'] } }, toOptions.concat([
@@ -1113,7 +1115,7 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     ok(budgets.indexOf('SEARCH_APP=4') >= 0 && budgets.indexOf('POLICIES:0=3') >= 0 && budgets.every((x) => /^(SEARCH_APP=(0|4)|POLICIES:0=3|[A-Z_:0-9]+=0)$/.test(x)), 'REST calls: 1 token + pages for a first search, 0 for the rest: ' + budgets.join(' '));
     ok(JSON.stringify(r.inst).indexOf('clientSecret') < 0 && JSON.stringify(r.pages.map((p) => p.state)).indexOf('secret-value-for-tests') < 0, 'application secrets from the list never reach the state');
     common(r, 'applications');
-    const r2 = await run({ worldOpt: { noBlockers: true }, settings: { ppPathApplications: '' } }, toOptions.concat([{ click: 'SIGNOUT' }]));
+    const r2 = await run({ worldOpt: { noBlockers: true }, settings: { ppPathApplications: 'none' } }, toOptions.concat([{ click: 'SIGNOUT' }]));
     ok(!buttonOf(r2.pages[r2.pages.length - 2].html, 'EXTRAS') && !/Applications and flow policies/.test(r2.pages[r2.pages.length - 2].html), 'no application path: the step is not offered');
     common(r2, 'applications off');
     const r3 = await run({ settings: { ppPathFlowPolicies: '/v1/environments/{envId}/policies' } }, []);

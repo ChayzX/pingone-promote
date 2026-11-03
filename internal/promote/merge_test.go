@@ -255,27 +255,41 @@ func actionOf(r *MergeResult, a string) Action {
 	return ""
 }
 
-func TestDemanageEmitsRemovedBlock(t *testing.T) {
+// A resource missing from a partial export is never deleted: the merge of
+// Flow B alone leaves every other block in Git, and writes no removed {}.
+func TestPartialExportNeverDeletes(t *testing.T) {
 	head := readTree(t, filepath.Join("testdata", "repo"))
-	exp := neutralized(t, exportertest.FixtureDir("dev"), flowB)
-	flowC := "pingone_davinci_flow.pingcli__Flow-0020-C"
-	res, err := Merge(MergeRequest{Export: exp, Head: head, Selected: selectedFor(flowB), SourceEnv: "dev", Remove: []string{flowC}})
-	if err != nil {
-		t.Fatal(err)
+	res := mergeFlowB(t, head, nil)
+	after := apply(head, res)
+	if _, ok := after["definitions/removed.tf"]; ok {
+		t.Fatal("a removed.tf was written")
 	}
-	removed := string(res.Files["definitions/removed.tf"])
-	if !strings.Contains(removed, "from = "+flowC) || !strings.Contains(removed, "destroy = false") {
-		t.Fatalf("removed.tf:\n%s", removed)
+	for p, src := range head {
+		if !strings.HasPrefix(p, "definitions/") || !strings.HasSuffix(p, ".tf") {
+			continue
+		}
+		old, err := hclblocks.Scan(src, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now, err := hclblocks.Scan(after[p], p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		have := map[string]bool{}
+		for _, b := range now {
+			have[b.Key()] = true
+		}
+		for _, b := range old {
+			if !have[b.Key()] {
+				t.Fatalf("%s: block %s was deleted by a partial export", p, b.Key())
+			}
+		}
 	}
-	if bytes.Contains(res.Files["definitions/pingone_davinci_flow.tf"], []byte(`"pingcli__Flow-0020-C"`)) {
-		t.Fatal("flow C block still present")
-	}
-	if bytes.Contains(res.Files["imports.tf"], []byte("to       = module.davinci."+flowC+"\n")) || bytes.Contains(res.Files["dev.tfvars"], []byte("pingone_davinci_flow.pingcli__Flow-0020-C\"")) {
-		t.Fatal("import block or import_ids key for flow C remains")
-	}
-	blockers, err := ValidateOverlays(apply(head, res), DefaultLayout, []string{"dev", "qa", "stage", "prod"})
-	if err != nil || len(blockers) != 0 {
-		t.Fatalf("%v %+v", err, blockers)
+	for _, c := range res.Changes {
+		if string(c.Action) == "removed" {
+			t.Fatalf("unexpected removal %+v", c)
+		}
 	}
 }
 
