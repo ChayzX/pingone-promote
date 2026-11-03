@@ -231,6 +231,37 @@ contract.normalizeResult = (raw) => {
   }
   return out;
 };
+// ---- the fallback when result.json cannot be downloaded --------------------------------------
+// GitLab may answer the artifact download with a redirect (3xx), or 404, while the job has finished. The job's
+// last log line is then the compact result: PINGONE_PROMOTE_RESULT {json} (status, links, summary, blocked
+// envs, error; no change list, diff or required secrets). Only that line is used, and only from the last 64 KiB
+// of the log; no other log text is ever kept or shown.
+contract.RESULT_LOG_PREFIX = 'PINGONE_PROMOTE_RESULT ';
+contract.TRACE_TAIL = 65536;
+contract.TRACE_RANGE = 'bytes=-' + contract.TRACE_TAIL;
+contract.artifactMissing = (status) => (status >= 300 && status < 400 ? 'GitLab answered the download with a redirect, HTTP ' + status : 'GitLab has no result.json for the job, HTTP ' + status);
+contract.useLogFallback = (status) => (status >= 300 && status < 400) || status === 404;
+// Returns {result, why}: the normalised result (flagged compact) or the reason there is none.
+contract.resultFromLog = (text, requestId) => {
+  const tail = (typeof text === 'string' ? text : '').slice(-contract.TRACE_TAIL).replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+  const lines = tail.split(/[\r\n]+/);
+  let line = '';
+  for (let i = lines.length - 1; i >= 0 && !line; i--) { if (lines[i].replace(/^\s+/, '').indexOf(contract.RESULT_LOG_PREFIX) === 0) { line = lines[i].replace(/^\s+/, ''); } }
+  if (!line) { return { result: null, why: 'the job log has no result line' }; }
+  let raw = null;
+  try { raw = JSON.parse(line.slice(contract.RESULT_LOG_PREFIX.length)); } catch (e) { raw = null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return { result: null, why: 'the result line in the job log is not valid' }; }
+  if (requestId && raw.requestId !== undefined && raw.requestId !== requestId) { return { result: null, why: 'the result line in the job log is for another request' }; }
+  const out = contract.normalizeResult(Object.assign({}, raw, { changes: [], blockers: {}, requiredSecrets: [], selected: [], warnings: [] }));
+  out.compact = true;
+  out.diffUrl = '';
+  for (const env of Array.isArray(raw.blockedEnvs) ? raw.blockedEnvs.slice(0, 20) : []) {
+    if (typeof env === 'string' && (contract.RE.env.test(env) || env === contract.REQUEST_BLOCKERS)) {
+      out.blockers[env] = [{ code: '', var: '', address: '', message: 'Values are missing here. The list is in result.json, which could not be read.' }];
+    }
+  }
+  return { result: out, why: '' };
+};
 contract.mrIid = (url) => { const m = /\/-\/merge_requests\/([0-9]{1,12})(?:[\/?#]|$)/.exec(String(url || '')); return m ? m[1] : ''; };
 
 // ---- typed errors: what each means for the person ---------------------------------

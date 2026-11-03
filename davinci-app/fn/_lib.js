@@ -212,6 +212,7 @@ lib.gl = (cfg, kind, a) => {
     case 'jobs': return { method: 'GET', url: base + '/pipelines/' + num(a.id) + '/jobs?per_page=100' };
     case 'bridges': return { method: 'GET', url: base + '/pipelines/' + num(a.id) + '/bridges?per_page=20' };
     case 'artifact': return { method: 'GET', url: base + '/jobs/' + num(a.id) + '/artifacts/' + contract.RESULT_ARTIFACT };
+    case 'trace': return { method: 'GET', url: base + '/jobs/' + num(a.id) + '/trace' };
     case 'mr': return { method: 'GET', url: base + '/merge_requests/' + num(a.iid) };
     case 'mrsBySource': return { method: 'GET', url: base + '/merge_requests?source_branch=' + reqBranch(a.branch) + '&state=all&per_page=5' };
     case 'mrList': return { method: 'GET', url: base + '/merge_requests?labels=' + lib.enc(cfg.mrLabel) + '&state=all&order_by=updated_at&sort=desc&per_page=20' };
@@ -263,7 +264,48 @@ lib.nextRead = (s) => {
   const c = lib.gl(s.cfg, it.k, it);
   if (c.method !== 'GET') { throw new Error('the read queue only reads'); }
   s.url = c.url;
-  return 'read';
+  // The job log has its own REST node (it asks for the last 64 KiB only).
+  return it.k === 'trace' ? 'trace' : 'read';
+};
+
+// ---- what a finished request job leaves behind (gl_read and gl_trace both end here) -----------
+lib.finishResult = (s, r, now) => {
+  const run = s.run;
+  run.auto = false;
+  run.done = true;
+  // A field the job refused is pointed out on the options screen without blocking it.
+  s.jobField = r.error && r.error.field ? { field: r.error.field, message: r.error.message } : null;
+  if (run.kind === 'preview') {
+    s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
+    s.sub = s.sub.state === 'unknown' ? { state: 'idle' } : s.sub;
+    s.screen = 'preview';
+    return;
+  }
+  if (r.error) {
+    s.sub = { state: 'error', key: run.key, error: r.error, result: r, jobUrl: run.jobUrl };
+    s.screen = 'preview';
+    if (!s.preview || s.preview.key !== run.key) { s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, at: now }; }
+    return;
+  }
+  // submitted, already_submitted (the existing commit and MR) and no_changes all end the request.
+  r.mrUrl = lib.webUrl(s.cfg, r.mrUrl);
+  r.branchUrl = lib.webUrl(s.cfg, r.branchUrl);
+  r.diffUrl = lib.webUrl(s.cfg, r.diffUrl);
+  s.sub = { state: 'done', key: run.key, result: r, jobUrl: run.jobUrl };
+  s.screen = 'submitted';
+};
+lib.finishNoResult = (s, why, now) => {
+  const run = s.run;
+  run.auto = false;
+  run.done = true;
+  if (run.kind === 'preview') {
+    s.preview = { key: run.key, failed: true, noResult: true, message: why, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
+    s.screen = 'preview';
+  } else {
+    // The job may have written part of the change before it stopped.
+    s.sub = { state: 'unknown', key: run.key, message: why, jobUrl: run.jobUrl };
+    s.screen = 'preview';
+  }
 };
 
 // ---- flow search (#93): case-insensitive substring on the name, or an exact ID --------
@@ -290,7 +332,8 @@ lib.currentPreview = (s) => {
   return s.preview && s.preview.key === key ? s.preview : null;
 };
 lib.blockerCount = (r) => Object.keys((r && r.blockers) || {}).length;
-lib.onlyUnchanged = (r) => !!r && !r.error && (r.status === 'no_changes' || (r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged')));
+lib.onlyUnchanged = (r) => !!r && !r.error && (r.status === 'no_changes' || (r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged')) ||
+  (!!r.compact && r.status === 'previewed' && r.summary.unchanged > 0 && Object.keys(r.summary).every((a) => a === 'unchanged' || !r.summary[a])));
 lib.FIX_FIELDS = 'Fix the highlighted fields first.';
 lib.canPreview = (s) => {
   if (!s.req) { return 'Choose a flow first.'; }

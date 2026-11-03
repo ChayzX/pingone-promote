@@ -152,6 +152,17 @@ ok(nr.requiredSecrets[0].declared === false && /VAULT_PATH_ENV/.test(nr.required
 ok(nr.error.code === 'unknown' && nr.error.type === 'merge' && nr.error.retryable && nr.error.field === 'flows[0]' && nr.error.candidates[0].name === 'A' && nr.error.message.indexOf(GLTOKEN) < 0, 'typed error fields, redacted');
 ok(nr.changes[1].action === 'moved' && nr.changes[1].from === 'pingone_x.z' && nr.summary.moved === 1 && JSON.stringify(nr).indexOf('xxxxx') < 0, 'moved rows keep from; the diff text is dropped');
 ok(contract.normalizeResult({ resultVersion: 1, status: 'blocked', blockers: { qa: [{ code: 'missing_value', var: 'a', message: 'm' }] } }).error.code === 'blocked', 'status blocked reads as a blocked error');
+const LOGLINE = (o) => contract.RESULT_LOG_PREFIX + JSON.stringify(Object.assign({ resultVersion: 1, requestId: rid, status: 'previewed', summary: { added: 2, unchanged: 1 } }, o));
+const fromLog = (text) => contract.resultFromLog(text, rid);
+eq(contract.TRACE_RANGE, 'bytes=-65536', 'the log is asked for by its last 64 KiB');
+ok(fromLog('noise\n' + LOGLINE({ status: 'failed', error: { code: 'preflight', type: 'export', message: 'old' } }) + '\nnoise\n' + LOGLINE({}) + '\ndone\n').result.status === 'previewed', 'the LAST result line wins');
+ok(fromLog('\u001b[0;32m' + LOGLINE({}) + '\u001b[0m\r\n').result.summary.added === 2, 'colour codes and CRLF around the line are ignored');
+ok(fromLog('x'.repeat(70000) + '\n' + LOGLINE({})).result.status === 'previewed' && fromLog(LOGLINE({}) + '\n' + 'x'.repeat(70000)).result === null, 'only the last 64 KiB of the log is read');
+eq(fromLog('Job succeeded\nPINGONE_PROMOTE_RESULT: no\n').why, 'the job log has no result line', 'no result line');
+ok(/not valid/.test(fromLog('PINGONE_PROMOTE_RESULT {nope').why) && /not valid/.test(fromLog('PINGONE_PROMOTE_RESULT [1]').why) && /another request/.test(contract.resultFromLog(LOGLINE({}), 'other-request').why), 'a broken line or one for another request is not used');
+const cl = fromLog(LOGLINE({ status: 'blocked', blockedEnvs: ['prod', 'bad env!'], mrUrl: GLWEB + '/-/merge_requests/9', error: { code: 'blocked', type: 'validation', message: 'm ' + GLTOKEN, retryable: false } })).result;
+ok(cl.compact && cl.changes.length === 0 && cl.diffUrl === '' && Object.keys(cl.blockers).join() === 'prod' && cl.error.code === 'blocked' && cl.error.message.indexOf(GLTOKEN) < 0 && cl.summary.added === 2, 'the compact result: status, summary, blocked envs and a redacted error; no change list or diff');
+ok(contract.useLogFallback(302) && contract.useLogFallback(301) && contract.useLogFallback(404) && !contract.useLogFallback(500) && !contract.useLogFallback(403) && !contract.useLogFallback(200), 'the log fallback is for a redirect or 404 only');
 eq(contract.footerOf('x\nRequested-by: pat\nRequest-id: ' + rid), { requestedBy: 'pat', requestId: rid }, 'MR footer parsed');
 eq(contract.mrIid(GLWEB + '/-/merge_requests/17'), '17', 'MR iid from URL');
 
@@ -255,7 +266,7 @@ function world(opt) {
     commitFail: null, noBlockers: false, artifactAsText: false, identity: { userId: 'u-1', username: 'pat.operator', name: 'Pat Operator', groups: ['Promote Operators'] } }, opt || {});
   const flows = makeFlows();
   const calls = [];
-  const g = { branches: { main: { commits: [newSha()] } }, files: {}, pipelines: [], mrs: [], deployments: [], commits: [], nextPipe: 500, nextJob: 9000, nextMr: 40, deletes: [], jobRefusals: [], submitted: {} };
+  const g = { branches: { main: { commits: [newSha()] } }, files: {}, pipelines: [], mrs: [], deployments: [], commits: [], nextPipe: 500, nextJob: 9000, nextMr: 40, deletes: [], jobRefusals: [], submitted: {}, traces: [] };
   const head = (b) => g.branches[b].commits[g.branches[b].commits.length - 1];
   const branchObj = (b) => ({ name: b, web_url: GLWEB + '/-/tree/' + b, commit: { id: head(b), title: g.branches[b].titles[g.branches[b].titles.length - 1], committed_date: '2026-11-03T09:00:00Z' } });
   g.branches.main.titles = ['init'];
@@ -419,7 +430,26 @@ function world(opt) {
     if ((m = /^\/jobs\/([0-9]+)\/artifacts\/result\.json$/.exec(bare))) {
       const p = g.pipelines.filter((x) => x.job && x.job.id === Number(m[1]))[0];
       if (!p || !p.result || o.noArtifact) { return { status: 404, body: { message: '404 Not Found' } }; }
+      // Some GitLab setups redirect artifact downloads to object storage; the REST node does not follow it.
+      if (o.artifactStatus) { return { status: o.artifactStatus, body: '' }; }
       return { status: 200, body: o.artifactAsText ? JSON.stringify(p.result) : JSON.parse(JSON.stringify(p.result)) };
+    }
+    if ((m = /^\/jobs\/([0-9]+)\/trace$/.exec(bare))) {
+      const p = g.pipelines.filter((x) => x.job && x.job.id === Number(m[1]))[0];
+      assert.strictEqual(headers.Accept, 'text/plain');
+      g.traces.push({ range: headers.Range, job: Number(m[1]) });
+      if (!p || !p.result) { return { status: 404, body: { message: '404 Not Found' } }; }
+      if (o.traceStatus) { return { status: o.traceStatus, body: 'LOGNOISE gateway error' }; }
+      const res = p.result;
+      const last = 'PINGONE_PROMOTE_RESULT ' + JSON.stringify({ resultVersion: res.resultVersion, requestId: res.requestId, status: res.status, mrUrl: res.mrUrl || undefined, branchUrl: res.branchUrl || undefined,
+        commitId: res.commitId || undefined, summary: res.summary, blockedEnvs: Object.keys(res.blockers).sort(), error: res.error || undefined });
+      const stale = 'PINGONE_PROMOTE_RESULT ' + JSON.stringify({ resultVersion: 1, requestId: res.requestId, status: 'failed', summary: {}, error: { code: 'preflight', type: 'export', message: 'an earlier line', retryable: false } });
+      // The log: a long head (outside the last 64 KiB), noise, an older result line, noise and the real last line.
+      const none = o.traceMode === 'none';
+      const text = [none ? 'LOGNOISE start' : 'PINGONE_PROMOTE_RESULT {"status":"failed"}', 'LOGNOISE-head '.repeat(8000), '\u001b[0;32mRunning pingone-promote request\u001b[0m LOGNOISE-token', none ? 'LOGNOISE' : stale,
+        'LOGNOISE terraform fmt done', none ? 'Job succeeded LOGNOISE' : '\u001b[0;m' + last, none ? '' : 'Cleaning up project directory LOGNOISE'].join('\r\n');
+      const ranged = headers.Range === 'bytes=-65536' && !o.traceIgnoreRange;
+      return { status: ranged ? 206 : 200, body: ranged ? text.slice(-65536) : text };
     }
     if ((m = /^\/merge_requests\/([0-9]+)$/.exec(bare))) { const mr = g.mrs.filter((x) => x.iid === Number(m[1]))[0]; return mr ? { status: 200, body: mr } : { status: 404, body: {} }; }
     if (bare === '/merge_requests') {
@@ -600,12 +630,14 @@ function common(r, label) {
     const v = visible(pg.html);
     for (const s of SECRETS) { ok(pg.html.indexOf(s) < 0, label + ': no secret or token on screen "' + pg.title + '"'); }
     ok(pg.html.indexOf(SRC) < 0 && pg.html.indexOf(WORKER) < 0 && pg.html.indexOf(QAENV) < 0, label + ': no environment ID on screen');
+    ok(pg.html.indexOf('LOGNOISE') < 0, label + ': no raw log text on screen "' + pg.title + '"');
     ok(!BANNED.test(v), label + ': vocabulary on "' + pg.title + '": ' + (BANNED.exec(v) || [''])[0]);
     ok(!/\bplan\b/i.test(v.replace(/pipeline plan job/gi, '')), label + ': "plan" only as "pipeline plan job"');
     ok(!/<script|onerror=/i.test(pg.html.replace(/&lt;img src=x onerror=alert\(1\)&gt;/g, '')), label + ': no markup injection on screen');
   }
   const st = JSON.stringify(r.inst.ppState || {}) + JSON.stringify(r.inst.ppFlows || {}) + String(r.inst.ppBody || '') + String(r.inst.ppUrl || '');
   for (const s of SECRETS) { ok(st.indexOf(s) < 0, label + ': no secret or token in flow-instance state'); }
+  ok(st.indexOf('LOGNOISE') < 0, label + ': no log text in flow-instance state');
   for (const c of r.w.calls) {
     if (c.url.indexOf('gitlab') > 0) { ok(c.headers.Authorization === undefined && JSON.stringify(c.body || '').indexOf(ACCESS) < 0 && JSON.stringify(c.body || '').indexOf(BASIC) < 0, label + ': PingOne credentials never go to GitLab'); }
     else { ok(JSON.stringify(c).indexOf(GLTOKEN) < 0, label + ': the GitLab token never goes to PingOne'); }
@@ -615,7 +647,7 @@ function common(r, label) {
       ok(keysOk(JSON.parse(req)), label + ': request.json has only the job\'s fields');
     }
   }
-  const LIMITS = { START: 0, SEARCH: 2 + 3, POLL: 3, KEEP: 3, PREVIEW: 1, SUBMIT: 1, CHECK: 4, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
+  const LIMITS = { START: 0, SEARCH: 2 + 3, POLL: 4, KEEP: 4, PREVIEW: 1, SUBMIT: 1, CHECK: 5, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
   for (const b of r.budget) {
     const key = b.button.split(':')[0].replace(/^OPENB?$/, 'WATCH');
     const lim = lib.has(LIMITS, key) ? LIMITS[key] : 0;
@@ -1009,6 +1041,57 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     const pv = visible(r.pages[r.pages.length - 2].html);
     ok(/name does not match <id>/.test(pv), 'warnings are shown, with IDs redacted');
     common(r, 'request blockers');
+  }
+  // ---- artifact fallback: the download is a redirect (or 404); the job log's last line is used ------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, artifactStatus: 302 } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/),
+      { click: 'SUBMIT', expect: /Summary only\. GitLab did not hand over result\.json.*full change list, the diff and the list of required secrets are not available here/ },
+      auto(/Request submitted/),
+      { click: 'WATCH', expect: /Open merge request.*Summary only.*1 new, 1 changed in source/ }, { click: 'SIGNOUT', expect: /Waiting for the merge request to be merged/ }]));
+    eq(r.w.g.traces.length, 2, 'a redirect on result.json: the job log is read once per job');
+    ok(r.w.g.traces.every((x) => x.range === contract.TRACE_RANGE), 'the log is requested with Range: bytes=-65536');
+    ok(glCalls(r, /\/artifacts\/result\.json$/).length === 2 && glCalls(r, /\/jobs\/[0-9]+\/trace$/).length === 2, 'artifact first, then the trace');
+    const pv = r.pages.filter((p) => /Preview: ready/.test(p.html))[0].html;
+    ok(/Summary only/.test(pv) && !/<table/.test(pv.split('Predicted changes')[1].split('Readiness')[0]) && /1 new, 1 changed in source, 2 differs; git version kept/.test(visible(pv)), 'the preview shows the summary counts and no change table');
+    ok(!/Review the change in GitLab/.test(pv), 'there is no diff link in log mode');
+    const done = r.pages.filter((p) => /Request submitted/.test(p.html))[0].html;
+    ok(/Open merge request/.test(done) && /Summary only/.test(done), 'a submit read from the log still links the merge request');
+    eq(commitsOf(r).length, 2, 'the fallback writes nothing');
+    common(r, 'artifact redirect');
+    const r2 = await run({ worldOpt: { artifactStatus: 301, traceIgnoreRange: true } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Summary only/), { click: 'SIGNOUT', expect: /qa ✕ 1 to fix.*stage ✕ 1 to fix.*prod ✕ 1 to fix/ }]));
+    const blocked = r2.pages[r2.pages.length - 2].html;
+    ok(buttonOf(blocked, 'SUBMIT').disabled && /Values are missing here/.test(blocked) && /Readiness: some environments are missing values/.test(visible(blocked)), 'blocked envs from the log: Readiness shows them and Submit stays off');
+    common(r2, 'artifact redirect, whole log returned');
+    const r3 = await run({ worldOpt: { noBlockers: true, noArtifact: true } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'SIGNOUT', expect: /Summary only/ }]));
+    eq(r3.w.g.traces.length, 1, 'a 404 on result.json also reads the job log');
+    common(r3, 'artifact 404');
+  }
+  // ---- artifact fallback: a log without a result line ------------------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true, artifactStatus: 302, traceMode: 'none' } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/The preview did not finish/),
+      { click: 'CHECK', expect: /GitLab answered the download with a redirect, HTTP 302\), and the job log has no result line\. Open the job in GitLab to see what happened\./ },
+      auto(/The preview did not finish/), { click: 'SIGNOUT' }]));
+    const pg = r.pages.filter((p) => /The preview did not finish/.test(p.html))[0].html;
+    ok(buttonOf(pg, 'CHECK') && !/LOGNOISE|Job succeeded/.test(pg), 'no result line: a clear error and Check GitLab, never log text');
+    ok(buttonOf(pg, 'PREVIEW') && !buttonOf(pg, 'PREVIEW').disabled, 'a failed preview can be run again');
+    eq(commitsOf(r).length, 1, 'Check GitLab resumes waiting and does not commit');
+    common(r, 'no result line, preview');
+    const r2 = await run({ worldOpt: { noBlockers: true, artifactStatus: 404 } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/),
+      { do: (wd) => { wd.o.traceMode = 'none'; } },
+      { click: 'SUBMIT' }, auto(/Outcome unknown/),
+      { click: 'CHECK', expect: /GitLab has no result\.json for the job, HTTP 404\), and the job log has no result line.*Check GitLab/ },
+      { click: 'SIGNOUT', expect: /Found in GitLab after Check GitLab/ }]));
+    const unk = r2.pages.filter((p) => /Outcome unknown/.test(p.html))[0].html;
+    ok(buttonOf(unk, 'CHECK') && buttonOf(unk, 'SUBMIT').disabled, 'a submit with no readable result is "outcome unknown", with Check GitLab');
+    common(r2, 'no result line, submit');
+    const r3 = await run({ worldOpt: { noBlockers: true, artifactStatus: 302, traceStatus: 502 } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/The preview did not finish/), { click: 'SIGNOUT', expect: /the job log could not be read \(HTTP 502\)/ }]));
+    common(r3, 'no result line, log unreadable');
   }
   // ---- cancel on protected request branches -------------------------------------------------------------------------------------
   {

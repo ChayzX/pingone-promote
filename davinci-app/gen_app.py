@@ -428,6 +428,8 @@ def build():
     gl = [("PRIVATE-TOKEN", [cv("ppGitlabToken")]), ("Accept", ["application/json"])]
     commit = f.rest("GitLab: commit request file", "POST", gl + [("Content-Type", ["application/json"])], raw=[iv("ppBody")])
     read = f.rest("GitLab: read", "GET", gl)
+    # The job log, only when result.json comes back as a redirect or 404: the last 64 KiB (contract.TRACE_RANGE).
+    trace = f.rest("GitLab: read job log (last 64 KiB)", "GET", [gl[0], ("Accept", ["text/plain"]), ("Range", ["bytes=-65536"])])
     delete = f.rest("GitLab: delete request branch", "DELETE", gl)
     left = f.page("Left the app", LEFT_HTML, [])
     f.route(handle, [("token", token), ("commit", commit), ("read", read), ("signout", left)], render, [("ppBody", "string", out(handle, "body"))])
@@ -443,7 +445,10 @@ def build():
     f.route(glc, [], render)
     glr = f.fn("GitLab: handle read", "gl_read", [state] + rest_in(read), STD_OUT)
     f.link(read, glr)
-    f.route(glr, [("read", read), ("delete", delete)], render)
+    f.route(glr, [("read", read), ("trace", trace), ("delete", delete)], render)
+    gltr = f.fn("GitLab: result from the job log", "gl_trace", [state, ("statusCode", "number", out(trace, "rawResponse.statusCode")), ("body", "string", out(trace, "rawResponse.body"))], STD_OUT)
+    f.link(trace, gltr)
+    f.route(gltr, [], render)
     gld = f.fn("GitLab: branch deleted?", "gl_delete", [state] + rest_in(delete), STD_OUT)
     f.link(delete, gld)
     f.route(gld, [], render)

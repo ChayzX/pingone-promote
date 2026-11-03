@@ -64,11 +64,14 @@ const summary = () => s.req ? '<dl class="pp-sum"><dt>Source env</dt><dd>' + e(s
   '</dd><dt>Request</dt><dd><code>' + e(s.req.requestId) + '</code></dd><dt>Rollout</dt><dd>' + e(cfg.rollout.join(' → ')) + '</dd></dl>' : '';
 // Field errors: the app's own checks first, then a field the job refused (error.field).
 const errFor = (path) => (s.errors || {})[path] || (s.jobField && s.jobField.field === path ? 'GitLab: ' + s.jobField.message : '');
+const compactNotice = (r, jobUrl) => (r.compact ? '<div class="pp-note warn" role="status"><strong>Summary only.</strong> GitLab did not hand over result.json, so the app read the closing summary of the job log. ' +
+  'The full change list, the diff and the list of required secrets are not available here' + (jobUrl ? '. ' + link(jobUrl, 'Open the job') + ' for the details' : '') + '.</div>' : '');
 const changesTable = (r) => {
-  if (!r.changes.length) { return '<p class="pp-empty">The job reported no changes.</p>'; }
   const unknown = r.changes.filter((c) => c.action === 'unknown').length;
   const line = contract.ACTION_ORDER.filter((a) => (a === 'unknown' ? unknown : r.summary[a]))
     .map((a) => (a === 'unknown' ? unknown + ' unrecognised' : r.summary[a] + ' ' + (contract.ACTIONS[a].count || contract.ACTIONS[a].label.toLowerCase()))).join(', ');
+  if (r.compact) { return '<p>' + (line ? e(line) + '.' : 'The job reported no counts.') + '</p>'; }
+  if (!r.changes.length) { return '<p class="pp-empty">The job reported no changes.</p>'; }
   const row = (c) => {
     const a = contract.ACTIONS[c.action] || { sym: '?', label: 'Not recognised', cls: 'warn' };
     return '<tr><td><code>' + e(c.address) + '</code>' + (c.role === 'selected' ? ' <span class="pp-tag">selected flow</span>' : '') +
@@ -254,9 +257,11 @@ screens.preview = () => {
   const r = p.result;
   let body = '';
   if (p.failed) {
-    body = '<div class="pp-note bad" role="alert"><strong>The preview did not finish.</strong> ' + e(p.message || (p.error && p.error.message) || '') + ' ' + link(p.jobUrl, 'Open the job') + '</div>';
+    body = '<div class="pp-note bad" role="alert"><strong>The preview did not finish.</strong> ' + e(p.message || (p.error && p.error.message) || '') + ' ' + link(p.jobUrl, 'Open the job') +
+      (p.noResult ? '<div class="pp-actions">' + button('CHECK', 'Check GitLab') + '</div>' : '') + '</div>';
   } else if (r) {
     if (r.error) { body += '<div class="pp-note bad" role="alert">' + errorBody(r.error) + '</div>'; }
+    body += compactNotice(r, p.jobUrl);
     if (r.selected.length) { body += '<p>Selected: ' + r.selected.map((x) => e(x.name) + ' <code>' + e(x.address) + '</code>').join(', ') + '</p>'; }
     if (r.warnings.length) { body += '<div class="pp-note warn">' + r.warnings.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
     if (r.problems.length) { body += '<div class="pp-note warn">' + r.problems.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
@@ -280,7 +285,7 @@ screens.submitted = () => {
   return head('Request submitted', mr ? 'The merge request is open. The rollout starts after it is merged.' : 'The change is on the request branch. Nothing rolls out until it is merged.') +
     summary() + again + (s.sub.found ? '<p class="pp-note">Found in GitLab after Check GitLab.</p>' : '') +
     '<p class="pp-big">' + (mr ? link(mr, 'Open merge request') : link(br, 'Open the branch')) + '</p>' +
-    (r.diffUrl ? '<p>' + link(r.diffUrl, 'Review the commit in GitLab') + '</p>' : '') +
+    (r.diffUrl ? '<p>' + link(r.diffUrl, 'Review the commit in GitLab') + '</p>' : '') + compactNotice(r, s.sub.jobUrl) + (r.compact ? '<h2>Summary</h2>' + changesTable(r) : '') +
     (r.changes && r.changes.length ? '<h2>Changes written</h2>' + changesTable(r) : '') +
     '<div class="pp-actions">' + button('WATCH', 'Watch the rollout') + button('NAV_NEW', 'New request', { ghost: true }) + '</div>';
 };
