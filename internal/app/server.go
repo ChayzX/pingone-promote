@@ -55,13 +55,15 @@ type Server struct {
 	gitlabSessionToken, gitlabTokenBinding string
 	requests                               map[string]gitops.Request
 	submissionAttempts                     map[string]bool
+	dvInventories                          map[string]*dvInventory
+	draftRuntimes                          map[string]*draftRuntime
 
 	profileGen uint64
 }
 
 func New(st *store.Store, token string) *Server {
 	root, _ := fs.Sub(assets, "web")
-	return &Server{store: st, token: token, csrf: RandomToken(), inventories: map[string]*inventorySession{}, plans: map[string]*planSession{}, clients: map[string]*pingone.Client{}, clientFactory: pingone.NewClient, gitlabFactory: gitlab.NewClient, requests: map[string]gitops.Request{}, submissionAttempts: map[string]bool{}, localTargets: map[string]bool{}, files: http.FileServer(http.FS(root))}
+	return &Server{store: st, token: token, csrf: RandomToken(), inventories: map[string]*inventorySession{}, plans: map[string]*planSession{}, clients: map[string]*pingone.Client{}, clientFactory: pingone.NewClient, gitlabFactory: gitlab.NewClient, requests: map[string]gitops.Request{}, submissionAttempts: map[string]bool{}, dvInventories: map[string]*dvInventory{}, draftRuntimes: map[string]*draftRuntime{}, localTargets: map[string]bool{}, files: http.FileServer(http.FS(root))}
 }
 func RandomToken() string {
 	var b [24]byte
@@ -136,6 +138,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if r.URL.Path == "/api/inventories" && r.Method == "POST" {
+		if err := s.loadDavinciInventory(w, r); err != nil {
+			s.logFailure(r, err)
+			replyRouteError(w, err)
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.route(w, r); err != nil {
@@ -150,7 +159,10 @@ func (s *Server) logFailure(r *http.Request, err error) {
 	}
 	status := http.StatusBadRequest
 	var statusErr *statusError
-	if errors.As(err, &statusErr) {
+	var api *apiError
+	if errors.As(err, &api) {
+		status = api.status
+	} else if errors.As(err, &statusErr) {
 		status = statusErr.status
 	} else {
 		var persistenceErr *store.PersistenceError
@@ -166,6 +178,13 @@ func (s *Server) logFailure(r *http.Request, err error) {
 }
 
 func replyRouteError(w http.ResponseWriter, err error) {
+	var api *apiError
+	if errors.As(err, &api) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(api.status)
+		json.NewEncoder(w).Encode(api)
+		return
+	}
 	var e *statusError
 	if errors.As(err, &e) {
 		replyError(w, e.status, e.err)
@@ -258,6 +277,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 	}
 	if path == "/api/logging" {
 		return s.loggingRoute(w, r)
+	}
+	if isDraftRoute(path) {
+		return s.draftRoute(w, r)
 	}
 	switch {
 	case path == "/api/session" && r.Method == "GET":
