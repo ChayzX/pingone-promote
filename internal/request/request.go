@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -40,19 +41,70 @@ type FlowRef struct {
 	Name string `json:"name,omitempty"`
 }
 
+// Scopes of a request.
+const (
+	// ScopeSelected exports the listed items and their dependencies.
+	ScopeSelected = "selected"
+	// ScopeAll exports every supported resource of the source environment.
+	ScopeAll = "all"
+)
+
+// WholeEnvironmentTitle prefixes the merge request title of a whole-
+// environment request.
+const WholeEnvironmentTitle = "[whole environment]"
+
+// MaxExcludes bounds the exclude list.
+const MaxExcludes = 200
+
+// Exclude types, by the name the request uses.
+const (
+	ExcludeFlow        = "flow"
+	ExcludeApplication = "application"
+	ExcludeFlowPolicy  = "flowPolicy"
+	ExcludeConnection  = "connection"
+	ExcludeVariable    = "variable"
+)
+
+// ExcludeTypes maps an exclude type to the terraform resource type.
+var ExcludeTypes = map[string]string{
+	ExcludeFlow:        "pingone_davinci_flow",
+	ExcludeApplication: "pingone_davinci_application",
+	ExcludeFlowPolicy:  "pingone_davinci_application_flow_policy",
+	ExcludeConnection:  "pingone_davinci_connector_instance",
+	ExcludeVariable:    "pingone_davinci_variable",
+}
+
+// ExcludeRef selects a resource to leave out, the way an include selects
+// one: by exact ID, then exact name, then a unique substring; or by its full
+// terraform Address. Type is one of flow, application, flowPolicy,
+// connection and variable, and is required unless Address is set.
+type ExcludeRef struct {
+	Type    string `json:"type,omitempty"`
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Address string `json:"address,omitempty"`
+}
+
 // Request is requestVersion 1.
 type Request struct {
 	RequestVersion int    `json:"requestVersion"`
 	RequestID      string `json:"requestId"`
 	RequestedBy    string `json:"requestedBy"`
 	// Source is the environment to export (a name, e.g. "dev").
-	Source string    `json:"source"`
-	Flows  []FlowRef `json:"flows"`
+	Source string `json:"source"`
+	// Scope is "selected" (default) or "all". all exports every supported
+	// resource of the source environment and requires ConfirmAll.
+	Scope      string `json:"scope,omitempty"`
+	ConfirmAll bool   `json:"confirmAll,omitempty"`
+	// Flows may be empty when Scope is all.
+	Flows []FlowRef `json:"flows"`
 	// Applications and FlowPolicies are included only when listed, by
 	// name (or terraformer label).
 	Applications []FlowRef `json:"applications,omitempty"`
 	FlowPolicies []FlowRef `json:"flowPolicies,omitempty"`
-	// DependencyChoices: "<type>.<label>" -> "update" | "keep".
+	// Exclude lists resources to leave out of the export, in either scope.
+	Exclude []ExcludeRef `json:"exclude,omitempty"`
+	// DependencyChoices: "<type>.<label>" -> "update" | "keep" | "exclude".
 	DependencyChoices map[string]string `json:"dependencyChoices,omitempty"`
 	// EnvValues: env -> root variable -> JSON value. Never secrets.
 	EnvValues map[string]map[string]json.RawMessage `json:"envValues,omitempty"`
@@ -183,10 +235,21 @@ func (r *Request) Validate() error {
 	if !envRE.MatchString(r.Source) {
 		return invalid("source", "must be an environment name")
 	}
-	if len(r.Flows)+len(r.Applications)+len(r.FlowPolicies) == 0 {
-		return invalid("flows", "select at least one flow, application or flow policy")
+	switch r.Scope {
+	case "":
+		r.Scope = ScopeSelected
+	case ScopeSelected, ScopeAll:
+	default:
+		return invalid("scope", "must be selected or all")
 	}
-	if len(r.Flows) > 20 || len(r.Applications) > 20 || len(r.FlowPolicies) > 20 {
+	switch {
+	case r.Whole() && !r.ConfirmAll:
+		return invalid("confirmAll", "a whole-environment request (scope all) requires confirmAll: true")
+	case !r.Whole() && r.ConfirmAll:
+		return invalid("confirmAll", "confirmAll only applies to scope all")
+	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies) == 0:
+		return invalid("flows", "select at least one flow, application or flow policy")
+	case !r.Whole() && (len(r.Flows) > 20 || len(r.Applications) > 20 || len(r.FlowPolicies) > 20):
 		return invalid("flows", "at most 20 of each kind per request")
 	}
 	for i, f := range r.Flows {
@@ -204,12 +267,15 @@ func (r *Request) Validate() error {
 			return err
 		}
 	}
+	if err := r.checkExcludes(); err != nil {
+		return err
+	}
 	for a, c := range r.DependencyChoices {
 		if !addressRE.MatchString(a) {
 			return invalid("dependencyChoices", a+" is not a resource address")
 		}
-		if c != "update" && c != "keep" {
-			return invalid("dependencyChoices."+a, "must be update or keep")
+		if c != "update" && c != "keep" && c != "exclude" {
+			return invalid("dependencyChoices."+a, "must be update, keep or exclude")
 		}
 	}
 	for env, vals := range r.EnvValues {
@@ -273,6 +339,61 @@ func (r *Request) Validate() error {
 		return invalid("description", "must be at most 64 KiB")
 	}
 	return nil
+}
+
+// Whole reports a whole-environment request.
+func (r *Request) Whole() bool { return r.Scope == ScopeAll }
+
+var excludeIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_\-]{0,63}(/[0-9A-Za-z][0-9A-Za-z_\-]{0,63})?$`)
+
+// checkExcludes validates the exclude list and refuses to exclude what the
+// request also includes. Only what can be told apart without the source
+// environment is compared here (type with the same ID or name); the job
+// compares the resolved addresses again.
+func (r *Request) checkExcludes() error {
+	if len(r.Exclude) > MaxExcludes {
+		return invalid("exclude", fmt.Sprintf("at most %d entries", MaxExcludes))
+	}
+	includes := map[string][]FlowRef{ExcludeFlow: r.Flows, ExcludeApplication: r.Applications, ExcludeFlowPolicy: r.FlowPolicies}
+	field := map[string]string{ExcludeFlow: "flows", ExcludeApplication: "applications", ExcludeFlowPolicy: "flowPolicies"}
+	for i, e := range r.Exclude {
+		f := fmt.Sprintf("exclude[%d]", i)
+		if e.Address != "" {
+			if e.Type != "" || e.ID != "" || e.Name != "" {
+				return invalid(f, "an address entry takes no type, id or name")
+			}
+			if !addressRE.MatchString(e.Address) {
+				return invalid(f+".address", "must be a terraform resource address")
+			}
+			continue
+		}
+		if _, ok := ExcludeTypes[e.Type]; !ok {
+			return invalid(f+".type", "must be flow, application, flowPolicy, connection or variable (or set address)")
+		}
+		switch {
+		case e.ID == "" && e.Name == "":
+			return invalid(f, "set id, name or address")
+		case e.ID != "" && !excludeIDRE.MatchString(e.ID):
+			return invalid(f+".id", "is not an ID")
+		case e.Name != "" && (!printable(e.Name, 200) || strings.TrimSpace(e.Name) == ""):
+			return invalid(f+".name", "must be at most 200 printable characters")
+		}
+		for j, in := range includes[e.Type] {
+			same := (e.ID != "" && strings.EqualFold(e.ID, in.ID)) ||
+				(e.Name != "" && strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(in.Name)))
+			if same {
+				return invalid(f, fmt.Sprintf("excludes %s, which %s[%d] includes; a resource cannot be both included and excluded", describe(e.ID, e.Name), field[e.Type], j))
+			}
+		}
+	}
+	return nil
+}
+
+func describe(id, name string) string {
+	if name != "" {
+		return strconv.Quote(name)
+	}
+	return id
 }
 
 func checkRef(field string, f FlowRef, allowID bool) error {

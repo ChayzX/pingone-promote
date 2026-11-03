@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strings"
 
 	"pingone-promote/internal/promote"
 )
@@ -45,9 +46,9 @@ type Selected struct {
 // ChangeOut is one address in result.changes.
 type ChangeOut struct {
 	Address string `json:"address"`
-	Role    string `json:"role"`   // selected | dependency
-	Action  string `json:"action"` // added | updated | kept_differs | unchanged | moved
-	Status  string `json:"status"` // new | changed-in-source | matches | git-newer | changed-in-both
+	Role    string `json:"role"`   // selected | dependency | environment | excluded
+	Action  string `json:"action"` // added | updated | kept_differs | unchanged | moved | excluded
+	Status  string `json:"status"` // new | changed-in-source | matches | git-newer | changed-in-both | not-compared
 	File    string `json:"file,omitempty"`
 	From    string `json:"from,omitempty"`
 	Reason  string `json:"reason,omitempty"`
@@ -93,13 +94,44 @@ type ErrorOut struct {
 	Candidates []Selected `json:"candidates,omitempty"`
 }
 
-// Summary counts changes by action.
-type Summary struct {
+// Counts are changes by action.
+type Counts struct {
 	Added       int `json:"added"`
 	Updated     int `json:"updated"`
 	KeptDiffers int `json:"kept_differs"`
 	Unchanged   int `json:"unchanged"`
 	Moved       int `json:"moved"`
+	Excluded    int `json:"excluded"`
+}
+
+func (c *Counts) add(action promote.Action) {
+	switch action {
+	case promote.ActionAdded:
+		c.Added++
+	case promote.ActionUpdated:
+		c.Updated++
+	case promote.ActionKeptDiffers:
+		c.KeptDiffers++
+	case promote.ActionUnchanged:
+		c.Unchanged++
+	case promote.ActionMoved:
+		c.Moved++
+	case promote.ActionExcluded:
+		c.Excluded++
+	}
+}
+
+// TypeCounts are the changes of one resource type.
+type TypeCounts struct {
+	Total int `json:"total"`
+	Counts
+}
+
+// Summary counts changes by action, overall and by resource type. ByType
+// is complete even where Changes is long, so a screen can lead with it.
+type Summary struct {
+	Counts
+	ByType map[string]TypeCounts `json:"byType"`
 }
 
 // Result is result.json, version 1.
@@ -111,6 +143,7 @@ type Result struct {
 	DryRun          bool                    `json:"dryRun"`
 	Mode            string                  `json:"mode"`
 	Source          string                  `json:"source"`
+	Scope           string                  `json:"scope"`
 	Branch          string                  `json:"branch"`
 	CommitID        string                  `json:"commitId"`
 	MRUrl           string                  `json:"mrUrl"`
@@ -129,11 +162,28 @@ type Result struct {
 	Error           *ErrorOut               `json:"error"`
 }
 
-// MaxDiff bounds result.diff.
-const MaxDiff = 1 << 20
+// MaxDiff bounds result.diff. A whole-environment diff is cut at
+// MaxDiffAll instead, so result.json (which also lists every change) stays
+// about the size of a selected request's.
+const (
+	MaxDiff    = 1 << 20
+	MaxDiffAll = 512 << 10
+)
+
+// truncateDiff cuts a diff to limit bytes at a line boundary.
+func truncateDiff(diff string, limit int) (string, bool) {
+	if len(diff) <= limit {
+		return diff, false
+	}
+	cut := diff[:limit]
+	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+		cut = cut[:i+1]
+	}
+	return cut, true
+}
 
 func newResult() *Result {
-	return &Result{ResultVersion: ResultVersion, Selected: []Selected{}, Changes: []ChangeOut{}, Files: []FileOut{},
+	return &Result{ResultVersion: ResultVersion, Scope: ScopeSelected, Summary: Summary{ByType: map[string]TypeCounts{}}, Selected: []Selected{}, Changes: []ChangeOut{}, Files: []FileOut{},
 		RequiredSecrets: []SecretOut{}, Blockers: map[string][]BlockerOut{}, Warnings: []string{}}
 }
 
@@ -147,18 +197,12 @@ func (r *Result) setChanges(changes []promote.Change) {
 	for _, c := range changes {
 		r.Changes = append(r.Changes, ChangeOut{Address: c.Address, Role: string(c.Role), Action: string(c.Action), Status: string(c.Status),
 			File: c.File, From: c.From, Reason: c.Reason})
-		switch c.Action {
-		case promote.ActionAdded:
-			r.Summary.Added++
-		case promote.ActionUpdated:
-			r.Summary.Updated++
-		case promote.ActionKeptDiffers:
-			r.Summary.KeptDiffers++
-		case promote.ActionUnchanged:
-			r.Summary.Unchanged++
-		case promote.ActionMoved:
-			r.Summary.Moved++
-		}
+		r.Summary.add(c.Action)
+		typ, _, _ := strings.Cut(c.Address, ".")
+		tc := r.Summary.ByType[typ]
+		tc.Total++
+		tc.add(c.Action)
+		r.Summary.ByType[typ] = tc
 	}
 }
 
@@ -196,12 +240,13 @@ func (r *Result) LogLine() string {
 		MRUrl         string    `json:"mrUrl,omitempty"`
 		BranchURL     string    `json:"branchUrl,omitempty"`
 		CommitID      string    `json:"commitId,omitempty"`
-		Summary       Summary   `json:"summary"`
+		Scope         string    `json:"scope"`
+		Summary       Counts    `json:"summary"`
 		BlockedEnvs   []string  `json:"blockedEnvs,omitempty"`
 		Error         *ErrorOut `json:"error,omitempty"`
 	}
 	l := line{ResultVersion: r.ResultVersion, RequestID: r.RequestID, Status: r.Status, MRUrl: r.MRUrl, BranchURL: r.BranchURL,
-		CommitID: r.CommitID, Summary: r.Summary, Error: r.Error}
+		CommitID: r.CommitID, Scope: r.Scope, Summary: r.Summary.Counts, Error: r.Error}
 	for env := range r.Blockers {
 		l.BlockedEnvs = append(l.BlockedEnvs, env)
 	}
