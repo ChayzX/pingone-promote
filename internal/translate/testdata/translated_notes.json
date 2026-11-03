@@ -1,0 +1,81 @@
+{
+  "Secrets": [
+    {
+      "key": "PingOne_DaVinci_connection_Custom_API_apiKey",
+      "site": "connection:Custom-20API/apiKey",
+      "reason": "heuristic"
+    },
+    {
+      "key": "PingOne_DaVinci_connection_Custom_API_loginHint",
+      "site": "connection:Custom-20API/loginHint",
+      "reason": "secure"
+    },
+    {
+      "key": "PingOne_DaVinci_connection_PingOne_clientSecret",
+      "site": "connection:PingOne/clientSecret",
+      "reason": "masked"
+    },
+    {
+      "key": "PingOne_DaVinci_flow_Login_n3sso_hmacKey",
+      "site": "node:Login/n3sso/hmacKey",
+      "reason": "heuristic"
+    },
+    {
+      "key": "davinci_variable_PingFedAuthNCreds_value",
+      "site": "variable:PingFedAuthNCreds_company",
+      "reason": "data_type"
+    }
+  ],
+  "Params": [
+    {
+      "key": "form_mfa_20subflow_n2form",
+      "path": "davinci_flows[\"MFA-20subflow\"].graph.nodes[\"n2form\"].properties/form"
+    },
+    {
+      "key": "themeid_mfa_20subflow_n2form",
+      "path": "davinci_flows[\"MFA-20subflow\"].graph.nodes[\"n2form\"].properties/themeId"
+    }
+  ],
+  "Warnings": [
+    {
+      "code": "version_latest",
+      "path": "davinci_applications[\"Web-20Login\"].flow_policies[\"Login-20policy\"].distributions[0].version",
+      "message": "policy pinned a source flow version; set to -1 (latest deployed)"
+    },
+    {
+      "code": "secret_heuristic",
+      "path": "davinci_connections[\"Custom-20API\"].properties/apiKey",
+      "site": "connection:Custom-20API/apiKey",
+      "message": "value has a secret-looking name and was replaced by a secret reference; acknowledge, or mark it as not secret",
+      "needs_ack": true
+    },
+    {
+      "code": "secret_heuristic",
+      "path": "davinci_flows[\"Login\"].graph.nodes[\"n3sso\"].properties/hmacKey",
+      "site": "node:Login/n3sso/hmacKey",
+      "message": "value has a secret-looking name and was replaced by a secret reference; acknowledge, or mark it as not secret",
+      "needs_ack": true
+    },
+    {
+      "code": "input_schema_cleared",
+      "path": "davinci_flows[\"Login\"].input_schema",
+      "message": "AUTHENTICATION flows take no input schema; cleared"
+    },
+    {
+      "code": "param_fallback",
+      "path": "davinci_flows[\"MFA-20subflow\"].graph.nodes[\"n2form\"].properties/form",
+      "message": "PingOne form IDs differ per environment; set parameter form_mfa_20subflow_n2form in each environment"
+    },
+    {
+      "code": "param_fallback",
+      "path": "davinci_flows[\"MFA-20subflow\"].graph.nodes[\"n2form\"].properties/themeId",
+      "message": "PingOne themeId IDs differ per environment; set parameter themeid_mfa_20subflow_n2form in each environment"
+    },
+    {
+      "code": "version_latest",
+      "path": "davinci_flows[\"MFA-20subflow\"].graph.nodes[\"n2sub\"].properties/subFlowVersionId",
+      "message": "subflow version pinned to a source version; set to -1 (latest deployed)"
+    }
+  ],
+  "TierConflicts": null
+}
