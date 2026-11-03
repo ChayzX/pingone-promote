@@ -63,16 +63,16 @@ func TestScopedMergeOfFlowB(t *testing.T) {
 	}
 	want := map[string]Action{
 		flowB: ActionUpdated,
-		"pingone_davinci_flow_deploy.pingcli__Flow-0020-B":                ActionUnchanged,
-		"pingone_davinci_flow_enable.pingcli__Flow-0020-B":                ActionUnchanged,
-		"pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow":          ActionAdded,
-		"pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow":   ActionAdded,
-		"pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow":   ActionAdded,
-		"pingone_davinci_connector_instance.pingcli__PingOne":             ActionKeptDiffers,
-		"pingone_davinci_connector_instance.pingcli__Http":                ActionUnchanged,
-		"pingone_davinci_variable.pingcli__apiKey_company":                ActionUnchanged,
-		"pingone_davinci_variable.pingcli__attempts_flowInstance":         ActionUnchanged,
-		"pingone_davinci_variable.pingcli__companyName_company":           ActionUnchanged,
+		"pingone_davinci_flow_deploy.pingcli__Flow-0020-B":              ActionUnchanged,
+		"pingone_davinci_flow_enable.pingcli__Flow-0020-B":              ActionUnchanged,
+		"pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow":        ActionAdded,
+		"pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow": ActionAdded,
+		"pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow": ActionAdded,
+		"pingone_davinci_connector_instance.pingcli__PingOne":           ActionKeptDiffers,
+		"pingone_davinci_connector_instance.pingcli__Http":              ActionUnchanged,
+		"pingone_davinci_variable.pingcli__apiKey_company":              ActionUnchanged,
+		"pingone_davinci_variable.pingcli__attempts_flowInstance":       ActionUnchanged,
+		"pingone_davinci_variable.pingcli__companyName_company":         ActionUnchanged,
 	}
 	if len(actions) != len(want) {
 		t.Fatalf("changes: %+v", res.Changes)

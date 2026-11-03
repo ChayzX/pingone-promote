@@ -91,11 +91,11 @@ type Variable struct {
 
 // Block is one neutralized resource block.
 type Block struct {
-	Address string `json:"address"` // <type>.<label>, module-relative
-	Type    string `json:"type"`
-	Label   string `json:"label"`
-	File    string `json:"file"` // <type>.tf, as terraformer names it
-	Text    []byte `json:"-"`    // fmt-clean, no surrounding blank lines
+	Address string   `json:"address"` // <type>.<label>, module-relative
+	Type    string   `json:"type"`
+	Label   string   `json:"label"`
+	File    string   `json:"file"` // <type>.tf, as terraformer names it
+	Text    []byte   `json:"-"`    // fmt-clean, no surrounding blank lines
 	Refs    []string `json:"refs,omitempty"`
 	Vars    []string `json:"vars,omitempty"`
 	// Name is the resource's name attribute, when it is a literal.
@@ -194,7 +194,7 @@ var (
 type rawBlock struct {
 	typ, label, file string
 	text             []byte
-	start            int // offset of text in its file
+	start            int                             // offset of text in its file
 	attrs            map[string]hclsyntax.Expression // top-level attributes
 	body             *hclsyntax.Body
 }

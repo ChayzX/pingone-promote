@@ -122,12 +122,12 @@ type MergeResult struct {
 	// Files holds the full new content of every created or changed file.
 	Files map[string][]byte `json:"-"`
 	// Deleted lists files the merge deletes (none today; reserved).
-	Deleted         []string               `json:"deleted,omitempty"`
-	Changes         []Change               `json:"changes"`
-	Blockers        []Blocker              `json:"blockers"`
-	RequiredSecrets []string               `json:"requiredSecrets"`
+	Deleted         []string                   `json:"deleted,omitempty"`
+	Changes         []Change                   `json:"changes"`
+	Blockers        []Blocker                  `json:"blockers"`
+	RequiredSecrets []string                   `json:"requiredSecrets"`
 	NewSecrets      []pipelinesecrets.NewEntry `json:"-"`
-	Warnings        []string               `json:"warnings,omitempty"`
+	Warnings        []string                   `json:"warnings,omitempty"`
 }
 
 // Blocked reports whether any blocker exists.
@@ -171,7 +171,7 @@ func Merge(req MergeRequest) (*MergeResult, error) {
 		return nil, errors.New("promote: source environment name is invalid")
 	}
 	m := &merger{req: req, l: l, view: newView(req.Head), files: map[string]*hclblocks.File{},
-		res: &MergeResult{Files: map[string][]byte{}, Changes: []Change{}, Blockers: []Blocker{}, RequiredSecrets: []string{}},
+		res:     &MergeResult{Files: map[string][]byte{}, Changes: []Change{}, Blockers: []Blocker{}, RequiredSecrets: []string{}},
 		written: map[string]bool{}, selected: map[string]bool{}}
 	var err error
 	if m.head, err = loadIndex(req.Head, l); err != nil {

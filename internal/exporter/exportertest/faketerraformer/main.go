@@ -66,8 +66,8 @@ func fail(msg string) {
 }
 
 type opts struct {
-	out, moduleDir, moduleName, format         string
-	include, exclude                           []string
+	out, moduleDir, moduleName, format        string
+	include, exclude                          []string
 	list, upstream, imports, values, skipDeps bool
 }
 
