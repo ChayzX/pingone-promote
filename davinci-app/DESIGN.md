@@ -119,17 +119,12 @@ Each screen is a form with two fields:
 ```
 │ Applications and flow policies   Application: Admin Console                          │
 │                                  [Add an application or flow policy]                 │
-│ Stop managing                                                                       │
-│   [ ] pingone_davinci_variable.pingcli__lang  Stop managing (keeps it in PingOne)   │
-│   [ ] I confirm: Git stops managing every resource ticked above. They keep running.  │
 │ Readiness                                                                           │
 │   qa  ✕ 1 to fix  qa: base_url [            ]                                       │
 │   [ ] Same in all environments: use the source value for base_url                   │
 │       identical everywhere: qa, stage, prod all get the same value; not asked per env│
 ```
 - **Same in all environments (`inlineValues`).** Each value row of the readiness list has the tick. The source value becomes a literal in every env, so the per-env value is not asked. Typed values for that variable are dropped before the commit. The boxes for one variable move together (the screen script). After a preview the variable stays listed under "Same in all environments" so it can be taken back. The job decides whether the variable can be inlined; if not, it names `inlineValues` in `error.field`.
-- **Stop managing (`remove`).** Offered for the rows of the last preview that are dependencies, that Git already manages (status is not `new`), and that are not `added`, `moved` or already `removed`. The selected flow is never offered, and a forced click is dropped on the server (`contract.removeChoices`). Ticking needs the confirm box, or Preview and Submit are refused ("Tick the confirmation ..."). The job reports the address with the action `removed`, which the app shows as **Stop managing (keeps it in PingOne)**.
-  - Limit: `result.json` lists only the addresses in the export plus the de-managed ones. A resource that Git manages but the export no longer mentions has no row, so the app cannot offer it (ask 12 below).
 
 ### 1.2b Add an application or flow policy (optional step)
 ```
@@ -422,7 +417,7 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
     - `envValues: {<env>: {<root variable>: <JSON value>}}`, for the source or rollout envs only, never `import_ids`, never secret-looking;
     - `secretMappings: {<terraformer secret var>: <customer_secrets.yml name>}`;
     - `commitMessage` (at most 2000 characters), `title` (one line, at most 255) and `description` (at most 64 KiB).
-  - `inlineValues` (names, sorted) and `remove` (addresses, sorted), from the review screen (section 1.2a); `applications` and `flowPolicies` (`{name}` only, at most 20 each), from section 1.2b.
+  - `inlineValues` (names, sorted), from the review screen (section 1.2a); `applications` and `flowPolicies` (`{name}` only, at most 20 each), from section 1.2b.
   - Not sent: `connectorEnvLocal` and `baseCommit`. They are optional in the job and can be added in `contract.buildRequest` without other changes.
   - `contract.validateRequest` applies all of these rules before any commit, using the job's field paths.
 - **Preview:**
@@ -446,7 +441,7 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
   - Links: `mrUrl`, `mrIid`, `branchUrl`, and `diffUrl` (the commit when one was made, otherwise the compare view).
   - `changes[]`:
     - `{address, role: selected|dependency, action, status, file?, from?, reason?}`;
-    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged`, `removed` (shown as "Stop managing (keeps it in PingOne)": de-managed, not destroyed) or `moved` (shown with `from`);
+    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged` or `moved` (shown with `from`);
     - `status` is one of `new`, `changed-in-source`, `matches`, `git-newer` or `changed-in-both`, and has its own column.
     - Dependencies that differ, and any address `changed-in-both`, get Keep Git version / Use source.
   - `summary`: counts per action, used for the summary line.
@@ -598,7 +593,7 @@ The backend (PR #96) accepted all eleven asks. The app now uses them as follows:
 
 Open points, none of them blocking:
 - `connectorEnvLocal` and `baseCommit` are not sent.
-- Ask 12 (new): `result.json` has no list of addresses that Git manages but the export does not contain, so "Stop managing" is offered only for dependency rows the export does contain. A `gitOnly[]` list would let the app offer the rest.
+- Ask 12 (withdrawn): the app no longer has a "Stop managing" feature, so no `gitOnly[]` list is needed. The request job has no `remove` field either; taking a resource out of Git is a manual change.
 - Ask 13 (new): `PINGONE_PROMOTE_RESULT` carries no `requiredSecrets`, so a submit read from the log cannot be gated on the Vault tick.
 
 ## 12. Assumptions to verify in a live tenant

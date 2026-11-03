@@ -345,7 +345,7 @@ lib.searchFlows = (items, query) => {
 };
 
 // ---- options, readiness and the #57 Submit rule ---------------------------------------
-lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.remove, o.applications, o.flowPolicies]);
+lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.applications, o.flowPolicies]);
 // Addresses that get a Keep Git version / Use source choice: differing dependencies (#93),
 // and any address changed in both Git and the source.
 lib.choosable = (r) => (r ? r.changes.filter((c) => contract.RE.address.test(c.address) &&

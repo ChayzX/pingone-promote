@@ -115,10 +115,10 @@ eq(lib.searchFlows(flowsFake, 'LOGIN').matches.map((f) => f.id), ['a1', 'a2'], '
 eq(lib.searchFlows(flowsFake, 'a3').matches.map((f) => f.id), ['a3'], 'search by exact ID');
 eq(lib.searchFlows(flowsFake, 'zzz').total, 0, 'no match');
 const req0 = contract.buildRequest({ requestId: rid, requestedBy: 'pat', source: 'dev', flow: { id: dvid(1), name: 'Login' },
-  options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {}, inline: [], remove: [] }, dryRun: true });
+  options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {}, inline: [] }, dryRun: true });
 // Every field the job's Request struct accepts (internal/request/request.go); unknown fields fail there.
 const ALLOWED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'applications', 'flowPolicies', 'dependencyChoices', 'envValues', 'secretMappings',
-  'connectorEnvLocal', 'inlineValues', 'remove', 'baseCommit', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
+  'connectorEnvLocal', 'inlineValues', 'baseCommit', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
 const REQUIRED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'mode', 'branchName', 'dryRun'];
 const keysOk = (r) => Object.keys(r).every((k) => ALLOWED_KEYS.indexOf(k) >= 0) && REQUIRED_KEYS.every((k) => lib.has(r, k));
 ok(keysOk(req0) && !lib.has(req0, 'dependencyChoices') && !lib.has(req0, 'secretMappings') && !lib.has(req0, 'remove'), 'request.json: only known fields; empty optional ones are left out');
@@ -146,7 +146,6 @@ vbad({ envValues: { qa: { import_ids: 'x' } } }, 'envValues.qa.import_ids');
 vbad({ envValues: { qa: { key: GLTOKEN } } }, 'envValues.qa.key');
 vbad({ secretMappings: { a: '1bad' } }, 'secretMappings.a');
 vbad({ dependencyChoices: { 'not.an_address': 'keep' } }, 'dependencyChoices');
-vbad({ remove: ['bad'] }, 'remove');
 vbad({ inlineValues: ['1bad'] }, 'inlineValues');
 vbad({ applications: Array(21).fill({ name: 'a' }) }, 'flows');
 vbad({ flowPolicies: Array(21).fill({ name: 'a' }) }, 'flows');
@@ -229,7 +228,7 @@ function jobValidate(req, branch) {
     }
   }
   for (const v of req.inlineValues || []) { if (!JOB_RE.ident.test(v)) { return fail('inlineValues', v + ' is not a variable name'); } }
-  for (const a of req.remove || []) { if (!JOB_RE.address.test(a)) { return fail('remove', a + ' is not a resource address'); } }
+  if (lib.has(req, 'remove')) { return fail('', 'unknown field remove'); }
   for (const a of Object.keys(req.dependencyChoices || {})) { if (!JOB_RE.address.test(a) || ['update', 'keep'].indexOf(req.dependencyChoices[a]) < 0) { return fail('dependencyChoices', a); } }
   for (const env of Object.keys(req.envValues || {})) {
     if ([req.source].concat(JOB_ROLLOUT).indexOf(env) < 0) { return fail('envValues', env + ' is not the source or a rollout env'); }
@@ -261,15 +260,8 @@ const PREVIEW = (req, o) => {
     { address: 'pingone_davinci_connector_instance.pingcli__Http', role: 'dependency', action: 'kept_differs', status: 'changed-in-source', reason: 'differs from Git; kept because it is a shared dependency (choose update to use the source version)' },
     { address: 'pingone_davinci_variable.pingcli__color', role: 'dependency', action: 'kept_differs', status: 'changed-in-both' },
     { address: 'pingone_davinci_variable.pingcli__theme_new', role: 'dependency', action: 'moved', status: 'matches', from: 'pingone_davinci_variable.pingcli__theme' },
-    { address: 'pingone_davinci_flow.pingcli__Old', role: 'dependency', action: 'removed', status: 'matches' },
     { address: 'pingone_davinci_variable.pingcli__lang', role: 'dependency', action: 'unchanged', status: 'matches' }];
-  for (const a of req.remove || []) {
-    // De-managed: the job reports the address as removed (the live resource is kept).
-    const row = { address: a, role: 'dependency', action: 'removed', status: 'matches', file: 'definitions/pingone_davinci_flow.tf', reason: 'de-managed: removed from the definitions; the live resource is kept (destroy = false)' };
-    const i = changes.findIndex((c) => c.address === a);
-    if (i >= 0) { changes[i] = row; } else { changes.push(row); }
-  }
-  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, removed: 0, moved: 0 };
+  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, moved: 0 };
   for (const c of changes) { summary[c.action] += 1; }
   const res = { resultVersion: 1, requestId: req.requestId, requestedBy: req.requestedBy, status: 'previewed', dryRun: true, mode: req.mode, source: req.source, branch: req.branchName,
     commitId: '', mrUrl: '', mrIid: 0, branchUrl: GLWEB + '/-/tree/' + encodeURIComponent(req.branchName), diffUrl: GLWEB + '/-/compare/main...' + encodeURIComponent(req.branchName),
@@ -751,7 +743,7 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     const r = await run({ world: w }, toOptions.concat([
       { click: 'PREVIEW', expect: /No preview yet/, form: { title: 'Bring Registration from dev', description: 'Ticket ABC-1' } },
       auto(/Preview$|Predicted changes/),
-      { click: 'EDIT', expect: /Predicted changes 1 new, 1 changed in source, 2 differs; git version kept, 1 moved \(new address\), 1 stopped managing, 1 matches git/i },
+      { click: 'EDIT', expect: /Predicted changes 1 new, 1 changed in source, 2 differs; git version kept, 1 moved \(new address\), 1 matches git/i },
       { click: 'PREVIEW', expect: /Keep Git version/, form: Object.assign({ deps: { [HTTP]: 'update' } }, ENV_FORM) },
       auto(/Preview: ready/),
       { click: 'SUBMIT', expect: /qa ✓ Ready/ },
@@ -1046,28 +1038,6 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
       { click: 'PREVIEW', form: { inline: { base_url: false } }, expect: /Same in all environments: use the source value for base_url/ }, auto(/Predicted changes/), { click: 'SIGNOUT' }]));
     eq(commitsOf(r2).map(decodeReq).map((x) => x.inlineValues), [undefined, ['base_url'], undefined], 'unticking takes the variable out of inlineValues');
     common(r2, 'inline off');
-  }
-  // ---- de-manage (remove) -------------------------------------------------------------------------------------------
-  {
-    const r = await run({}, toOptions.concat([
-      { click: 'PREVIEW' }, auto(/Predicted changes/), { click: 'EDIT', expect: /Predicted changes/ },
-      { click: 'PREVIEW', form: { remove: { [LANG]: true } }, expect: /Stop managing/ },
-      { click: 'PREVIEW', form: { remove: { [SEL]: true }, removeConfirm: true }, expect: /Fix 1 field: Tick the confirmation before you stop managing a resource/ },
-      auto(/Predicted changes/),
-      { click: 'EDIT', expect: /Stop managing \(keeps it in PingOne\)/ },
-      { click: 'PREVIEW', form: { remove: { [LANG]: false } }, expect: /I confirm: Git stops managing/ }, auto(/Predicted changes/), { click: 'SIGNOUT' }]));
-    const cs = commitsOf(r).map(decodeReq);
-    eq(cs.length, 3, 'a request without the confirmation is not committed');
-    eq(cs.map((x) => x.remove), [undefined, [LANG], undefined], 'remove is sent when ticked and confirmed, and withdrawn when unticked');
-    ok(r.pages.some((p) => p.state && p.state.req && p.state.req.options && p.state.req.options.removeConfirmed === false), 'the confirmation resets when nothing is ticked');
-    const opts = r.pages.filter((p) => /<h2>Stop managing<\/h2>/.test(p.html) && /I confirm/.test(p.html));
-    const offered = opts[0].html.split('<h2>Stop managing</h2>')[1].split('<h2>Readiness</h2>')[0];
-    ok(offered.indexOf(SEL) < 0 && offered.indexOf(HTTP) > 0 && offered.indexOf(COLOR) > 0 && offered.indexOf(LANG) > 0, 'Stop managing is offered for Git-managed dependencies, never for the selected flow');
-    ok(offered.indexOf('MFA-0020-sub') < 0 && offered.indexOf('theme_new') < 0 && offered.indexOf('pingcli__Old') < 0, 'not offered for new, moved or already de-managed rows');
-    ok(!buttonOf(opts[0].html, 'PREVIEW').disabled, 'the confirmation error does not lock the screen');
-    const done = r.pages.filter((p) => /Predicted changes/.test(p.html) && /pingcli__lang<\/code>[^]{0,300}Stop managing \(keeps it in PingOne\)/.test(p.html))[0];
-    ok(done && /2 stopped managing/.test(visible(done.html)), 'the result action removed is shown as "Stop managing (keeps it in PingOne)"');
-    common(r, 'de-manage');
   }
   // ---- _request blockers, warnings, one-at-a-time jobs -----------------------------------------------------------------------
   {

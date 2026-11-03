@@ -2,7 +2,7 @@
 
 **PingOne Promote - request app** is a DaVinci flow. People sign in to it with PingOne SSO. In the flow they:
 1. pick a **source env** and a **main flow**;
-2. preview the change, optionally with applications and flow policies, values that are the same in every env, and resources to stop managing;
+2. preview the change, optionally with applications and flow policies and values that are the same in every env;
 3. submit it as a request to the config repo in GitLab;
 4. watch its **rollout** (qa → stage → prod).
 
@@ -158,7 +158,7 @@ The full operator test plan, with the exact names, is `docs/acceptance/live-acce
 5. **Rollout.** Choose **Watch the rollout**, then merge the MR in GitLab. qa shows **Needs approval** (a manual job) until you run it, then **Live**. prod shows **Needs approval (n of m approvals)**. Make one env job fail (`exit 1`) and check that it shows **Failed**.
 6. **Branch mode.** Repeat steps 2 to 4 with **Branch only**. You get a branch link and no MR. The rollout shows "branch only" until you open an MR by hand.
 7. **Cancel.** Preview a new request and choose **Cancel request**: the branch is deleted. Push a commit to another request branch by hand and try again: the app refuses.
-8. **Options.** After a preview that asks for an env value, tick *Same in all environments* and preview again: `request.json` has `inlineValues` and no per-env value for it. Tick *Stop managing (keeps it in PingOne)* on a dependency row plus the confirm box: the result shows that row as stopped, and the resource is still in PingOne. Add an application and one of its flow policies by name.
+8. **Options.** After a preview that asks for an env value, tick *Same in all environments* and preview again: `request.json` has `inlineValues` and no per-env value for it. Add an application and one of its flow policies by name.
 9. **Result download fallback.** If your GitLab redirects artifact downloads, the screens show "Summary only" (read from the job log's last line) instead of the change list.
 10. **Slow GitLab.** Pause the project's runners and submit. The working screen says "waiting for a runner", and after `ppRunTimeoutSeconds` it shows "GitLab is slow" with **Keep waiting** and **Check GitLab**. Resume the runners and choose Check GitLab: the app resumes.
 11. **Requests.** The list shows the MR with *Requested by*, and the open request branches.
