@@ -2,7 +2,8 @@ package translate
 
 import (
 	"regexp"
-	"strings"
+
+	"pingone-promote/internal/secretscan"
 )
 
 // Secret naming rules. Each rule is one function so the convention can change
@@ -33,24 +34,12 @@ func NodeSecretName(flowName, nodeID, property string) string {
 	return "PingOne_DaVinci_flow_" + sanitizeSecretPart(flowName) + "_" + sanitizeSecretPart(nodeID) + "_" + sanitizeSecretPart(property)
 }
 
-// Secret-looking names. These heuristics move here from promotion.Redact,
-// which is deleted with the native workflow in #44. Here a match is not a
-// silent redaction: it classifies the value as secret and raises a warning
-// the operator must acknowledge (or override with Options.NotSecret).
-func redactionKey(key string) string {
-	return strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(key))
-}
-
-func secretLookingName(key string) bool {
-	lk := redactionKey(key)
-	for _, s := range []string{"password", "passphrase", "secret", "token", "key", "credential", "authentication", "authorization", "connectionstring", "connectionuri"} {
-		if strings.Contains(lk, s) {
-			return true
-		}
-	}
-	return lk == "dsn" || lk == "auth"
-}
+// Secret-looking names. The heuristics live in internal/secretscan, shared
+// with the v2 exporter and neutralizer. Here a match is not a silent
+// redaction: it classifies the value as secret and raises a warning the
+// operator must acknowledge (or override with Options.NotSecret).
+func secretLookingName(key string) bool { return secretscan.LooksLikeSecretName(key) }
 
 // templateOnly matches a value that is wholly a DaVinci expression, which is
 // a reference rather than a secret.
-var templateOnly = regexp.MustCompile(`^\s*(\{\{[^{}]*\}\}|\$\{[^{}]*\})\s*$`)
+var templateOnly = secretscan.TemplateOnly
