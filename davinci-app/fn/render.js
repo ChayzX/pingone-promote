@@ -68,7 +68,7 @@ const changesTable = (r) => {
   if (!r.changes.length) { return '<p class="pp-empty">The job reported no changes.</p>'; }
   const unknown = r.changes.filter((c) => c.action === 'unknown').length;
   const line = contract.ACTION_ORDER.filter((a) => (a === 'unknown' ? unknown : r.summary[a]))
-    .map((a) => (a === 'unknown' ? unknown + ' unrecognised' : r.summary[a] + ' ' + contract.ACTIONS[a].label.toLowerCase())).join(', ');
+    .map((a) => (a === 'unknown' ? unknown + ' unrecognised' : r.summary[a] + ' ' + (contract.ACTIONS[a].count || contract.ACTIONS[a].label.toLowerCase()))).join(', ');
   const row = (c) => {
     const a = contract.ACTIONS[c.action] || { sym: '?', label: 'Not recognised', cls: 'warn' };
     return '<tr><td><code>' + e(c.address) + '</code>' + (c.role === 'selected' ? ' <span class="pp-tag">selected flow</span>' : '') +
@@ -82,28 +82,47 @@ const changesTable = (r) => {
   return '<p>' + e(line) + '.</p>' + (main.length ? table(main) : '') + (same.length ? '<details><summary>' + same.length + ' matching Git</summary>' + table(same) + '</details>' : '');
 };
 const shown = (v) => (v && typeof v === 'object' ? JSON.stringify(v) : (v === undefined || v === null ? '' : String(v)));
+// Same in all environments (inlineValues): one tick per variable. Every box for the same variable is kept in step by
+// the screen's script, so the last one in the form always holds the person's choice.
+const inlineBox = (v, editable) => {
+  const id = uid('c');
+  const on = (s.req.options.inline || []).indexOf(v) >= 0;
+  return (editable ? '<label class="pp-check" for="' + id + '"><input type="checkbox" id="' + id + '"' + attr(['inline', v]) + (on ? ' checked' : '') +
+    ' aria-describedby="' + id + '-d" /> Same in all environments: use the source value for <code>' + e(v) + '</code></label>'
+    : '<p>Same in all environments: <code>' + e(v) + '</code></p>') +
+    '<p class="pp-hint" id="' + id + '-d"><span class="pp-tag">identical everywhere</span> ' + (on ? 'The source value is written as a literal, so ' : 'If ticked, the source value is written as a literal, so ') +
+    e(cfg.rollout.join(', ')) + ' all get the same value. It is not asked per environment.</p>';
+};
 const readiness = (r, editable) => {
   const bl = (r && r.blockers) || {};
+  const inl = s.req.options.inline || [];
   // The rollout envs always; the source and the whole request only when there is something for them.
   const envs = cfg.rollout.slice();
   if (bl[s.req.source] || (s.req.options.env || {})[s.req.source]) { envs.unshift(s.req.source); }
   if (bl[contract.REQUEST_BLOCKERS]) { envs.unshift(contract.REQUEST_BLOCKERS); }
+  const shownInline = [];
   const rows = envs.map((env) => {
     const list = bl[env] || [];
     const vals = env === contract.REQUEST_BLOCKERS ? {} : ((s.req.options.env || {})[env] || {});
     const items = list.map((b) => {
-      if (b.code === 'missing_value' && b.var && editable && env !== contract.REQUEST_BLOCKERS) {
-        return text(['env', env, b.var], env + ': ' + b.var, shown(vals[b.var]), { err: errFor('envValues.' + env + '.' + b.var), hint: (b.message || 'Environment value for ' + env) + '. Text, or JSON for a list.' });
+      if (b.code === 'missing_value' && b.var && env !== contract.REQUEST_BLOCKERS) {
+        shownInline.push(b.var);
+        if (inl.indexOf(b.var) >= 0) { return '<div class="pp-note ok"><p><code>' + e(b.var) + '</code> has the same value in every environment.</p>' + inlineBox(b.var, editable) + '</div>'; }
+        if (editable) {
+          return text(['env', env, b.var], env + ': ' + b.var, shown(vals[b.var]), { err: errFor('envValues.' + env + '.' + b.var), hint: (b.message || 'Environment value for ' + env) + '. Text, or JSON for a list.' }) + inlineBox(b.var, true);
+        }
       }
       const what = contract.BLOCKER_TEXT[b.code] || b.code || 'blocked';
       return '<p class="pp-note bad"><strong>' + e(what) + '.</strong> ' + e(b.message) + (b.address ? ' <code>' + e(b.address) + '</code>' : '') + (b.var ? ' <code>' + e(b.var) + '</code>' : '') + '</p>';
     }).join('');
-    const extra = Object.keys(vals).filter((k) => !list.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + k, shown(vals[k]), { err: errFor('envValues.' + env + '.' + k) })).join('');
+    const extra = Object.keys(vals).filter((k) => !list.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + k, shown(vals[k]), { err: errFor('envValues.' + env + '.' + k) }) + inlineBox(k, true)).join('');
     const ready = !list.length;
     const name = env === contract.REQUEST_BLOCKERS ? 'Whole request' : env + (env === s.req.source ? ' (source env)' : '');
     return '<section class="pp-env-row"><h3>' + e(name) + ' <span class="' + (ready ? 'add' : 'bad') + '">' + (ready ? (r ? '✓ Ready' : 'Not checked yet') : '✕ ' + list.length + ' to fix') + '</span></h3>' + items + (editable ? extra : '') + '</section>';
   }).join('');
-  return '<h2>Readiness</h2><p class="pp-hint">Environment values each rollout env needs. Missing values block the request; fill them in here and preview again.</p>' + rows;
+  const rest = inl.filter((v) => shownInline.indexOf(v) < 0);
+  const same = rest.length ? '<section class="pp-env-row"><h3>Same in all environments <span class="add">identical everywhere</span></h3>' + rest.map((v) => inlineBox(v, editable)).join('') + '</section>' : '';
+  return '<h2>Readiness</h2><p class="pp-hint">Environment values each rollout env needs. Missing values block the request; fill them in here and preview again.</p>' + rows + same;
 };
 const secretsBlock = (r, editable) => {
   const list = (r && r.requiredSecrets) || [];
@@ -188,13 +207,23 @@ screens.options = () => {
   const depBlock = '<h2>Shared definitions</h2>' + (!r ? '<p class="pp-hint">Preview to list the dependencies that differ from Git. A dependency that differs keeps the Git version unless you choose otherwise, because other flows use it too.</p>'
     : (!deps.length ? '<p class="pp-empty">No dependency differs from Git.</p>' : deps.map((c) => radios(['deps', c.address], c.address + (c.status === 'changed-in-both' ? ' (changed in both Git and the source)' : ''), o.deps[c.address] || (c.action === 'kept_differs' ? 'keep' : 'update'),
       [['keep', 'Keep Git version'], ['update', 'Use source']])).join('')));
+  const offered = contract.removeChoices(r, o);
+  const confirmId = uid('c');
+  const stopBlock = '<h2>Stop managing</h2>' + (!r ? '<p class="pp-hint">Preview to list the shared definitions Git already manages. You can then stop managing one without destroying it in PingOne.</p>'
+    : (!offered.length ? '<p class="pp-empty">No shared definition in this export can be stopped. The selected flow never can.</p>'
+      : '<p class="pp-hint">These are managed in Git. Stopping removes the definition from Git; the live resource stays in PingOne and nothing is destroyed. The selected flow is never offered.</p>' +
+        offered.map((a) => { const id = uid('c'); return '<label class="pp-check" for="' + id + '"><input type="checkbox" id="' + id + '"' + attr(['remove', a]) + (o.remove.indexOf(a) >= 0 ? ' checked' : '') +
+          ' /> <code>' + e(a) + '</code> ' + e(contract.STOP_MANAGING) + '</label>'; }).join('') +
+        '<div class="pp-field' + (errFor('remove') ? ' has-err' : '') + '">' + (errFor('remove') ? '<p class="pp-err" id="' + confirmId + '-err">' + e(errFor('remove')) + '</p>' : '') +
+        '<label class="pp-check" for="' + confirmId + '"><input type="checkbox" id="' + confirmId + '"' + attr(['removeConfirm']) + (o.removeConfirmed ? ' checked' : '') + (errFor('remove') ? ' aria-invalid="true" aria-describedby="' + confirmId + '-err"' : '') +
+        ' /> I confirm: Git stops managing every resource ticked above. They keep running in PingOne.</label></div>'));
   return head('Review the change', 'Choose how the request is written, then preview it.') + summary() + subBanner() + errorSummary() + state +
     radios(['mode'], 'How to hand the change to GitLab', o.mode, [['mr', 'Open a merge request'], ['branch', 'Branch only (no merge request)']]) +
     '<p class="pp-hint">Request branch: <code>' + e(s.req.branch) + '</code></p>' +
     text(['title'], 'Title', o.title, { err: errFor('title'), hint: 'One line, at most 255 characters.' }) +
     area(['commitMessage'], 'Commit message', o.commitMessage, 'At most 2000 characters. The job adds the Requested-by and Request-id lines.', errFor('commitMessage')) +
     area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.', errFor('description')) +
-    depBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
+    depBlock + stopBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
 };
 screens.working = () => {
   const run = s.run;

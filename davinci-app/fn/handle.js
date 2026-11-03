@@ -42,19 +42,28 @@ const applyOptions = () => {
     if (contract.CHOICES.indexOf(v) >= 0) { deps[a] = v; }
   }
   o.deps = deps;
+  // Same in all environments (inlineValues): the source value becomes a literal everywhere, so nothing is asked per env.
+  const fi = lib.obj(form.inline);
+  o.inline = contract.inlineChoices(r, o).filter((v) => (lib.has(fi, v) ? fi[v] === true : o.inline.indexOf(v) >= 0));
+  // Stop managing (remove): rows the preview offers, never the selected flow; an explicit confirmation is required.
+  const fr = lib.obj(form.remove);
+  o.remove = contract.removeChoices(r, o).filter((a) => (lib.has(fr, a) ? fr[a] === true : o.remove.indexOf(a) >= 0));
+  o.removeConfirmed = o.remove.length > 0 && (lib.has(form, 'removeConfirm') ? form.removeConfirm === true : !!o.removeConfirmed);
+  if (o.remove.length && !o.removeConfirmed) { errors.remove = 'Tick the confirmation before you stop managing ' + (o.remove.length === 1 ? 'a resource' : o.remove.length + ' resources') + '.'; }
   // Environment values: the rollout envs and the source (the job accepts no other env).
   const env = {};
   const fe = lib.obj(form.env);
   for (const e of [s.req.source].concat(cfg.rollout)) {
     const vals = Object.assign({}, o.env[e] || {}, lib.obj(fe[e]));
     for (const k of Object.keys(vals)) {
+      if (o.inline.indexOf(k) >= 0) { continue; }
       const v = envValue(vals[k]);
       if (v === '') { continue; }
       if (lib.looksSecret(JSON.stringify(v))) { errors['envValues.' + e + '.' + k] = 'This looks like a secret. Secrets come from Vault through customer_secrets.yml, not from here.'; continue; }
       (env[e] = env[e] || {})[k] = v;
     }
   }
-  o.env = env;
+  o.env = contract.withoutInlined(env, o.inline);
   // Secret mappings: terraformer secret variable -> an existing customer_secrets.yml name.
   // Names only, never values. Ticks confirm a new secret's value is in Vault.
   const secrets = {};
@@ -142,7 +151,7 @@ switch (s.screen) {
       const title = 'PingOne Promote: ' + f.name + ' from ' + s.search.source;
       s.req = { requestId: id, branch: contract.branchFor(id), source: s.search.source, flow: { id: f.id, name: f.name }, lastCommit: '',
         options: { mode: 'mr', title: title.slice(0, contract.LIMITS.title), commitMessage: title.slice(0, contract.LIMITS.title), description: '', deps: {}, env: {}, secrets: {},
-          inline: [], remove: [], confirmed: {} } };
+          inline: [], remove: [], removeConfirmed: false, confirmed: {} } };
       s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {};
       return render('options');
     }

@@ -354,6 +354,13 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
   function edited(e) {
     collect();
     if (!e.target || !e.target.hasAttribute || !e.target.hasAttribute('data-pp')) { return; }
+    // Same in all environments: every box for one variable shows the same state.
+    var mine = e.target.getAttribute('data-pp');
+    if (e.target.type === 'checkbox' && mine.indexOf('["inline"') === 0) {
+      var twins = document.querySelectorAll('[data-pp]');
+      for (var j = 0; j < twins.length; j++) { if (twins[j] !== e.target && twins[j].getAttribute('data-pp') === mine) { twins[j].checked = e.target.checked; } }
+      collect();
+    }
     var bs = document.querySelectorAll('[data-pp-enable-on-edit]');
     for (var i = 0; i < bs.length; i++) {
       bs[i].disabled = false;
