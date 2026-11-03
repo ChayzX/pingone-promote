@@ -1,0 +1,51 @@
+# Root-level import blocks, for runtimes that do not honor import blocks
+# inside child modules. The module already imports from import_ids; use this
+# file INSTEAD of import_ids, never with it, to avoid two import blocks
+# targeting one address.
+#
+# Addresses are module.davinci.<resource>[<logical key>]. IDs use the
+# provider's "<environment_id>/<id>" form. Flows live in the resource for
+# their tier (t0..t3).
+
+import {
+  to = module.davinci.pingone_davinci_connector_instance.this["pingone_sso"]
+  id = "${var.pingone_environment_id}/<connector_instance_id>"
+}
+
+import {
+  to = module.davinci.pingone_davinci_flow.t3["login"]
+  id = "${var.pingone_environment_id}/<flow_id>"
+}
+
+import {
+  to = module.davinci.pingone_davinci_flow_enable.this["login"]
+  id = "${var.pingone_environment_id}/<flow_id>"
+}
+
+import {
+  to = module.davinci.pingone_davinci_variable.global["brand_company"]
+  id = "${var.pingone_environment_id}/<variable_id>"
+}
+
+import {
+  to = module.davinci.pingone_davinci_variable.flow_scoped["attempts_flow_login"]
+  id = "${var.pingone_environment_id}/<variable_id>"
+}
+
+import {
+  to = module.davinci.pingone_davinci_application.this["web_login"]
+  id = "${var.pingone_environment_id}/<application_id>"
+}
+
+import {
+  to = module.davinci.pingone_davinci_application_flow_policy.this["web_login/default"]
+  id = "${var.pingone_environment_id}/<application_id>/<flow_policy_id>"
+}
+
+# Terraform 1.7+ also accepts for_each here, for example:
+#
+# import {
+#   for_each = var.import_ids.davinci_flows
+#   to       = module.davinci.pingone_davinci_flow.t3[each.key]
+#   id       = "${var.pingone_environment_id}/${each.value}"
+# }

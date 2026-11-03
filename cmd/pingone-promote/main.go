@@ -67,6 +67,11 @@ func envOr(name, fallback string) string {
 }
 
 func main() {
+	// Subcommands are dispatched before flag parsing so the application's
+	// startup path is unchanged when none is given.
+	if len(os.Args) > 1 && os.Args[1] == "check" {
+		os.Exit(runCheck(context.Background(), os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "PingOne Promote:", err)
 		os.Exit(1)

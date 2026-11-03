@@ -1,5 +1,7 @@
 # PingOne Promote
 
+> **Direction change in progress:** pingone-promote is moving from the native Configuration Management API to Terraform. Per-environment tfvars files feed versioned modules, which the enterprise GitLab Terraform pipeline applies. See [docs/adr/](docs/adr/README.md) for the decisions, and `terraform/` and `pingone-promote check` for the first pieces. The native workflow below keeps working until that migration lands.
+
 > Production promotions are GitLab-only. The current standard tool is integrated on `main`; `feat/davinci-request-flow` is an alternate maintained design. See [docs/HANDOFF.md](docs/HANDOFF.md) for current verification status and remaining acceptance work. Local execution is limited to explicitly allowlisted non-production environments.
 
 PingOne Promote is a local browser application for reviewing and promoting explicitly selected PingOne configuration resources with PingOne's native Configuration Management API. It requires Go 1.27.3 or newer to build and has no third-party runtime dependencies. The API must be enabled for the tenant.
@@ -123,3 +125,13 @@ python3 scripts/test_browser_logging.py --fixture-file /tmp/pingone-browser.json
 ```
 
 Stop the fixture with Ctrl+C when finished. Screenshots go to `/tmp/pingone-browser-evidence` unless `--output-dir` is supplied. These checks verify local behavior only. See [verification notes](docs/verification.md) for the live acceptance checklist and API limitations.
+
+## Validate a Terraform tfvars file (preview)
+
+`pingone-promote check` validates an environment tfvars file (schema v1) offline. It makes no network calls:
+
+```sh
+pingone-promote check environments/dev.tfvars [--format text|json] [--required-secrets] [--terraform-fmt[=PATH]]
+```
+
+It checks that the file contains values only, key formats, reference closure, subflow tier ordering, and canonical formatting, and it scans for secrets. `--terraform-fmt` also requires `terraform fmt` (or `tofu fmt`) to leave the file unchanged. Exit status is 0 when the file is valid, 1 when problems are found, and 2 for usage or environment errors. Running the binary without a subcommand starts the local app as before.

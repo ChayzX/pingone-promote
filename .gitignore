@@ -20,3 +20,10 @@ gitlab.json
 /rollback.json
 /rollback.sha256
 /selected-request.txt
+
+# Terraform working directories. Commit the root stack lock file only.
+.terraform/
+terraform/modules/**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
