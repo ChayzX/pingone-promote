@@ -18,6 +18,7 @@ format decision / alternatives / consequences.
 | [0010](0010-versioning-source-switch.md) | Module versioning and the module source switch |
 | [0011](0011-drift-and-diffs.md) | Drift and diffs |
 | [0012](0012-package-fate.md) | Fate of existing packages |
+| [0013](0013-submission-and-drafts.md) | Single-commit GitLab submission and the server-side Draft API |
 
 Code in this phase:
 

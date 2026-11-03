@@ -13,8 +13,10 @@ of its own:
    request description. It lists added, removed and modified keys per
    collection, with field paths that continue into JSON as `/key/...`. JSON
    is compared semantically and sets as sets. Diffs carry paths, never values.
-2. **Optimistic concurrency** through GitLab `last_commit_id` on file updates
-   (a later PR).
+2. **Optimistic concurrency** through GitLab `last_commit_id`: each draft
+   records the base commit of every file it writes. Submission compares the
+   base before committing and passes `last_commit_id` on updates, and both
+   checks map to a typed conflict (ADR 0013).
 3. **A per-definition SHA-256** that feeds
    `pingone_davinci_flow_deploy.deploy_trigger_values.definition`. It covers
    the tfvars entry, the resolved node properties (subflow, variable and
