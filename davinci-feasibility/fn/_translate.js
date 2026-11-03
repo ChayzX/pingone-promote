@@ -93,7 +93,9 @@ tr.scrub = (v, ctx, propName) => {
       const x = v[k];
       if (x && typeof x === 'object' && !Array.isArray(x) && typeof x.value === 'string' && x.value !== '' &&
           (x.secure === true || x.value === tr.MASK || (tr.SECRET_NAME.test(k) && !tr.isExpr(x.value)))) {
-        const copy = tr.scrub(x, ctx, k);
+        const rest = {};
+        for (const rk of Object.keys(x)) { if (rk !== 'value') { rest[rk] = x[rk]; } }
+        const copy = tr.scrub(rest, ctx, k);
         copy.value = tr.secretPlaceholder(ctx, k);
         out[k] = copy;
       } else {
@@ -114,8 +116,9 @@ tr.mergeStats = (a, b) => {
 };
 
 // The ID map used for placeholders, built from the inventory maps.
-tr.idMap = (maps, sourceEnvId) => {
+tr.idMap = (maps, sourceEnvIdArg) => {
   const ids = {};
+  const sourceEnvId = sourceEnvIdArg || maps.env || '';
   for (const id of Object.keys(maps.flows || {})) { ids[id] = '@@flow:' + maps.flows[id] + '@@'; }
   for (const id of Object.keys(maps.conns || {})) { ids[id] = '@@connection:' + maps.conns[id] + '@@'; }
   for (const id of Object.keys(maps.vars || {})) { ids[id] = '@@variable:' + maps.vars[id] + '@@'; }
@@ -283,7 +286,8 @@ tr.connectionEntry = (c, key, maps, stats, secrets) => {
 
 // ---- deterministic HCL-ish rendering ---------------------------------------------
 // Not terraform fmt (that cannot run in DaVinci); it imitates its alignment.
-tr.escTemplate = (s) => s.replace(/\$\{/g, '$${').replace(/%\{/g, '%%{');
+// A function replacement: in a replacement string "$$" would mean a single "$".
+tr.escTemplate = (s) => s.replace(/\$\{/g, () => '$${').replace(/%\{/g, () => '%%{');
 tr.q = (s) => '"' + tr.escTemplate(String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
   .replace(/[\u0000-\u001f\u007f]/g, (c) => '\\u' + ('0000' + c.charCodeAt(0).toString(16).toUpperCase()).slice(-4))) + '"';
 tr.canon = (v, d) => {

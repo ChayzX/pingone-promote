@@ -49,6 +49,12 @@ if (s.invalid || !s.cfg) {
   check('function_time', band(tot.maxFnMs, 1000, 3000), 'Slowest custom function run ' + tot.maxFnMs + ' ms. PASS up to 1 s, WARN up to 3 s.');
   check('response_size', band(tot.maxResponseBytes, 1048576, 5242880), 'Largest response ' + kb(tot.maxResponseBytes) + '. PASS up to 1 MB, WARN up to 5 MB.');
   check('carried_state', band(tot.maxFragsBytes, 2097152, 8388608), 'Largest flow-instance variable ' + kb(tot.maxFragsBytes) + '. PASS up to 2 MB, WARN up to 8 MB.');
+  if (tf) {
+    // The snippet went through the fsTfvars flow-instance variable: did it come back whole?
+    const back = lib.utf8Len(String(params.tfvars || ''));
+    check('variable_integrity', back === tf.bytes ? 'PASS' : 'FAIL', 'tfvars read back from fsTfvars: ' + back + ' of ' + tf.bytes + ' bytes' +
+      (back === tf.bytes ? '.' : ' (DaVinci truncated or changed the variable).'));
+  }
   if (s.fetch) {
     const translated = (s.stages.translate && s.stages.translate.items) || 0;
     check('coverage', fetched === wanted && translated === fetched ? 'PASS' : 'FAIL', fetched + ' of ' + wanted + ' requested flows fetched, ' + translated + ' translated.');

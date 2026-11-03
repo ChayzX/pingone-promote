@@ -83,7 +83,7 @@ for (const v of frags.inv.variables) {
     vars[v.id] = tr.variableKey(v.name, v.context, v.context === 'flow' ? fk.map[(v.flow && v.flow.id) || ''] || '' : '');
   } catch (err) { varProblems += 1; }
 }
-s.maps = { flows: fk.map, conns: ck.map, vars: vars };
+s.maps = { flows: fk.map, conns: ck.map, vars: vars, env: s.cfg.sourceEnvironmentId };
 s.counts = { flowsInEnv: s.inv.flowList.length, connectorInstances: frags.inv.connections.length, variables: frags.inv.variables.length,
   flowNameCollisions: fk.collisions, connectionNameCollisions: ck.collisions, variablesWithoutKey: varProblems };
 if (fk.collisions || ck.collisions) { lib.note(s, 'Some flows or connections share a name; their keys got a --N suffix. The hosted design refuses this.'); }
