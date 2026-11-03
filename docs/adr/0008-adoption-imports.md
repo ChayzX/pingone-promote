@@ -1,6 +1,8 @@
 # ADR 0008: Adoption with for_each import blocks driven by import_ids
 
-- Status: Accepted
+> **Superseded by [ADR 0014](0014-source-only-rollout.md)/[0015](0015-pingcli-terraformer-exporter.md) and, after spike S1 passed, by [ADR 0016](0016-import-mechanism.md)** (2026-11-03). Kept for history.
+
+- Status: Superseded by 0014/0015 (S1 passed; see 0016)
 - Date: 2026-11-03
 - Issues: #60, #63
 

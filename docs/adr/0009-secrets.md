@@ -1,6 +1,6 @@
 # ADR 0009: Secrets come from pipeline-injected variables, never from tfvars
 
-- Status: Accepted (revised 2026-11-03 for the confirmed pipeline format)
+- Status: Accepted (revised 2026-11-03 for the confirmed pipeline format and for v2)
 - Date: 2026-11-03
 - Issues: #60, #63, #67, #71
 
@@ -85,3 +85,28 @@
   this mechanism; the provider reads `PINGONE_CLIENT_SECRET` (ADR 0001).
 - The name heuristics can produce false positives. A value that is entirely a
   DaVinci expression, or that contains a secret placeholder, is not flagged.
+
+## Revision for v2 (2026-11-03)
+
+- **Naming comes from terraformer.** A secret is a variable terraformer
+  declares `sensitive`: DaVinci secret variables
+  (`davinci_variable_<name>_value`) and masked connector properties
+  (`davinci_connection_<label>_<property>`). These are the defaults; the
+  `translate` naming functions are retired.
+- **Mapping onto `customer_secrets.yml` names.** A request's
+  `secretMappings` maps terraformer's name (the `key` reported in
+  `result.requiredSecrets`) to an existing declared name; the neutralizer
+  renames the variable in the shared definitions, `secrets.tf` and the
+  module call. Two terraformer secrets may map onto one pipeline secret; a
+  secret and a non-secret may not.
+- `secrets.tf` declares one variable per secret: `type = string`,
+  `sensitive = true`, `nullable = false`, no default, so a missing
+  `TF_VAR_` fails the plan with the variable's name. The `pingone_secrets`
+  map and local are gone: each secret is passed to the module directly.
+- terraformer writes `secret = ""` into `*-terraform.auto.tfvars`, which
+  Terraform loads automatically and which would override `TF_VAR_`. The
+  neutralizer drops every `*.auto.tfvars`, and `check --root` fails when one
+  exists.
+- New secrets are appended to `customer_secrets.yml` with the field equal
+  to the variable name (`internal/pipelinesecrets`, unchanged); commented
+  entries still block.

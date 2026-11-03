@@ -261,8 +261,9 @@ func (r *Runner) verifyDigest(w *workspace) error {
 	if _, err := io.Copy(h, f); err != nil {
 		return err
 	}
-	if hex.EncodeToString(h.Sum(nil)) != r.Config.SHA256 {
-		return ErrChecksum
+	if got := hex.EncodeToString(h.Sum(nil)); got != r.Config.SHA256 {
+		// A digest is not secret; printing it lets an operator pin a build.
+		return fmt.Errorf("%w (the binary's sha256 is %s)", ErrChecksum, got)
 	}
 	return nil
 }

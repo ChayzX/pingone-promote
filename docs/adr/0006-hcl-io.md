@@ -1,6 +1,6 @@
 # ADR 0006: HCL I/O with hashicorp/hcl/v2, app-canonical files, terraform fmt gate
 
-- Status: Accepted
+- Status: Accepted (revised 2026-11-03 for v2, ADR 0015)
 - Date: 2026-11-03
 - Issues: #60, #64
 
@@ -62,3 +62,24 @@ submission path calls it in a later PR (#9).
   Terraform. JSON heredoc content is lossless.
 - Generating a file needs a terraform or tofu binary when the fmt gate is
   enabled. When it is missing, the error says so.
+
+## Revision for v2 (2026-11-03)
+
+The tfvars schema-v1 parser and canonical writer are retired with the v1
+model (ADR 0014). What stays:
+
+- **The terraform fmt gate is unchanged.** `tfvars.FormatWithTerraform`
+  (sealed environment, 30 s timeout, output must equal the input and
+  `hclwrite.Format`) gates every Terraform file a request writes:
+  `definitions/*.tf`, root `*.tf` and `<env>.tfvars` overlays. The request
+  job and `check --root --terraform-fmt` both run it.
+- **Files are no longer app-canonical.** The config repository is
+  terraformer output that people may comment. Edits are surgical instead
+  (`internal/hclblocks`): a block is found by its byte range with
+  `hclsyntax` and replaced, inserted or removed; every other byte is kept.
+  The alternative this ADR rejected ("hclwrite editing in place") is now
+  the decision, at block granularity, because the output must not depend
+  on unrelated content.
+- **Overlays** are flat literal-only tfvars (`tfvars.ParseOverlay`):
+  attributes only, no references, functions or templates. New keys are
+  appended as their own group so existing lines keep their bytes.

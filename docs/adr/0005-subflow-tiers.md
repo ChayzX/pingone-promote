@@ -1,6 +1,8 @@
 # ADR 0005: Fixed subflow tiers t0..t3
 
-- Status: Accepted
+> **Superseded by [ADR 0014](0014-source-only-rollout.md) and [ADR 0015](0015-pingcli-terraformer-exporter.md)** (2026-11-03). Kept for history; the v1 code it describes is deleted in migration step 10.
+
+- Status: Superseded by 0014/0015
 - Date: 2026-11-03
 - Issues: #60, #63
 

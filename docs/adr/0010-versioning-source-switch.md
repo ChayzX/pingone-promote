@@ -1,6 +1,8 @@
 # ADR 0010: Module versioning and the module source switch
 
-- Status: Accepted
+> **Superseded by [ADR 0014](0014-source-only-rollout.md) and [ADR 0015](0015-pingcli-terraformer-exporter.md)** (2026-11-03). Kept for history; the v1 code it describes is deleted in migration step 10.
+
+- Status: Superseded by 0014/0015
 - Date: 2026-11-03
 - Issues: #59, #60, #63
 
