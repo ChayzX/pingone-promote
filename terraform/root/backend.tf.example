@@ -1,0 +1,16 @@
+# Copy to backend.tf in the enterprise pipeline repository.
+#
+# State contains secret values in plaintext: the pingone provider has no
+# write-only attributes, so connector properties and secret variables are
+# stored in state. The backend MUST be encrypted at rest and restricted to the
+# pipeline and its administrators.
+#
+# GitLab-managed Terraform state uses the http backend. The pipeline supplies
+# address, lock_address, unlock_address, username and password through
+# TF_HTTP_* environment variables or -backend-config, for example:
+#
+#   TF_HTTP_ADDRESS=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${ENVIRONMENT}
+
+terraform {
+  backend "http" {}
+}
