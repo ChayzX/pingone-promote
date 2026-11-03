@@ -1,22 +1,9 @@
-/dist/
-/.superpowers/
+# Private generated copies and values (may hold your connection IDs).
+values.json
 *.local.json
-.DS_Store
-
+/out/
+davinci-feasibility/out/
 __pycache__/
 *.pyc
+.DS_Store
 .env
-profiles.json
-records.json
-/.lock
-/pingone-promote
-/local-data/
-
-gitlab.json
-*.execute-intent
-/plan.json
-/plan.sha256
-/result.json
-/rollback.json
-/rollback.sha256
-/selected-request.txt
