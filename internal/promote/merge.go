@@ -78,6 +78,11 @@ type Change struct {
 	File    string `json:"file,omitempty"`
 	From    string `json:"from,omitempty"` // for moved
 	Reason  string `json:"reason,omitempty"`
+	// Var is the per-environment ID variable that replaced the references
+	// to an excluded resource, and SourceID its value in the source
+	// environment (an ID, never a secret).
+	Var      string `json:"var,omitempty"`
+	SourceID string `json:"sourceId,omitempty"`
 }
 
 // Blocker stops a submission. Env is "" for request-level blockers.
@@ -356,6 +361,10 @@ func (m *merger) excluded() {
 			ch.Reason = "excluded; Git-managed copy kept"
 		case e.Variable != "":
 			ch.Reason = "excluded; referenced by ID variable `" + e.Variable + "`"
+			ch.Var = e.Variable
+			if v, ok := m.req.Export.SourceValues[e.Variable]; ok && v.Type() == cty.String {
+				ch.SourceID = v.AsString()
+			}
 		default:
 			ch.Reason = "excluded; not exported"
 		}

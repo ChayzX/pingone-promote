@@ -255,6 +255,9 @@ func TestExcludingUnmanagedDependencyNeedsPerEnvironmentIDs(t *testing.T) {
 	for _, c := range res.Changes {
 		if c.Address == pingOneAddr {
 			found = true
+			if c.Var != pingOneIDVar || c.SourceID != "c0000000000000000000000000000002" {
+				t.Fatalf("the change must carry the variable and the source ID: %+v", c)
+			}
 			if c.Action != ActionExcluded || c.Reason != "excluded; referenced by ID variable `"+pingOneIDVar+"`" || c.Role != RoleDependency {
 				t.Fatalf("change: %+v", c)
 			}

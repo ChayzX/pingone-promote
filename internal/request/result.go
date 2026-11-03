@@ -52,6 +52,10 @@ type ChangeOut struct {
 	File    string `json:"file,omitempty"`
 	From    string `json:"from,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// Var and SourceID: for an excluded resource referenced by ID, the
+	// per-environment variable and its value in the source environment.
+	Var      string `json:"var,omitempty"`
+	SourceID string `json:"sourceId,omitempty"`
 }
 
 // SecretOut is one required secret.
@@ -196,7 +200,7 @@ func (r *Result) fail(code, typ, msg string, retryable bool) *Result {
 func (r *Result) setChanges(changes []promote.Change) {
 	for _, c := range changes {
 		r.Changes = append(r.Changes, ChangeOut{Address: c.Address, Role: string(c.Role), Action: string(c.Action), Status: string(c.Status),
-			File: c.File, From: c.From, Reason: c.Reason})
+			File: c.File, From: c.From, Reason: c.Reason, Var: c.Var, SourceID: c.SourceID})
 		r.Summary.add(c.Action)
 		typ, _, _ := strings.Cut(c.Address, ".")
 		tc := r.Summary.ByType[typ]

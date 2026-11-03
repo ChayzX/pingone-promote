@@ -340,7 +340,7 @@ func TestExcludingUnmanagedDependencyNeedsIDsPerEnvironment(t *testing.T) {
 	for _, c := range res.Changes {
 		if c.Address == subflowAddr {
 			reason = c.Reason
-			if c.Action != "excluded" || c.Role != "dependency" {
+			if c.Action != "excluded" || c.Role != "dependency" || c.Var != idVar || c.SourceID != "f0000000000000000000000000000003" {
 				t.Fatalf("%+v", c)
 			}
 		}
