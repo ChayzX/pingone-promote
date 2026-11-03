@@ -1,3 +1,5 @@
+> Superseded by docs/adr/0014–0017. Archived; describes the retired v1 local app and native API workflow.
+
 # GitLab production implementation plan
 
 **Goal:** Production requests originate locally, but all target-changing production actions execute through an approved GitLab deployment job.

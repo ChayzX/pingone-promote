@@ -1,3 +1,5 @@
+> Superseded by docs/adr/0014–0017. Archived; describes the retired v1 local app and native API workflow.
+
 # Verification and integration status
 
 The local application has been verified with documented API-shaped fixtures. Later live sandbox testing verified native inventory loading and draft creation, but the native plan review remains blocked. No live native execution or rollback is verified. The application has not been executed on macOS/RHEL in this workspace.

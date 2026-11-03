@@ -1,3 +1,5 @@
+> Superseded by docs/adr/0014–0017. Archived; describes the retired v1 local app and native API workflow.
+
 # PingOne Promote implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.

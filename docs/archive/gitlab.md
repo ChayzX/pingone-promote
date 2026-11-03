@@ -1,3 +1,5 @@
+> Superseded by docs/adr/0014–0017. Archived; describes the retired v1 local app and native API workflow.
+
 # GitLab production setup
 
 Production writes must run through your private GitLab project and your own runners. You continue authoring and reviewing flows in the PingOne UI. This setup uses PingOne Configuration Management APIs; it does not require Terraform. Instance and tenant identities belong in private project settings and evidence, while credentials belong in protected variables. This public template contains no tenant configuration.

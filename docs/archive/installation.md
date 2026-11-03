@@ -1,3 +1,5 @@
+> Superseded by docs/adr/0014–0017. Archived; describes the retired v1 local app and native API workflow.
+
 # Installation
 
 Homebrew packaging is a preview. It does not establish live PingOne promotion or rollback compatibility. Production planning, deployment and rollback remain GitLab-only.

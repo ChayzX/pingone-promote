@@ -27,6 +27,9 @@ front end as a GitLab CI job.
 | [0016](0016-import-mechanism.md) | Conditional imports on static addresses (spike S1) | Accepted |
 | [0017](0017-davinci-frontend-ci-backend.md) | DaVinci front end, GitLab CI job backend | Accepted |
 
+v1 packages, the local web UI and the native API path were deleted in
+issue #44 (see ADR 0012); old documents are in `../archive/`.
+
 v2 code:
 
 - `internal/exporter`: the pinned pingcli-terraformer runner and search

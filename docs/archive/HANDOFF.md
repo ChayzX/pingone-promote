@@ -1,3 +1,5 @@
+> Superseded by docs/adr/0014–0017. Archived; describes the retired v1 local app and native API workflow.
+
 # Production acceptance handoff
 
 This work integrates the GitLab-controlled workflow and subsequent main-branch fixes. Disposable acceptance used a private GitLab project and GitLab-hosted Linux runners at the operator's request; this does not verify enterprise or self-managed runner policy. Keep credentials, tenant configuration and raw evidence outside this public repository. An existing public main-branch commit message contains sandbox-identifying details and should be reviewed separately.
