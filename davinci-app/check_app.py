@@ -21,7 +21,7 @@ Trust boundary (DESIGN.md, "Trust boundary"):
   token only by the PingOne list call, the GitLab token only by GitLab calls
 - no secret or token reference in any function input, screen or saved value
 - PingOne calls: one POST to the token endpoint, every other call a GET
-- GitLab calls: one POST (the request-file commit), GETs, one DELETE; the
+- GitLab calls: one POST (the request-file commit), GETs (the job log read is one of them), one DELETE; the
   function code allows only the paths in lib.gl (checked by test_app.js)
 Hygiene (export and every text file in the repo):
 - no UUIDs except the all-zero placeholder, no 32-hex IDs except the known
@@ -261,7 +261,7 @@ def check_export(path, allow_conn_ids):
                 code = nodes[m.group(1)]["properties"]["code"]["value"]
                 if f"'{value}'" not in code:
                     problems.append(f"{i} routes on action '{value}' which {title(m.group(1))} never returns")
-    want = collections.Counter({"pingone POST": 1, "pingone GET": 1, "gitlab POST": 1, "gitlab GET": 1, "gitlab DELETE": 1})
+    want = collections.Counter({"pingone POST": 1, "pingone GET": 1, "gitlab POST": 1, "gitlab GET": 2, "gitlab DELETE": 1})
     if methods != want:
         problems.append(f"REST calls by method are {dict(methods)}, expected {dict(want)}")
     scanned = text
@@ -326,8 +326,11 @@ def self_test(export):
     def fixed_url(f):
         node(f, "GitLab: read")["properties"]["url"]["value"] = json.dumps([{"children": [{"text": "https://gitlab.example.com/api/v4/projects/1/pipelines/1/play"}]}])
 
+    def job_log_write(f):
+        node(f, "GitLab: read job log (last 64 KiB)")["properties"]["httpMethod"]["value"] = "POST"
+
     failures = 0
-    for case in (secret_into_function, gitlab_token_to_pingone, pingone_write, preset_env, secret_in_body, token_on_screen, extra_gitlab_post, fixed_url):
+    for case in (job_log_write, secret_into_function, gitlab_token_to_pingone, pingone_write, preset_env, secret_in_body, token_on_screen, extra_gitlab_post, fixed_url):
         data = copy.deepcopy(base)
         case(data["flows"][0])
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:

@@ -61,6 +61,9 @@ SETTINGS = {
     "statusRefreshSeconds": "30",
     "statusMaxMinutes": "30",
     "childPipelines": "yes",
+    # Assumed paths (DESIGN.md section 12); an empty ppPathApplications switches the "Add an application or flow policy" step off.
+    "pathApplications": "/v1/environments/{envId}/davinciApplications",
+    "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies",
 }
 EMPTY_SETTINGS = ("workerEnvironmentId", "sourceEnvs", "gitlabProjectId", "allowedGroups")
 PRESETTABLE = {k for k in SETTINGS if k not in EMPTY_SETTINGS}
@@ -354,6 +357,13 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
   function edited(e) {
     collect();
     if (!e.target || !e.target.hasAttribute || !e.target.hasAttribute('data-pp')) { return; }
+    // Same in all environments: every box for one variable shows the same state.
+    var mine = e.target.getAttribute('data-pp');
+    if (e.target.type === 'checkbox' && mine.indexOf('["inline"') === 0) {
+      var twins = document.querySelectorAll('[data-pp]');
+      for (var j = 0; j < twins.length; j++) { if (twins[j] !== e.target && twins[j].getAttribute('data-pp') === mine) { twins[j].checked = e.target.checked; } }
+      collect();
+    }
     var bs = document.querySelectorAll('[data-pp-enable-on-edit]');
     for (var i = 0; i < bs.length; i++) {
       bs[i].disabled = false;
@@ -368,7 +378,8 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'text') {
       e.preventDefault();
-      var b = document.querySelector('[data-skbuttonvalue="SEARCH"]') || document.querySelector('[data-skbuttonvalue="PREVIEW"]:not([disabled])');
+      var want = e.target.getAttribute('data-pp-enter');
+      var b = (want && document.querySelector('[data-skbuttonvalue="' + want + '"]')) || document.querySelector('[data-skbuttonvalue="SEARCH"]') || document.querySelector('[data-skbuttonvalue="PREVIEW"]:not([disabled])');
       if (b) { collect(); b.click(); }
     }
   }, true);
@@ -421,6 +432,8 @@ def build():
     gl = [("PRIVATE-TOKEN", [cv("ppGitlabToken")]), ("Accept", ["application/json"])]
     commit = f.rest("GitLab: commit request file", "POST", gl + [("Content-Type", ["application/json"])], raw=[iv("ppBody")])
     read = f.rest("GitLab: read", "GET", gl)
+    # The job log, only when result.json comes back as a redirect or 404: the last 64 KiB (contract.TRACE_RANGE).
+    trace = f.rest("GitLab: read job log (last 64 KiB)", "GET", [gl[0], ("Accept", ["text/plain"]), ("Range", ["bytes=-65536"])])
     delete = f.rest("GitLab: delete request branch", "DELETE", gl)
     left = f.page("Left the app", LEFT_HTML, [])
     f.route(handle, [("token", token), ("commit", commit), ("read", read), ("signout", left)], render, [("ppBody", "string", out(handle, "body"))])
@@ -436,7 +449,10 @@ def build():
     f.route(glc, [], render)
     glr = f.fn("GitLab: handle read", "gl_read", [state] + rest_in(read), STD_OUT)
     f.link(read, glr)
-    f.route(glr, [("read", read), ("delete", delete)], render)
+    f.route(glr, [("read", read), ("trace", trace), ("delete", delete)], render)
+    gltr = f.fn("GitLab: result from the job log", "gl_trace", [state, ("statusCode", "number", out(trace, "rawResponse.statusCode")), ("body", "string", out(trace, "rawResponse.body"))], STD_OUT)
+    f.link(trace, gltr)
+    f.route(gltr, [], render)
     gld = f.fn("GitLab: branch deleted?", "gl_delete", [state] + rest_in(delete), STD_OUT)
     f.link(delete, gld)
     f.route(gld, [], render)

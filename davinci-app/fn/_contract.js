@@ -52,8 +52,11 @@ contract.buildRequest = (d) => {
   put('dependencyChoices', o.deps);
   put('envValues', o.env);
   put('secretMappings', o.secrets);
-  put('inlineValues', o.inline);
-  put('remove', o.remove);
+  // Applications and flow policies are selected by name only (the job refuses an id for them).
+  put('applications', (o.applications || []).map((x) => ({ name: x.name })));
+  put('flowPolicies', (o.flowPolicies || []).map((x) => ({ name: x.name })));
+  put('inlineValues', (o.inline || []).slice().sort());
+  put('remove', (o.remove || []).slice().sort());
   r.mode = o.mode;
   r.branchName = contract.branchFor(d.requestId);
   if (o.commitMessage) { r.commitMessage = o.commitMessage; }
@@ -61,6 +64,35 @@ contract.buildRequest = (d) => {
   if (o.description) { r.description = o.description; }
   r.dryRun = !!d.dryRun;
   return r;
+};
+// ---- same in all environments (inlineValues) and de-manage (remove) ---------------------------
+// inlineValues: variables whose SOURCE value becomes a literal in every environment, so no per-environment
+// value is asked or sent for them. Offered for a variable the readiness list asks for, or already inlined.
+contract.inlineChoices = (r, o) => {
+  const names = (o.inline || []).slice();
+  for (const env of Object.keys((r && r.blockers) || {})) {
+    for (const b of r.blockers[env]) { if (b.code === 'missing_value' && b.var) { names.push(b.var); } }
+  }
+  for (const env of Object.keys(o.env || {})) { names.push.apply(names, Object.keys(o.env[env])); }
+  return names.filter((v, i) => contract.RE.ident.test(v) && v !== 'import_ids' && names.indexOf(v) === i).sort();
+};
+contract.withoutInlined = (env, inline) => {
+  const out = {};
+  for (const e of Object.keys(env || {})) {
+    for (const k of Object.keys(env[e])) { if (inline.indexOf(k) < 0) { (out[e] = out[e] || {})[k] = env[e][k]; } }
+  }
+  return out;
+};
+// remove: stop managing a resource in Git without destroying it. Only rows the preview shows that Git manages
+// (status is not "new") and that are dependencies: never the selected flow, never one already de-managed.
+contract.STOP_MANAGING = 'Stop managing (keeps it in PingOne)';
+contract.canDemanage = (c) => !!c && contract.RE.address.test(c.address) && c.role === 'dependency' && c.status !== 'new' &&
+  ['added', 'removed', 'moved', 'unknown'].indexOf(c.action) < 0;
+contract.isSelected = (r, a) => !!r && (r.changes.some((c) => c.address === a && c.role === 'selected') || r.selected.some((x) => x.address === a));
+// The addresses to list on the review screen: the offered rows, plus ones already ticked (so they can be taken back).
+contract.removeChoices = (r, o) => {
+  const names = ((r && r.changes) || []).filter(contract.canDemanage).map((c) => c.address).concat((o.remove || []).filter((a) => contract.RE.address.test(a)));
+  return names.filter((a, i) => names.indexOf(a) === i && !contract.isSelected(r, a)).sort();
 };
 // The same checks the job makes, so a person never waits for a pipeline to
 // learn about avoidable input. Returns [{field, message}] using the job's
@@ -74,7 +106,15 @@ contract.validateRequest = (r, cfg) => {
   if (!printable(r.requestedBy, contract.LIMITS.requestedBy) || /[\n\t]/.test(r.requestedBy)) { bad('requestedBy', 'must be one line of at most 128 characters'); }
   if (!contract.RE.env.test(r.source)) { bad('source', 'must be an environment name'); }
   if (cfg.rollout.indexOf(r.source) >= 0) { bad('source', 'must not be a rollout environment'); }
-  if (!r.flows.length || r.flows.length > contract.LIMITS.refs) { bad('flows', 'choose 1 to 20 flows'); }
+  const refs = ['applications', 'flowPolicies'];
+  if (r.flows.length + refs.reduce((n, k) => n + (r[k] || []).length, 0) === 0) { bad('flows', 'select at least one flow, application or flow policy'); }
+  if (r.flows.length > contract.LIMITS.refs || refs.some((k) => (r[k] || []).length > contract.LIMITS.refs)) { bad('flows', 'at most 20 of each kind per request'); }
+  for (const k of refs) {
+    (r[k] || []).forEach((f, i) => {
+      if (f.id !== undefined) { bad(k + '[' + i + '].id', 'must be a DaVinci ID (flows only)'); }
+      if (!printable(f.name, contract.LIMITS.refName) || !String(f.name).trim()) { bad(k + '[' + i + '].name', 'must be at most 200 printable characters'); }
+    });
+  }
   r.flows.forEach((f, i) => {
     if (f.id && !contract.RE.davinciId.test(f.id)) { bad('flows[' + i + '].id', 'must be a DaVinci ID'); }
     if (f.name !== undefined && (!printable(f.name, contract.LIMITS.refName) || !f.name.trim())) { bad('flows[' + i + '].name', 'must be at most 200 printable characters'); }
@@ -139,7 +179,7 @@ contract.ACTIONS = {
   updated: { sym: '~', label: 'Changed in source', cls: 'chg' },
   kept_differs: { sym: '!', label: 'Differs; Git version kept', cls: 'warn' },
   unchanged: { sym: '=', label: 'Matches Git', cls: 'same' },
-  removed: { sym: '−', label: 'No longer managed (not destroyed)', cls: 'warn' },
+  removed: { sym: '−', label: 'Stop managing (keeps it in PingOne)', count: 'stopped managing', cls: 'warn' },
   moved: { sym: '→', label: 'Moved (new address)', cls: 'chg' }
 };
 contract.ROW_STATUS = {
@@ -201,6 +241,37 @@ contract.normalizeResult = (raw) => {
     out.error = { code: 'unknown', type: '', message: 'The request job failed without saying why.', retryable: false, field: '', candidates: [] };
   }
   return out;
+};
+// ---- the fallback when result.json cannot be downloaded --------------------------------------
+// GitLab may answer the artifact download with a redirect (3xx), or 404, while the job has finished. The job's
+// last log line is then the compact result: PINGONE_PROMOTE_RESULT {json} (status, links, summary, blocked
+// envs, error; no change list, diff or required secrets). Only that line is used, and only from the last 64 KiB
+// of the log; no other log text is ever kept or shown.
+contract.RESULT_LOG_PREFIX = 'PINGONE_PROMOTE_RESULT ';
+contract.TRACE_TAIL = 65536;
+contract.TRACE_RANGE = 'bytes=-' + contract.TRACE_TAIL;
+contract.artifactMissing = (status) => (status >= 300 && status < 400 ? 'GitLab answered the download with a redirect, HTTP ' + status : 'GitLab has no result.json for the job, HTTP ' + status);
+contract.useLogFallback = (status) => (status >= 300 && status < 400) || status === 404;
+// Returns {result, why}: the normalised result (flagged compact) or the reason there is none.
+contract.resultFromLog = (text, requestId) => {
+  const tail = (typeof text === 'string' ? text : '').slice(-contract.TRACE_TAIL).replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+  const lines = tail.split(/[\r\n]+/);
+  let line = '';
+  for (let i = lines.length - 1; i >= 0 && !line; i--) { if (lines[i].replace(/^\s+/, '').indexOf(contract.RESULT_LOG_PREFIX) === 0) { line = lines[i].replace(/^\s+/, ''); } }
+  if (!line) { return { result: null, why: 'the job log has no result line' }; }
+  let raw = null;
+  try { raw = JSON.parse(line.slice(contract.RESULT_LOG_PREFIX.length)); } catch (e) { raw = null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return { result: null, why: 'the result line in the job log is not valid' }; }
+  if (requestId && raw.requestId !== undefined && raw.requestId !== requestId) { return { result: null, why: 'the result line in the job log is for another request' }; }
+  const out = contract.normalizeResult(Object.assign({}, raw, { changes: [], blockers: {}, requiredSecrets: [], selected: [], warnings: [] }));
+  out.compact = true;
+  out.diffUrl = '';
+  for (const env of Array.isArray(raw.blockedEnvs) ? raw.blockedEnvs.slice(0, 20) : []) {
+    if (typeof env === 'string' && (contract.RE.env.test(env) || env === contract.REQUEST_BLOCKERS)) {
+      out.blockers[env] = [{ code: '', var: '', address: '', message: 'Values are missing here. The list is in result.json, which could not be read.' }];
+    }
+  }
+  return { result: out, why: '' };
 };
 contract.mrIid = (url) => { const m = /\/-\/merge_requests\/([0-9]{1,12})(?:[\/?#]|$)/.exec(String(url || '')); return m ? m[1] : ''; };
 

@@ -1,7 +1,7 @@
 // One GitLab GET answered. Handle it by phase (poll | check | cancel | status |
 // requests), queue more reads if needed, then render. At most lib.MAX_CALLS
 // reads run per browser request.
-// Actions: 'read' (next queued GET) | 'delete' (cancel confirmed) | 'render'.
+// Actions: 'read' (next queued GET) | 'trace' (the job log) | 'delete' (cancel confirmed) | 'render'.
 const s = lib.state(params.state);
 const status = Number(params.statusCode) || 0;
 const ok = lib.ok2xx(status);
@@ -21,44 +21,9 @@ const o = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 let action = 'render';
 const gone = () => lib.note(s, 'bad', 'GitLab did not answer as expected (HTTP ' + status + '). ' + lib.httpMessage(body));
 
-// ---- results of a request job ------------------------------------------------------
-const finishResult = (raw) => {
-  const r = contract.normalizeResult(raw);
-  run.auto = false;
-  run.done = true;
-  // A field the job refused is pointed out on the options screen without blocking it.
-  s.jobField = r.error && r.error.field ? { field: r.error.field, message: r.error.message } : null;
-  if (run.kind === 'preview') {
-    s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
-    s.sub = s.sub.state === 'unknown' ? { state: 'idle' } : s.sub;
-    s.screen = 'preview';
-    return;
-  }
-  if (r.error) {
-    s.sub = { state: 'error', key: run.key, error: r.error, result: r, jobUrl: run.jobUrl };
-    s.screen = 'preview';
-    if (!s.preview || s.preview.key !== run.key) { s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, at: now }; }
-    return;
-  }
-  // submitted, already_submitted (the existing commit and MR) and no_changes all end the request.
-  r.mrUrl = lib.webUrl(cfg, r.mrUrl);
-  r.branchUrl = lib.webUrl(cfg, r.branchUrl);
-  r.diffUrl = lib.webUrl(cfg, r.diffUrl);
-  s.sub = { state: 'done', key: run.key, result: r, jobUrl: run.jobUrl };
-  s.screen = 'submitted';
-};
-const finishNoResult = (why) => {
-  run.auto = false;
-  run.done = true;
-  if (run.kind === 'preview') {
-    s.preview = { key: run.key, failed: true, message: why, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
-    s.screen = 'preview';
-  } else {
-    // The job may have written part of the change before it stopped.
-    s.sub = { state: 'unknown', key: run.key, message: why, jobUrl: run.jobUrl };
-    s.screen = 'preview';
-  }
-};
+// ---- results of a request job (lib.finishResult / lib.finishNoResult are shared with gl_trace) ----
+const finishResult = (raw) => lib.finishResult(s, contract.normalizeResult(raw), now);
+const finishNoResult = (why) => lib.finishNoResult(s, why, now);
 
 // ---- handlers ---------------------------------------------------------------------------
 const H = {};
@@ -90,6 +55,8 @@ H['poll:jobs'] = H['check:jobs'] = () => {
 H['poll:artifact'] = H['check:artifact'] = () => {
   const r = lib.parse(body);
   if (ok && r && typeof r === 'object' && !Array.isArray(r)) { finishResult(r); return; }
+  // A redirect (object storage) or a missing artifact, with the job finished: read the job log's result line instead.
+  if (contract.useLogFallback(status)) { run.artifactStatus = status; push({ k: 'trace', id: run.jobId }); return; }
   finishNoResult('The ' + contract.REQUEST_JOB + ' job ended (' + run.jobStatus + ') without ' + contract.RESULT_ARTIFACT + '.');
 };
 // Check GitLab: find out what the last Preview or Submit actually did.

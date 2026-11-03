@@ -129,7 +129,7 @@ lib.ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 lib.GITLAB_API = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-]{1,64})*\/api\/v4$/;
 lib.SETTINGS = ['apiOrigin', 'authOrigin', 'workerEnvironmentId', 'sourceEnvs', 'pathFlows', 'flowsListQuery', 'rolloutEnvs', 'gitlabApi',
   'gitlabProjectId', 'defaultBranch', 'applyJobPattern', 'environmentPattern', 'mrLabel', 'allowedGroups', 'runTimeoutSeconds',
-  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines'];
+  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies'];
 lib.varName = (n) => 'pp' + n.charAt(0).toUpperCase() + n.slice(1);
 lib.checkSettings = (p) => {
   const cfg = {};
@@ -156,6 +156,19 @@ lib.checkSettings = (p) => {
   if (!/^\/v1\/[A-Za-z0-9_{}\/-]{1,200}$/.test(path) || path.indexOf('{envId}') < 0 || path.indexOf('..') >= 0 || /\{(?!envId\})/.test(path)) {
     problems.push({ name: 'pathFlows', issue: path ? 'must be a /v1/... path using only {envId}' : 'not set' });
   } else { cfg.pathFlows = path; }
+  // Optional: an empty path switches the "Add an application or flow policy" step off (DESIGN.md section 12, assumption 13).
+  const optPath = (name, vars) => {
+    const v = lib.str(p[name]);
+    if (!v) { return ''; }
+    const rest = v.replace(/\{(envId|appId)\}/g, '');
+    if (!/^\/v1\/[A-Za-z0-9_{}\/-]{1,200}$/.test(v) || v.indexOf('..') >= 0 || /[{}]/.test(rest) || vars.some((x) => v.indexOf('{' + x + '}') < 0)) {
+      problems.push({ name: name, issue: 'must be a /v1/... path using ' + vars.map((x) => '{' + x + '}').join(' and ') + ' (or empty to switch the step off)' });
+      return '';
+    }
+    return v;
+  };
+  cfg.pathApplications = optPath('pathApplications', ['envId']);
+  cfg.pathFlowPolicies = cfg.pathApplications ? optPath('pathFlowPolicies', ['envId', 'appId']) : '';
   cfg.flowsListQuery = need('flowsListQuery', /^[A-Za-z0-9_.,=&%-]{0,200}$/, 'must be a plain query string such as attributes=id,name', '');
   cfg.rollout = lib.str(p.rolloutEnvs).split(',').map((x) => x.trim()).filter((x) => x);
   if (!cfg.rollout.length || cfg.rollout.some((x) => !lib.ENV_NAME.test(x))) { problems.push({ name: 'rolloutEnvs', issue: 'must be env names in rollout order, such as qa,stage,prod' }); }
@@ -189,6 +202,17 @@ lib.flowsUrl = (cfg, source) => {
   if (!id) { throw new Error('unknown source env'); }
   return cfg.apiOrigin + cfg.pathFlows.replace('{envId}', id) + (cfg.flowsListQuery ? '?' + cfg.flowsListQuery : '');
 };
+// The read-only list calls: flows, applications, or one application's flow policies (PingOne lists those per application).
+lib.listUrl = (cfg, list) => {
+  const id = cfg.sources[list.source];
+  if (!id) { throw new Error('unknown source env'); }
+  if (list.kind === 'applications' && cfg.pathApplications) { return cfg.apiOrigin + cfg.pathApplications.replace('{envId}', id); }
+  if (list.kind === 'policies' && cfg.pathFlowPolicies && /^[A-Za-z0-9_-]{1,64}$/.test(String(list.appId))) {
+    return cfg.apiOrigin + cfg.pathFlowPolicies.replace('{envId}', id).replace('{appId}', lib.enc(list.appId));
+  }
+  if (list.kind === 'flows' || list.kind === undefined) { return lib.flowsUrl(cfg, list.source); }
+  throw new Error('unknown list');
+};
 lib.tokenUrl = (cfg) => cfg.authOrigin + '/' + cfg.workerEnvironmentId + '/as/token';
 lib.nextLink = (body, origin) => {
   const l = body && body._links && body._links.next;
@@ -212,6 +236,7 @@ lib.gl = (cfg, kind, a) => {
     case 'jobs': return { method: 'GET', url: base + '/pipelines/' + num(a.id) + '/jobs?per_page=100' };
     case 'bridges': return { method: 'GET', url: base + '/pipelines/' + num(a.id) + '/bridges?per_page=20' };
     case 'artifact': return { method: 'GET', url: base + '/jobs/' + num(a.id) + '/artifacts/' + contract.RESULT_ARTIFACT };
+    case 'trace': return { method: 'GET', url: base + '/jobs/' + num(a.id) + '/trace' };
     case 'mr': return { method: 'GET', url: base + '/merge_requests/' + num(a.iid) };
     case 'mrsBySource': return { method: 'GET', url: base + '/merge_requests?source_branch=' + reqBranch(a.branch) + '&state=all&per_page=5' };
     case 'mrList': return { method: 'GET', url: base + '/merge_requests?labels=' + lib.enc(cfg.mrLabel) + '&state=all&order_by=updated_at&sort=desc&per_page=20' };
@@ -263,7 +288,48 @@ lib.nextRead = (s) => {
   const c = lib.gl(s.cfg, it.k, it);
   if (c.method !== 'GET') { throw new Error('the read queue only reads'); }
   s.url = c.url;
-  return 'read';
+  // The job log has its own REST node (it asks for the last 64 KiB only).
+  return it.k === 'trace' ? 'trace' : 'read';
+};
+
+// ---- what a finished request job leaves behind (gl_read and gl_trace both end here) -----------
+lib.finishResult = (s, r, now) => {
+  const run = s.run;
+  run.auto = false;
+  run.done = true;
+  // A field the job refused is pointed out on the options screen without blocking it.
+  s.jobField = r.error && r.error.field ? { field: r.error.field, message: r.error.message } : null;
+  if (run.kind === 'preview') {
+    s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
+    s.sub = s.sub.state === 'unknown' ? { state: 'idle' } : s.sub;
+    s.screen = 'preview';
+    return;
+  }
+  if (r.error) {
+    s.sub = { state: 'error', key: run.key, error: r.error, result: r, jobUrl: run.jobUrl };
+    s.screen = 'preview';
+    if (!s.preview || s.preview.key !== run.key) { s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, at: now }; }
+    return;
+  }
+  // submitted, already_submitted (the existing commit and MR) and no_changes all end the request.
+  r.mrUrl = lib.webUrl(s.cfg, r.mrUrl);
+  r.branchUrl = lib.webUrl(s.cfg, r.branchUrl);
+  r.diffUrl = lib.webUrl(s.cfg, r.diffUrl);
+  s.sub = { state: 'done', key: run.key, result: r, jobUrl: run.jobUrl };
+  s.screen = 'submitted';
+};
+lib.finishNoResult = (s, why, now) => {
+  const run = s.run;
+  run.auto = false;
+  run.done = true;
+  if (run.kind === 'preview') {
+    s.preview = { key: run.key, failed: true, noResult: true, message: why, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
+    s.screen = 'preview';
+  } else {
+    // The job may have written part of the change before it stopped.
+    s.sub = { state: 'unknown', key: run.key, message: why, jobUrl: run.jobUrl };
+    s.screen = 'preview';
+  }
 };
 
 // ---- flow search (#93): case-insensitive substring on the name, or an exact ID --------
@@ -279,7 +345,7 @@ lib.searchFlows = (items, query) => {
 };
 
 // ---- options, readiness and the #57 Submit rule ---------------------------------------
-lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.remove]);
+lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.remove, o.applications, o.flowPolicies]);
 // Addresses that get a Keep Git version / Use source choice: differing dependencies (#93),
 // and any address changed in both Git and the source.
 lib.choosable = (r) => (r ? r.changes.filter((c) => contract.RE.address.test(c.address) &&
@@ -290,7 +356,8 @@ lib.currentPreview = (s) => {
   return s.preview && s.preview.key === key ? s.preview : null;
 };
 lib.blockerCount = (r) => Object.keys((r && r.blockers) || {}).length;
-lib.onlyUnchanged = (r) => !!r && !r.error && (r.status === 'no_changes' || (r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged')));
+lib.onlyUnchanged = (r) => !!r && !r.error && (r.status === 'no_changes' || (r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged')) ||
+  (!!r.compact && r.status === 'previewed' && r.summary.unchanged > 0 && Object.keys(r.summary).every((a) => a === 'unchanged' || !r.summary[a])));
 lib.FIX_FIELDS = 'Fix the highlighted fields first.';
 lib.canPreview = (s) => {
   if (!s.req) { return 'Choose a flow first.'; }

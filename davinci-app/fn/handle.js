@@ -42,19 +42,28 @@ const applyOptions = () => {
     if (contract.CHOICES.indexOf(v) >= 0) { deps[a] = v; }
   }
   o.deps = deps;
+  // Same in all environments (inlineValues): the source value becomes a literal everywhere, so nothing is asked per env.
+  const fi = lib.obj(form.inline);
+  o.inline = contract.inlineChoices(r, o).filter((v) => (lib.has(fi, v) ? fi[v] === true : o.inline.indexOf(v) >= 0));
+  // Stop managing (remove): rows the preview offers, never the selected flow; an explicit confirmation is required.
+  const fr = lib.obj(form.remove);
+  o.remove = contract.removeChoices(r, o).filter((a) => (lib.has(fr, a) ? fr[a] === true : o.remove.indexOf(a) >= 0));
+  o.removeConfirmed = o.remove.length > 0 && (lib.has(form, 'removeConfirm') ? form.removeConfirm === true : !!o.removeConfirmed);
+  if (o.remove.length && !o.removeConfirmed) { errors.remove = 'Tick the confirmation before you stop managing ' + (o.remove.length === 1 ? 'a resource' : o.remove.length + ' resources') + '.'; }
   // Environment values: the rollout envs and the source (the job accepts no other env).
   const env = {};
   const fe = lib.obj(form.env);
   for (const e of [s.req.source].concat(cfg.rollout)) {
     const vals = Object.assign({}, o.env[e] || {}, lib.obj(fe[e]));
     for (const k of Object.keys(vals)) {
+      if (o.inline.indexOf(k) >= 0) { continue; }
       const v = envValue(vals[k]);
       if (v === '') { continue; }
       if (lib.looksSecret(JSON.stringify(v))) { errors['envValues.' + e + '.' + k] = 'This looks like a secret. Secrets come from Vault through customer_secrets.yml, not from here.'; continue; }
       (env[e] = env[e] || {})[k] = v;
     }
   }
-  o.env = env;
+  o.env = contract.withoutInlined(env, o.inline);
   // Secret mappings: terraformer secret variable -> an existing customer_secrets.yml name.
   // Names only, never values. Ticks confirm a new secret's value is in Vault.
   const secrets = {};
@@ -111,7 +120,7 @@ const pickIndex = (prefix, list) => {
 if (btn === 'SIGNOUT') { s.screen = 'signedout'; return done('signout'); }
 if (btn === 'NAV_NEW') {
   if (s.req && s.req.lastCommit && s.sub.state !== 'done') { lib.note(s, 'info', 'The previous request still has a branch in GitLab. You can cancel it from Requests.'); }
-  s.req = null; s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {};
+  s.req = null; s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null;
   return render('search');
 }
 if (btn === 'NAV_REQUESTS') { s.screen = 'requests'; return done(lib.queue(s, 'requests', [{ k: 'mrList' }, { k: 'requestBranches' }])); }
@@ -142,8 +151,8 @@ switch (s.screen) {
       const title = 'PingOne Promote: ' + f.name + ' from ' + s.search.source;
       s.req = { requestId: id, branch: contract.branchFor(id), source: s.search.source, flow: { id: f.id, name: f.name }, lastCommit: '',
         options: { mode: 'mr', title: title.slice(0, contract.LIMITS.title), commitMessage: title.slice(0, contract.LIMITS.title), description: '', deps: {}, env: {}, secrets: {},
-          inline: [], remove: [], confirmed: {} } };
-      s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {};
+          inline: [], remove: [], removeConfirmed: false, applications: [], flowPolicies: [], confirmed: {} } };
+      s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null;
       return render('options');
     }
     return render();
@@ -154,12 +163,72 @@ switch (s.screen) {
     if (btn === 'PREVIEW') { return commit(true); }
     if (btn === 'SUBMIT') { return commit(false); }
     if (btn === 'EDIT') { return render('options'); }
+    if (btn === 'EXTRAS' && cfg.pathApplications && s.req) { s.extras = s.extras || { apps: null, pol: null }; s.errors = {}; return render('extras'); }
     if (btn === 'BACK') { return render('search'); }
     if (btn === 'CHECK' && s.req) { return done(lib.queue(s, 'check', [{ k: 'requestFile', branch: s.req.branch }])); }
     if (btn === 'CANCEL' && s.req && s.req.lastCommit && s.sub.state !== 'done') {
       s.cancel = { branch: s.req.branch, sha: s.req.lastCommit, from: 'request' };
       return done(lib.queue(s, 'cancel', [{ k: 'branch', branch: s.req.branch }]));
     }
+    return render();
+  }
+  case 'extras': {
+    // Optional applications and flow policies, found by name in the source env (read-only, like the flow search).
+    // Applications: 1 token + the list pages. Flow policies: PingOne lists them per application, so only the
+    // policies of the one application the person opens are read (1 token + their pages). Everything else is free.
+    if (!s.req || !cfg.pathApplications) { return render('options'); }
+    const ex = s.extras = s.extras || { apps: null, pol: null };
+    const o = s.req.options;
+    const startList = (kind, more) => { s.list = Object.assign({ kind: kind, source: s.req.source, pages: 0 }, more); s.url = lib.tokenUrl(cfg); return done('token'); };
+    const cached = (bucket, appId) => flows.source === s.req.source && bucket && bucket.complete && (appId === undefined || bucket.appId === appId);
+    const fill = (target, bucket, query) => { const m = lib.searchFlows(bucket.items, query); target.matches = m.matches; target.total = m.total; target.listed = bucket.items.length; };
+    // A name that two listed items share cannot be told apart: the job selects applications and flow policies by name only.
+    const add = (kind, what, name, bucket, extra) => {
+      if (o[kind].some((x) => x.name === name)) { lib.note(s, 'info', name + ' is already in the request.'); return; }
+      if (o[kind].length >= contract.LIMITS.refs) { lib.note(s, 'bad', 'A request can hold at most ' + contract.LIMITS.refs + ' ' + what + 's.'); return; }
+      if (bucket && bucket.items.filter((x) => x.name.toLowerCase() === name.toLowerCase()).length > 1) {
+        lib.note(s, 'bad', 'Two ' + what + 's are named “' + name + '”. The request job selects by name, so it could not tell them apart. Rename one in the source env first.');
+        return;
+      }
+      o[kind].push(Object.assign({ name: name }, extra || {}));
+    };
+    if (btn === 'EXTRAS_DONE') { s.errors = {}; return render('options'); }
+    if (btn === 'SEARCH_APP') {
+      const query = T(form.appQuery).trim().slice(0, 200);
+      ex.apps = { query: query, matches: null, total: 0 };
+      ex.pol = null;
+      if (!query) { s.errors = { appQuery: 'Type part of an application name, or its ID.' }; return render(); }
+      s.errors = {};
+      if (cached(flows.apps)) { fill(ex.apps, flows.apps, query); return render(); }
+      return startList('applications', { query: query });
+    }
+    if (btn.indexOf('POLICIES:') === 0 && cfg.pathFlowPolicies) {
+      const a = pickIndex('POLICIES:', ex.apps && ex.apps.matches);
+      if (!a) { return render(); }
+      ex.pol = { app: { id: a.id, name: a.name }, query: '', matches: null, total: 0 };
+      s.errors = {};
+      if (cached(flows.pol, a.id)) { fill(ex.pol, flows.pol, ''); return render(); }
+      return startList('policies', { appId: a.id, query: '' });
+    }
+    if (btn === 'SEARCH_POL' && ex.pol) {
+      const query = T(form.polQuery).trim().slice(0, 200);
+      ex.pol.query = query;
+      s.errors = {};
+      if (cached(flows.pol, ex.pol.app.id)) { fill(ex.pol, flows.pol, query); return render(); }
+      return startList('policies', { appId: ex.pol.app.id, query: query });
+    }
+    if (btn.indexOf('ADDAPP:') === 0) {
+      const a = pickIndex('ADDAPP:', ex.apps && ex.apps.matches);
+      if (a) { add('applications', 'application', a.name, flows.apps); }
+      return render();
+    }
+    if (btn.indexOf('ADDPOL:') === 0 && ex.pol) {
+      const m = pickIndex('ADDPOL:', ex.pol.matches);
+      if (m) { add('flowPolicies', 'flow policy', m.name, flows.pol, { app: ex.pol.app.name }); }
+      return render();
+    }
+    if (btn.indexOf('DROPAPP:') === 0) { const x = pickIndex('DROPAPP:', o.applications); if (x) { o.applications = o.applications.filter((y) => y !== x); } return render(); }
+    if (btn.indexOf('DROPPOL:') === 0) { const x = pickIndex('DROPPOL:', o.flowPolicies); if (x) { o.flowPolicies = o.flowPolicies.filter((y) => y !== x); } return render(); }
     return render();
   }
   case 'working': {
