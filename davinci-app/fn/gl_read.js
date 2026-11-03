@@ -26,6 +26,8 @@ const finishResult = (raw) => {
   const r = contract.normalizeResult(raw);
   run.auto = false;
   run.done = true;
+  // A field the job refused is pointed out on the options screen without blocking it.
+  s.jobField = r.error && r.error.field ? { field: r.error.field, message: r.error.message } : null;
   if (run.kind === 'preview') {
     s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, pipelineUrl: run.pipelineUrl, at: now };
     s.sub = s.sub.state === 'unknown' ? { state: 'idle' } : s.sub;
@@ -38,8 +40,10 @@ const finishResult = (raw) => {
     if (!s.preview || s.preview.key !== run.key) { s.preview = { key: run.key, result: r, jobUrl: run.jobUrl, at: now }; }
     return;
   }
+  // submitted, already_submitted (the existing commit and MR) and no_changes all end the request.
   r.mrUrl = lib.webUrl(cfg, r.mrUrl);
   r.branchUrl = lib.webUrl(cfg, r.branchUrl);
+  r.diffUrl = lib.webUrl(cfg, r.diffUrl);
   s.sub = { state: 'done', key: run.key, result: r, jobUrl: run.jobUrl };
   s.screen = 'submitted';
 };
@@ -137,12 +141,12 @@ H['check:mrsBySource'] = () => {
   if (!ok) { gone(); return; }
   const mr = list[0];
   if (mr && lib.webUrl(cfg, mr.web_url)) {
-    s.sub = { state: 'done', key: run ? run.key : '', result: contract.normalizeResult({ status: 'found', mrUrl: mr.web_url, changes: [] }) };
+    s.sub = { state: 'done', key: run ? run.key : '', result: contract.normalizeResult({ resultVersion: contract.RESULT_VERSION, status: 'submitted', mrUrl: mr.web_url, changes: [] }) };
     s.sub.result.mrUrl = lib.webUrl(cfg, mr.web_url);
     s.sub.found = true;
     s.screen = 'submitted';
   } else if (s.req.options.mode === 'branch') {
-    s.sub = { state: 'done', key: run ? run.key : '', result: contract.normalizeResult({ status: 'found', branchUrl: s.checkBranchUrl, changes: [] }), found: true };
+    s.sub = { state: 'done', key: run ? run.key : '', result: contract.normalizeResult({ resultVersion: contract.RESULT_VERSION, status: 'submitted', branchUrl: s.checkBranchUrl, changes: [] }), found: true };
     s.sub.result.branchUrl = s.checkBranchUrl;
     s.screen = 'submitted';
   } else {
@@ -289,6 +293,8 @@ if (q.phase === 'poll' && run && !run.done) {
   const age = now - run.startedAt;
   run.noPipeline = !run.pipelineId && age > cfg.pipelineAppearSeconds * 1000;
   run.waitingRunner = run.jobStatus === 'pending' || run.jobStatus === 'created';
+  // resource_group pingone-promote-requests: one request job at a time.
+  run.waitingTurn = run.jobStatus === 'waiting_for_resource';
   if (now > run.deadline) {
     run.auto = false;
     run.timedOut = true;

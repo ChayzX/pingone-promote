@@ -8,66 +8,76 @@ const now = lib.now();
 s.notes = [];
 if (!s.user || !s.cfg) { return lib.out(s, 'signout', { body: '' }); }
 const cfg = s.cfg;
-const T = (v, max) => lib.str(v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, max);
-const VAR = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
-const FIELD = /^[A-Za-z0-9_.-]{1,128}$/;
+const T = (v) => lib.str(v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
 const done = (action, extra) => lib.out(s, action, Object.assign({ body: '' }, extra || {}));
 const render = (screen) => { if (screen) { s.screen = screen; } return done('render'); };
+// An env value is text, or JSON when it starts with [ or { (lists such as redirect URIs).
+const envValue = (v) => {
+  if (v && typeof v === 'object') { return v; }
+  const t = T(v);
+  if (/^[\[{]/.test(t)) { try { return JSON.parse(t); } catch (e) { return t; } }
+  return t;
+};
 
 // ---- options form -------------------------------------------------------------------
+// Error keys are the request job's field paths (title, envValues.<env>.<var>, secretMappings.<key>, ...).
 const applyOptions = () => {
   if (s.screen !== 'options' || !s.req) { return; }
   const o = s.req.options;
   const before = lib.optionsKey(o);
   const errors = {};
   const r = s.preview && s.preview.result;
-  const mode = T(form.mode, 10);
+  const mode = T(form.mode);
   if (contract.MODES.indexOf(mode) >= 0) { o.mode = mode; }
-  o.title = T(form.title, 200) || o.title;
-  o.commitMessage = T(form.commitMessage, 200) || o.title;
-  o.description = T(form.description, 4000);
+  if (lib.has(form, 'title')) { o.title = T(form.title).trim(); }
+  if (lib.has(form, 'commitMessage')) { o.commitMessage = T(form.commitMessage).trim(); }
+  if (lib.has(form, 'description')) { o.description = T(form.description); }
   if (!o.title) { errors.title = 'Give the request a title.'; }
-  // Dependency choices: only for addresses the last preview listed as differing.
+  // Dependency choices: for dependencies the last preview listed as differing,
+  // and for any address changed in both Git and the source.
   const deps = {};
-  const choosable = r ? r.changes.filter((c) => c.role !== 'selected' && (c.action === 'kept_differs' || c.action === 'updated')).map((c) => c.address) : [];
   const fd = lib.obj(form.deps);
-  for (const a of choosable) {
+  for (const a of lib.choosable(r)) {
     const v = lib.has(fd, a) ? fd[a] : o.deps[a];
     if (contract.CHOICES.indexOf(v) >= 0) { deps[a] = v; }
   }
   o.deps = deps;
-  // Environment values for the rollout envs (never the source; it is exported as is).
+  // Environment values: the rollout envs and the source (the job accepts no other env).
   const env = {};
   const fe = lib.obj(form.env);
-  for (const e of cfg.rollout.filter((x) => x !== s.req.source)) {
+  for (const e of [s.req.source].concat(cfg.rollout)) {
     const vals = Object.assign({}, o.env[e] || {}, lib.obj(fe[e]));
     for (const k of Object.keys(vals)) {
-      const v = T(vals[k], 2000);
-      if (!VAR.test(k)) { continue; }
-      if (lib.looksSecret(v)) { errors['env.' + e + '.' + k] = 'This looks like a secret. Secrets come from Vault; map them under Secrets instead.'; continue; }
-      if (v) { (env[e] = env[e] || {})[k] = v; }
+      const v = envValue(vals[k]);
+      if (v === '') { continue; }
+      if (lib.looksSecret(JSON.stringify(v))) { errors['envValues.' + e + '.' + k] = 'This looks like a secret. Secrets come from Vault through customer_secrets.yml, not from here.'; continue; }
+      (env[e] = env[e] || {})[k] = v;
     }
   }
   o.env = env;
-  // Secret mappings: names only, never values. Ticks confirm Vault has them.
+  // Secret mappings: terraformer secret variable -> an existing customer_secrets.yml name.
+  // Names only, never values. Ticks confirm a new secret's value is in Vault.
   const secrets = {};
   const confirmed = {};
   const fs = lib.obj(form.secrets);
   for (const x of (r && r.requiredSecrets) || []) {
-    const f = Object.assign({ varName: x.varName, field: x.field }, lib.obj((o.secrets || {})[x.key]), lib.obj(fs[x.key]));
-    const varName = T(f.varName, 128);
-    const field = T(f.field, 128);
-    if (varName && !VAR.test(varName)) { errors['secret.' + x.key] = 'Variable names use letters, digits and _ and start with a letter.'; }
-    if (field && !FIELD.test(field)) { errors['secret.' + x.key] = 'Vault field names use letters, digits, ., _ and -.'; }
-    if (varName || field) { secrets[x.key] = { varName: varName || x.key, field: field || x.key }; }
-    const tick = lib.has(fs, x.key) && lib.has(lib.obj(fs[x.key]), 'ok') ? lib.obj(fs[x.key]).ok === true : !!(o.confirmed || {})[x.key];
+    const f = lib.obj(fs[x.key]);
+    const name = (lib.has(f, 'mapTo') ? T(f.mapTo) : lib.str((o.secrets || {})[x.key])).trim();
+    if (name) { secrets[x.key] = name; }
+    const tick = lib.has(f, 'ok') ? f.ok === true : !!(o.confirmed || {})[x.key];
     if (tick) { confirmed[x.key] = true; }
   }
   o.secrets = secrets;
   o.confirmed = confirmed;
+  // The job's own rules, checked here first (contract.validateRequest).
+  const req = contract.buildRequest({ requestId: s.req.requestId, requestedBy: s.user.username, source: s.req.source, flow: s.req.flow, options: o, dryRun: true });
+  for (const p of contract.validateRequest(req, cfg)) { if (!errors[p.field]) { errors[p.field] = p.message; } }
   s.errors = errors;
   // #57: an edit clears a failed submit and re-enables Submit; an unknown outcome stays until Check GitLab.
-  if (lib.optionsKey(o) !== before && s.sub.state === 'error') { s.sub = { state: 'idle' }; }
+  if (lib.optionsKey(o) !== before) {
+    s.jobField = null;
+    if (s.sub.state === 'error') { s.sub = { state: 'idle' }; }
+  }
 };
 
 // ---- Preview / Submit: ONE Commits API call --------------------------------------------
@@ -76,6 +86,8 @@ const commit = (dryRun) => {
   if (why) { lib.note(s, 'bad', why); return render(); }
   const req = contract.buildRequest({ requestId: s.req.requestId, requestedBy: s.user.username, source: s.req.source, flow: s.req.flow,
     options: s.req.options, dryRun: dryRun });
+  const problems = contract.validateRequest(req, cfg);
+  if (problems.length) { for (const p of problems) { lib.note(s, 'bad', p.field + ': ' + p.message); } return render(); }
   const body = contract.commitBody(req, cfg.defaultBranch, s.req.lastCommit || '');
   s.url = lib.gl(cfg, 'commit').url;
   s.run = { kind: dryRun ? 'preview' : 'submit', key: lib.optionsKey(s.req.options), sha: '', pipelineId: '', jobId: '', jobStatus: '',
@@ -107,8 +119,8 @@ if (btn === 'NAV_REQUESTS') { s.screen = 'requests'; return done(lib.queue(s, 'r
 switch (s.screen) {
   case 'search': {
     if (btn === 'SEARCH') {
-      const source = T(form.source, 40);
-      const query = T(form.query, 100);
+      const source = T(form.source).slice(0, 63);
+      const query = T(form.query).trim().slice(0, 200);
       if (!lib.has(cfg.sources, source)) { lib.note(s, 'bad', 'Choose a source env.'); return render(); }
       s.search = { source: source, query: query, matches: null, total: 0 };
       if (!query) { s.errors = { query: 'Type part of a flow name, or a flow ID.' }; return render(); }
@@ -129,7 +141,8 @@ switch (s.screen) {
       const id = contract.newRequestId(now, rnd);
       const title = 'PingOne Promote: ' + f.name + ' from ' + s.search.source;
       s.req = { requestId: id, branch: contract.branchFor(id), source: s.search.source, flow: { id: f.id, name: f.name }, lastCommit: '',
-        options: { mode: 'mr', title: title.slice(0, 200), commitMessage: title.slice(0, 200), description: '', deps: {}, env: {}, secrets: {}, confirmed: {} } };
+        options: { mode: 'mr', title: title.slice(0, contract.LIMITS.title), commitMessage: title.slice(0, contract.LIMITS.title), description: '', deps: {}, env: {}, secrets: {},
+          inline: [], remove: [], confirmed: {} } };
       s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {};
       return render('options');
     }
@@ -164,7 +177,7 @@ switch (s.screen) {
   }
   case 'submitted': {
     if (btn === 'WATCH' && s.sub.result) {
-      const iid = contract.mrIid(s.sub.result.mrUrl);
+      const iid = s.sub.result.mrIid || contract.mrIid(s.sub.result.mrUrl);
       return done(watch({ iid: iid, branch: s.req.branch, mode: iid ? 'mr' : 'branch', title: s.req.options.title }));
     }
     return render();

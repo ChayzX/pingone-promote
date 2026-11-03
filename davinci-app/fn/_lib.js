@@ -124,7 +124,8 @@ lib.unb64 = (text) => {
 lib.API_ORIGIN = /^https:\/\/api\.pingone\.[a-z]{2,6}(\.[a-z]{2,3})?$/;
 lib.AUTH_ORIGIN = /^https:\/\/auth\.pingone\.[a-z]{2,6}(\.[a-z]{2,3})?$/;
 lib.ENV_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-lib.ENV_NAME = /^[a-z][a-z0-9_-]{0,30}$/;
+// Environment names as the request job accepts them (contract.RE.env).
+lib.ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 lib.GITLAB_API = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-]{1,64})*\/api\/v4$/;
 lib.SETTINGS = ['apiOrigin', 'authOrigin', 'workerEnvironmentId', 'sourceEnvs', 'pathFlows', 'flowsListQuery', 'rolloutEnvs', 'gitlabApi',
   'gitlabProjectId', 'defaultBranch', 'applyJobPattern', 'environmentPattern', 'mrLabel', 'allowedGroups', 'runTimeoutSeconds',
@@ -146,7 +147,7 @@ lib.checkSettings = (p) => {
   cfg.sources = {};
   const srcText = lib.str(p.sourceEnvs);
   for (const part of srcText.split(',').map((x) => x.trim()).filter((x) => x)) {
-    const m = /^([a-z][a-z0-9_-]{0,30})=(.+)$/.exec(part);
+    const m = /^([A-Za-z0-9][A-Za-z0-9_-]{0,62})=(.+)$/.exec(part);
     if (!m || !lib.ENV_ID.test(m[2].trim())) { problems.push({ name: 'sourceEnvs', issue: 'must be name=<environment ID> pairs separated by commas' }); break; }
     cfg.sources[m[1]] = m[2].trim();
   }
@@ -158,6 +159,8 @@ lib.checkSettings = (p) => {
   cfg.flowsListQuery = need('flowsListQuery', /^[A-Za-z0-9_.,=&%-]{0,200}$/, 'must be a plain query string such as attributes=id,name', '');
   cfg.rollout = lib.str(p.rolloutEnvs).split(',').map((x) => x.trim()).filter((x) => x);
   if (!cfg.rollout.length || cfg.rollout.some((x) => !lib.ENV_NAME.test(x))) { problems.push({ name: 'rolloutEnvs', issue: 'must be env names in rollout order, such as qa,stage,prod' }); }
+  // The job refuses a source that is also in the rollout (PINGONE_PROMOTE_ROLLOUT).
+  if (Object.keys(cfg.sources).some((x) => cfg.rollout.indexOf(x) >= 0)) { problems.push({ name: 'sourceEnvs', issue: 'a source env must not also be in ppRolloutEnvs' }); }
   cfg.gitlabApi = need('gitlabApi', lib.GITLAB_API, 'must be https://<host>/api/v4');
   cfg.gitlabWeb = cfg.gitlabApi ? cfg.gitlabApi.replace(/\/api\/v4$/, '') : '';
   cfg.gitlabProjectId = need('gitlabProjectId', /^([0-9]{1,12}|[A-Za-z0-9_.-]{1,100}(\/[A-Za-z0-9_.-]{1,100}){1,5})$/, 'must be a numeric project ID or group/project path');
@@ -276,36 +279,43 @@ lib.searchFlows = (items, query) => {
 };
 
 // ---- options, readiness and the #57 Submit rule ---------------------------------------
-lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets]);
+lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.remove]);
+// Addresses that get a Keep Git version / Use source choice: differing dependencies (#93),
+// and any address changed in both Git and the source.
+lib.choosable = (r) => (r ? r.changes.filter((c) => contract.RE.address.test(c.address) &&
+  ((c.role !== 'selected' && (c.action === 'kept_differs' || c.action === 'updated')) || c.status === 'changed-in-both')).map((c) => c.address) : []);
 lib.currentPreview = (s) => {
   // The preview for exactly the current options, if there is one.
   const key = s.req ? lib.optionsKey(s.req.options) : '';
   return s.preview && s.preview.key === key ? s.preview : null;
 };
 lib.blockerCount = (r) => Object.keys((r && r.blockers) || {}).length;
-lib.onlyUnchanged = (r) => !!r && !r.error && r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged');
+lib.onlyUnchanged = (r) => !!r && !r.error && (r.status === 'no_changes' || (r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged')));
+lib.FIX_FIELDS = 'Fix the highlighted fields first.';
 lib.canPreview = (s) => {
   if (!s.req) { return 'Choose a flow first.'; }
   if (s.req.gone) { return 'This request\'s branch no longer exists. Start a new request.'; }
   if (s.sub.state === 'running') { return 'A request is running.'; }
   if (s.sub.state === 'unknown') { return 'The outcome of the last submit is unknown. Check GitLab first.'; }
   if (s.sub.state === 'done') { return 'This request is already submitted.'; }
-  if (Object.keys(s.errors || {}).length) { return 'Fix the highlighted fields first.'; }
+  if (Object.keys(s.errors || {}).length) { return lib.FIX_FIELDS; }
   return '';
 };
 lib.canSubmit = (s) => {
   const p = lib.canPreview(s);
   if (p) { return p; }
   const key = lib.optionsKey(s.req.options);
-  if (s.sub.state === 'error' && s.sub.key === key) { return 'The last submit failed with these exact options. Change them to submit again.'; }
+  // A retryable error (error.retryable) does not need an edit; any other does (#57).
+  if (s.sub.state === 'error' && s.sub.key === key && !(s.sub.error && s.sub.error.retryable)) { return 'The last submit failed with these exact options. Change them to submit again.'; }
   const cur = lib.currentPreview(s);
   if (cur && cur.result) {
     const r = cur.result;
-    if (r.error) { return 'The preview of these options failed. Change them to submit.'; }
     if (lib.blockerCount(r)) { return 'Readiness: ' + lib.blockerCount(r) + ' environment(s) are missing values.'; }
+    if (r.error && !r.error.retryable) { return 'The preview of these options failed. Change them to submit.'; }
     if (lib.onlyUnchanged(r)) { return 'Nothing to change: Git already matches the source for this flow.'; }
   }
-  const secrets = (s.preview && s.preview.result && s.preview.result.requiredSecrets) || [];
+  // Only secrets this request adds to customer_secrets.yml (declared: false) need a Vault value created.
+  const secrets = ((s.preview && s.preview.result && s.preview.result.requiredSecrets) || []).filter((x) => !x.declared);
   const confirmed = s.req.options.confirmed || {};
   if (secrets.some((x) => !confirmed[x.key])) { return 'Confirm that each required secret is in Vault for every environment.'; }
   return '';

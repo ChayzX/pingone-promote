@@ -11,5 +11,10 @@ if (lib.ok2xx(status) || status === 404) {
   s.screen = c.from === 'requests' ? 'requests' : 'search';
   return lib.out(s, 'render');
 }
+if (status === 403) {
+  // The recommended setup protects pingone-promote/*; a Developer token cannot delete a protected branch.
+  lib.note(s, 'bad', 'GitLab refused to delete ' + c.branch + ' (HTTP 403): request branches are protected here. Ask a Maintainer to delete it in GitLab. Nothing reached the rollout.');
+  return lib.out(s, 'render');
+}
 lib.note(s, 'bad', 'GitLab did not delete the branch (HTTP ' + status + '). ' + lib.httpMessage(params.body));
 return lib.out(s, 'render');

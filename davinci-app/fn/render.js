@@ -27,9 +27,9 @@ const text = (path, label, value, o) => {
   return field(id, label, '<input type="text" id="' + id + '"' + attr(path) + ' value="' + e(value) + '" autocomplete="off"' +
     (o.placeholder ? ' placeholder="' + e(o.placeholder) + '"' : '') + described(id, o.err, o.hint) + ' />', o.err, o.hint);
 };
-const area = (path, label, value, hint) => {
+const area = (path, label, value, hint, err) => {
   const id = uid('f');
-  return field(id, label, '<textarea id="' + id + '" rows="4"' + attr(path) + described(id, '', hint) + '>' + e(value) + '</textarea>', '', hint);
+  return field(id, label, '<textarea id="' + id + '" rows="4"' + attr(path) + described(id, err, hint) + '>' + e(value) + '</textarea>', err, hint);
 };
 const radios = (path, legend, value, opts) => {
   const name = uid('r');
@@ -62,35 +62,46 @@ const strip = (envs, source) => '<ol class="pp-strip" aria-label="Rollout">' +
   }).join('') + '</ol>';
 const summary = () => s.req ? '<dl class="pp-sum"><dt>Source env</dt><dd>' + e(s.req.source) + '</dd><dt>Flow</dt><dd>' + e(s.req.flow.name) +
   '</dd><dt>Request</dt><dd><code>' + e(s.req.requestId) + '</code></dd><dt>Rollout</dt><dd>' + e(cfg.rollout.join(' → ')) + '</dd></dl>' : '';
+// Field errors: the app's own checks first, then a field the job refused (error.field).
+const errFor = (path) => (s.errors || {})[path] || (s.jobField && s.jobField.field === path ? 'GitLab: ' + s.jobField.message : '');
 const changesTable = (r) => {
   if (!r.changes.length) { return '<p class="pp-empty">The job reported no changes.</p>'; }
-  const counts = {};
-  for (const c of r.changes) { counts[c.action] = (counts[c.action] || 0) + 1; }
-  const order = ['added', 'updated', 'kept_differs', 'unknown', 'unchanged'];
-  const line = order.filter((a) => counts[a]).map((a) => counts[a] + ' ' + (contract.ACTIONS[a] ? contract.ACTIONS[a].label.toLowerCase() : 'unrecognised')).join(', ');
+  const unknown = r.changes.filter((c) => c.action === 'unknown').length;
+  const line = contract.ACTION_ORDER.filter((a) => (a === 'unknown' ? unknown : r.summary[a]))
+    .map((a) => (a === 'unknown' ? unknown + ' unrecognised' : r.summary[a] + ' ' + contract.ACTIONS[a].label.toLowerCase())).join(', ');
   const row = (c) => {
     const a = contract.ACTIONS[c.action] || { sym: '?', label: 'Not recognised', cls: 'warn' };
-    return '<tr><td><code>' + e(c.address) + '</code>' + (c.role === 'selected' ? ' <span class="pp-tag">selected flow</span>' : '') + '</td><td class="' + a.cls + '"><span aria-hidden="true">' + e(a.sym) + ' </span>' + e(a.label) + '</td></tr>';
+    return '<tr><td><code>' + e(c.address) + '</code>' + (c.role === 'selected' ? ' <span class="pp-tag">selected flow</span>' : '') +
+      (c.from ? '<br><span class="pp-hint">was <code>' + e(c.from) + '</code></span>' : '') + (c.file ? '<br><span class="pp-hint">' + e(c.file) + '</span>' : '') + '</td>' +
+      '<td class="' + a.cls + '"><span aria-hidden="true">' + e(a.sym) + ' </span>' + e(a.label) + (c.reason ? '<br><span class="pp-hint">' + e(c.reason) + '</span>' : '') + '</td>' +
+      '<td class="' + (c.status === 'changed-in-both' || c.status === 'git-newer' ? 'warn' : 'same') + '">' + e(contract.ROW_STATUS[c.status] || '') + '</td></tr>';
   };
   const main = r.changes.filter((c) => c.action !== 'unchanged');
   const same = r.changes.filter((c) => c.action === 'unchanged');
-  const table = (rows) => '<table class="pp-table"><thead><tr><th scope="col">Shared definition (address)</th><th scope="col">Predicted change</th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>';
+  const table = (rows) => '<table class="pp-table"><thead><tr><th scope="col">Shared definition (address)</th><th scope="col">Predicted change</th><th scope="col">Source vs Git</th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>';
   return '<p>' + e(line) + '.</p>' + (main.length ? table(main) : '') + (same.length ? '<details><summary>' + same.length + ' matching Git</summary>' + table(same) + '</details>' : '');
 };
+const shown = (v) => (v && typeof v === 'object' ? JSON.stringify(v) : (v === undefined || v === null ? '' : String(v)));
 const readiness = (r, editable) => {
-  const envs = cfg.rollout.filter((x) => x !== s.req.source);
+  const bl = (r && r.blockers) || {};
+  // The rollout envs always; the source and the whole request only when there is something for them.
+  const envs = cfg.rollout.slice();
+  if (bl[s.req.source] || (s.req.options.env || {})[s.req.source]) { envs.unshift(s.req.source); }
+  if (bl[contract.REQUEST_BLOCKERS]) { envs.unshift(contract.REQUEST_BLOCKERS); }
   const rows = envs.map((env) => {
-    const bl = (r && r.blockers[env]) || [];
-    const vals = (s.req.options.env || {})[env] || {};
-    const items = bl.map((b) => {
-      if (b.var && editable) {
-        return text(['env', env, b.var], env + ': ' + b.var, vals[b.var] || '', { err: s.errors['env.' + env + '.' + b.var], hint: b.message || 'Environment value for ' + env });
+    const list = bl[env] || [];
+    const vals = env === contract.REQUEST_BLOCKERS ? {} : ((s.req.options.env || {})[env] || {});
+    const items = list.map((b) => {
+      if (b.code === 'missing_value' && b.var && editable && env !== contract.REQUEST_BLOCKERS) {
+        return text(['env', env, b.var], env + ': ' + b.var, shown(vals[b.var]), { err: errFor('envValues.' + env + '.' + b.var), hint: (b.message || 'Environment value for ' + env) + '. Text, or JSON for a list.' });
       }
-      return '<p class="pp-note bad">' + e(b.message || b.code || 'blocked') + '</p>';
+      const what = contract.BLOCKER_TEXT[b.code] || b.code || 'blocked';
+      return '<p class="pp-note bad"><strong>' + e(what) + '.</strong> ' + e(b.message) + (b.address ? ' <code>' + e(b.address) + '</code>' : '') + (b.var ? ' <code>' + e(b.var) + '</code>' : '') + '</p>';
     }).join('');
-    const extra = Object.keys(vals).filter((k) => !bl.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + k, vals[k], { err: s.errors['env.' + env + '.' + k] })).join('');
-    const ready = !bl.length;
-    return '<section class="pp-env-row"><h3>' + e(env) + ' <span class="' + (ready ? 'add' : 'bad') + '">' + (ready ? (r ? '✓ Ready' : 'Not checked yet') : '✕ ' + bl.length + ' missing') + '</span></h3>' + items + (editable ? extra : '') + '</section>';
+    const extra = Object.keys(vals).filter((k) => !list.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + k, shown(vals[k]), { err: errFor('envValues.' + env + '.' + k) })).join('');
+    const ready = !list.length;
+    const name = env === contract.REQUEST_BLOCKERS ? 'Whole request' : env + (env === s.req.source ? ' (source env)' : '');
+    return '<section class="pp-env-row"><h3>' + e(name) + ' <span class="' + (ready ? 'add' : 'bad') + '">' + (ready ? (r ? '✓ Ready' : 'Not checked yet') : '✕ ' + list.length + ' to fix') + '</span></h3>' + items + (editable ? extra : '') + '</section>';
   }).join('');
   return '<h2>Readiness</h2><p class="pp-hint">Environment values each rollout env needs. Missing values block the request; fill them in here and preview again.</p>' + rows;
 };
@@ -98,16 +109,26 @@ const secretsBlock = (r, editable) => {
   const list = (r && r.requiredSecrets) || [];
   if (!list.length) { return ''; }
   const o = s.req.options;
-  return '<h2>Secrets</h2><p class="pp-hint">The app never sees secret values. Map each secret to its variable and Vault field, then confirm it exists in Vault for every rollout env. Vault is not checked from here.</p>' +
+  return '<h2>Secrets</h2><p class="pp-hint">The app never sees secret values. Each secret below is read from Vault in every environment. Vault is not checked from here.</p>' +
     list.map((x) => {
-      const m = (o.secrets || {})[x.key] || {};
       const id = uid('c');
-      const err = s.errors['secret.' + x.key];
-      return '<fieldset class="pp-secret"><legend><code>' + e(x.key) + '</code></legend>' + (editable
-        ? text(['secrets', x.key, 'varName'], 'Variable name', m.varName || x.varName || x.key, { err: err }) + text(['secrets', x.key, 'field'], 'Vault field', m.field || x.field || x.key, {}) +
-          '<label class="pp-check" for="' + id + '"><input type="checkbox" id="' + id + '"' + attr(['secrets', x.key, 'ok']) + ((o.confirmed || {})[x.key] ? ' checked' : '') + ' /> It is in Vault for ' + e(cfg.rollout.join(', ')) + '</label>'
-        : '<p>' + ((o.confirmed || {})[x.key] ? '✓ Confirmed in Vault' : 'Not confirmed yet') + '</p>') + '</fieldset>';
+      const where = '<p class="pp-hint">Terraform variable <code>' + e(x.varName || x.key) + '</code>, Vault field <code>' + e(x.field) + '</code>' + (x.vault ? ' at <code>' + e(x.vault) + '</code>' : '') + '</p>';
+      const state = x.declared ? '<p>Already declared in customer_secrets.yml.</p>' : '<p class="warn">New: this request adds it to customer_secrets.yml, so its value must exist in Vault for every environment.</p>';
+      const tick = x.declared ? '' : (editable
+        ? '<label class="pp-check" for="' + id + '"><input type="checkbox" id="' + id + '"' + attr(['secrets', x.key, 'ok']) + ((o.confirmed || {})[x.key] ? ' checked' : '') + ' /> Its value is in Vault for ' + e(cfg.rollout.join(', ')) + '</label>'
+        : '<p>' + ((o.confirmed || {})[x.key] ? '✓ Confirmed in Vault' : 'Not confirmed yet') + '</p>');
+      const map = editable ? text(['secrets', x.key, 'mapTo'], 'Use an existing customer_secrets.yml name instead (optional)', (o.secrets || {})[x.key] || '', { err: errFor('secretMappings.' + x.key) })
+        : ((o.secrets || {})[x.key] ? '<p>Mapped to <code>' + e(o.secrets[x.key]) + '</code></p>' : '');
+      return '<fieldset class="pp-secret"><legend><code>' + e(x.key) + '</code></legend>' + where + state + map + tick + '</fieldset>';
     }).join('');
+};
+const errorBody = (err) => {
+  const t = contract.ERROR_TEXT[err.code] || contract.ERROR_TEXT.unknown;
+  const cands = err.candidates && err.candidates.length ? '<p>Several flows match. Search again and choose one of these:</p><ul class="pp-list">' +
+    err.candidates.map((c) => '<li>' + e(c.name) + (c.address ? ' <code>' + e(c.address) + '</code>' : '') + '</li>').join('') + '</ul>' : '';
+  return '<strong>' + e(t.title) + '.</strong> ' + e(t.fix) + (err.type ? ' <span class="pp-hint">(in ' + e(contract.TYPE_TEXT[err.type] || err.type) + ')</span>' : '') +
+    '<p>' + e(err.message) + (err.field ? ' <span class="pp-hint">Field: <code>' + e(err.field) + '</code></span>' : '') + '</p>' + cands +
+    (err.retryable ? '<p class="pp-hint">GitLab says this may work if you try again.</p>' : '');
 };
 const subBanner = () => {
   const sub = s.sub || {};
@@ -116,10 +137,10 @@ const subBanner = () => {
       (sub.message ? ' ' + e(sub.message) : '') + ' ' + link(sub.jobUrl, 'Open the job') + '<div class="pp-actions">' + button('CHECK', 'Check GitLab') + '</div></div>';
   }
   if (sub.state === 'error' && sub.error) {
-    const t = contract.ERROR_TEXT[sub.error.code] || { title: 'GitLab did not accept the request', fix: 'Change the options and submit again.' };
     const partial = sub.error.code === 'partial' && sub.result ? link(lib.webUrl(cfg, sub.result.branchUrl), 'Open the request branch') : '';
-    return '<div class="pp-note bad" role="alert"><strong>Submit failed: ' + e(t.title) + '.</strong> ' + e(t.fix) + '<p>' + e(sub.error.message) + '</p>' + partial + ' ' + link(sub.jobUrl, 'Open the job') +
-      '<p class="pp-hint">Change any option to submit again.</p></div>';
+    const err = contract.ERROR_TEXT[sub.error.code] ? sub.error : Object.assign({}, sub.error, { code: 'unknown' });
+    return '<div class="pp-note bad" role="alert">Submit failed: ' + errorBody(err) + partial + ' ' + link(sub.jobUrl, 'Open the job') +
+      '<p class="pp-hint">' + (sub.error.retryable ? 'You can submit again as it is, or change an option.' : 'Change any option to submit again.') + '</p></div>';
   }
   return '';
 };
@@ -127,7 +148,11 @@ const actions = () => {
   const pw = lib.canPreview(s);
   const sw = lib.canSubmit(s);
   const cancel = s.req && s.req.lastCommit && s.sub.state !== 'done' && s.sub.state !== 'unknown' ? button('CANCEL', 'Cancel request', { ghost: true, danger: true }) : '';
-  return '<div class="pp-actions">' + button('PREVIEW', 'Preview', { why: pw, ghost: true }) + button('SUBMIT', s.req && s.req.options.mode === 'branch' ? 'Submit request (branch only)' : 'Submit request', { why: sw, onEdit: !!sw && !pw && s.screen === 'options' }) + cancel + '</div>';
+  // Reasons an edit can fix turn the button back on when the person edits (the server checks again).
+  const editable = s.screen === 'options';
+  const fieldsOnly = editable && pw === lib.FIX_FIELDS;
+  return '<div class="pp-actions">' + button('PREVIEW', 'Preview', { why: pw, ghost: true, onEdit: fieldsOnly }) +
+    button('SUBMIT', s.req && s.req.options.mode === 'branch' ? 'Submit request (branch only)' : 'Submit request', { why: sw, onEdit: editable && !!sw && (!pw || fieldsOnly) }) + cancel + '</div>';
 };
 
 const screens = {};
@@ -159,15 +184,16 @@ screens.options = () => {
   if (p && !cur) { state = '<p class="pp-note warn">The options changed since the last preview. Preview again to see their effect.</p>'; }
   if (cur && cur.result) { state = '<p class="pp-note ok">The preview below matches these options.</p>'; }
   if (p && p.failed) { state = '<p class="pp-note bad">The last preview did not finish' + (p.error ? ': ' + e(p.error.message) : (p.message ? ': ' + e(p.message) : '.')) + ' ' + link(p.jobUrl, 'Open the job') + '</p>'; }
-  const deps = r ? r.changes.filter((c) => c.role !== 'selected' && (c.action === 'kept_differs' || c.action === 'updated')) : [];
+  const deps = r ? r.changes.filter((c) => lib.choosable(r).indexOf(c.address) >= 0) : [];
   const depBlock = '<h2>Shared definitions</h2>' + (!r ? '<p class="pp-hint">Preview to list the dependencies that differ from Git. A dependency that differs keeps the Git version unless you choose otherwise, because other flows use it too.</p>'
-    : (!deps.length ? '<p class="pp-empty">No dependency differs from Git.</p>' : deps.map((c) => radios(['deps', c.address], c.address, o.deps[c.address] || (c.action === 'kept_differs' ? 'keep' : 'update'),
+    : (!deps.length ? '<p class="pp-empty">No dependency differs from Git.</p>' : deps.map((c) => radios(['deps', c.address], c.address + (c.status === 'changed-in-both' ? ' (changed in both Git and the source)' : ''), o.deps[c.address] || (c.action === 'kept_differs' ? 'keep' : 'update'),
       [['keep', 'Keep Git version'], ['update', 'Use source']])).join('')));
   return head('Review the change', 'Choose how the request is written, then preview it.') + summary() + subBanner() + errorSummary() + state +
     radios(['mode'], 'How to hand the change to GitLab', o.mode, [['mr', 'Open a merge request'], ['branch', 'Branch only (no merge request)']]) +
     '<p class="pp-hint">Request branch: <code>' + e(s.req.branch) + '</code></p>' +
-    text(['title'], 'Title', o.title, { err: s.errors.title }) + text(['commitMessage'], 'Commit message', o.commitMessage, {}) +
-    area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.') +
+    text(['title'], 'Title', o.title, { err: errFor('title'), hint: 'One line, at most 255 characters.' }) +
+    area(['commitMessage'], 'Commit message', o.commitMessage, 'At most 2000 characters. The job adds the Requested-by and Request-id lines.', errFor('commitMessage')) +
+    area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.', errFor('description')) +
     depBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
 };
 screens.working = () => {
@@ -176,7 +202,7 @@ screens.working = () => {
   const what = run.kind === 'preview' ? 'Preview' : 'Submit';
   let step = 'GitLab has the request. Waiting for the pipeline to start';
   if (run.pipelineId && !run.jobId) { step = 'Pipeline started. Waiting for the ' + contract.REQUEST_JOB + ' job'; }
-  if (run.jobId) { step = run.waitingRunner ? 'The job is waiting for a runner' : 'The job is running'; }
+  if (run.jobId) { step = run.waitingTurn ? 'The job is waiting for another request to finish (one at a time)' : (run.waitingRunner ? 'The job is waiting for a runner' : 'The job is running'); }
   const slow = [];
   if (run.noPipeline) { slow.push('GitLab has not started a pipeline for the request after ' + lib.dur(age) + '. GitLab may be busy, or CI may be off for request branches.'); }
   if (run.waitingRunner && age > cfg.pipelineAppearSeconds * 1000) { slow.push('No runner has picked up the job yet. GitLab runners may be busy.'); }
@@ -201,10 +227,9 @@ screens.preview = () => {
   if (p.failed) {
     body = '<div class="pp-note bad" role="alert"><strong>The preview did not finish.</strong> ' + e(p.message || (p.error && p.error.message) || '') + ' ' + link(p.jobUrl, 'Open the job') + '</div>';
   } else if (r) {
-    if (r.error) {
-      const t = contract.ERROR_TEXT[r.error.code] || contract.ERROR_TEXT.unknown;
-      body += '<div class="pp-note bad" role="alert"><strong>' + e(t.title) + '.</strong> ' + e(t.fix) + '<p>' + e(r.error.message) + '</p></div>';
-    }
+    if (r.error) { body += '<div class="pp-note bad" role="alert">' + errorBody(r.error) + '</div>'; }
+    if (r.selected.length) { body += '<p>Selected: ' + r.selected.map((x) => e(x.name) + ' <code>' + e(x.address) + '</code>').join(', ') + '</p>'; }
+    if (r.warnings.length) { body += '<div class="pp-note warn">' + r.warnings.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
     if (r.problems.length) { body += '<div class="pp-note warn">' + r.problems.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
     if (lib.onlyUnchanged(r)) { body += '<p class="pp-empty">No changes: Git already matches ' + e(s.req.source) + ' for this flow.</p>'; }
     body += '<h2>Predicted changes</h2>' + changesTable(r) + (r.diffUrl && lib.webUrl(cfg, r.diffUrl) ? '<p>' + link(lib.webUrl(cfg, r.diffUrl), 'Review the change in GitLab') + '</p>' : '') +
@@ -218,9 +243,15 @@ screens.submitted = () => {
   const r = (s.sub && s.sub.result) || {};
   const mr = lib.webUrl(cfg, r.mrUrl);
   const br = lib.webUrl(cfg, r.branchUrl);
+  if (r.status === 'no_changes') {
+    return head('No changes', 'Git already matches ' + e(s.req.source) + ' for this flow. The job wrote nothing and opened no merge request.') + summary() +
+      '<div class="pp-actions">' + button('NAV_NEW', 'New request') + '</div>';
+  }
+  const again = r.status === 'already_submitted' ? '<p class="pp-note">This request was already submitted. Nothing new was written; this is the existing ' + (mr ? 'merge request' : 'branch') + '.</p>' : '';
   return head('Request submitted', mr ? 'The merge request is open. The rollout starts after it is merged.' : 'The change is on the request branch. Nothing rolls out until it is merged.') +
-    summary() + (s.sub.found ? '<p class="pp-note">Found in GitLab after Check GitLab.</p>' : '') +
+    summary() + again + (s.sub.found ? '<p class="pp-note">Found in GitLab after Check GitLab.</p>' : '') +
     '<p class="pp-big">' + (mr ? link(mr, 'Open merge request') : link(br, 'Open the branch')) + '</p>' +
+    (r.diffUrl ? '<p>' + link(r.diffUrl, 'Review the commit in GitLab') + '</p>' : '') +
     (r.changes && r.changes.length ? '<h2>Changes written</h2>' + changesTable(r) : '') +
     '<div class="pp-actions">' + button('WATCH', 'Watch the rollout') + button('NAV_NEW', 'New request', { ghost: true }) + '</div>';
 };
