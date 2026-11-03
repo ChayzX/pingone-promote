@@ -62,7 +62,7 @@ func neutralized(t *testing.T, fixture string, seeds ...string) *neutralize.Resu
 	if len(seeds) == 0 {
 		exp, err = r.Export(context.Background(), testCreds, exporter.ExportOptions{Include: []string{"*"}, Imports: true})
 	} else {
-		exp, err = r.ScopedExport(context.Background(), testCreds, seeds)
+		exp, err = r.ScopedExport(context.Background(), testCreds, seeds, nil)
 	}
 	if err != nil {
 		t.Fatal(err)

@@ -413,7 +413,15 @@ func (r *Runner) ListResources(ctx context.Context, creds Credentials) ([]Addres
 // ExportOptions select what to export.
 type ExportOptions struct {
 	Include []string // --include-resources patterns or addresses
-	Exclude []string // --exclude-resources patterns
+	// All exports every supported resource: no --include-resources. It is
+	// the whole-environment scope (ADR 0015) and excludes Include.
+	All bool
+	// Exclude are --exclude-resources patterns. terraformer's explicit
+	// excludes override upstream expansion (core.applyUpstreamExpansion), and
+	// a reference to an excluded resource becomes a variable named
+	// <type>_<label>_id (core.resolveOneReference) instead of a resource
+	// reference.
+	Exclude []string
 	// IncludeUpstream adds everything the included resources reference.
 	IncludeUpstream bool
 	// Imports adds --include-imports so the export carries source IDs.
@@ -441,8 +449,13 @@ const (
 
 // Argv returns the export argv (without the binary).
 func (o ExportOptions) Argv(outDir string) ([]string, error) {
-	if len(o.Include) == 0 {
-		return nil, errors.New("exporter: at least one --include-resources pattern is required; whole-environment exports are not used")
+	switch {
+	case o.All && len(o.Include) > 0:
+		return nil, errors.New("exporter: a whole-environment export takes no --include-resources pattern")
+	case !o.All && len(o.Include) == 0:
+		return nil, errors.New("exporter: at least one --include-resources pattern is required unless the whole environment is exported (All)")
+	case o.All && o.IncludeUpstream:
+		return nil, errors.New("exporter: --include-upstream has no meaning for a whole-environment export")
 	}
 	args := []string{"export", "--out", outDir, "--module-dir", ModuleDir, "--module-name", ModuleName, "--output-format", "hcl"}
 	if !o.SkipValues {

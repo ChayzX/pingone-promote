@@ -34,7 +34,7 @@ func export(t *testing.T, seeds ...string) *neutralize.Input {
 	if len(seeds) == 0 {
 		exp, err = r.Export(context.Background(), creds, exporter.ExportOptions{Include: []string{"*"}, Imports: true})
 	} else {
-		exp, err = r.ScopedExport(context.Background(), creds, seeds)
+		exp, err = r.ScopedExport(context.Background(), creds, seeds, nil)
 	}
 	if err != nil {
 		t.Fatal(err)

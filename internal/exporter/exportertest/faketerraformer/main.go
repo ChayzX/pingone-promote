@@ -109,7 +109,48 @@ type block struct {
 }
 
 var refRE = regexp.MustCompile(`\b(pingone_[a-z_]+)\.(pingcli__[A-Za-z0-9_\-]+)`)
+
 var varRE = regexp.MustCompile(`\bvar\.([A-Za-z0-9_]+)`)
+
+// idRefRE is an attribute reference to another resource's ID.
+var idRefRE = regexp.MustCompile(`\b(pingone_[a-z_]+)\.(pingcli__[A-Za-z0-9_\-]+)\.id\b`)
+
+// variableName is utils.SanitizeVariableName.
+func variableName(s string) string {
+	return regexp.MustCompile(`[^A-Za-z0-9_]`).ReplaceAllString(s, "_")
+}
+
+// fallback is a variable terraformer declares for a reference to a resource
+// that is not in the export (core.resolveOneReference at v0.6.0: the name is
+// SanitizeVariableName(<type>_<label>_<field>), the description "ID of <type>
+// resource (excluded from export)", and the original ID is the value written
+// with --include-values).
+type fallback struct{ name, typ, id string }
+
+// rewriteFallbacks replaces ATTRIBUTE references (core.resolveAttrs) to
+// resources outside the output with var.<name>. References inside a
+// "${...}" template are the embedded references of core.ResolveEmbeddedReferences
+// (a flow's subFlowId); v0.6.0 resolves those against the full graph without
+// looking at the excluded set, so they stay resource references. The
+// neutralizer repairs them.
+func rewriteFallbacks(text []byte, byAddr map[string]block, sel map[string]bool, ids map[string]string, out map[string]fallback) []byte {
+	var b bytes.Buffer
+	last := 0
+	for _, m := range idRefRE.FindAllSubmatchIndex(text, -1) {
+		addr := string(text[m[2]:m[3]]) + "." + string(text[m[4]:m[5]])
+		inTemplate := m[0] >= 2 && string(text[m[0]-2:m[0]]) == "${"
+		if _, exists := byAddr[addr]; !exists || sel[addr] || inTemplate {
+			continue
+		}
+		name := variableName(addr + "_id")
+		out[name] = fallback{name: name, typ: string(text[m[2]:m[3]]), id: ids[addr]}
+		b.Write(text[last:m[0]])
+		b.WriteString("var." + name)
+		last = m[1]
+	}
+	b.Write(text[last:])
+	return b.Bytes()
+}
 
 func load() ([]block, map[string]string, error) {
 	var blocks []block
@@ -216,10 +257,10 @@ func export(args []string) error {
 			walk(a)
 		}
 	}
-	return write(o, envID, blocks, sel, ids)
+	return write(o, envID, blocks, byAddr, sel, ids)
 }
 
-func write(o opts, envID string, blocks []block, sel map[string]bool, ids map[string]string) error {
+func write(o opts, envID string, blocks []block, byAddr map[string]block, sel map[string]bool, ids map[string]string) error {
 	mod := filepath.Join(o.out, o.moduleDir)
 	if err := os.MkdirAll(mod, 0o755); err != nil {
 		return err
@@ -227,14 +268,20 @@ func write(o opts, envID string, blocks []block, sel map[string]bool, ids map[st
 	byType := map[string][]string{}
 	usedVars := map[string]bool{}
 	var addrs []string
+	fallbacks := map[string]fallback{}
+	tailID := map[string]string{}
+	for a, id := range ids {
+		tailID[a] = id[strings.LastIndex(id, "/")+1:]
+	}
 	for _, b := range blocks {
 		a := b.typ + "." + b.label
 		if !sel[a] {
 			continue
 		}
 		addrs = append(addrs, a)
-		byType[b.typ] = append(byType[b.typ], string(b.text))
-		for _, m := range varRE.FindAllSubmatch(b.text, -1) {
+		text := rewriteFallbacks(b.text, byAddr, sel, tailID, fallbacks)
+		byType[b.typ] = append(byType[b.typ], string(text))
+		for _, m := range varRE.FindAllSubmatch(text, -1) {
 			usedVars[string(m[1])] = true
 		}
 	}
@@ -275,6 +322,19 @@ func write(o opts, envID string, blocks []block, sel map[string]bool, ids map[st
 			inputs = append(inputs, "  "+n+" = var."+n)
 			rootDecls = append(rootDecls, strings.Replace(string(b.Text(vsrc)), "\n\n  validation", "\n  validation", 1))
 		}
+	}
+	var fbNames []string
+	for n := range fallbacks {
+		fbNames = append(fbNames, n)
+	}
+	sort.Strings(fbNames)
+	for _, n := range fbNames {
+		fb := fallbacks[n]
+		decl := fmt.Sprintf("variable %q {\n  type        = string\n  description = %q\n}\n", n, "ID of "+fb.typ+" resource (excluded from export)")
+		decls = append(decls, decl)
+		names = append(names, n)
+		inputs = append(inputs, "  "+n+" = var."+n)
+		rootDecls = append(rootDecls, decl)
 	}
 	if err := os.WriteFile(filepath.Join(mod, "variables.tf"), []byte(strings.Join(decls, "\n\n")+"\n"), 0o644); err != nil {
 		return err
@@ -320,6 +380,9 @@ func write(o opts, envID string, blocks []block, sel map[string]bool, ids map[st
 		fmt.Fprintf(&tv, "pingone_environment_id = %q\n\n", envID)
 	} else {
 		tv.WriteString("pingone_environment_id = \"\"\n\n")
+	}
+	for n, fb := range fallbacks {
+		vals[n] = fb.id
 	}
 	sort.Strings(names)
 	for _, n := range names {

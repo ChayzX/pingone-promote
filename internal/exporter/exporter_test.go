@@ -233,7 +233,7 @@ func TestListResourcesAndSearch(t *testing.T) {
 
 func TestScopedExportFollowsUpstreamAndCompanions(t *testing.T) {
 	f := getFake(t)
-	exp, err := runner(f).ScopedExport(context.Background(), creds, []string{"pingone_davinci_flow.pingcli__Flow-0020-B"})
+	exp, err := runner(f).ScopedExport(context.Background(), creds, []string{"pingone_davinci_flow.pingcli__Flow-0020-B"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,5 +303,110 @@ func TestRealTerraformer(t *testing.T) {
 	r := &Runner{Config: Config{Version: "v0.6.0", SHA256: hex.EncodeToString(sum[:]), Path: bin}}
 	if err := r.Verify(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWholeEnvironmentArgv(t *testing.T) {
+	argv, err := (ExportOptions{All: true, Imports: true, Exclude: []string{"pingone_davinci_flow.pingcli__Flow-0020-C"}}).Argv("/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"export", "--out", "/o", "--module-dir", "ping-export-module", "--module-name", "ping-export", "--output-format", "hcl",
+		"--include-values", "--include-imports", "--exclude-resources", "pingone_davinci_flow.pingcli__Flow-0020-C"}
+	if !slices.Equal(argv, want) {
+		t.Fatalf("argv\n got %q\nwant %q", argv, want)
+	}
+	if slices.Contains(argv, "--include-resources") || slices.Contains(argv, "--include-upstream") {
+		t.Fatal("a whole-environment export takes no include flags")
+	}
+	if _, err := (ExportOptions{All: true, Include: []string{"a.b"}}).Argv("/o"); err == nil {
+		t.Fatal("All with Include accepted")
+	}
+	if _, err := (ExportOptions{All: true, IncludeUpstream: true}).Argv("/o"); err == nil {
+		t.Fatal("All with IncludeUpstream accepted")
+	}
+}
+
+func TestWholeExportEverythingAndExcludes(t *testing.T) {
+	f := getFake(t)
+	exp, err := runner(f).WholeExport(context.Background(), creds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Addresses(exp)
+	if len(got) != 19 {
+		t.Fatalf("a whole export lists every resource, got %d", len(got))
+	}
+	exp, err = runner(f).WholeExport(context.Background(), creds, []string{"pingone_davinci_connector_instance.pingcli__PingOne"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = Addresses(exp)
+	if len(got) != 18 || slices.Contains(got, "pingone_davinci_connector_instance.pingcli__PingOne") {
+		t.Fatalf("the excluded connector must not be exported: %v", got)
+	}
+}
+
+// terraformer v0.6.0 renders an attribute reference to an excluded resource as
+// a variable named <type>_<label>_id (core.resolveOneReference), declared in
+// the module, passed by the root and valued with the ID under --include-values.
+func TestExcludedReferenceBecomesIDVariable(t *testing.T) {
+	f := getFake(t)
+	const connector = "pingone_davinci_connector_instance.pingcli__PingOne"
+	exp, err := runner(f).ScopedExport(context.Background(), creds, []string{"pingone_davinci_flow.pingcli__Flow-0020-B"}, []string{connector})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Addresses(exp)
+	if slices.Contains(got, connector) {
+		t.Fatalf("excluded resource exported: %v", got)
+	}
+	if !slices.Contains(got, "pingone_davinci_connector_instance.pingcli__Http") {
+		t.Fatalf("the other connector must still be pulled in: %v", got)
+	}
+	const name = "pingone_davinci_connector_instance_pingcli__PingOne_id"
+	flow := string(exp.Files["ping-export-module/pingone_davinci_flow.tf"])
+	if !strings.Contains(flow, "connection_id   = var."+name) || strings.Contains(flow, connector+".id") {
+		t.Fatalf("flow B must reference the variable:\n%s", flow)
+	}
+	if !strings.Contains(string(exp.Files["ping-export-module/variables.tf"]), `variable "`+name+`"`) {
+		t.Fatal("variable is not declared in the module")
+	}
+	if !strings.Contains(string(exp.Files["ping-export-module.tf"]), name+" = var."+name) {
+		t.Fatal("variable is not passed by the root module call")
+	}
+	if !strings.Contains(string(exp.Files["ping-export-terraform.auto.tfvars"]), name+" = \"c0000000000000000000000000000002\"") {
+		t.Fatalf("the ID is not valued:\n%s", exp.Files["ping-export-terraform.auto.tfvars"])
+	}
+	// A selected resource cannot be excluded.
+	if _, err := runner(f).ScopedExport(context.Background(), creds, []string{"pingone_davinci_flow.pingcli__Flow-0020-B"},
+		[]string{"pingone_davinci_flow.pingcli__Flow-0020-B"}); err == nil {
+		t.Fatal("selected and excluded accepted")
+	}
+	// Companions of an excluded subflow are not pulled in by the second pass.
+	exp, err = runner(f).ScopedExport(context.Background(), creds, []string{"pingone_davinci_flow.pingcli__Flow-0020-B"},
+		[]string{"pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow", "pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow", "pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = Addresses(exp)
+	for _, a := range got {
+		if strings.Contains(a, "Subflow") {
+			t.Fatalf("excluded subflow or its companion exported: %s", a)
+		}
+	}
+}
+
+func TestCatalogAllIDs(t *testing.T) {
+	f := getFake(t)
+	cat, err := runner(f).CatalogAllIDs(context.Background(), creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SearchType(cat, "pingone_davinci_connector_instance", "c0000000000000000000000000000002"); len(got) != 1 || got[0].Label != "pingcli__PingOne" {
+		t.Fatalf("connector by ID: %+v", got)
+	}
+	if got := SearchType(cat, "pingone_davinci_variable", "apiKey"); len(got) != 1 {
+		t.Fatalf("variable by name: %+v", got)
 	}
 }

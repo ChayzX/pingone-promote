@@ -22,7 +22,7 @@ import (
 // Exporter is the subset of *exporter.Runner the engine uses.
 type Exporter interface {
 	Catalog(ctx context.Context, creds exporter.Credentials, withIDs bool) ([]exporter.Resource, error)
-	ScopedExport(ctx context.Context, creds exporter.Credentials, seeds []string) (*exporter.Export, error)
+	ScopedExport(ctx context.Context, creds exporter.Credentials, seeds, exclude []string) (*exporter.Export, error)
 }
 
 // Committer writes the request commit (GitLab in CI).
@@ -138,7 +138,7 @@ func (r *runner) run(ctx context.Context) {
 	if err != nil {
 		return // resolve filled the error
 	}
-	exp, err := r.env.Exporter.ScopedExport(ctx, creds, seeds)
+	exp, err := r.env.Exporter.ScopedExport(ctx, creds, seeds, nil)
 	if err != nil {
 		var lc *exporter.LabelCollisionError
 		code := ErrPreflight
