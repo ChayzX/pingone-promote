@@ -1,8 +1,8 @@
 # PingOne Promote: DaVinci app (operator guide)
 
 **PingOne Promote - request app** is a DaVinci flow. People sign in to it with PingOne SSO. In the flow they:
-1. pick a **source env** and a **main flow**;
-2. preview the change, optionally with applications and flow policies and values that are the same in every env;
+1. pick a **source env** and a **main flow**, or bring the **whole environment**;
+2. preview the change, optionally with applications and flow policies, things to **leave out** (flows, applications, flow policies, connections, variables) and values that are the same in every env;
 3. submit it as a request to the config repo in GitLab;
 4. watch its **rollout** (qa → stage → prod).
 
@@ -111,11 +111,12 @@ Settings (empty means the default; a variable with no default must be set):
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout refresh interval / how long the automatic refresh runs |
 | `ppChildPipelines` | `yes` | `no` if your env jobs are never in child pipelines |
 | `ppPathFlows` / `ppFlowsListQuery` | `/v1/environments/{envId}/flows` / `attributes=id,name` | change only if the flow-list call turns out to differ |
+| `ppPathConnections` / `ppPathVariables` | `/v1/environments/{envId}/connectorInstances` / `/v1/environments/{envId}/variables` | the connection list and the variable list, for the optional **Exclude items** step (connections and variables are found there). Assumptions (DESIGN.md §12, item 17): change them if they differ, or set one to `none` to stop offering that kind. They use only `{envId}`. Both are read once per source env per session (1 token + its pages) |
 | `ppPathApplications` / `ppPathFlowPolicies` | `/v1/environments/{envId}/davinciApplications` / `/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies` | the application list and one application's flow policy list, for the optional "Add an application or flow policy" step. These paths are assumptions (DESIGN.md §12): change them if they differ, or set `ppPathApplications` to `none` to switch the step off. They use only `{envId}` and `{appId}` |
 
 Runtime state (`ppState`, `ppFlows`, `ppUrl`, `ppBody`, `ppLastFailed`) is internal: flow-instance variables, one set per session, and they need no setup. Never make one of them a company variable; company variables are shared by every user.
 
-To switch an optional value off, set it to `none` (`ppPathApplications`, `ppPathFlowPolicies`, `ppFlowsListQuery`); empty means the default.
+To switch an optional value off, set it to `none` (`ppPathApplications`, `ppPathFlowPolicies`, `ppPathConnections`, `ppPathVariables`, `ppFlowsListQuery`); empty means the default.
 
 A missing or malformed setting stops the app with "PingOne Promote is not set up yet". The screen lists the setting **names** and what is wrong with each, never the values.
 
@@ -159,7 +160,7 @@ The full operator test plan, with the exact names, is `docs/acceptance/live-acce
 
 1. **Search.** Open the launch link and sign in. Search for a name that matches nothing, then one that matches two flows, then one exact flow ID. The two-flow search must list both, and the app must not pick one.
 2. **Preview.** Preview with the defaults. The commit appears on `pingone-promote/<requestId>`, `pingone-promote:request` runs in `.pre`, and Predicted changes, Readiness and Secrets appear. `result.json` has `status: previewed` or `blocked`. Nothing else is committed.
-3. **Readiness.** Fill in the env values, tick each secret, choose Use source for one differing dependency, and preview again. The same branch gets an update commit (`last_commit_id`).
+3. **Readiness.** Fill in the env values, tick each secret, choose Update for one differing dependency, and preview again. The same branch gets an update commit (`last_commit_id`).
 4. **Submit.** Submit (mode MR). The job makes one commit that adds the change and deletes `request.json`, and opens a labelled MR (`status: submitted`). The app shows **Open merge request**. Submitting the same request again shows "already submitted" and the same MR.
 5. **Rollout.** Choose **Watch the rollout**, then merge the MR in GitLab. qa shows **Needs approval** (a manual job) until you run it, then **Live**. prod shows **Needs approval (n of m approvals)**. Make one env job fail (`exit 1`) and check that it shows **Failed**.
 6. **Branch mode.** Repeat steps 2 to 4 with **Branch only**. You get a branch link and no MR. The rollout shows "branch only" until you open an MR by hand.
@@ -168,7 +169,8 @@ The full operator test plan, with the exact names, is `docs/acceptance/live-acce
 9. **Result download fallback.** If your GitLab redirects artifact downloads, the screens show "Summary only" (read from the job log's last line) instead of the change list.
 10. **Slow GitLab.** Pause the project's runners and submit. The working screen says "waiting for a runner", and after `ppRunTimeoutSeconds` it shows "GitLab is slow" with **Keep waiting** and **Check GitLab**. Resume the runners and choose Check GitLab: the app resumes.
 11. **Requests.** The list shows the MR with *Requested by*, and the open request branches.
-12. **Leaks.** With logging at Info, check that no screen shows a token, a secret or an env ID. Also check that `request.json` holds names and values only, never secret values.
+12. **Whole environment and exclusions.** Choose **Whole environment** on the new request screen: the flow search disappears and Continue needs the tick. The preview leads with counts by type and folds the list; the MR title starts with `[whole environment]`. Use **Exclude items** to leave out a flow, then a connection that the flows use: if Git does not manage it, give its ID for each environment. See the cases E-15 to E-17 of `docs/acceptance/live-acceptance.md`.
+13. **Leaks.** With logging at Info, check that no screen shows a token, a secret or an env ID. Also check that `request.json` holds names and values only, never secret values.
 
 ## Rebuild and check
 

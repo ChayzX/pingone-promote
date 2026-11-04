@@ -5,7 +5,7 @@ The DaVinci-hosted front end of pingone-promote. It is the primary front end. It
 DaVinci does **light work only**:
 - the PingOne SSO sign-in;
 - the forms;
-- one flow-list read;
+- one flow-list read (plus, only when asked, the application, flow policy, connection and variable lists of the exclude step);
 - one commit of a small request file;
 - status reads.
 
@@ -14,7 +14,8 @@ Export, neutralizing, the additive block-level merge (#93), `terraform fmt` and 
 ```
 Person ─ PingOne SSO ─▶ DaVinci app flow
   1 source env + main flow search ── PingOne: token + GET flows?attributes=id,name (read-only worker)
-  2 options, readiness
+    or "Whole environment" (scope all, no search)
+  2 options, readiness; optional: exclude items (own step: token + one list per kind, cached)
   3 Preview ── POST /repository/commits  branch pingone-promote/<requestId>  (.pingone-promote/request.json, dryRun:true)
                branch push pipeline ▶ .pre job pingone-promote:request ▶ result.json artifact (writes nothing)
   4 Submit  ── POST /repository/commits  same branch, update request.json (dryRun:false, last_commit_id)
@@ -77,6 +78,9 @@ Each screen is a form with two fields:
  empty: "No flow in dev matches "zzz". Try part of the name, or the flow ID."
  empty env: "... (the env has no flows the app can read; ask your DaVinci administrator to check the worker's role)"
 ```
+- **What to bring into Git** (`Selected items`, the default, or `Whole environment`): two toggle buttons under the source env.
+  - *Selected items* is the flow search below.
+  - *Whole environment* hides the flow search and shows a **required** tick box, "Bring the whole <source> environment into Git" (the source name follows the source env list). **Continue** without the tick is refused on the screen with the reason, before anything is committed. With the tick the request is created with `scope: "all"` and `confirmAll: true`, and no flow. The next screen is the review screen.
 - Search follows #93: a case-insensitive substring of the name, or an exact flow ID.
 - One match shows a single primary **Use this flow** button. Several matches are all listed, and the app never picks one.
 - The list (`id,name` only) is read once per source env per session. Later searches in that env filter it in DaVinci and make no calls.
@@ -143,6 +147,35 @@ Each screen is a form with two fields:
 - The list responses can carry client secrets. Only `id` and `name` are kept (`p1_list`); nothing else enters the state or a screen.
 - Off when `ppPathApplications` is `none` (no button, no calls).
 
+### 1.2c Exclude items (optional step, in both scopes)
+```
+│ Exclude items                                                                      │
+│ Left out of this request (1)   Flow: Login - MFA                  [Stop excluding] │
+│ Find an item   What to exclude [Flow ▾]  Name or ID [ login          ] [Search]    │
+│ 2 matches. Choose one; the app never picks for you                                 │
+│   Login        <id>  [Exclude this flow]                                           │
+│   Login - MFA  <id>  [Exclude this flow]                                           │
+│ [Back to the options]                                                              │
+```
+- It sits next to the include step on the review screen ("Leave out" block, button **Exclude items**). It works in both scopes and has the include search UX: none ("No flow in dev matches ..."), several (all listed, the app picks none) or one.
+- Kinds: flow, application, connection, variable, and **flow policy** (reached through an application's **Its flow policies** button, because PingOne lists policies per application, exactly as in 1.2b). Connections and variables are listed from `ppPathConnections` and `ppPathVariables` (assumption 15); a kind whose path is `none` is not offered.
+- Sent as `exclude: [{type, id?, name}]`: a flow by ID and name, everything else by name (a variable as `<name>_<context>`, the way the job labels it). At most 200. The job resolves each entry like an include (exact ID, exact name, unique substring) and lists candidates when several match.
+- The app refuses what the job would refuse: excluding the main flow, an application or flow policy the request includes, a name two listed items share, or the 201st item.
+- **Own REST budget.** A first search of a kind costs 1 token + that list's pages and is then cached for the session (like flows); every later search, add, remove and "Back" costs 0. This is why it is a separate step and not part of the review screen, which makes no PingOne calls. The lists can carry secrets (connection properties, variable values); only `id`, `name` (and a variable's `context`) are kept.
+
+### 1.2d Dependencies: Update, Keep Git version, Exclude
+```
+│ Shared definitions                                                                 │
+│   pingone_davinci_connector_instance.http   ( ) Update (•) Keep Git version ( ) Exclude │
+│   pingone_davinci_flow.mfa_sub  (new)       (•) Update                      ( ) Exclude │
+│ Readiness                                                                          │
+│   dev (source env) ✓ Ready   dev: ID of pingone_davinci_flow.mfa_sub  [<id>] filled from the export │
+│   qa    ✕ 1 to fix           qa: ID of pingone_davinci_flow.mfa_sub   [        ]    │
+```
+- A dependency that differs from Git (or is changed in both) has three choices, defaulting to **Keep Git version**. A new dependency has **Update** and **Exclude** (there is no Git version to keep). The selected item has Update and Keep only: excluding it is refused (here and by the job). A whole-environment request lists only the resources that differ; the rest is added, or left out through the exclude list.
+- **Exclude** a dependency that Git already manages behaves like Keep (reason "excluded; Git-managed copy kept").
+- **Exclude** a dependency that Git does not manage makes the shared definitions refer to it by a root variable `<type>_<label>_id`. Its ID is asked per environment in Readiness, next to the other missing values, as a text input labelled "ID of <address>"; the **source** env's input is prefilled from the export (`changes[].sourceId`) and only a changed value is sent. These IDs are never offered as "Same in all environments". A missing ID is a `missing_value` blocker with `var` and `address`, so Submit stays off until each environment has one.
+
 ### 1.3 Working (Preview running / Submit running)
 ```
 │ Submit running                                                                     │
@@ -182,6 +215,8 @@ If `GET /jobs/:id/artifacts/result.json` answers a redirect (3xx) or 404 for a f
 │ [Preview] [Submit request]  [Cancel request]   [Edit options]                     │
 ```
 The symbol is never the only cue: each one sits next to its label, and the symbols are `aria-hidden`.
+
+For `scope: "all"` the preview leads with **Changes by type** (a table of counts per resource type from `summary.byType`), then a folded **Full list** (`<details>`, closed) of the resources that change or differ. Resources identical to Git are counted, not listed (a large environment would otherwise put thousands of rows in the state); the state keeps at most 2000 rows and says so when more were not kept. **Excluded** items are listed apart, with their reason (`excluded; referenced by ID variable ...` or `excluded; Git-managed copy kept`) and, for a dependency, a tag.
 
 ### 1.5 Request submitted
 ```
@@ -227,6 +262,7 @@ States: **Live**, Live via !N (a newer commit that contains ours), **Needs appro
  sign-in ─▶ signin ─(denied / settings)─▶ Cannot continue (end)  │
                │ok                                               ▼
                └──────────────▶ search ──SEARCH──▶ search (list read once per env)
+                                  │SCOPE:ALL / SCOPE:SELECTED (toggle)  START_ALL (needs the tick) ──▶ options
                                   │PICK:n (new requestId, branch name, default options)
                                   ▼
             ┌─────────────── options ◀──EDIT── preview ◀─────────────┐
@@ -414,8 +450,10 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
   - Always sent: `requestVersion: 1`, `requestId`, `requestedBy` (one line, at most 128 characters), `source`, `flows`, `mode: "mr"|"branch"`, `branchName` and `dryRun`.
   - `source` must not be a rollout env. The settings check refuses a `ppSourceEnvs` name that is also in `ppRolloutEnvs`.
   - `flows` holds at most 20 entries of `{id, name}`. The `id` is sent only when it is a DaVinci ID (32 hex or a UUID); the name is checked by the job.
+  - `scope: "all"` and `confirmAll: true` are sent for a whole-environment request (with `flows: []`); a selected request leaves both out. The job refuses `scope: "all"` without `confirmAll: true`, `confirmAll` without `scope: "all"`, and applies the 1-to-20 rule only to a selected request. The app checks the same (`contract.validateRequest`).
   - Sent when set:
-    - `dependencyChoices: {<address>: "update"|"keep"}` (the address must match `^pingone_[a-z0-9_]+\.…`);
+    - `dependencyChoices: {<address>: "update"|"keep"|"exclude"}` (the address must match `^pingone_[a-z0-9_]+\.…`; excluding the selected item is refused);
+    - `exclude: [{type: flow|application|flowPolicy|connection|variable, id?, name}]` (at most 200; the app never sends `address`; an entry that is also included is refused, naming both);
     - `envValues: {<env>: {<root variable>: <JSON value>}}`, for the source or rollout envs only, never `import_ids`, never secret-looking;
     - `secretMappings: {<terraformer secret var>: <customer_secrets.yml name>}`;
     - `commitMessage` (at most 2000 characters), `title` (one line, at most 255) and `description` (at most 64 KiB).
@@ -442,11 +480,12 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
     - `failed`: shows the typed error.
   - Links: `mrUrl`, `mrIid`, `branchUrl`, and `diffUrl` (the commit when one was made, otherwise the compare view).
   - `changes[]`:
-    - `{address, role: selected|dependency, action, status, file?, from?, reason?}`;
-    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged` or `moved` (shown with `from`);
-    - `status` is one of `new`, `changed-in-source`, `matches`, `git-newer` or `changed-in-both`, and has its own column.
-    - Dependencies that differ, and any address `changed-in-both`, get Keep Git version / Use source.
-  - `summary`: counts per action, used for the summary line.
+    - `{address, role: selected|dependency|environment|excluded, action, status, file?, from?, reason?, var?, sourceId?}`;
+    - `action` is one of `added`, `updated`, `kept_differs`, `unchanged`, `moved` (shown with `from`) or `excluded`;
+    - `status` is one of `new`, `changed-in-source`, `matches`, `git-newer`, `changed-in-both` or `not-compared` (excluded), and has its own column;
+    - for an excluded dependency referenced by an ID variable, `var` is the variable and `sourceId` the source env's ID (an ID, not a secret).
+    - Dependencies that differ, and any address `changed-in-both`, get Update / Keep Git version / Exclude; a new or already excluded dependency gets Update / Exclude.
+  - `scope` and `summary`: counts per action, used for the summary line, and `summary.byType` (per Terraform resource type: `total` and the same counts), used first in a whole-environment preview. `changes` is complete; the app drops `unchanged` rows of a whole-environment result (counted in `summary`) and keeps at most 2000 rows.
   - `requiredSecrets[]`: `{key, varName, field, declared, vault}`. `key` is the `secretMappings` key.
   - `blockers`: keyed by env or `_request` (shown as "Whole request"). Each item is `{code, var, address, message}`. A `missing_value` with a `var` becomes an inline input; every other code is explained in words (`contract.BLOCKER_TEXT`).
   - `error`: `{code: conflict|preflight|partial|blocked, type: validation|export|merge|gitlab|internal, message, retryable, field?, candidates?}`.
@@ -454,7 +493,7 @@ Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-
     - `field` is pointed out next to that input, without blocking it.
     - A `retryable` error lets the same Submit run again without an edit.
   - `warnings` are shown, redacted.
-  - `diff` (up to 1 MiB) is dropped on read and never kept in state; the screens link to `diffUrl`.
+  - `diff` (up to 1 MiB; 512 KiB for `scope: "all"`) is dropped on read and never kept in state; the screens link to `diffUrl`.
   - An unknown status, action or code stays visible as a problem. It is never dropped.
 - **Status:**
   1. `GET /merge_requests/:iid`, or by `source_branch` in branch mode;
@@ -486,7 +525,10 @@ REST calls per browser request (one screen submission). The "measured" column is
 | Search applications, first time for a source env | 1 token + 1 per page (budget 2 + pages; capped at 20 pages) | 4 (3 test pages) | applications can be large; only `id,name` are kept |
 | Its flow policies (one application) | 1 token + 1 per page of that application's policies | 3 | names only |
 | Search flow policies / Search applications again / Add / Remove / Back to the options | 0 | 0 | — |
-| Working, automatic check | ≤ 3: pipelines by ref and sha → jobs → result.json; **4** when result.json is a redirect or 404 and the job log is read | 3 | jobs page ≤ 100 jobs; result.json, **up to about 1 MiB** because of its `diff` (dropped on read, never kept in state) |
+| Exclude items: search a kind, first time for a source env (flows, applications, connections, variables) | 1 token + 1 per page of that list (budget 2 + pages; capped at 20 pages) | 4 (3 test pages) | `id,name` (and a variable's context) only; connection properties and variable values are never kept |
+| Exclude items: Its flow policies (one application) | 1 token + 1 per page of that application's policies | 3 | names only |
+| Exclude items: search again / Exclude this / Stop excluding / Back to the options / Whole environment (toggle, Continue) | 0 | 0 | — |
+| Working, automatic check | ≤ 3: pipelines by ref and sha → jobs → result.json; **4** when result.json is a redirect or 404 and the job log is read | 3 | jobs page ≤ 100 jobs; result.json, **up to about 1 MiB** because of its `diff` (dropped on read, never kept in state); a whole-environment result also lists every change (thousands of rows, a few MiB at most), of which the state keeps the ones that matter, at most 2000 |
 | Check GitLab | ≤ 3 (file → branch → MRs), or file → pipelines → jobs → result.json (→ job log): ≤ 5 | 5 | small; job log: last 64 KiB |
 | Cancel | 2 (branch, then delete) | 2 | small |
 | Requests | 2 (MRs by label, request branches) | 2 | ≤ 20 rows each |
@@ -621,3 +663,6 @@ Open points, none of them blocking:
 14. **Assumed (new): `Range` on the job log.** `GET /jobs/:id/trace` honours `Range: bytes=-65536`. If it ignores it, the whole log reaches the function, which keeps only the last 64 KiB, but the transfer is larger. A text body is assumed to arrive as a string in `rawResponse.body`.
 15. **Assumed (new): the job only has a result line in the log when it ran far enough.** The log line may be missing after a crash; the app then reports that and offers Check GitLab.
 16. **Assumed (new): company variables survive a re-import.** Re-importing the flow keeps the values of existing company variables (it does not overwrite them with the declaration), while flow variables are reset to the export. The export therefore declares the settings as company variables with empty values; if a re-import did overwrite them, the operator would have to set them again, as before with flow variables, and the secrets (also declared empty) would show it first. We found no export in the repository (terraformer fixtures, the feasibility export) that shows company variables with values in a flow export, so this is unverified: import twice in the sandbox, set `ppMrLabel`, import again, and check that it is still set. Also check that an empty company string variable reads as an empty string (not an error) in `{{global.company.variables.X}}`, because the app relies on that to apply its defaults.
+17. **Assumed (new): the connection and variable lists.** `GET /v1/environments/{envId}/connectorInstances` (key `connectorInstances`) and `GET /v1/environments/{envId}/variables` (key `variables`), from ADR 0007, for the "Exclude items" step. They are taken from the SDK, not run against a tenant, assumed readable by the DaVinci Admin Read Only worker, to page with `_links.next` and to carry `id` and `name` (a variable also `context`). Both are company variables (`ppPathConnections`, `ppPathVariables`, defaults from `lib.DEFAULTS`; `none` switches the kind off). A variable is sent as `<name>_<context>` and a connection by its `name`, which assumes the request job's catalog labels match them (terraformer labels a variable `<name>_<context>` and a connection by its name). The lists can include secrets (connection properties, variable values); the app keeps only `id`, `name` and `context`.
+18. **Assumed (new): the exclude lists are cheap enough.** A first search of a kind in a large environment reads every page (capped at 20 pages of 100); the step is separate so the review screen stays free of PingOne calls. If a kind is too large, set its path to `none` and exclude it by editing the request or by address in `request.json`.
+19. **Assumed (new): the job reports `var` and `sourceId` on an excluded dependency.** The prefill of the source env's ID relies on `changes[].sourceId` (ADR 0015). Without it the input is empty and the source env is asked like the others.

@@ -129,12 +129,12 @@ lib.ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 lib.GITLAB_API = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-]{1,64})*\/api\/v4$/;
 lib.SETTINGS = ['apiOrigin', 'authOrigin', 'workerEnvironmentId', 'sourceEnvs', 'pathFlows', 'flowsListQuery', 'rolloutEnvs', 'gitlabApi',
   'gitlabProjectId', 'defaultBranch', 'applyJobPattern', 'environmentPattern', 'mrLabel', 'allowedGroups', 'runTimeoutSeconds',
-  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies'];
+  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies', 'pathConnections', 'pathVariables'];
 // The defaults live here, not in the export: the export declares the company variables without values (so a re-import cannot
 // overwrite what the operator set), and an empty variable means its default. gen_app.py reads this line. "none" switches off the
 // optional ones (an empty value cannot, because empty means the default).
-lib.DEFAULTS = {"apiOrigin": "https://api.pingone.com", "authOrigin": "https://auth.pingone.com", "pathFlows": "/v1/environments/{envId}/flows", "flowsListQuery": "attributes=id,name", "rolloutEnvs": "qa,stage,prod", "gitlabApi": "https://gitlab.com/api/v4", "defaultBranch": "main", "applyJobPattern": "apply:{env}", "environmentPattern": "{env}", "mrLabel": "pingone-promote", "runTimeoutSeconds": "600", "pipelineAppearSeconds": "120", "statusRefreshSeconds": "30", "statusMaxMinutes": "30", "childPipelines": "yes", "pathApplications": "/v1/environments/{envId}/davinciApplications", "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies"};
-lib.OFFABLE = ['flowsListQuery', 'pathApplications', 'pathFlowPolicies'];
+lib.DEFAULTS = {"apiOrigin": "https://api.pingone.com", "authOrigin": "https://auth.pingone.com", "pathFlows": "/v1/environments/{envId}/flows", "flowsListQuery": "attributes=id,name", "rolloutEnvs": "qa,stage,prod", "gitlabApi": "https://gitlab.com/api/v4", "defaultBranch": "main", "applyJobPattern": "apply:{env}", "environmentPattern": "{env}", "mrLabel": "pingone-promote", "runTimeoutSeconds": "600", "pipelineAppearSeconds": "120", "statusRefreshSeconds": "30", "statusMaxMinutes": "30", "childPipelines": "yes", "pathApplications": "/v1/environments/{envId}/davinciApplications", "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies", "pathConnections": "/v1/environments/{envId}/connectorInstances", "pathVariables": "/v1/environments/{envId}/variables"};
+lib.OFFABLE = ['flowsListQuery', 'pathApplications', 'pathFlowPolicies', 'pathConnections', 'pathVariables'];
 lib.withDefaults = (p) => {
   const out = {};
   for (const n of lib.SETTINGS) {
@@ -183,6 +183,9 @@ lib.checkSettings = (raw) => {
   };
   cfg.pathApplications = optPath('pathApplications', ['envId']);
   cfg.pathFlowPolicies = cfg.pathApplications ? optPath('pathFlowPolicies', ['envId', 'appId']) : '';
+  // Optional, like the two above: the connection and variable lists of the "Exclude items" step (DESIGN.md section 12, assumption 17).
+  cfg.pathConnections = optPath('pathConnections', ['envId']);
+  cfg.pathVariables = optPath('pathVariables', ['envId']);
   cfg.flowsListQuery = need('flowsListQuery', /^[A-Za-z0-9_.,=&%-]{0,200}$/, 'must be a plain query string such as attributes=id,name', '');
   cfg.rollout = lib.str(p.rolloutEnvs).split(',').map((x) => x.trim()).filter((x) => x);
   if (!cfg.rollout.length || cfg.rollout.some((x) => !lib.ENV_NAME.test(x))) { problems.push({ name: 'rolloutEnvs', issue: 'must be env names in rollout order, such as qa,stage,prod' }); }
@@ -216,7 +219,8 @@ lib.flowsUrl = (cfg, source) => {
   if (!id) { throw new Error('unknown source env'); }
   return cfg.apiOrigin + cfg.pathFlows.replace('{envId}', id) + (cfg.flowsListQuery ? '?' + cfg.flowsListQuery : '');
 };
-// The read-only list calls: flows, applications, or one application's flow policies (PingOne lists those per application).
+// The read-only list calls: flows, applications, one application's flow policies (PingOne lists those per application),
+// connections and variables (the last two only to find what to exclude).
 lib.listUrl = (cfg, list) => {
   const id = cfg.sources[list.source];
   if (!id) { throw new Error('unknown source env'); }
@@ -224,6 +228,8 @@ lib.listUrl = (cfg, list) => {
   if (list.kind === 'policies' && cfg.pathFlowPolicies && /^[A-Za-z0-9_-]{1,64}$/.test(String(list.appId))) {
     return cfg.apiOrigin + cfg.pathFlowPolicies.replace('{envId}', id).replace('{appId}', lib.enc(list.appId));
   }
+  if (list.kind === 'connections' && cfg.pathConnections) { return cfg.apiOrigin + cfg.pathConnections.replace('{envId}', id); }
+  if (list.kind === 'variables' && cfg.pathVariables) { return cfg.apiOrigin + cfg.pathVariables.replace('{envId}', id); }
   if (list.kind === 'flows' || list.kind === undefined) { return lib.flowsUrl(cfg, list.source); }
   throw new Error('unknown list');
 };
@@ -359,11 +365,15 @@ lib.searchFlows = (items, query) => {
 };
 
 // ---- options, readiness and the #57 Submit rule ---------------------------------------
-lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.applications, o.flowPolicies]);
-// Addresses that get a Keep Git version / Use source choice: differing dependencies (#93),
-// and any address changed in both Git and the source.
-lib.choosable = (r) => (r ? r.changes.filter((c) => contract.RE.address.test(c.address) &&
-  ((c.role !== 'selected' && (c.action === 'kept_differs' || c.action === 'updated')) || c.status === 'changed-in-both')).map((c) => c.address) : []);
+lib.optionsKey = (o) => JSON.stringify([o.mode, o.title, o.description, o.commitMessage, o.deps, o.env, o.secrets, o.inline, o.applications, o.flowPolicies, o.exclude]);
+// Addresses that get an Update / Keep Git version / Exclude choice: differing dependencies (#93), any address changed in
+// both Git and the source, a dependency already excluded (so the choice can be changed back), and, for a selected
+// request, a new dependency (Update or Exclude: there is no Git version to keep). A whole-environment request lists
+// only the resources that differ; the rest is added or excluded through the exclude list.
+lib.choosable = (r) => (r ? r.changes.filter((c) => contract.RE.address.test(c.address) && (c.status === 'changed-in-both' || (c.role !== 'selected' && (
+  c.action === 'kept_differs' || c.action === 'updated' || (c.action === 'excluded' && c.role === 'dependency') || (c.action === 'added' && r.scope !== 'all'))))).map((c) => c.address) : []);
+// The choices a row offers: the selected item cannot be excluded, and a resource Git does not have has no Git version to keep.
+lib.choicesFor = (c) => (c.role === 'selected' ? ['update', 'keep'] : ((c.action === 'added' || (c.action === 'excluded' && !c.file)) ? ['update', 'exclude'] : ['update', 'keep', 'exclude']));
 lib.currentPreview = (s) => {
   // The preview for exactly the current options, if there is one.
   const key = s.req ? lib.optionsKey(s.req.options) : '';
@@ -371,6 +381,7 @@ lib.currentPreview = (s) => {
 };
 lib.blockerCount = (r) => Object.keys((r && r.blockers) || {}).length;
 lib.onlyUnchanged = (r) => !!r && !r.error && (r.status === 'no_changes' || (r.changes.length > 0 && r.changes.every((c) => c.action === 'unchanged')) ||
+  (r.scope === 'all' && !r.compact && r.status === 'previewed' && !r.changes.length && r.summary.unchanged > 0 && Object.keys(r.summary).every((a) => a === 'unchanged' || !r.summary[a])) ||
   (!!r.compact && r.status === 'previewed' && r.summary.unchanged > 0 && Object.keys(r.summary).every((a) => a === 'unchanged' || !r.summary[a])));
 lib.FIX_FIELDS = 'Fix the highlighted fields first.';
 lib.canPreview = (s) => {

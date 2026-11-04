@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -26,15 +27,20 @@ const devEnv = "11111111-1111-4111-8111-111111111111"
 
 func export(t *testing.T, seeds ...string) *neutralize.Input {
 	t.Helper()
+	return exportExcluding(t, nil, seeds...)
+}
+
+func exportExcluding(t *testing.T, exclude []string, seeds ...string) *neutralize.Input {
+	t.Helper()
 	f := exportertest.Build(t, t.TempDir(), exportertest.FixtureDir("dev"))
 	r := &exporter.Runner{Config: exporter.Config{Version: f.Version, SHA256: f.SHA256, Path: f.Path}}
 	creds := exporter.Credentials{ClientID: "c", ClientSecret: "s", WorkerEnvironmentID: devEnv, RegionCode: "NA"}
 	var exp *exporter.Export
 	var err error
 	if len(seeds) == 0 {
-		exp, err = r.Export(context.Background(), creds, exporter.ExportOptions{Include: []string{"*"}, Imports: true})
+		exp, err = r.WholeExport(context.Background(), creds, exclude)
 	} else {
-		exp, err = r.ScopedExport(context.Background(), creds, seeds)
+		exp, err = r.ScopedExport(context.Background(), creds, seeds, exclude)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -336,5 +342,116 @@ resource "pingone_davinci_connector_instance" "pingcli__X" {
 	}
 	if len(r.Findings) != 1 || r.Findings[0].Name != "davinci_connection_X_apiToken" {
 		t.Fatalf("findings: %+v", r.Findings)
+	}
+}
+
+const (
+	pingOneConn = "pingone_davinci_connector_instance.pingcli__PingOne"
+	subflow     = "pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow"
+	flowB       = "pingone_davinci_flow.pingcli__Flow-0020-B"
+)
+
+func blockText(t *testing.T, r *neutralize.Result, addr string) string {
+	t.Helper()
+	b := r.Block(addr)
+	if b == nil {
+		t.Fatalf("%s is not in the result", addr)
+	}
+	return string(b.Text)
+}
+
+// An excluded dependency that is not in Git: terraformer wrote an ID
+// variable; it becomes a per-environment variable valued with the source ID.
+func TestExcludedAttributeReferenceBecomesPerEnvironmentIDVariable(t *testing.T) {
+	in := exportExcluding(t, []string{pingOneConn}, flowB)
+	r, err := neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv,
+		Excluded: []neutralize.Excluded{{Address: pingOneConn}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = "pingone_davinci_connector_instance_pingcli__PingOne_id"
+	v := r.Variables[name]
+	if v == nil || v.Kind != neutralize.KindExcludedRef || v.Excluded != pingOneConn || !v.PerEnvironment() {
+		t.Fatalf("variable: %+v", v)
+	}
+	if got := r.SourceValues[name]; got.AsString() != "c0000000000000000000000000000002" {
+		t.Fatalf("source value: %#v", got)
+	}
+	if !strings.Contains(blockText(t, r, flowB), "connection_id   = var."+name) {
+		t.Fatalf("flow B:\n%s", blockText(t, r, flowB))
+	}
+	if r.Block(pingOneConn) != nil {
+		t.Fatal("the excluded block must not be in the result")
+	}
+	if len(r.Excluded) != 1 || r.Excluded[0].Variable != name || !r.Excluded[0].Referenced {
+		t.Fatalf("report: %+v", r.Excluded)
+	}
+	if len(r.MissingDependencies) != 0 {
+		t.Fatalf("missing: %v", r.MissingDependencies)
+	}
+	// The connector's own secret variable is gone with it.
+	for n := range r.Variables {
+		if strings.Contains(n, "PingOne_clientSecret") {
+			t.Fatalf("variable of the excluded connector leaked: %s", n)
+		}
+	}
+}
+
+// terraformer v0.6.0 leaves an embedded reference (a subflow inside node
+// properties) as a resource reference to a block that is not exported.
+func TestExcludedEmbeddedReferenceIsRepaired(t *testing.T) {
+	ex := []string{subflow, "pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow", "pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow"}
+	in := exportExcluding(t, ex, flowB)
+	raw := string(in.Files["ping-export-module/pingone_davinci_flow.tf"])
+	if !strings.Contains(raw, "${"+subflow+".id}") {
+		t.Fatalf("the fake must reproduce the dangling embedded reference:\n%s", raw)
+	}
+	r, err := neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv,
+		Excluded: []neutralize.Excluded{{Address: subflow, ID: "f0000000000000000000000000000003"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nm := neutralize.ExcludedVariableName(subflow)
+	text := blockText(t, r, flowB)
+	if strings.Contains(text, subflow) || !strings.Contains(text, "${var."+nm+"}") {
+		t.Fatalf("flow B:\n%s", text)
+	}
+	v := r.Variables[nm]
+	if v == nil || v.Kind != neutralize.KindExcludedRef {
+		t.Fatalf("variable %s: %+v", nm, v)
+	}
+	if got := r.SourceValues[nm]; got.AsString() != "f0000000000000000000000000000003" {
+		t.Fatalf("source value from the catalog ID: %#v", got)
+	}
+	if len(r.MissingDependencies) != 0 {
+		t.Fatalf("missing: %v", r.MissingDependencies)
+	}
+}
+
+// A Git-managed excluded resource keeps being referenced by address.
+func TestExcludedManagedDependencyKeepsAddressReference(t *testing.T) {
+	in := exportExcluding(t, []string{pingOneConn}, flowB)
+	r, err := neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv,
+		Excluded: []neutralize.Excluded{{Address: pingOneConn, Managed: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(blockText(t, r, flowB), "connection_id   = "+pingOneConn+".id") {
+		t.Fatalf("flow B:\n%s", blockText(t, r, flowB))
+	}
+	if _, ok := r.Variables["pingone_davinci_connector_instance_pingcli__PingOne_id"]; ok {
+		t.Fatal("a managed dependency needs no ID variable")
+	}
+	if len(r.Excluded) != 1 || !r.Excluded[0].Managed || !r.Excluded[0].Referenced || r.Excluded[0].Variable != "" {
+		t.Fatalf("report: %+v", r.Excluded)
+	}
+	if !slices.Contains(r.Block(flowB).Refs, pingOneConn) {
+		t.Fatal("the block must record the reference")
+	}
+}
+
+func TestExcludedAddressMustBeAnAddress(t *testing.T) {
+	if _, err := neutralize.Neutralize(export(t), neutralize.Options{SourceEnvironmentID: devEnv, Excluded: []neutralize.Excluded{{Address: "nope"}}}); err == nil {
+		t.Fatal("bad excluded address accepted")
 	}
 }

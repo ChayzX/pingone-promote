@@ -175,3 +175,18 @@ func importable(addr string) bool {
 	typ, _, _ := strings.Cut(addr, ".")
 	return strings.HasPrefix(typ, "pingone_davinci_")
 }
+
+// ManagedAddresses lists the resource addresses the repository's shared
+// definitions already manage.
+func ManagedAddresses(r Repo, l Layout) (map[string]bool, error) {
+	l = l.WithDefaults()
+	ix, err := loadIndex(r, l)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ix.defs))
+	for a := range ix.defs {
+		out[a] = true
+	}
+	return out, nil
+}

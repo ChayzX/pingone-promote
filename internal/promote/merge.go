@@ -23,6 +23,10 @@ type Choice string
 const (
 	ChoiceUpdate Choice = "update" // use the source version ("Use source")
 	ChoiceKeep   Choice = "keep"   // keep the Git version ("Keep Git version")
+	// ChoiceExclude leaves the dependency out of the export. The request
+	// job passes it to the exporter; a resource that is still in the export
+	// is handled like keep.
+	ChoiceExclude Choice = "exclude"
 )
 
 // Status compares live source, Git head and (optionally) a base commit.
@@ -34,6 +38,9 @@ const (
 	StatusMatches         Status = "matches"
 	StatusGitNewer        Status = "git-newer"
 	StatusChangedInBoth   Status = "changed-in-both"
+	// StatusNotCompared is the status of an excluded resource: it was not
+	// exported, so there is nothing to compare.
+	StatusNotCompared Status = "not-compared"
 )
 
 // Action is what the merge did with an address.
@@ -45,6 +52,8 @@ const (
 	ActionKeptDiffers Action = "kept_differs"
 	ActionUnchanged   Action = "unchanged"
 	ActionMoved       Action = "moved"
+	// ActionExcluded: the resource was left out of the export on purpose.
+	ActionExcluded Action = "excluded"
 )
 
 // Role is why an address is in the export.
@@ -53,6 +62,11 @@ type Role string
 const (
 	RoleSelected   Role = "selected"
 	RoleDependency Role = "dependency"
+	// RoleEnvironment: a resource of a whole-environment export. There is
+	// no selected item, so none is updated unless the operator says so.
+	RoleEnvironment Role = "environment"
+	// RoleExcluded: an excluded resource that nothing exported refers to.
+	RoleExcluded Role = "excluded"
 )
 
 // Change is the outcome for one address.
@@ -64,6 +78,11 @@ type Change struct {
 	File    string `json:"file,omitempty"`
 	From    string `json:"from,omitempty"` // for moved
 	Reason  string `json:"reason,omitempty"`
+	// Var is the per-environment ID variable that replaced the references
+	// to an excluded resource, and SourceID its value in the source
+	// environment (an ID, never a secret).
+	Var      string `json:"var,omitempty"`
+	SourceID string `json:"sourceId,omitempty"`
 }
 
 // Blocker stops a submission. Env is "" for request-level blockers.
@@ -100,6 +119,10 @@ type MergeRequest struct {
 	// Selected addresses are always updated (the explicitly chosen flow and
 	// its deploy/enable companions). Everything else is a dependency.
 	Selected []string
+	// WholeEnvironment marks an export of the whole source environment:
+	// every resource has the role "environment", and one that differs from
+	// Git is kept unless Choices says update.
+	WholeEnvironment bool
 	// Choices override the default per address.
 	Choices   map[string]Choice
 	SourceEnv string
@@ -182,8 +205,8 @@ func Merge(req MergeRequest) (*MergeResult, error) {
 		m.selected[a] = true
 	}
 	for a, c := range req.Choices {
-		if c != ChoiceUpdate && c != ChoiceKeep {
-			return nil, fmt.Errorf("promote: choice for %s must be update or keep", a)
+		if c != ChoiceUpdate && c != ChoiceKeep && c != ChoiceExclude {
+			return nil, fmt.Errorf("promote: choice for %s must be update, keep or exclude", a)
 		}
 	}
 	known := map[string]bool{}
@@ -260,6 +283,9 @@ func (m *merger) status(addr string, live []byte) Status {
 func (m *merger) blocks() error {
 	for _, b := range m.req.Export.Blocks {
 		role := RoleDependency
+		if m.req.WholeEnvironment {
+			role = RoleEnvironment
+		}
 		if m.selected[b.Address] {
 			role = RoleSelected
 		}
@@ -277,7 +303,9 @@ func (m *merger) blocks() error {
 			if role == RoleSelected && chosen && choice == ChoiceKeep {
 				update = false
 			}
-			if !update {
+			if !update && role == RoleEnvironment {
+				ch.Reason = "differs from Git; kept (choose update to use the source version)"
+			} else if !update {
 				ch.Reason = "differs from Git; kept because it is a shared dependency (choose update to use the source version)"
 			}
 		case StatusGitNewer:
@@ -307,6 +335,7 @@ func (m *merger) blocks() error {
 		}
 		m.res.Changes = append(m.res.Changes, ch)
 	}
+	m.excluded()
 	// Selected addresses that the export does not contain are reported.
 	for _, a := range m.req.Selected {
 		if m.req.Export.Block(a) == nil {
@@ -320,6 +349,30 @@ func (m *merger) blocks() error {
 		}
 	}
 	return nil
+}
+
+// excluded reports the resources left out of the export. Nothing is written
+// for them and their blocks in Git are untouched.
+func (m *merger) excluded() {
+	for _, e := range m.req.Export.Excluded {
+		ch := Change{Address: e.Address, Role: RoleDependency, Status: StatusNotCompared, Action: ActionExcluded, File: m.head.defs[e.Address]}
+		switch {
+		case e.Managed:
+			ch.Reason = "excluded; Git-managed copy kept"
+		case e.Variable != "":
+			ch.Reason = "excluded; referenced by ID variable `" + e.Variable + "`"
+			ch.Var = e.Variable
+			if v, ok := m.req.Export.SourceValues[e.Variable]; ok && v.Type() == cty.String {
+				ch.SourceID = v.AsString()
+			}
+		default:
+			ch.Reason = "excluded; not exported"
+		}
+		if !e.Referenced && m.req.Choices[e.Address] != ChoiceExclude {
+			ch.Role = RoleExcluded
+		}
+		m.res.Changes = append(m.res.Changes, ch)
+	}
 }
 
 func (m *merger) inExport(a string) bool { return m.req.Export.Block(a) != nil }
@@ -688,7 +741,7 @@ func (m *merger) envs() []string {
 func (m *merger) overlays() error {
 	needed := []*neutralize.Variable{m.req.Export.Variables[neutralize.EnvironmentIDVariable]}
 	for _, v := range m.neededVars() {
-		if v.Kind == neutralize.KindEnvLocal {
+		if v.PerEnvironment() {
 			needed = append(needed, v)
 		}
 	}
@@ -834,7 +887,7 @@ func (m *merger) finish() error {
 	if err != nil {
 		return err
 	}
-	m.res.Blockers = append(m.res.Blockers, blockers...)
+	m.res.Blockers = append(m.res.Blockers, m.nameExcluded(blockers)...)
 	for _, f := range m.req.Export.Findings {
 		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretFinding, Address: f.Name,
 			Message: "suspected secret (" + f.Kind + ") in the export at " + f.File + lineSuffix(f.Line) + "; secrets must come from customer_secrets.yml"})
@@ -843,6 +896,25 @@ func (m *merger) finish() error {
 	sort.Slice(m.res.Changes, func(i, j int) bool { return m.res.Changes[i].Address < m.res.Changes[j].Address })
 	sortBlockers(m.res.Blockers)
 	return nil
+}
+
+// nameExcluded rewrites the missing_value blockers of excluded-reference
+// variables so they name the dependency whose ID is needed.
+func (m *merger) nameExcluded(bs []Blocker) []Blocker {
+	for i, b := range bs {
+		v := m.req.Export.Variables[b.Variable]
+		if b.Code != BlockMissingValue || v == nil || v.Kind != neutralize.KindExcludedRef {
+			continue
+		}
+		p, err := m.l.Overlay(b.Env)
+		if err != nil {
+			p = b.Env + ".tfvars"
+		}
+		bs[i].Address = v.Excluded
+		bs[i].Message = p + " must set " + v.Name + ": the ID of the existing " + v.Excluded + " in " + b.Env +
+			" (it was excluded from the export, so the shared definitions refer to it by ID)"
+	}
+	return bs
 }
 
 func lineSuffix(n int) string {

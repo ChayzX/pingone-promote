@@ -37,8 +37,18 @@ no variable size limit, and the branch is where the result lands anyway.
 - Validates the request strictly (`requestVersion: 1`, unknown fields fail,
   size limit 256 KiB, secret-looking values refused), requires the branch to
   be exactly `pingone-promote/<requestId>`, and refuses the default branch.
-- Exports the source with the pinned terraformer, neutralizes, merges
-  additively into the checked-out workspace, runs `terraform fmt`.
+  `scope` is `selected` (default; one to 20 of each kind) or `all` (the
+  whole source environment; the lists may be empty and uncapped, and the
+  request must carry `confirmAll: true` or validation fails). `exclude`
+  entries (flow, application, flowPolicy, connection, variable, or a full
+  address) apply in both scopes; one that is also included, or a dependency
+  choice `exclude` on the selected item, is rejected with both sides named.
+- Exports the source with the pinned terraformer (the selection plus
+  upstream, or everything for `all`, minus the exclusions), neutralizes,
+  merges additively into the checked-out workspace, runs `terraform fmt`.
+  The semantics of whole-environment export and of excluded resources
+  (references become per-environment ID variables unless Git already
+  manages them) are in ADR 0015.
 - `dryRun`: writes `result.json` (changes, blockers, required secrets, diff)
   and commits NOTHING.
 - Otherwise: ONE commit to the SAME branch through the Commits API, with
@@ -47,7 +57,8 @@ no variable size limit, and the branch is where the result lands anyway.
   carries `Requested-by:`, `Request-id:` and `PingOne-Promote-Request:`
   trailers; the MR description repeats the first two. `mode: mr` opens an MR
   to the default branch labelled `pingone-promote` (configurable); `mode:
-  branch` leaves the branch.
+  branch` leaves the branch. A whole-environment MR title is prefixed
+  `[whole environment]` unless the title already contains it.
 - The job never plans or applies.
 
 ### Concurrency, idempotency and failure
@@ -91,6 +102,17 @@ no variable size limit, and the branch is where the result lands anyway.
   are never secrets.
 - **Merge requests:** the default branch stays protected; a person merges.
   Enterprise deploy jobs remain manual and gated.
+
+### Size limits for a whole environment
+
+`result.json` always lists every change and adds `summary.byType` (per-type
+counts), so the app can lead with the summary. The diff is cut at a line
+boundary at 1 MiB, or 512 KiB for `scope: all`, which keeps `result.json` a
+few MiB at the most for a large environment; the complete diff is behind
+`diffUrl`. The request limit stays 256 KiB (an exclude list is capped at 200
+entries). The merge request description of a whole-environment request is
+the per-type table plus at most 300 changed rows, far below GitLab's limit.
+`resultVersion` stays 1: the new fields are additive.
 
 ## Alternatives
 

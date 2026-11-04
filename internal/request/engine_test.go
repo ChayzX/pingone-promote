@@ -64,6 +64,7 @@ func requestJSON(mut func(map[string]any)) []byte {
 }
 
 type harness struct {
+	fake   exportertest.Fake
 	t      *testing.T
 	gl     *gitlabtest.Fake
 	env    Env
@@ -94,7 +95,7 @@ func newHarness(t *testing.T, req []byte) *harness {
 		Credentials:  exporter.Credentials{ClientID: "c", ClientSecret: "s", WorkerEnvironmentID: devEnv, RegionCode: "NA"},
 		TerraformBin: tf, Committer: GitLabCommitter{S: &gitlab.Submitter{Client: client, Formatter: tf}},
 		Branch: branch, Head: head, DefaultBranch: "main", ProjectURL: "https://gitlab.example.invalid/group/config"}
-	return &harness{t: t, gl: gl, env: env, branch: branch}
+	return &harness{t: t, gl: gl, env: env, branch: branch, fake: fake}
 }
 
 func (h *harness) run(req []byte) *Result {

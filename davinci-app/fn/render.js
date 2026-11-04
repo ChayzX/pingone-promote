@@ -60,29 +60,53 @@ const strip = (envs, source) => '<ol class="pp-strip" aria-label="Rollout">' +
     return '<li class="pp-chip ' + cls + '"><span class="pp-env">' + e(x) + '</span><span class="pp-st"><span aria-hidden="true">' + (STATE_SYM[v.state] || '') + ' </span>' + e(v.state) + '</span>' +
       (v.detail ? '<span class="pp-detail">' + e(v.detail) + '</span>' : '') + '</li>';
   }).join('') + '</ol>';
-const summary = () => s.req ? '<dl class="pp-sum"><dt>Source env</dt><dd>' + e(s.req.source) + '</dd><dt>Flow</dt><dd>' + e(s.req.flow.name) +
-  '</dd><dt>Request</dt><dd><code>' + e(s.req.requestId) + '</code></dd><dt>Rollout</dt><dd>' + e(cfg.rollout.join(' → ')) + '</dd></dl>' : '';
+const whole = () => !!s.req && s.req.scope === 'all';
+const summary = () => s.req ? '<dl class="pp-sum"><dt>Source env</dt><dd>' + e(s.req.source) + '</dd>' + (whole() ? '<dt>Scope</dt><dd>The whole environment</dd>' : '<dt>Flow</dt><dd>' + e(s.req.flow.name) + '</dd>') +
+  '<dt>Request</dt><dd><code>' + e(s.req.requestId) + '</code></dd><dt>Rollout</dt><dd>' + e(cfg.rollout.join(' → ')) + '</dd></dl>' : '';
 // Field errors: the app's own checks first, then a field the job refused (error.field).
 const errFor = (path) => (s.errors || {})[path] || (s.jobField && s.jobField.field === path ? 'GitLab: ' + s.jobField.message : '');
 const compactNotice = (r, jobUrl) => (r.compact ? '<div class="pp-note warn" role="status"><strong>Summary only.</strong> GitLab did not hand over result.json, so the app read the closing summary of the job log. ' +
   'The full change list, the diff and the list of required secrets are not available here' + (jobUrl ? '. ' + link(jobUrl, 'Open the job') + ' for the details' : '') + '.</div>' : '');
+const TAGS = { selected: 'selected flow', environment: 'whole environment', excluded: 'excluded by you' };
+// Counts per resource type first (a whole-environment result can list thousands of rows), then the rows.
+const typeTable = (r) => {
+  const types = Object.keys(r.byType || {}).sort();
+  if (!types.length) { return ''; }
+  const cols = ['added', 'updated', 'kept_differs', 'moved', 'excluded', 'unchanged'];
+  return '<table class="pp-table pp-types"><caption class="pp-sr">Changes by type</caption><thead><tr><th scope="col">Type</th><th scope="col">Total</th>' +
+    cols.map((a) => '<th scope="col">' + e(contract.ACTIONS[a].label) + '</th>').join('') + '</tr></thead><tbody>' +
+    types.map((t) => '<tr><th scope="row"><code>' + e(t) + '</code></th><td>' + r.byType[t].total + '</td>' + cols.map((a) => '<td>' + (r.byType[t][a] || 0) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+};
+// Excluded resources are shown on their own: why, and what stands in for them.
+const excludedList = (r) => {
+  const rows = r.changes.filter((c) => c.action === 'excluded');
+  if (!rows.length) { return ''; }
+  return '<h2>Excluded</h2><p class="pp-hint">Left out of the export. Nothing is written for them and their definitions in Git stay as they are.</p><ul class="pp-list">' +
+    rows.map((c) => '<li><code>' + e(c.address) + '</code>' + (c.role === 'dependency' ? ' <span class="pp-tag">dependency</span>' : '') + '<br><span class="pp-hint">' + e(c.reason || 'excluded') + '</span></li>').join('') + '</ul>';
+};
 const changesTable = (r) => {
   const unknown = r.changes.filter((c) => c.action === 'unknown').length;
   const line = contract.ACTION_ORDER.filter((a) => (a === 'unknown' ? unknown : r.summary[a]))
     .map((a) => (a === 'unknown' ? unknown + ' unrecognised' : r.summary[a] + ' ' + (contract.ACTIONS[a].count || contract.ACTIONS[a].label.toLowerCase()))).join(', ');
   if (r.compact) { return '<p>' + (line ? e(line) + '.' : 'The job reported no counts.') + '</p>'; }
-  if (!r.changes.length) { return '<p class="pp-empty">The job reported no changes.</p>'; }
+  if (!r.changes.length && !r.unchangedOmitted) { return '<p class="pp-empty">The job reported no changes.</p>'; }
   const row = (c) => {
     const a = contract.ACTIONS[c.action] || { sym: '?', label: 'Not recognised', cls: 'warn' };
-    return '<tr><td><code>' + e(c.address) + '</code>' + (c.role === 'selected' ? ' <span class="pp-tag">selected flow</span>' : '') +
+    return '<tr><td><code>' + e(c.address) + '</code>' + (TAGS[c.role] && c.role !== 'environment' ? ' <span class="pp-tag">' + e(TAGS[c.role]) + '</span>' : '') +
       (c.from ? '<br><span class="pp-hint">was <code>' + e(c.from) + '</code></span>' : '') + (c.file ? '<br><span class="pp-hint">' + e(c.file) + '</span>' : '') + '</td>' +
       '<td class="' + a.cls + '"><span aria-hidden="true">' + e(a.sym) + ' </span>' + e(a.label) + (c.reason ? '<br><span class="pp-hint">' + e(c.reason) + '</span>' : '') + '</td>' +
       '<td class="' + (c.status === 'changed-in-both' || c.status === 'git-newer' ? 'warn' : 'same') + '">' + e(contract.ROW_STATUS[c.status] || '') + '</td></tr>';
   };
-  const main = r.changes.filter((c) => c.action !== 'unchanged');
+  const main = r.changes.filter((c) => c.action !== 'unchanged' && c.action !== 'excluded');
   const same = r.changes.filter((c) => c.action === 'unchanged');
   const table = (rows) => '<table class="pp-table"><thead><tr><th scope="col">Shared definition (address)</th><th scope="col">Predicted change</th><th scope="col">Source vs Git</th></tr></thead><tbody>' + rows.map(row).join('') + '</tbody></table>';
-  return '<p>' + e(line) + '.</p>' + (main.length ? table(main) : '') + (same.length ? '<details><summary>' + same.length + ' matching Git</summary>' + table(same) + '</details>' : '');
+  const unchangedNote = r.unchangedOmitted ? '<p class="pp-hint">' + r.unchangedOmitted + ' more match Git and are not listed.</p>' : '';
+  if (r.scope === 'all') {
+    // The summary first; the full list stays folded.
+    return '<p>' + e(line) + '.</p>' + typeTable(r) + (main.length ? '<details><summary>Full list: ' + main.length + ' resource' + (main.length === 1 ? '' : 's') + ' that change or differ</summary>' + table(main) + '</details>' : '') +
+      unchangedNote + excludedList(r);
+  }
+  return '<p>' + e(line) + '.</p>' + (main.length ? table(main) : '') + (same.length ? '<details><summary>' + same.length + ' matching Git</summary>' + table(same) + '</details>' : '') + excludedList(r);
 };
 const shown = (v) => (v && typeof v === 'object' ? JSON.stringify(v) : (v === undefined || v === null ? '' : String(v)));
 // Same in all environments (inlineValues): one tick per variable. Every box for the same variable is kept in step by
@@ -104,11 +128,18 @@ const readiness = (r, editable) => {
   if (bl[s.req.source] || (s.req.options.env || {})[s.req.source]) { envs.unshift(s.req.source); }
   if (bl[contract.REQUEST_BLOCKERS]) { envs.unshift(contract.REQUEST_BLOCKERS); }
   const shownInline = [];
+  // Excluded dependencies referenced by an ID variable: the ID differs per environment, the source's comes from the export.
+  const idVars = ((r && r.changes) || []).filter((c) => c.action === 'excluded' && c.var);
+  const isIdVar = (k) => idVars.some((c) => c.var === k) || Object.keys(bl).some((x) => bl[x].some((b) => b.var === k && b.address));
+  if (idVars.length && envs.indexOf(s.req.source) < 0) { envs.unshift(s.req.source); }
   const rows = envs.map((env) => {
     const list = bl[env] || [];
     const vals = env === contract.REQUEST_BLOCKERS ? {} : ((s.req.options.env || {})[env] || {});
     const items = list.map((b) => {
-      if (b.code === 'missing_value' && b.var && env !== contract.REQUEST_BLOCKERS) {
+      if (b.code === 'missing_value' && b.var && env !== contract.REQUEST_BLOCKERS && b.address) {
+        // The existing ID of an excluded dependency in this environment: never "the same in all environments".
+        if (editable) { return text(['env', env, b.var], env + ': ID of ' + b.address, shown(vals[b.var]), { err: errFor('envValues.' + env + '.' + b.var), hint: (b.message || 'The ID this resource has in ' + env) + '. Text.' }); }
+      } else if (b.code === 'missing_value' && b.var && env !== contract.REQUEST_BLOCKERS) {
         shownInline.push(b.var);
         if (inl.indexOf(b.var) >= 0) { return '<div class="pp-note ok"><p><code>' + e(b.var) + '</code> has the same value in every environment.</p>' + inlineBox(b.var, editable) + '</div>'; }
         if (editable) {
@@ -118,10 +149,14 @@ const readiness = (r, editable) => {
       const what = contract.BLOCKER_TEXT[b.code] || b.code || 'blocked';
       return '<p class="pp-note bad"><strong>' + e(what) + '.</strong> ' + e(b.message) + (b.address ? ' <code>' + e(b.address) + '</code>' : '') + (b.var ? ' <code>' + e(b.var) + '</code>' : '') + '</p>';
     }).join('');
-    const extra = Object.keys(vals).filter((k) => !list.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + k, shown(vals[k]), { err: errFor('envValues.' + env + '.' + k) }) + inlineBox(k, true)).join('');
+    const extra = Object.keys(vals).filter((k) => !list.some((b) => b.var === k)).map((k) => text(['env', env, k], env + ': ' + (isIdVar(k) ? 'ID of ' + ((idVars.filter((c) => c.var === k)[0] || {}).address || k) : k), shown(vals[k]), { err: errFor('envValues.' + env + '.' + k) }) + (isIdVar(k) ? '' : inlineBox(k, true))).join('');
+    // The source env's value is prefilled from the export (change it only if it is wrong); the other envs are asked above.
+    const prefill = env === s.req.source ? idVars.filter((c) => c.sourceId && !(lib.has(vals, c.var))).map((c) => (editable
+      ? text(['env', env, c.var], env + ': ID of ' + c.address, c.sourceId, { err: errFor('envValues.' + env + '.' + c.var), hint: 'Filled in from the export. Change it only if it is wrong. This is where the excluded resource already lives; the other environments need their own IDs.' })
+      : '<p>' + e(env) + ': ID of <code>' + e(c.address) + '</code> comes from the export.</p>')).join('') : '';
     const ready = !list.length;
     const name = env === contract.REQUEST_BLOCKERS ? 'Whole request' : env + (env === s.req.source ? ' (source env)' : '');
-    return '<section class="pp-env-row"><h3>' + e(name) + ' <span class="' + (ready ? 'add' : 'bad') + '">' + (ready ? (r ? '✓ Ready' : 'Not checked yet') : '✕ ' + list.length + ' to fix') + '</span></h3>' + items + (editable ? extra : '') + '</section>';
+    return '<section class="pp-env-row"><h3>' + e(name) + ' <span class="' + (ready ? 'add' : 'bad') + '">' + (ready ? (r ? '✓ Ready' : 'Not checked yet') : '✕ ' + list.length + ' to fix') + '</span></h3>' + items + prefill + (editable ? extra : '') + '</section>';
   }).join('');
   const rest = inl.filter((v) => shownInline.indexOf(v) < 0);
   const same = rest.length ? '<section class="pp-env-row"><h3>Same in all environments <span class="add">identical everywhere</span></h3>' + rest.map((v) => inlineBox(v, editable)).join('') + '</section>' : '';
@@ -146,7 +181,7 @@ const secretsBlock = (r, editable) => {
 };
 const errorBody = (err) => {
   const t = contract.ERROR_TEXT[err.code] || contract.ERROR_TEXT.unknown;
-  const cands = err.candidates && err.candidates.length ? '<p>Several flows match. Search again and choose one of these:</p><ul class="pp-list">' +
+  const cands = err.candidates && err.candidates.length ? '<p>' + (/^exclude/.test(err.field) ? 'Several resources match what you chose to exclude. Exclude one of these by searching for it again:' : 'Several flows match. Search again and choose one of these:') + '</p><ul class="pp-list">' +
     err.candidates.map((c) => '<li>' + e(c.name) + (c.address ? ' <code>' + e(c.address) + '</code>' : '') + '</li>').join('') + '</ul>' : '';
   return '<strong>' + e(t.title) + '.</strong> ' + e(t.fix) + (err.type ? ' <span class="pp-hint">(in ' + e(contract.TYPE_TEXT[err.type] || err.type) + ')</span>' : '') +
     '<p>' + e(err.message) + (err.field ? ' <span class="pp-hint">Field: <code>' + e(err.field) + '</code></span>' : '') + '</p>' + cands +
@@ -180,9 +215,26 @@ const actions = () => {
 const screens = {};
 screens.search = () => {
   const sr = s.search || {};
+  const scope = sr.scope === 'all' ? 'all' : 'selected';
   const sources = Object.keys(cfg.sources);
   const id = uid('f');
-  const select = '<select id="' + id + '"' + attr(['source']) + '>' + sources.map((x) => '<option value="' + e(x) + '"' + (x === sr.source ? ' selected' : '') + '>' + e(x) + '</option>').join('') + '</select>';
+  // The source env names are mirrored into the tick box below by the screen's script.
+  const select = '<select id="' + id + '"' + attr(['source']) + ' data-pp-source="1">' + sources.map((x) => '<option value="' + e(x) + '"' + (x === sr.source ? ' selected' : '') + '>' + e(x) + '</option>').join('') + '</select>';
+  const toggle = '<div class="pp-actions" role="group" aria-label="What to bring into Git">' + button('SCOPE:SELECTED', 'Selected items', { ghost: scope !== 'selected' }) +
+    button('SCOPE:ALL', 'Whole environment', { ghost: scope !== 'all' }) + '</div>' +
+    '<p class="pp-hint">' + (scope === 'all' ? 'Whole environment: every supported resource of the source env comes into Git. Nothing is ever deleted, and what already differs in Git keeps its Git version unless you choose otherwise.'
+      : 'Selected items: one main flow, with its shared definitions and subflows. You can add applications and flow policies, and leave things out, on the next screen.') + '</p>';
+  if (scope === 'all') {
+    const src = sr.source || sources[0];
+    const cid = uid('c');
+    const err = (s.errors || {}).confirmAll;
+    return head('New request', 'Pick the <strong>source env</strong> and bring everything in it into Git. The rollout then carries the same commit through ' + e(cfg.rollout.join(' → ')) + '.') +
+      errorSummary() + field(id, 'Source env', select, '', '') + toggle +
+      '<div class="pp-field' + (err ? ' has-err' : '') + '">' + (err ? '<p class="pp-err" id="' + cid + '-err">' + e(err) + '</p>' : '') +
+      '<label class="pp-check" for="' + cid + '"><input type="checkbox" id="' + cid + '"' + attr(['confirmAll']) + (err ? ' aria-invalid="true" aria-describedby="' + cid + '-err"' : '') + ' required /> ' +
+      'Bring the whole <span data-pp-source-name="1">' + e(src) + '</span> environment into Git</label></div>' +
+      '<div class="pp-actions">' + button('START_ALL', 'Continue') + '</div>';
+  }
   let results = '';
   if (sr.matches) {
     if (!sr.matches.length) {
@@ -194,7 +246,7 @@ screens.search = () => {
     }
   }
   return head('New request', 'Pick the <strong>source env</strong> and the main flow to bring into Git. Its shared definitions and subflows come with it; the rollout then carries the same commit through ' + e(cfg.rollout.join(' → ')) + '.') +
-    errorSummary() + field(id, 'Source env', select, '', '') + text(['query'], 'Main flow name or ID', sr.query || '', { err: (s.errors || {}).query, placeholder: 'for example: Login' }) +
+    errorSummary() + field(id, 'Source env', select, '', '') + toggle + text(['query'], 'Main flow name or ID', sr.query || '', { err: (s.errors || {}).query, placeholder: 'for example: Login' }) +
     '<div class="pp-actions">' + button('SEARCH', 'Search flows') + '</div>' + results;
 };
 screens.options = () => {
@@ -207,20 +259,27 @@ screens.options = () => {
   if (cur && cur.result) { state = '<p class="pp-note ok">The preview below matches these options.</p>'; }
   if (p && p.failed) { state = '<p class="pp-note bad">The last preview did not finish' + (p.error ? ': ' + e(p.error.message) : (p.message ? ': ' + e(p.message) : '.')) + ' ' + link(p.jobUrl, 'Open the job') + '</p>'; }
   const deps = r ? r.changes.filter((c) => lib.choosable(r).indexOf(c.address) >= 0) : [];
-  const depBlock = '<h2>Shared definitions</h2>' + (!r ? '<p class="pp-hint">Preview to list the dependencies that differ from Git. A dependency that differs keeps the Git version unless you choose otherwise, because other flows use it too.</p>'
-    : (!deps.length ? '<p class="pp-empty">No dependency differs from Git.</p>' : deps.map((c) => radios(['deps', c.address], c.address + (c.status === 'changed-in-both' ? ' (changed in both Git and the source)' : ''), o.deps[c.address] || (c.action === 'kept_differs' ? 'keep' : 'update'),
-      [['keep', 'Keep Git version'], ['update', 'Use source']])).join('')));
-  const extrasBlock = cfg.pathApplications ? '<h2>Applications and flow policies</h2>' +
+  const CHOICE_LABEL = { update: 'Update', keep: 'Keep Git version', exclude: 'Exclude' };
+  const depLead = whole() ? 'Resources that differ from Git keep the Git version unless you choose otherwise. Update uses the source version; Exclude leaves the resource out.'
+    : 'A dependency that differs keeps the Git version unless you choose otherwise, because other flows use it too. Update uses the source version; Exclude leaves it out of the export.';
+  const depBlock = '<h2>' + (whole() ? 'Resources that differ from Git' : 'Shared definitions') + '</h2>' + (!r ? '<p class="pp-hint">Preview to list the ' + (whole() ? 'resources' : 'dependencies') + ' that differ from Git. ' + e(depLead) + '</p>'
+    : (!deps.length ? '<p class="pp-empty">' + (whole() ? 'No resource differs from Git.' : 'No dependency differs from Git.') + '</p>' : '<p class="pp-hint">' + e(depLead) + '</p>' + deps.map((c) => radios(['deps', c.address],
+      c.address + (c.status === 'changed-in-both' ? ' (changed in both Git and the source)' : '') + (c.action === 'excluded' ? ' (excluded)' : ''),
+      o.deps[c.address] || (c.action === 'excluded' ? 'exclude' : (c.action === 'kept_differs' ? 'keep' : 'update')), lib.choicesFor(c).map((v) => [v, CHOICE_LABEL[v]]))).join('')));
+  const excludeBlock = '<h2>Leave out</h2>' + (o.exclude.length ? '<ul class="pp-list">' + o.exclude.map((x) => '<li>' + e(contract.EXCLUDE_KINDS[x.type].label.replace(/^./, (c) => c.toUpperCase())) + ': ' + e(x.show || x.name) + '</li>').join('') + '</ul>'
+    : '<p class="pp-hint">Nothing. Optional: flows, applications, flow policies, connections and variables can be left out' + (whole() ? ' of the whole environment' : ' of this request') + '. Their definitions in Git are not touched.</p>') +
+    '<div class="pp-actions">' + button('EXCLUDE', 'Exclude items', { ghost: true }) + '</div>';
+  const extrasBlock = cfg.pathApplications && !whole() ? '<h2>Applications and flow policies</h2>' +
     (o.applications.length || o.flowPolicies.length ? '<ul class="pp-list">' + o.applications.map((x) => '<li>Application: ' + e(x.name) + '</li>').join('') +
       o.flowPolicies.map((x) => '<li>Flow policy: ' + e(x.name) + (x.app ? ' <span class="pp-hint">(application ' + e(x.app) + ')</span>' : '') + '</li>').join('') + '</ul>' : '<p class="pp-hint">None. Optional.</p>') +
     '<div class="pp-actions">' + button('EXTRAS', 'Add an application or flow policy', { ghost: true }) + '</div>' : '';
-  return head('Review the change', 'Choose how the request is written, then preview it.') + summary() + subBanner() + errorSummary() + state +
+  return head('Review the change', whole() ? 'This request brings the whole source env into Git. Choose how it is written, then preview it.' : 'Choose how the request is written, then preview it.') + summary() + subBanner() + errorSummary() + state +
     radios(['mode'], 'How to hand the change to GitLab', o.mode, [['mr', 'Open a merge request'], ['branch', 'Branch only (no merge request)']]) +
     '<p class="pp-hint">Request branch: <code>' + e(s.req.branch) + '</code></p>' +
     text(['title'], 'Title', o.title, { err: errFor('title'), hint: 'One line, at most 255 characters.' }) +
     area(['commitMessage'], 'Commit message', o.commitMessage, 'At most 2000 characters. The job adds the Requested-by and Request-id lines.', errFor('commitMessage')) +
     area(['description'], 'Description (optional)', o.description, 'Shown in the merge request. Your name is added for you.', errFor('description')) +
-    extrasBlock + depBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', 'Back to flow search', { ghost: true }) + '</div>';
+    extrasBlock + excludeBlock + depBlock + readiness(r, true) + secretsBlock(r, true) + actions() + '<div class="pp-actions">' + button('BACK', whole() ? 'Back to the start' : 'Back to flow search', { ghost: true }) + '</div>';
 };
 // Applications and flow policies, found by name in the source env like flows are: no guessing, every match listed.
 screens.extras = () => {
@@ -249,6 +308,36 @@ screens.extras = () => {
     '<div class="pp-actions">' + button('SEARCH_APP', 'Search applications') + '</div>' +
     found(ex.apps, 'application', 'ADDAPP:', cfg.pathFlowPolicies ? (i) => button('POLICIES:' + i, 'Its flow policies', { ghost: true }) : null) + policies +
     '<div class="pp-actions">' + button('EXTRAS_DONE', 'Back to the options') + '</div>';
+};
+// The exclude picker: the same search as an include (none, several listed, or one), for flows, applications, flow policies,
+// connections and variables. The app never picks for you.
+screens.exclude = () => {
+  const o = s.req.options;
+  const ex = s.exc || {};
+  const kinds = [['flow', true], ['application', true], ['connection', !!cfg.pathConnections], ['variable', !!cfg.pathVariables]].filter((x) => x[1]).map((x) => x[0]);
+  const kid = uid('f');
+  const select = '<select id="' + kid + '"' + attr(['excKind']) + '>' + kinds.map((k) => '<option value="' + e(k) + '"' + (k === ex.kind ? ' selected' : '') + '>' + e(contract.EXCLUDE_KINDS[k].label.replace(/^./, (c) => c.toUpperCase())) + '</option>').join('') + '</select>';
+  const found = (res, what, addPrefix, extraBtn, showCtx) => {
+    if (!res || !res.matches) { return ''; }
+    if (!res.matches.length) { return '<p class="pp-empty" role="status">No ' + e(what) + ' in ' + e(s.req.source) + ' matches “' + e(res.query) + '”' + (res.listed === 0 ? ' (the env has none the app can read; ask your DaVinci administrator to check the worker\'s role)' : '') + '. Try part of the name.</p>'; }
+    return '<h3 role="status">' + (res.matches.length === 1 ? '1 match' : res.total + ' matches' + (res.total > res.matches.length ? ' (first ' + res.matches.length + ' shown)' : '') + '. Choose one; the app never picks for you') + '</h3>' +
+      '<table class="pp-table"><thead><tr><th scope="col">Name</th><th scope="col">' + (showCtx ? 'Context' : 'ID') + '</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' +
+      res.matches.map((m, i) => '<tr><td>' + e(m.name) + '</td><td>' + (showCtx ? e(m.ctx) : '<code>' + e(m.id) + '</code>') + '</td><td>' +
+        button(addPrefix + i, 'Exclude this ' + what, { ghost: res.matches.length > 1 }) + (extraBtn ? extraBtn(i) : '') + '</td></tr>').join('') + '</tbody></table>';
+  };
+  const listed = o.exclude.length ? '<table class="pp-table"><thead><tr><th scope="col">Left out</th><th scope="col"><span class="pp-sr">Action</span></th></tr></thead><tbody>' +
+    o.exclude.map((x, i) => '<tr><td>' + e(contract.EXCLUDE_KINDS[x.type].label.replace(/^./, (c) => c.toUpperCase())) + ': ' + e(x.show || x.name) + '</td><td>' + button('EXC_DROP:' + i, 'Stop excluding', { ghost: true }) + '</td></tr>').join('') + '</tbody></table>'
+    : '<p class="pp-empty">Nothing excluded.</p>';
+  const res = ex.res;
+  const policies = ex.pol ? '<h2>Flow policies of ' + e(ex.pol.app.name) + '</h2><p class="pp-hint">PingOne lists flow policies per application, so the app reads only this application\'s.</p>' +
+    text(['excPolQuery'], 'Flow policy name (leave empty to list them all)', ex.pol.query || '', { enter: 'EXC_SEARCH_POL' }) +
+    '<div class="pp-actions">' + button('EXC_SEARCH_POL', 'Search flow policies') + '</div>' + found(ex.pol, 'flow policy', 'EXC_ADDPOL:') : '';
+  return head('Exclude items', 'Leave things out of <strong>' + e(s.req.source) + '</strong>. An excluded item is never exported or written and its definition in Git is not touched. If another item refers to it and Git does not manage it, that reference becomes an ID you give per environment. At most ' + contract.LIMITS.excludes + '.') +
+    summary() + errorSummary() + '<h2>Left out of this request (' + o.exclude.length + ')</h2>' + listed + '<h2>Find an item</h2>' +
+    field(kid, 'What to exclude', select, '', '') + text(['excQuery'], 'Name' + (ex.kind === 'flow' || !ex.kind ? ' or ID' : ''), ex.query || '', { err: (s.errors || {}).excQuery, enter: 'EXC_SEARCH' }) +
+    '<div class="pp-actions">' + button('EXC_SEARCH', 'Search') + '</div>' +
+    (res ? found(res, contract.EXCLUDE_KINDS[res.kind].label, 'EXC_ADD:', res.kind === 'application' && cfg.pathFlowPolicies ? (i) => button('EXC_POLICIES:' + i, 'Its flow policies', { ghost: true }) : null, res.kind === 'variable') : '') + policies +
+    '<div class="pp-actions">' + button('EXC_DONE', 'Back to the options') + '</div>';
 };
 screens.working = () => {
   const run = s.run;
@@ -284,10 +373,10 @@ screens.preview = () => {
   } else if (r) {
     if (r.error) { body += '<div class="pp-note bad" role="alert">' + errorBody(r.error) + '</div>'; }
     body += compactNotice(r, p.jobUrl);
-    if (r.selected.length) { body += '<p>Selected: ' + r.selected.map((x) => e(x.name) + ' <code>' + e(x.address) + '</code>').join(', ') + '</p>'; }
+    if (r.selected.length && !whole()) { body += '<p>Selected: ' + r.selected.map((x) => e(x.name) + ' <code>' + e(x.address) + '</code>').join(', ') + '</p>'; }
     if (r.warnings.length) { body += '<div class="pp-note warn">' + r.warnings.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
     if (r.problems.length) { body += '<div class="pp-note warn">' + r.problems.map((x) => '<p>' + e(x) + '</p>').join('') + '</div>'; }
-    if (lib.onlyUnchanged(r)) { body += '<p class="pp-empty">No changes: Git already matches ' + e(s.req.source) + ' for this flow.</p>'; }
+    if (lib.onlyUnchanged(r)) { body += '<p class="pp-empty">No changes: Git already matches ' + e(s.req.source) + (whole() ? '.' : ' for this flow.') + '</p>'; }
     body += '<h2>Predicted changes</h2>' + changesTable(r) + (r.diffUrl && lib.webUrl(cfg, r.diffUrl) ? '<p>' + link(lib.webUrl(cfg, r.diffUrl), 'Review the change in GitLab') + '</p>' : '') +
       readiness(r, false) + secretsBlock(r, false);
   }
@@ -300,7 +389,7 @@ screens.submitted = () => {
   const mr = lib.webUrl(cfg, r.mrUrl);
   const br = lib.webUrl(cfg, r.branchUrl);
   if (r.status === 'no_changes') {
-    return head('No changes', 'Git already matches ' + e(s.req.source) + ' for this flow. The job wrote nothing and opened no merge request.') + summary() +
+    return head('No changes', 'Git already matches ' + e(s.req.source) + (whole() ? '' : ' for this flow') + '. The job wrote nothing and opened no merge request.') + summary() +
       '<div class="pp-actions">' + button('NAV_NEW', 'New request') + '</div>';
   }
   const again = r.status === 'already_submitted' ? '<p class="pp-note">This request was already submitted. Nothing new was written; this is the existing ' + (mr ? 'merge request' : 'branch') + '.</p>' : '';
@@ -341,7 +430,7 @@ screens.requests = () => {
     '<div class="pp-actions">' + button('REFRESH', 'Refresh', { ghost: true }) + '</div>';
 };
 
-const screen = screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' && s.screen !== 'extras' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
+const screen = screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' && s.screen !== 'extras' && s.screen !== 'exclude' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
 s.screen = screen;
 const nav = '<nav class="pp-nav" aria-label="App">' + button('NAV_NEW', 'New request', { ghost: screen !== 'search' }) + button('NAV_REQUESTS', 'Requests', { ghost: screen !== 'requests' }) +
   '<span class="pp-user">Signed in as ' + e(s.user.name || s.user.username) + '</span>' + button('SIGNOUT', 'Leave the app', { ghost: true }) + '</nav>';

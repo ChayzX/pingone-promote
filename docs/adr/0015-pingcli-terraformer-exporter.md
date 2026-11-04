@@ -25,7 +25,8 @@ Verified against the v0.6.0 source (`main.go`, `cmd/tf.go`, `cmd/export.go`,
 - Export: `pingcli-terraformer export --out <dir> --module-dir ping-export-module
   --module-name ping-export --output-format hcl --include-values
   --include-imports --include-resources <addr> ... --include-upstream
-  [--exclude-resources <pattern> ...]`. `--include-resources` is a pflag
+  [--exclude-resources <pattern> ...]`. A whole-environment export omits
+  `--include-resources` and `--include-upstream`. `--include-resources` is a pflag
   StringSlice: repeatable and split on commas, so patterns with commas are
   refused.
 - Credentials only through `PINGCLI_PINGONE_CLIENT_CREDENTIALS_CLIENT_ID`,
@@ -133,6 +134,89 @@ surgical at the resource-block level.
    asserts: Flow B updated, subflow added, connection kept and reported,
    every byte of flows A and C and their dependencies identical, nothing
    deleted; a re-run is a no-op; `git diff` touches only the expected hunks.
+
+## Whole environment and exclusions
+
+Two later requirements: *export everything*, and *exclude items and
+dependencies the same way as including them.*
+
+### Scope
+
+`scope: "all"` (request field, ADR 0017) exports every supported resource:
+`export` with no `--include-resources`, so the flow deploy and enable
+resources come with the list and no second pass is needed. The merge rules
+are the ones above and do not bend:
+
+- additive only; nothing is ever deleted, and a resource missing from Git is
+  added;
+- there is no single selected item, so every resource that differs from Git
+  **keeps its Git version** unless `dependencyChoices` says `update` (role
+  `environment`; reported `kept_differs`);
+- a re-run against its own result is a no-op (tested on the fixture).
+
+`result.json` stays complete (`changes` lists everything) and adds
+`summary.byType`, counts per resource type, so a screen can lead with the
+summary. The diff is cut at a line boundary: 1 MiB for a selected request,
+512 KiB for a whole environment, whose full diff is the commit or compare
+view behind `diffUrl`. The merge request description of a whole-environment
+request carries the per-type table and at most 300 rows of changes.
+
+### Exclusions
+
+`exclude: [{type, id?, name?} | {address}]` applies in both scopes and is
+resolved like an include (exact ID, exact name, unique substring; ambiguity
+is a `preflight` error with candidates). The resolved addresses, plus a
+flow's deploy and enable, go to terraformer as `--exclude-resources`. An
+excluded resource is never exported or written and its blocks in Git are
+untouched; excluding something that is also explicitly included is a
+validation error naming both. A dependency choice `exclude` does the same
+for one address, and the selected item itself cannot be excluded.
+
+How terraformer v0.6.0 renders a reference to an excluded resource (read in
+`internal/core/orchestrator.go`, `internal/filter/filter.go`,
+`internal/core/embedded_references.go`):
+
+- `applyUpstreamExpansion` keeps a resource out of the output when it
+  matches an explicit exclude, even if a seed refers to it, and marks it
+  excluded (`explicitExcludes`); without `--include-upstream` the filter
+  does the same (`excludedIDs`).
+- `resolveOneReference` then renders an **attribute reference** to it (a
+  node's `connection_id`, a flow policy's `davinci_application_id` and
+  `flow_distributions[].id`, a deploy's `flow_id`) as a variable named
+  `SanitizeVariableName(<type>_<label>_<field>)`, for example
+  `pingone_davinci_connector_instance_pingcli__PingOne_id`. It is declared in
+  the module's `variables.tf` with the description "ID of <type> resource
+  (excluded from export)", passed from the root module call, and valued with
+  the original ID in the `.auto.tfvars` under `--include-values`.
+- An **embedded reference** (`subFlowId` inside a flow's node `properties`)
+  is resolved by `ResolveEmbeddedReferences` against the whole graph and never
+  consults the excluded set, so v0.6.0 renders it as a reference to a block
+  that is not in the output. Reported upstream as an issue; the neutralizer
+  repairs it (below), and the fake terraformer reproduces both behaviours.
+
+The neutralizer takes the excluded addresses (`Options.Excluded`) and
+classifies each:
+
+- **Already managed in Git:** references keep pointing at the Git address.
+  The terraformer variable is dropped and its uses are rewritten to
+  `<type>.<label>.id`; nothing else changes, so it behaves like `keep`.
+  Change reason: `excluded; Git-managed copy kept`.
+- **Not in Git:** the variable becomes a per-environment **root variable**
+  `<type>_<label>_id` (kind `excluded_ref`), declared in the module and the
+  root `variables.tf`, passed by the module call, valued in the source
+  overlay from the export (terraformer's value, else the catalog's ID for the
+  embedded case) and required in every other overlay. A missing value is a
+  `missing_value` blocker for that environment with `var` set and a message
+  naming the dependency; `envValues` supplies it. Change reason: ``excluded;
+  referenced by ID variable `<var>` ``.
+
+Tests: the three-flow fixture in whole scope (adds everything new, deletes
+nothing, re-run is a no-op), whole scope excluding a flow (its Git blocks are
+byte-identical, argv has the excludes), exclude ambiguity with candidates,
+excluding a managed dependency (files identical to `keep`), excluding an
+unmanaged one (variable in both `variables.tf`, source overlay value, a
+blocker per other environment, `check --root` passes once the values are
+supplied) and a `terraform test` with `-var-file` per environment.
 
 ## Alternatives
 

@@ -22,7 +22,9 @@ import (
 // Exporter is the subset of *exporter.Runner the engine uses.
 type Exporter interface {
 	Catalog(ctx context.Context, creds exporter.Credentials, withIDs bool) ([]exporter.Resource, error)
-	ScopedExport(ctx context.Context, creds exporter.Credentials, seeds []string) (*exporter.Export, error)
+	CatalogAllIDs(ctx context.Context, creds exporter.Credentials) ([]exporter.Resource, error)
+	ScopedExport(ctx context.Context, creds exporter.Credentials, seeds, exclude []string) (*exporter.Export, error)
+	WholeExport(ctx context.Context, creds exporter.Credentials, exclude []string) (*exporter.Export, error)
 }
 
 // Committer writes the request commit (GitLab in CI).
@@ -80,6 +82,10 @@ type Env struct {
 func Run(ctx context.Context, env Env, req *Request) *Result {
 	res := newResult()
 	res.RequestID, res.RequestedBy, res.DryRun, res.Mode, res.Source = req.RequestID, req.RequestedBy, req.DryRun, req.Mode, req.Source
+	res.Scope = req.Scope
+	if res.Scope == "" {
+		res.Scope = ScopeSelected
+	}
 	res.Branch = env.Branch
 	r := &runner{env: env, req: req, res: res, layout: env.Layout.WithDefaults()}
 	r.run(ctx)
@@ -134,11 +140,17 @@ func (r *runner) run(ctx context.Context) {
 	}
 	creds := r.env.Credentials
 	creds.ExportEnvironmentID = sourceID
-	seeds, err := r.resolve(ctx, creds)
+	head := promote.DirRepo(r.env.Workspace)
+	sel, err := r.resolve(ctx, creds, head)
 	if err != nil {
 		return // resolve filled the error
 	}
-	exp, err := r.env.Exporter.ScopedExport(ctx, creds, seeds)
+	var exp *exporter.Export
+	if req.Whole() {
+		exp, err = r.env.Exporter.WholeExport(ctx, creds, sel.patterns())
+	} else {
+		exp, err = r.env.Exporter.ScopedExport(ctx, creds, sel.seeds, sel.patterns())
+	}
 	if err != nil {
 		var lc *exporter.LabelCollisionError
 		code := ErrPreflight
@@ -149,18 +161,20 @@ func (r *runner) run(ctx context.Context) {
 		return
 	}
 	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName}, neutralize.Options{
-		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings})
+		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings,
+		Excluded: sel.neutralizeExcluded()})
 	if err != nil {
 		res.fail(ErrBlocked, "merge", err.Error(), false)
 		return
 	}
+	sel.reportedOnly(neu)
 	for _, f := range exp.Findings {
 		res.Blockers[RequestBlockers] = append(res.Blockers[RequestBlockers], BlockerOut{Code: promote.BlockSecretFinding,
 			Message: fmt.Sprintf("the raw export looks like it contains a secret (%s) at %s:%d", f.Kind, f.File, f.Line)})
 	}
 	res.Warnings = append(res.Warnings, neu.Warnings...)
 	var selected []string
-	for _, s := range seeds {
+	for _, s := range sel.seeds {
 		selected = append(selected, s)
 		if strings.HasPrefix(s, neutralize.TypeFlow+".") {
 			selected = append(selected, exporter.Companions(s)...)
@@ -170,8 +184,7 @@ func (r *runner) run(ctx context.Context) {
 	for a, c := range req.DependencyChoices {
 		choices[a] = promote.Choice(c)
 	}
-	head := promote.DirRepo(r.env.Workspace)
-	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices,
+	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, WholeEnvironment: req.Whole(),
 		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig}
 	if req.BaseCommit != "" {
 		if r.env.BaseRepo == nil {
@@ -209,10 +222,11 @@ func (r *runner) run(ctx context.Context) {
 		res.fail(ErrPreflight, "internal", err.Error(), true)
 		return
 	}
-	if len(diff) > MaxDiff {
-		diff, res.DiffTruncated = diff[:MaxDiff], true
+	limit := MaxDiff
+	if req.Whole() {
+		limit = MaxDiffAll
 	}
-	res.Diff = diff
+	res.Diff, res.DiffTruncated = truncateDiff(diff, limit)
 	for _, p := range m.ChangedPaths() {
 		action := "update"
 		if _, ok, _ := head.Read(p); !ok {
@@ -306,22 +320,107 @@ func (r *runner) sourceEnvironmentID() (string, error) {
 	return v.AsString(), nil
 }
 
-// resolve turns flow, application and policy references into addresses.
-// It never guesses: no match or several matches is a typed error.
-func (r *runner) resolve(ctx context.Context, creds exporter.Credentials) ([]string, error) {
-	withIDs := false
-	for _, f := range r.req.Flows {
-		if f.ID != "" {
-			withIDs = true
+// selection is what a request resolves to: the seeds to export and the
+// resources to leave out.
+type selection struct {
+	seeds []string
+	// excluded maps every excluded address (flow companions included) to
+	// what is known about it.
+	excluded map[string]*exclusion
+}
+
+type exclusion struct {
+	id      string
+	managed bool
+	// derived marks a flow's deploy and enable: they follow their flow and
+	// are not reported on their own.
+	derived bool
+}
+
+func (s *selection) patterns() []string {
+	out := make([]string, 0, len(s.excluded))
+	for a := range s.excluded {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *selection) neutralizeExcluded() []neutralize.Excluded {
+	var out []neutralize.Excluded
+	for _, a := range s.patterns() {
+		e := s.excluded[a]
+		out = append(out, neutralize.Excluded{Address: a, Managed: e.managed, ID: e.id})
+	}
+	return out
+}
+
+// reportedOnly drops the derived companions from the excluded report.
+func (s *selection) reportedOnly(neu *neutralize.Result) {
+	kept := neu.Excluded[:0]
+	for _, e := range neu.Excluded {
+		if x := s.excluded[e.Address]; x != nil && x.derived {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	neu.Excluded = kept
+}
+
+// resolve turns the request's includes and excludes into addresses. It
+// never guesses: no match or several matches is a typed error, for an
+// exclude the same as for an include.
+func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head promote.Repo) (*selection, error) {
+	req := r.req
+	sel := &selection{excluded: map[string]*exclusion{}}
+	var depExcluded []string
+	for a, c := range req.DependencyChoices {
+		if c == string(promote.ChoiceExclude) {
+			depExcluded = append(depExcluded, a)
 		}
 	}
-	cat, err := r.env.Exporter.Catalog(ctx, creds, withIDs)
-	if err != nil {
-		r.res.fail(ErrPreflight, "export", err.Error(), true)
-		return nil, err
+	sort.Strings(depExcluded)
+	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies)
+	var cat []exporter.Resource
+	if items+len(req.Exclude)+len(depExcluded) > 0 {
+		withIDs, allIDs := false, false
+		for _, f := range req.Flows {
+			withIDs = withIDs || f.ID != ""
+		}
+		for _, e := range req.Exclude {
+			if e.ID != "" {
+				withIDs = true
+				allIDs = allIDs || e.Type != ExcludeFlow
+			}
+			// An excluded flow referenced inside another flow's node
+			// properties carries no ID in the export; the catalog has it.
+			withIDs = withIDs || e.Type == ExcludeFlow || strings.HasPrefix(e.Address, neutralize.TypeFlow+".")
+		}
+		for _, a := range depExcluded {
+			withIDs = withIDs || strings.HasPrefix(a, neutralize.TypeFlow+".")
+		}
+		var err error
+		if allIDs {
+			cat, err = r.env.Exporter.CatalogAllIDs(ctx, creds)
+		} else {
+			cat, err = r.env.Exporter.Catalog(ctx, creds, withIDs)
+		}
+		if err != nil {
+			r.res.fail(ErrPreflight, "export", err.Error(), true)
+			return nil, err
+		}
 	}
-	var seeds []string
-	pick := func(kind string, ref FlowRef, matches []exporter.Resource) error {
+	unresolved := errors.New("unresolved")
+	fail := func(field, msg string, matches []exporter.Resource, query string) error {
+		r.res.fail(ErrPreflight, "validation", msg, false)
+		r.res.Error.Field = field
+		for _, m := range matches {
+			r.res.Error.Candidates = append(r.res.Error.Candidates, Selected{Query: query, Address: m.String(), Name: m.Name, ID: m.ID})
+		}
+		return unresolved
+	}
+	// pickOne finds exactly one resource.
+	pickOne := func(field, kind string, ref FlowRef, matches []exporter.Resource) (*exporter.Resource, error) {
 		query := ref.ID
 		if query == "" {
 			query = ref.Name
@@ -332,40 +431,152 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials) ([]str
 			if ref.ID != "" && ref.Name != "" && !strings.EqualFold(m.Name, ref.Name) {
 				r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s %s is named %q in the source, not %q", kind, ref.ID, m.Name, ref.Name))
 			}
-			r.res.Selected = append(r.res.Selected, Selected{Query: query, Address: m.String(), Name: m.Name, ID: m.ID})
-			seeds = append(seeds, m.String())
-			return nil
+			return &m, nil
 		case 0:
-			r.res.fail(ErrPreflight, "validation", fmt.Sprintf("no %s matches %q in %s", kind, query, r.req.Source), false)
-		default:
-			r.res.fail(ErrPreflight, "validation", fmt.Sprintf("%d %ss match %q in %s; select one by ID", len(matches), kind, query, r.req.Source), false)
-			for _, m := range matches {
-				r.res.Error.Candidates = append(r.res.Error.Candidates, Selected{Query: query, Address: m.String(), Name: m.Name, ID: m.ID})
-			}
+			return nil, fail(field, fmt.Sprintf("no %s matches %q in %s", kind, query, req.Source), nil, query)
 		}
-		return errors.New("unresolved")
+		return nil, fail(field, fmt.Sprintf("%d %ss match %q in %s; select one by ID", len(matches), kind, query, req.Source), matches, query)
 	}
-	for _, f := range r.req.Flows {
+	includedBy := map[string]string{} // address -> request field
+	include := func(field, kind string, ref FlowRef, matches []exporter.Resource) error {
+		m, err := pickOne(field, kind, ref, matches)
+		if err != nil {
+			return err
+		}
+		query := ref.ID
+		if query == "" {
+			query = ref.Name
+		}
+		includedBy[m.String()] = field
+		sel.seeds = append(sel.seeds, m.String())
+		if !req.Whole() {
+			r.res.Selected = append(r.res.Selected, Selected{Query: query, Address: m.String(), Name: m.Name, ID: m.ID})
+		}
+		return nil
+	}
+	for i, f := range req.Flows {
 		q := f.ID
 		if q == "" {
 			q = f.Name
 		}
-		if err := pick("flow", f, exporter.Search(cat, q)); err != nil {
+		if err := include(fmt.Sprintf("flows[%d]", i), "flow", f, exporter.Search(cat, q)); err != nil {
 			return nil, err
 		}
 	}
-	for _, a := range r.req.Applications {
-		if err := pick("application", a, exporter.SearchType(cat, neutralize.TypeApplication, a.Name)); err != nil {
+	for i, a := range req.Applications {
+		if err := include(fmt.Sprintf("applications[%d]", i), "application", a, exporter.SearchType(cat, neutralize.TypeApplication, a.Name)); err != nil {
 			return nil, err
 		}
 	}
-	for _, p := range r.req.FlowPolicies {
-		if err := pick("flow policy", p, exporter.SearchType(cat, neutralize.TypeFlowPolicy, p.Name)); err != nil {
+	for i, p := range req.FlowPolicies {
+		if err := include(fmt.Sprintf("flowPolicies[%d]", i), "flow policy", p, exporter.SearchType(cat, neutralize.TypeFlowPolicy, p.Name)); err != nil {
 			return nil, err
 		}
 	}
-	sort.Strings(seeds)
-	return seeds, nil
+	if req.Whole() {
+		// A whole-environment request has no selected item: the listed
+		// items were only resolved so that a conflicting exclude is caught.
+		sel.seeds = nil
+		if items > 0 {
+			r.res.Warnings = append(r.res.Warnings, "flows, applications and flowPolicies are ignored when scope is all; the whole environment is exported")
+		}
+	}
+	ids := map[string]string{}
+	for _, c := range cat {
+		if c.ID != "" {
+			ids[c.String()] = c.ID
+		}
+	}
+	exclude := func(addr, from string) {
+		if _, ok := sel.excluded[addr]; ok {
+			return
+		}
+		sel.excluded[addr] = &exclusion{id: ids[addr]}
+		if strings.HasPrefix(addr, neutralize.TypeFlow+".") {
+			for _, c := range exporter.Companions(addr) {
+				if _, ok := sel.excluded[c]; !ok {
+					sel.excluded[c] = &exclusion{derived: true}
+				}
+			}
+		}
+	}
+	requestExcluded := map[string]string{} // address -> exclude[i]
+	for i, e := range req.Exclude {
+		field := fmt.Sprintf("exclude[%d]", i)
+		var m *exporter.Resource
+		var err error
+		if e.Address != "" {
+			var found []exporter.Resource
+			for _, c := range cat {
+				if c.String() == e.Address {
+					found = append(found, c)
+				}
+			}
+			if len(found) == 0 {
+				return nil, fail(field+".address", fmt.Sprintf("no resource has the address %s in %s", e.Address, req.Source), nil, e.Address)
+			}
+			m = &found[0]
+		} else {
+			typ := ExcludeTypes[e.Type]
+			ref := FlowRef{ID: e.ID, Name: e.Name}
+			query := e.ID
+			if query == "" {
+				query = e.Name
+			}
+			if m, err = pickOne(field, kindName(e.Type), ref, exporter.SearchType(cat, typ, query)); err != nil {
+				return nil, err
+			}
+		}
+		requestExcluded[m.String()] = field
+		exclude(m.String(), field)
+	}
+	// An include that is also excluded is a conflict, named on both sides.
+	for _, s := range sel.seeds {
+		if f, ok := requestExcluded[s]; ok {
+			return nil, fail(f, fmt.Sprintf("%s resolves to %s, which %s also includes; a resource cannot be both included and excluded", f, s, includedBy[s]), nil, s)
+		}
+	}
+	// Excluding a dependency: the selected item itself cannot be one.
+	selected := map[string]bool{}
+	for _, s := range sel.seeds {
+		selected[s] = true
+		if strings.HasPrefix(s, neutralize.TypeFlow+".") {
+			for _, c := range exporter.Companions(s) {
+				selected[c] = true
+				includedBy[c] = includedBy[s]
+			}
+		}
+	}
+	for _, a := range depExcluded {
+		if selected[a] {
+			return nil, fail("dependencyChoices."+a, fmt.Sprintf("dependencyChoices.%s is exclude, but %s is the selected item (%s) itself; it cannot be excluded", a, a, includedBy[a]), nil, a)
+		}
+		exclude(a, "dependencyChoices."+a)
+	}
+	// Which of them Git already manages: references to those keep pointing
+	// at the Git address.
+	if len(sel.excluded) > 0 {
+		managed, err := promote.ManagedAddresses(head, r.layout)
+		if err != nil {
+			r.res.fail(ErrPreflight, "internal", err.Error(), false)
+			return nil, err
+		}
+		for a, e := range sel.excluded {
+			e.managed = managed[a]
+		}
+	}
+	sort.Strings(sel.seeds)
+	return sel, nil
+}
+
+func kindName(t string) string {
+	switch t {
+	case ExcludeFlowPolicy:
+		return "flow policy"
+	case ExcludeConnection:
+		return "connection"
+	}
+	return t
 }
 
 func (r *runner) secrets(m *promote.MergeResult) {
@@ -394,6 +605,9 @@ func (r *runner) secrets(m *promote.MergeResult) {
 func (r *runner) commitMessage() string {
 	req := r.req
 	msg := strings.TrimSpace(req.CommitMessage)
+	if msg == "" && req.Whole() {
+		msg = "PingOne: whole " + req.Source + " environment"
+	}
 	if msg == "" {
 		var names []string
 		for _, s := range r.res.Selected {
@@ -421,14 +635,43 @@ func (r *runner) footer() string {
 	return "Requested-by: " + by + "\nRequest-id: " + r.req.RequestID
 }
 
+// maxDescriptionRows keeps a whole-environment merge request description far
+// below GitLab's size limit.
+const maxDescriptionRows = 300
+
 func (r *runner) description() string {
 	var b strings.Builder
 	if d := strings.TrimSpace(r.req.Description); d != "" {
 		b.WriteString(d + "\n\n")
 	}
-	b.WriteString("Source environment: `" + r.req.Source + "`\n\n| Address | Role | Change |\n| --- | --- | --- |\n")
+	b.WriteString("Source environment: `" + r.req.Source + "`\n\n")
+	if r.req.Whole() {
+		b.WriteString("Scope: the whole environment. Nothing is deleted; a resource that differs from Git keeps its Git version unless it is listed as updated.\n\n")
+		b.WriteString("| Type | Total | Added | Updated | Kept (differs) | Unchanged | Moved | Excluded |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+		types := make([]string, 0, len(r.res.Summary.ByType))
+		for t := range r.res.Summary.ByType {
+			types = append(types, t)
+		}
+		sort.Strings(types)
+		for _, t := range types {
+			c := r.res.Summary.ByType[t]
+			fmt.Fprintf(&b, "| `%s` | %d | %d | %d | %d | %d | %d | %d |\n", t, c.Total, c.Added, c.Updated, c.KeptDiffers, c.Unchanged, c.Moved, c.Excluded)
+		}
+		b.WriteString("\nChanges (resources identical to Git are not listed):\n\n")
+	}
+	b.WriteString("| Address | Role | Change |\n| --- | --- | --- |\n")
+	rows := 0
 	for _, c := range r.res.Changes {
+		if r.req.Whole() && c.Action == string(promote.ActionUnchanged) {
+			continue
+		}
+		if rows++; rows > maxDescriptionRows {
+			continue
+		}
 		b.WriteString("| `" + c.Address + "` | " + c.Role + " | " + c.Action + " |\n")
+	}
+	if rows > maxDescriptionRows {
+		fmt.Fprintf(&b, "\n... and %d more; the full list is in result.json of the job.\n", rows-maxDescriptionRows)
 	}
 	var newSecrets []string
 	for _, s := range r.res.RequiredSecrets {
@@ -476,6 +719,13 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 	title := req.Title
 	if title == "" {
 		title = strings.SplitN(r.commitMessage(), "\n", 2)[0]
+	}
+	if req.Whole() && !strings.Contains(title, WholeEnvironmentTitle) {
+		prefix := WholeEnvironmentTitle + " "
+		if room := 255 - len(prefix); len(title) > room {
+			title = strings.TrimRight(strings.ToValidUTF8(title[:room], ""), " ")
+		}
+		title = prefix + title
 	}
 	labels := r.env.MRLabels
 	if labels == nil {

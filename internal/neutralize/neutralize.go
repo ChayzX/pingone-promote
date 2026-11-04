@@ -67,7 +67,40 @@ type Options struct {
 	// SecretNames maps terraformer secret variable names onto names
 	// declared in customer_secrets.yml.
 	SecretNames map[string]string
+	// Excluded lists resources left out of the export on purpose
+	// (--exclude-resources). References to them never stay resource
+	// references to a block that is not in the output.
+	Excluded []Excluded
 }
+
+// Excluded is one resource left out of the export on purpose.
+type Excluded struct {
+	Address string
+	// Managed is true when the resource is already managed in Git:
+	// references to it keep pointing at its address (like keeping the Git
+	// version). Otherwise they become a per-environment ID variable.
+	Managed bool
+	// ID is the source environment's ID, when known. It values the ID
+	// variable when terraformer did not (an embedded reference carries no
+	// default).
+	ID string
+}
+
+// ExcludedRef reports what became of an excluded resource.
+type ExcludedRef struct {
+	Address string `json:"address"`
+	Managed bool   `json:"managed,omitempty"`
+	// Variable is the per-environment ID variable that replaced the
+	// references to it ("" when nothing references it, or it is managed).
+	Variable string `json:"variable,omitempty"`
+	// Referenced is true when an exported block refers to it.
+	Referenced bool `json:"referenced,omitempty"`
+}
+
+// ExcludedVariableName is the name terraformer v0.6.0 gives the variable
+// that replaces a reference to an excluded resource
+// (core.resolveOneReference: SanitizeVariableName(<type>_<label>_<field>)).
+func ExcludedVariableName(address string) string { return VariableName(address + "_id") }
 
 // Kind classifies a variable of the shared definitions.
 type Kind string
@@ -76,7 +109,15 @@ const (
 	KindEnvironmentID Kind = "environment_id"
 	KindEnvLocal      Kind = "env_local"
 	KindSecret        Kind = "secret"
+	// KindExcludedRef is the ID of a resource left out of the export. It is
+	// environment-local like KindEnvLocal: every overlay sets the existing
+	// resource's ID in that environment.
+	KindExcludedRef Kind = "excluded_ref"
 )
+
+// PerEnvironment reports whether every environment overlay sets the
+// variable.
+func (v *Variable) PerEnvironment() bool { return v.Kind == KindEnvLocal || v.Kind == KindExcludedRef }
 
 // Variable is a variable of the shared definitions, declared in the child
 // module and at the root.
@@ -87,6 +128,9 @@ type Variable struct {
 	Kind        Kind   `json:"kind"`
 	// Origin is terraformer's name before any renaming.
 	Origin string `json:"origin,omitempty"`
+	// Excluded is the address of the excluded resource whose ID this
+	// variable carries (KindExcludedRef).
+	Excluded string `json:"excluded,omitempty"`
 }
 
 // Block is one neutralized resource block.
@@ -121,6 +165,8 @@ type Result struct {
 	// without the "<environment_id>/" prefix.
 	SourceIDs map[string]string `json:"sourceIds"`
 	Renames   []Rename          `json:"renames,omitempty"`
+	// Excluded reports each excluded resource, sorted by address.
+	Excluded []ExcludedRef `json:"excluded,omitempty"`
 	// GlobalVariableRefs lists {{global.variables.x}} names per flow.
 	GlobalVariableRefs map[string][]string `json:"globalVariableRefs,omitempty"`
 	// MissingDependencies are addresses referenced (by a reference or a
@@ -186,9 +232,10 @@ func (e *CollisionError) Error() string {
 }
 
 var (
-	uuidRE       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	secretNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,127}$`)
-	globalVarRE  = regexp.MustCompile(`\{\{\s*global\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
+	uuidRE            = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	secretNameRE      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,127}$`)
+	excludedAddressRE = regexp.MustCompile(`^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$`)
+	globalVarRE       = regexp.MustCompile(`\{\{\s*global\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
 )
 
 type rawBlock struct {
@@ -224,6 +271,12 @@ type state struct {
 	rename  map[string]string // terraformer var -> final name (global)
 	lifted  map[*rawBlock][]lift
 	noValue map[string]bool
+	// excl is Options.Excluded by address; exclVar maps terraformer's
+	// variable name for an excluded reference to the address; mapBack maps
+	// such a variable of a Git-managed resource to its address.
+	excl    map[string]Excluded
+	exclVar map[string]string
+	mapBack map[string]string
 }
 
 type lift struct {
@@ -245,7 +298,15 @@ func Neutralize(in *Input, opts Options) (*Result, error) {
 		SourceIDs:          map[string]string{},
 		GlobalVariableRefs: map[string][]string{},
 	}, relabel: map[*rawBlock]string{}, varRenameBy: map[*rawBlock]map[string]string{},
-		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{}}
+		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{},
+		excl: map[string]Excluded{}, exclVar: map[string]string{}, mapBack: map[string]string{}}
+	for _, e := range opts.Excluded {
+		if !excludedAddressRE.MatchString(e.Address) {
+			return nil, fmt.Errorf("neutralize: excluded %q is not a resource address", e.Address)
+		}
+		s.excl[e.Address] = e
+		s.exclVar[ExcludedVariableName(e.Address)] = e.Address
+	}
 	s.res.Variables[EnvironmentIDVariable] = &Variable{Name: EnvironmentIDVariable, Type: "string",
 		Description: "The PingOne environment ID to configure DaVinci resources in", Kind: KindEnvironmentID}
 	steps := []func() error{s.readDecls, s.readValues, s.readImports, s.readBlocks, s.resolveCollisions, s.classifyVariables, s.liftAttributes, s.rewrite, s.scan}
@@ -620,6 +681,16 @@ func (s *state) classifyVariables() error {
 		if origin == EnvironmentIDVariable {
 			continue
 		}
+		if addr, ok := s.exclVar[origin]; ok {
+			// terraformer turned a reference to an excluded resource into
+			// an ID variable.
+			if s.excl[addr].Managed {
+				s.mapBack[origin] = addr
+				continue
+			}
+			s.excludedRef(addr)
+			continue
+		}
 		d, ok := s.decls[origin]
 		if !ok {
 			return fmt.Errorf("neutralize: variable %s is used but not declared in the export", origin)
@@ -675,6 +746,30 @@ func (s *state) classifyVariables() error {
 		}
 	}
 	return nil
+}
+
+// excludedRef makes the per-environment ID variable of an excluded resource
+// that is not in Git, valued with its source ID (terraformer's value when it
+// wrote one, else the catalog's).
+func (s *state) excludedRef(addr string) *Variable {
+	name := ExcludedVariableName(addr)
+	if v, ok := s.res.Variables[name]; ok {
+		return v
+	}
+	id := ""
+	if v, ok := s.values[name]; ok && v.Type() == cty.String {
+		id = v.AsString()
+	}
+	if id == "" {
+		id = s.excl[addr].ID
+	}
+	if id != "" {
+		s.res.SourceValues[name] = cty.StringVal(id)
+	}
+	v := &Variable{Name: name, Type: "string", Kind: KindExcludedRef, Origin: name, Excluded: addr,
+		Description: "ID of the existing " + addr + " in this environment (excluded from the export)"}
+	s.res.Variables[name] = v
+	return v
 }
 
 // keep makes a variable environment-local and records its source value.

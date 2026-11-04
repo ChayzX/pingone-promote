@@ -5,3 +5,7 @@ This preview is the v2 tool: a DaVinci request app, the `pingone-promote` comman
 The Homebrew package installs the single `pingone-promote` binary with the subcommands `check --root`, `export` and `request`. It does not start a server or hold PingOne credentials. The earlier local web UI, the native Configuration Management API workflow (`pingone-runner`) and the Terraform-module translation path are retired; see `docs/adr/` and `docs/archive/`.
 
 This is an installation preview, not a production-readiness declaration. See `docs/acceptance/live-acceptance.md` for the live acceptance status and `docs/gitlab-ci-integration.md` for the CI contract.
+
+## Whole environment and exclusions
+
+A request can bring the whole source environment into Git (`scope: "all"` with `confirmAll: true`; the merge stays additive, nothing is deleted, and what differs from Git keeps its Git version unless you choose Update) and can leave resources out (`exclude`, and the dependency choice `exclude`). An excluded resource that Git does not manage is referenced by a per-environment ID variable (`<type>_<label>_id`) that every environment file must set. The DaVinci app has a Whole environment choice and an Exclude items step, with two new optional settings (`ppPathConnections`, `ppPathVariables`). See ADR 0015, ADR 0017 and `docs/gitlab-ci-integration.md`.

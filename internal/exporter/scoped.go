@@ -29,6 +29,18 @@ type Resource struct {
 // a second, flows-only export with --include-imports supplies flow IDs and
 // exact names.
 func (r *Runner) Catalog(ctx context.Context, creds Credentials, withIDs bool) ([]Resource, error) {
+	return r.catalog(ctx, creds, withIDs, false)
+}
+
+// CatalogAllIDs is Catalog with IDs and exact names for every resource type
+// (one whole-environment export with import blocks, values skipped). The
+// request job needs it only to resolve an exclusion by ID for a type other
+// than a flow.
+func (r *Runner) CatalogAllIDs(ctx context.Context, creds Credentials) ([]Resource, error) {
+	return r.catalog(ctx, creds, true, true)
+}
+
+func (r *Runner) catalog(ctx context.Context, creds Credentials, withIDs, allTypes bool) ([]Resource, error) {
 	list, err := r.ListResources(ctx, creds)
 	if err != nil {
 		return nil, err
@@ -41,7 +53,11 @@ func (r *Runner) Catalog(ctx context.Context, creds Credentials, withIDs bool) (
 	if !withIDs {
 		return out, nil
 	}
-	exp, err := r.Export(ctx, creds, ExportOptions{Include: []string{neutralize.TypeFlow + ".*"}, Imports: true, SkipValues: true})
+	opts := ExportOptions{Include: []string{neutralize.TypeFlow + ".*"}, Imports: true, SkipValues: true}
+	if allTypes {
+		opts = ExportOptions{All: true, Imports: true, SkipValues: true}
+	}
+	exp, err := r.Export(ctx, creds, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +200,29 @@ func Companions(flowAddr string) []string {
 	return []string{neutralize.TypeFlowDeploy + "." + label, neutralize.TypeFlowEnable + "." + label}
 }
 
+// matchesAny reports whether an address matches a terraformer exclude
+// pattern (case-insensitive glob, as internal/filter does).
+func matchesAny(patterns []string, addr string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(strings.ToLower(p), strings.ToLower(addr)); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// WholeExport exports every supported resource of the source environment
+// (no --include-resources), minus the excluded patterns. The flow
+// companions (deploy, enable) are ordinary resources of the full list, so
+// no second pass is needed.
+func (r *Runner) WholeExport(ctx context.Context, creds Credentials, exclude []string) (*Export, error) {
+	return r.Export(ctx, creds, ExportOptions{All: true, Exclude: exclude, Imports: true})
+}
+
 // ScopedExport exports the seed resources and their upstream dependencies.
+// Resources matching exclude are never exported, even when a seed refers to
+// them: terraformer's explicit excludes override upstream expansion, and
+// the references to them become variables.
 //
 // terraformer's --include-upstream follows references only upstream, so
 // it never adds a flow's flow_deploy / flow_enable (they reference the
@@ -192,7 +230,7 @@ func Companions(flowAddr string) []string {
 // {{global.variables.x}}. A second pass therefore adds the companions of
 // every flow in the closure and the referenced global variables. Flow
 // policies and applications are included only when they are seeds.
-func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds []string) (*Export, error) {
+func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds, exclude []string) (*Export, error) {
 	if len(seeds) == 0 {
 		return nil, errors.New("exporter: nothing selected")
 	}
@@ -201,17 +239,22 @@ func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds []st
 		if !addressRE.MatchString(s) {
 			return nil, errors.New("exporter: seeds must be resource addresses")
 		}
+		if matchesAny(exclude, s) {
+			return nil, errors.New("exporter: " + s + " is both selected and excluded")
+		}
 		include[s] = true
 		if strings.HasPrefix(s, neutralize.TypeFlow+".") {
 			for _, c := range Companions(s) {
-				include[c] = true
+				if !matchesAny(exclude, c) {
+					include[c] = true
+				}
 			}
 		}
 	}
 	var exp *Export
 	for pass := 0; pass < 3; pass++ {
 		var err error
-		exp, err = r.Export(ctx, creds, ExportOptions{Include: sortedSet(include), IncludeUpstream: true, Imports: true})
+		exp, err = r.Export(ctx, creds, ExportOptions{Include: sortedSet(include), Exclude: exclude, IncludeUpstream: true, Imports: true})
 		if err != nil {
 			return nil, err
 		}
@@ -225,7 +268,7 @@ func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds []st
 		}
 		added := false
 		want := func(a string) {
-			if !include[a] && !got[a] {
+			if !include[a] && !got[a] && !matchesAny(exclude, a) {
 				include[a] = true
 				added = true
 			}

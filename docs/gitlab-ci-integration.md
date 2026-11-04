@@ -157,10 +157,12 @@ Unknown fields fail. Maximum 256 KiB.
   "requestId": "20261103-120000-abc123",
   "requestedBy": "jdoe",
   "source": "development",
+  "scope": "selected",
   "flows": [{ "id": "f0000000000000000000000000000002", "name": "Flow B" }],
   "applications": [{ "name": "Web" }],
   "flowPolicies": [{ "name": "Web Policy" }],
-  "dependencyChoices": { "pingone_davinci_connector_instance.pingcli__PingOne": "update" },
+  "exclude": [{ "type": "connection", "name": "Legacy SMTP" }, { "address": "pingone_davinci_flow.pingcli__Old-0020-Flow" }],
+  "dependencyChoices": { "pingone_davinci_connector_instance.pingcli__PingOne": "update", "pingone_davinci_flow.pingcli__Shared-0020-Login": "exclude" },
   "envValues": {
     "testing": {
       "pingone_environment_id": "22222222-2222-4222-8222-222222222222",
@@ -187,9 +189,12 @@ Unknown fields fail. Maximum 256 KiB.
 | `requestId` | yes | `^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$` (DaVinci uses `YYYYMMDD-HHMMSS-xxxxxx`); the branch must be `pingone-promote/<requestId>` |
 | `requestedBy` | no | a username, at most 128 characters, one line; written as `Requested-by:` |
 | `source` | yes | environment name; must be in `PINGONE_PROMOTE_SOURCES` (when set) and not in `PINGONE_PROMOTE_ROLLOUT` |
-| `flows` | one of flows, applications, flowPolicies | up to 20 `{id, name}`; `id` (32 hex or UUID) selects when present, `name` is then only checked; a name alone matches an exact ID, an exact name, or a unique case-insensitive substring; several matches fail with `candidates` |
+| `scope` | no | `selected` (default) or `all`. `all` exports every supported resource of the source environment (no `--include-resources`; the flow deploy and enable resources are part of the full list) and requires `confirmAll: true`; without it validation fails (`invalid_field`, field `confirmAll`). `confirmAll` is refused with `selected`. The merge rules do not change: additive only, nothing is ever deleted, new resources are added, and because a whole-environment request has no selected item, every resource that differs from Git **keeps its Git version** unless `dependencyChoices` says `update` (role `environment` in `changes`) |
+| `confirmAll` | with `scope: all` | `true` |
+| `flows` | one of flows, applications, flowPolicies (not needed with `scope: all`) | up to 20 `{id, name}` (the cap and the minimum do not apply with `scope: all`, where listed items are only resolved to catch an include/exclude conflict and are otherwise ignored, with a warning); `id` (32 hex or UUID) selects when present, `name` is then only checked; a name alone matches an exact ID, an exact name, or a unique case-insensitive substring; several matches fail with `candidates` |
 | `applications`, `flowPolicies` | no | up to 20 `{name}` each; included only when listed |
-| `dependencyChoices` | no | address -> `update` or `keep`; default: selected flows update, new dependencies are added, differing dependencies are kept |
+| `exclude` | no | up to 200 entries, in both scopes: `{type, id?, name?}` with `type` one of `flow`, `application`, `flowPolicy`, `connection`, `variable`, or `{address}` (a full terraform address, `<type>.<label>`). Resolved like an include (exact ID, exact name, unique case-insensitive substring); several matches fail as `preflight` with `candidates`, none as `preflight`. Passed to terraformer as `--exclude-resources` (a flow also excludes its deploy and enable), which overrides upstream expansion. An excluded resource is never exported or written and its Git blocks are untouched. Excluding something the request also includes is a validation error naming both entries (`exclude[i]` and `flows[j]`), checked on type and ID or name when the request is parsed and on the resolved address in the job |
+| `dependencyChoices` | no | address -> `update`, `keep` or `exclude`; default: selected flows update, new dependencies are added, differing dependencies are kept. `exclude` leaves the dependency out like an `exclude` entry: if Git already manages it, references keep pointing at the Git address and it behaves like `keep` (reason `excluded; Git-managed copy kept`); if Git does not, references become a root variable `<type>_<label>_id` (see below). Excluding the selected item itself is a `preflight` error |
 | `envValues` | no | environment -> root variable -> JSON value; environments must be the source or in the rollout; `import_ids` and secret-looking values are refused |
 | `secretMappings` | no | terraformer secret variable (`requiredSecrets[].key`) -> declared `customer_secrets.yml` variable name |
 | `connectorEnvLocal` | no | connector label -> property names kept as environment values |
@@ -213,6 +218,7 @@ Unknown fields fail. Maximum 256 KiB.
   "dryRun": false,
   "mode": "mr",
   "source": "development",
+  "scope": "selected",
   "branch": "pingone-promote/20261103-120000-abc123",
   "commitId": "<sha>",
   "mrUrl": "https://gitlab.example/<group>/<project>/-/merge_requests/7",
@@ -224,7 +230,10 @@ Unknown fields fail. Maximum 256 KiB.
     { "address": "pingone_davinci_flow.pingcli__Flow-0020-B", "role": "selected", "action": "updated", "status": "changed-in-source", "file": "definitions/pingone_davinci_flow.tf" },
     { "address": "pingone_davinci_connector_instance.pingcli__PingOne", "role": "dependency", "action": "kept_differs", "status": "changed-in-source", "file": "definitions/pingone_davinci_connector_instance.tf", "reason": "differs from Git; kept because it is a shared dependency (choose update to use the source version)" }
   ],
-  "summary": { "added": 3, "updated": 1, "kept_differs": 1, "unchanged": 6, "moved": 0 },
+  "summary": {
+    "added": 3, "updated": 1, "kept_differs": 1, "unchanged": 6, "moved": 0, "excluded": 1,
+    "byType": { "pingone_davinci_flow": { "total": 5, "added": 1, "updated": 1, "kept_differs": 0, "unchanged": 3, "moved": 0, "excluded": 0 } }
+  },
   "files": [{ "path": "definitions/pingone_davinci_flow.tf", "action": "update" }, { "path": ".pingone-promote/request.json", "action": "delete" }],
   "requiredSecrets": [{ "key": "davinci_variable_apiKey_value", "varName": "davinci_variable_apiKey_value", "field": "davinci_variable_apiKey_value", "declared": false, "vault": "apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/davinci_variable_apiKey_value@secret" }],
   "blockers": { "testing": [{ "code": "missing_value", "var": "davinci_variable_companyName_value", "message": "testing.tfvars must set davinci_variable_companyName_value" }] },
@@ -239,17 +248,39 @@ Unknown fields fail. Maximum 256 KiB.
 | --- | --- |
 | `status` | `previewed` (dryRun), `submitted`, `no_changes` (only the request file was deleted, no MR), `already_submitted` (this `requestId` was committed before; the existing commit and MR are reported), `blocked`, `failed` |
 | `mrUrl`, `mrIid`, `branchUrl`, `diffUrl` | links; `diffUrl` is the commit when one was made, otherwise the compare view of the branch |
-| `changes[]` | one per address in the export. `role`: `selected` or `dependency`. `action`: `added`, `updated`, `kept_differs`, `unchanged`, `moved` (relabelled; `from` is the old address). `status`: `new`, `changed-in-source`, `matches`, `git-newer`, `changed-in-both` |
-| `summary` | counts per action |
+| `scope` | `selected` or `all` |
+| `changes[]` | one per address in the export, always complete (also with `scope: all`), plus one per excluded resource. `role`: `selected`, `dependency`, `environment` (a resource of a whole-environment export) or `excluded` (an excluded resource nothing exported refers to). `action`: `added`, `updated`, `kept_differs`, `unchanged`, `moved` (relabelled; `from` is the old address), `excluded`. `status`: `new`, `changed-in-source`, `matches`, `git-newer`, `changed-in-both`, `not-compared` (excluded). An excluded resource's `reason` is ``excluded; referenced by ID variable `<var>` ``, `excluded; Git-managed copy kept` or `excluded; not exported`; a flow's deploy and enable are not listed on their own. When references became an ID variable, `var` names it and `sourceId` is the ID in the source environment (an ID, never a secret), so a screen can prefill the source value |
+| `summary` | counts per action, and `byType`: per Terraform resource type, `total` and the same counts. `byType` covers the whole change list, so a screen can lead with it when `changes` is long |
 | `files[]` | `create`, `update` or `delete` per path |
 | `requiredSecrets[]` | secrets the written blocks need. `key`: terraformer's name, the key of `secretMappings`. `varName`: the Terraform variable after mapping (`TF_VAR_<varName>`). `field`: the Vault field. `declared: false` means this request adds the `customer_secrets.yml` entry and the Vault value must exist for every environment |
 | `blockers` | environment -> list of `{code, var, address, message}`; `_request` holds blockers for no single environment. Codes: `missing_value`, `missing_overlay`, `undeclared_key`, `secret_in_overlay`, `invalid_import_key`, `changed_in_both`, `customer_secrets`, `secret_finding`, `missing_dependency`, `auto_tfvars` |
-| `diff` | unified diff of the change, at most 1 MiB (`diffTruncated`) |
+| `diff` | unified diff of the change, cut at a line boundary at 1 MiB (512 KiB for `scope: all`, so `result.json`, which also lists every change, stays about 1.5 MiB at the most for a large environment); `diffTruncated` says so. `diffUrl` is the complete diff |
 | `error` | `null`, or `{code, type, message, retryable, field?, candidates?}`. `code`: `conflict`, `preflight`, `partial`, `blocked`. `type`: `validation`, `export`, `merge`, `gitlab`, `internal`. `candidates` lists matches for an ambiguous name |
 
 The final log line is `PINGONE_PROMOTE_RESULT` followed by
-`{resultVersion, requestId, status, mrUrl, branchUrl, commitId, summary,
-blockedEnvs, error}`.
+`{resultVersion, requestId, status, mrUrl, branchUrl, commitId, scope, summary,
+blockedEnvs, error}` (`summary` without `byType`).
+
+The new fields (`scope`, `summary.excluded`, `summary.byType`, the `environment`
+and `excluded` roles, the `excluded` action) are additive, so `resultVersion`
+stays 1; a client that does not know the `excluded` action should list it
+as is.
+
+### Excluded dependencies that are not in Git
+
+terraformer v0.6.0 renders an attribute reference to a resource it was told
+to exclude as a variable named `<type>_<label>_id` (`core.resolveOneReference`;
+`pingone_davinci_connector_instance_pingcli__PingOne_id`), declares it in
+the child module, passes it from the root and writes the ID with
+`--include-values`. The job turns that into a per-environment root variable:
+declared in `variables.tf` (and the module), set in the source environment's
+overlay from the export, and required in every other overlay. A missing value
+is a blocker `missing_value` with `var` and `address` set and a message that
+names the dependency; `envValues` supplies the values (the existing ID of
+that resource in each environment; IDs are not secrets). An embedded
+reference (a subflow inside node properties) is left as a resource
+reference by v0.6.0, which would point at a block that is not there; the job
+rewrites it to the same variable and takes the source ID from the catalog.
 
 Exit status: 0 for `previewed`, `submitted`, `no_changes`,
 `already_submitted`; 1 for `blocked` and `failed`.

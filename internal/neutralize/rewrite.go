@@ -195,7 +195,28 @@ func (s *state) rewrite() error {
 			delete(s.res.SourceValues, name)
 		}
 	}
+	s.reportExcluded()
 	return nil
+}
+
+// reportExcluded records what became of each excluded resource.
+func (s *state) reportExcluded() {
+	referenced := map[string]bool{}
+	for _, b := range s.res.Blocks {
+		for _, r := range b.Refs {
+			referenced[r] = true
+		}
+	}
+	for _, e := range s.opts.Excluded {
+		ref := ExcludedRef{Address: e.Address, Managed: e.Managed}
+		if e.Managed {
+			ref.Referenced = referenced[e.Address]
+		} else if v, ok := s.res.Variables[ExcludedVariableName(e.Address)]; ok {
+			ref.Variable, ref.Referenced = v.Name, true
+		}
+		s.res.Excluded = append(s.res.Excluded, ref)
+	}
+	sort.Slice(s.res.Excluded, func(i, j int) bool { return s.res.Excluded[i].Address < s.res.Excluded[j].Address })
 }
 
 func (s *state) rewriteBlock(rb *rawBlock) ([]byte, error) {
@@ -239,7 +260,11 @@ func (s *state) rewriteBlock(rb *rawBlock) ([]byte, error) {
 				continue
 			}
 			final := s.finalVarName(rb, name)
-			if val, ok := s.inline[final]; ok {
+			if addr, ok := s.mapBack[name]; ok {
+				// The variable stood for a Git-managed excluded resource:
+				// point at the managed resource again.
+				edits = append(edits, hclblocks.Edit{Start: st, End: vEnd, Text: []byte(addr + ".id")})
+			} else if val, ok := s.inline[final]; ok {
 				if i+3 < len(toks) && (toks[i+3].Type == hclsyntax.TokenDot || toks[i+3].Type == hclsyntax.TokenOBrack) {
 					return nil, fmt.Errorf("var.%s is indexed and cannot be inlined", name)
 				}
@@ -264,6 +289,20 @@ func (s *state) rewriteBlock(rb *rawBlock) ([]byte, error) {
 			i += 2
 		case isTraversal(toks, i, "") && strings.HasPrefix(string(t.Bytes), "pingone_"):
 			addr := string(t.Bytes) + "." + string(toks[i+2].Bytes)
+			if ex, ok := s.excl[addr]; ok && !ex.Managed {
+				// A reference terraformer left as a resource reference
+				// (an embedded one, such as a subflow inside node
+				// properties): v0.6.0 does not look at the excluded set
+				// there. The block is not in the export, so use the ID
+				// variable.
+				if !(i+4 < len(toks) && toks[i+3].Type == hclsyntax.TokenDot && toks[i+4].Type == hclsyntax.TokenIdent && string(toks[i+4].Bytes) == "id") {
+					return nil, fmt.Errorf("%s refers to the excluded %s other than by .id; only an ID reference can become a variable", rb.addr(), addr)
+				}
+				v := s.excludedRef(addr)
+				edits = append(edits, hclblocks.Edit{Start: st, End: toks[i+4].Range.End.Byte, Text: []byte("var." + v.Name)})
+				i += 4
+				continue
+			}
 			to := s.refRename(rb, addr)
 			if to == "" {
 				return nil, &CollisionError{What: "label", Name: addr, Addresses: []string{rb.addr()}, Hint: "the reference matches several renamed resources"}
