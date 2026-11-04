@@ -183,7 +183,7 @@ lib.checkSettings = (raw) => {
   };
   cfg.pathApplications = optPath('pathApplications', ['envId']);
   cfg.pathFlowPolicies = cfg.pathApplications ? optPath('pathFlowPolicies', ['envId', 'appId']) : '';
-  // Optional, like the two above: the connection and variable lists of the "Exclude items" step (DESIGN.md section 12, assumption 15).
+  // Optional, like the two above: the connection and variable lists of the "Exclude items" step (DESIGN.md section 12, assumption 17).
   cfg.pathConnections = optPath('pathConnections', ['envId']);
   cfg.pathVariables = optPath('pathVariables', ['envId']);
   cfg.flowsListQuery = need('flowsListQuery', /^[A-Za-z0-9_.,=&%-]{0,200}$/, 'must be a plain query string such as attributes=id,name', '');
