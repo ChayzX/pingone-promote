@@ -14,7 +14,16 @@ contract.REQUEST_FILE = '.pingone-promote/request.json';
 contract.REQUEST_JOB = 'pingone-promote:request';
 contract.RESULT_ARTIFACT = 'result.json';
 contract.MODES = ['mr', 'branch'];
-contract.CHOICES = ['update', 'keep'];
+contract.CHOICES = ['update', 'keep', 'exclude'];
+contract.SCOPES = ['selected', 'all'];
+// What the exclude picker can find: the request's exclude type, the PingOne list it is found in, and the words on screen.
+contract.EXCLUDE_KINDS = {
+  flow: { label: 'flow', plural: 'flows', list: 'flows' },
+  application: { label: 'application', plural: 'applications', list: 'applications' },
+  flowPolicy: { label: 'flow policy', plural: 'flow policies', list: 'policies' },
+  connection: { label: 'connection', plural: 'connections', list: 'connections' },
+  variable: { label: 'variable', plural: 'variables', list: 'variables' }
+};
 
 // ---- validation rules, as request.go applies them ---------------------------------------
 contract.RE = {
@@ -25,9 +34,10 @@ contract.RE = {
   address: /^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$/,
   davinciId: /^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
   sha: /^[0-9a-f]{7,64}$/,
-  label: /^[A-Za-z0-9_\-]{1,512}$/
+  label: /^[A-Za-z0-9_\-]{1,512}$/,
+  excludeId: /^[0-9A-Za-z][0-9A-Za-z_\-]{0,63}(\/[0-9A-Za-z][0-9A-Za-z_\-]{0,63})?$/
 };
-contract.LIMITS = { refs: 20, refName: 200, requestedBy: 128, title: 255, commitMessage: 2000, description: 65536, size: 262144 };
+contract.LIMITS = { refs: 20, excludes: 200, refName: 200, requestedBy: 128, title: 255, commitMessage: 2000, description: 65536, size: 262144 };
 
 // requestId: sortable, branch-safe, no tenant data. rnd is a base-36 string.
 contract.newRequestId = (t, rnd) => {
@@ -41,20 +51,25 @@ contract.isRequestBranch = (b) => {
 };
 
 // ---- request.json -------------------------------------------------------------------
-// d: { requestId, requestedBy, source, flow:{id,name}, options:{deps, env, secrets, inline, mode, title,
-//      description, commitMessage}, dryRun }. Optional fields are sent only when they hold something
+// d: { requestId, requestedBy, source, scope, confirmAll, flow:{id,name} (none for scope all), options:{deps, env, secrets, inline,
+//      exclude, mode, title, description, commitMessage}, dryRun }. Optional fields are sent only when they hold something
 // (the job refuses unknown fields; empty optional ones are simply left out).
+// One exclude entry: a flow by ID and name when the ID is a DaVinci ID, everything else by name (the job finds them like an include).
+contract.excludeEntry = (x) => (x.type === 'flow' && x.id && contract.RE.davinciId.test(x.id) ? { type: x.type, id: x.id, name: x.name } : { type: x.type, name: x.name });
 contract.buildRequest = (d) => {
   const o = d.options;
-  const flow = contract.RE.davinciId.test(d.flow.id) ? { id: d.flow.id, name: d.flow.name } : { name: d.flow.name };
-  const r = { requestVersion: contract.REQUEST_VERSION, requestId: d.requestId, requestedBy: d.requestedBy, source: d.source, flows: [flow] };
+  const whole = d.scope === 'all';
+  const flows = whole || !d.flow ? [] : [contract.RE.davinciId.test(d.flow.id) ? { id: d.flow.id, name: d.flow.name } : { name: d.flow.name }];
+  const r = { requestVersion: contract.REQUEST_VERSION, requestId: d.requestId, requestedBy: d.requestedBy, source: d.source, flows: flows };
   const put = (k, v) => { if (v && (Array.isArray(v) ? v.length : Object.keys(v).length)) { r[k] = v; } };
+  if (whole) { r.scope = 'all'; r.confirmAll = d.confirmAll === true; }
   put('dependencyChoices', o.deps);
   put('envValues', o.env);
   put('secretMappings', o.secrets);
   // Applications and flow policies are selected by name only (the job refuses an id for them).
   put('applications', (o.applications || []).map((x) => ({ name: x.name })));
   put('flowPolicies', (o.flowPolicies || []).map((x) => ({ name: x.name })));
+  put('exclude', (o.exclude || []).map(contract.excludeEntry));
   put('inlineValues', (o.inline || []).slice().sort());
   r.mode = o.mode;
   r.branchName = contract.branchFor(d.requestId);
@@ -84,8 +99,10 @@ contract.withoutInlined = (env, inline) => {
 };
 // The same checks the job makes, so a person never waits for a pipeline to
 // learn about avoidable input. Returns [{field, message}] using the job's
-// field paths. cfg: {rollout:[...]} from the app settings.
-contract.validateRequest = (r, cfg) => {
+// field paths. cfg: {rollout:[...]} from the app settings. known: {selected:[addresses]} from the last preview, so that
+// excluding the selected item itself is refused here too.
+contract.companions = (a) => (/^pingone_davinci_flow\./.test(a) ? ['pingone_davinci_flow_deploy.', 'pingone_davinci_flow_enable.'].map((t) => t + a.slice('pingone_davinci_flow.'.length)) : []);
+contract.validateRequest = (r, cfg, known) => {
   const out = [];
   const bad = (field, message) => out.push({ field: field, message: message });
   const printable = (s, max) => typeof s === 'string' && lib.utf8(s).length <= max && !/[\u0000-\u0008\u000b-\u001f]/.test(s);
@@ -95,8 +112,37 @@ contract.validateRequest = (r, cfg) => {
   if (!contract.RE.env.test(r.source)) { bad('source', 'must be an environment name'); }
   if (cfg.rollout.indexOf(r.source) >= 0) { bad('source', 'must not be a rollout environment'); }
   const refs = ['applications', 'flowPolicies'];
-  if (r.flows.length + refs.reduce((n, k) => n + (r[k] || []).length, 0) === 0) { bad('flows', 'select at least one flow, application or flow policy'); }
-  if (r.flows.length > contract.LIMITS.refs || refs.some((k) => (r[k] || []).length > contract.LIMITS.refs)) { bad('flows', 'at most 20 of each kind per request'); }
+  // scope all brings in the whole source env: it needs confirmAll, and the lists may be empty and uncapped.
+  const whole = r.scope === 'all';
+  if (r.scope !== undefined && contract.SCOPES.indexOf(r.scope) < 0) { bad('scope', 'must be selected or all'); }
+  if (whole && r.confirmAll !== true) { bad('confirmAll', 'a whole-environment request (scope all) requires confirmAll: true'); }
+  if (!whole && r.confirmAll !== undefined) { bad('confirmAll', 'confirmAll only applies to scope all'); }
+  if (!whole && r.flows.length + refs.reduce((n, k) => n + (r[k] || []).length, 0) === 0) { bad('flows', 'select at least one flow, application or flow policy'); }
+  if (!whole && (r.flows.length > contract.LIMITS.refs || refs.some((k) => (r[k] || []).length > contract.LIMITS.refs))) { bad('flows', 'at most 20 of each kind per request'); }
+  // exclude: what to leave out, in either scope. Excluding something the request also includes is refused, naming both.
+  const ex = r.exclude || [];
+  if (ex.length > contract.LIMITS.excludes) { bad('exclude', 'at most ' + contract.LIMITS.excludes + ' entries'); }
+  const includes = { flow: ['flows', r.flows], application: ['applications', r.applications || []], flowPolicy: ['flowPolicies', r.flowPolicies || []] };
+  ex.forEach((e, i) => {
+    const f = 'exclude[' + i + ']';
+    if (e.address !== undefined) {
+      if (e.type !== undefined || e.id !== undefined || e.name !== undefined) { bad(f, 'an address entry takes no type, id or name'); }
+      if (!contract.RE.address.test(e.address)) { bad(f + '.address', 'must be a terraform resource address'); }
+      return;
+    }
+    if (!lib.has(contract.EXCLUDE_KINDS, e.type)) { bad(f + '.type', 'must be flow, application, flowPolicy, connection or variable (or set address)'); return; }
+    if (e.id === undefined && e.name === undefined) { bad(f, 'set id, name or address'); }
+    if (e.id !== undefined && !contract.RE.excludeId.test(e.id)) { bad(f + '.id', 'is not an ID'); }
+    if (e.name !== undefined && (!printable(e.name, contract.LIMITS.refName) || !String(e.name).trim())) { bad(f + '.name', 'must be at most 200 printable characters'); }
+    const inc = includes[e.type];
+    if (inc) {
+      inc[1].forEach((x, j) => {
+        const sameId = e.id && x.id && String(e.id).toLowerCase() === String(x.id).toLowerCase();
+        const sameName = e.name && x.name && String(e.name).trim().toLowerCase() === String(x.name).trim().toLowerCase();
+        if (sameId || sameName) { bad(f, 'excludes ' + JSON.stringify(e.name || e.id) + ', which ' + inc[0] + '[' + j + '] includes; a resource cannot be both included and excluded'); }
+      });
+    }
+  });
   for (const k of refs) {
     (r[k] || []).forEach((f, i) => {
       if (f.id !== undefined) { bad(k + '[' + i + '].id', 'must be a DaVinci ID (flows only)'); }
@@ -109,7 +155,8 @@ contract.validateRequest = (r, cfg) => {
   });
   for (const a of Object.keys(r.dependencyChoices || {})) {
     if (!contract.RE.address.test(a)) { bad('dependencyChoices', a + ' is not a resource address'); }
-    if (contract.CHOICES.indexOf(r.dependencyChoices[a]) < 0) { bad('dependencyChoices.' + a, 'must be update or keep'); }
+    if (contract.CHOICES.indexOf(r.dependencyChoices[a]) < 0) { bad('dependencyChoices.' + a, 'must be update, keep or exclude'); }
+    if (r.dependencyChoices[a] === 'exclude' && known && (known.selected || []).indexOf(a) >= 0) { bad('dependencyChoices.' + a, 'is the selected item itself; it cannot be excluded'); }
   }
   const envs = [r.source].concat(cfg.rollout);
   for (const env of Object.keys(r.envValues || {})) {
@@ -166,12 +213,16 @@ contract.ACTIONS = {
   updated: { sym: '~', label: 'Changed in source', cls: 'chg' },
   kept_differs: { sym: '!', label: 'Differs; Git version kept', cls: 'warn' },
   unchanged: { sym: '=', label: 'Matches Git', cls: 'same' },
-  moved: { sym: '→', label: 'Moved (new address)', cls: 'chg' }
+  moved: { sym: '→', label: 'Moved (new address)', cls: 'chg' },
+  excluded: { sym: '⊘', label: 'Excluded', cls: 'same' }
 };
 contract.ROW_STATUS = {
-  'new': 'new', 'changed-in-source': 'changed in source', matches: 'matches Git', 'git-newer': 'Git is newer', 'changed-in-both': 'changed in both'
+  'new': 'new', 'changed-in-source': 'changed in source', matches: 'matches Git', 'git-newer': 'Git is newer', 'changed-in-both': 'changed in both', 'not-compared': 'not compared'
 };
-contract.ACTION_ORDER = ['added', 'updated', 'kept_differs', 'moved', 'unknown', 'unchanged'];
+contract.ACTION_ORDER = ['added', 'updated', 'kept_differs', 'moved', 'excluded', 'unknown', 'unchanged'];
+contract.ROLES = ['selected', 'dependency', 'environment', 'excluded'];
+// A whole-environment result can list thousands of rows: the state keeps the ones that matter (not the unchanged), at most this many.
+contract.MAX_CHANGES = 2000;
 contract.ERROR_CODES = ['conflict', 'preflight', 'partial', 'blocked'];
 contract.ERROR_TYPES = ['validation', 'export', 'merge', 'gitlab', 'internal'];
 contract.REQUEST_BLOCKERS = '_request';
@@ -187,22 +238,35 @@ contract.BLOCKER_TEXT = {
 contract.normalizeResult = (raw) => {
   const r = lib.obj(raw);
   const s = (v, max) => lib.str(v).slice(0, max || 300);
-  const out = { status: s(r.status, 40), mrUrl: s(r.mrUrl, 500), mrIid: lib.NUM.test(String(r.mrIid)) && Number(r.mrIid) > 0 ? String(r.mrIid) : '', branchUrl: s(r.branchUrl, 500),
-    diffUrl: s(r.diffUrl, 500), commitId: lib.SHA.test(lib.str(r.commitId)) ? lib.str(r.commitId) : '', changes: [], summary: {}, requiredSecrets: [],
+  const out = { status: s(r.status, 40), scope: r.scope === 'all' ? 'all' : 'selected', mrUrl: s(r.mrUrl, 500), mrIid: lib.NUM.test(String(r.mrIid)) && Number(r.mrIid) > 0 ? String(r.mrIid) : '', branchUrl: s(r.branchUrl, 500),
+    diffUrl: s(r.diffUrl, 500), commitId: lib.SHA.test(lib.str(r.commitId)) ? lib.str(r.commitId) : '', changes: [], summary: {}, byType: {}, unchangedOmitted: 0, notShown: 0, requiredSecrets: [],
     blockers: {}, warnings: [], selected: [], error: null, problems: [] };
   if (!Object.keys(r).length) { out.problems.push('result.json is empty or not JSON'); return out; }
   if (r.resultVersion !== contract.RESULT_VERSION) { out.problems.push('unexpected resultVersion ' + lib.redact(r.resultVersion, 20)); }
   if (!lib.has(contract.STATUS, out.status)) { out.problems.push('unknown status ' + lib.redact(out.status, 40)); }
-  for (const c of lib.arr(r.changes).slice(0, 2000)) {
+  const counts = { unchanged: 0 };
+  for (const c of lib.arr(r.changes).slice(0, 50000)) {
     const address = s(c && c.address, 600);
     if (!address) { out.problems.push('a change without an address'); continue; }
     const action = lib.has(contract.ACTIONS, c.action) ? c.action : 'unknown';
     if (action === 'unknown') { out.problems.push('unknown change action ' + lib.redact(c.action, 40)); }
-    out.changes.push({ address: address, action: action, role: c.role === 'selected' ? 'selected' : (c.role === 'dependency' ? 'dependency' : ''),
-      status: lib.has(contract.ROW_STATUS, c.status) ? c.status : '', file: s(c.file, 200), from: s(c.from, 600), reason: lib.redact(c.reason, 300) });
+    // A whole-environment request lists every resource: the ones identical to Git are counted (summary.byType), not kept.
+    if (out.scope === 'all' && action === 'unchanged') { counts.unchanged += 1; continue; }
+    if (out.changes.length >= contract.MAX_CHANGES) { out.notShown += 1; continue; }
+    out.changes.push({ address: address, action: action, role: contract.ROLES.indexOf(c.role) >= 0 ? c.role : '',
+      status: lib.has(contract.ROW_STATUS, c.status) ? c.status : '', file: s(c.file, 200), from: s(c.from, 600), reason: lib.redact(c.reason, 300),
+      var: contract.RE.ident.test(lib.str(c.var)) ? lib.str(c.var) : '', sourceId: /^[A-Za-z0-9_\/-]{1,200}$/.test(lib.str(c.sourceId)) ? lib.str(c.sourceId) : '' });
   }
+  out.unchangedOmitted = counts.unchanged;
+  if (out.notShown) { out.problems.push(out.notShown + ' more changes are not shown here; the merge request has them all'); }
   const sum = lib.obj(r.summary);
-  for (const a of Object.keys(contract.ACTIONS)) { out.summary[a] = Number(sum[a]) || out.changes.filter((c) => c.action === a).length; }
+  for (const a of Object.keys(contract.ACTIONS)) { out.summary[a] = Number(sum[a]) || out.changes.filter((c) => c.action === a).length + (a === 'unchanged' ? counts.unchanged : 0); }
+  const bt = lib.obj(sum.byType);
+  for (const t of Object.keys(bt).filter((k) => /^pingone_[a-z0-9_]+$/.test(k)).slice(0, 30)) {
+    const row = lib.obj(bt[t]);
+    out.byType[t] = { total: Number(row.total) || 0 };
+    for (const a of Object.keys(contract.ACTIONS)) { out.byType[t][a] = Number(row[a]) || 0; }
+  }
   for (const x of lib.arr(r.requiredSecrets)) {
     const key = lib.str(x && x.key);
     if (!key) { continue; }

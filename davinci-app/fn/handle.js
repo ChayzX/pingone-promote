@@ -19,6 +19,12 @@ const envValue = (v) => {
   return t;
 };
 
+// The request as the options say it (Preview sets dryRun). Whole-environment requests carry scope all and confirmAll, and no flow.
+const buildReq = (dryRun) => contract.buildRequest({ requestId: s.req.requestId, requestedBy: s.user.username, source: s.req.source, scope: s.req.scope,
+  confirmAll: s.req.confirmAll, flow: s.req.flow, options: s.req.options, dryRun: dryRun });
+// The addresses of the selected item in the last preview: the job refuses to exclude them.
+const knownOf = () => ({ selected: ((s.preview && s.preview.result && s.preview.result.changes) || []).filter((c) => c.role === 'selected').map((c) => c.address) });
+
 // ---- options form -------------------------------------------------------------------
 // Error keys are the request job's field paths (title, envValues.<env>.<var>, secretMappings.<key>, ...).
 const applyOptions = () => {
@@ -39,7 +45,9 @@ const applyOptions = () => {
   const fd = lib.obj(form.deps);
   for (const a of lib.choosable(r)) {
     const v = lib.has(fd, a) ? fd[a] : o.deps[a];
-    if (contract.CHOICES.indexOf(v) >= 0) { deps[a] = v; }
+    // A resource Git does not have is added anyway; only leaving it out is a choice worth sending.
+    const row = r.changes.filter((c) => c.address === a)[0];
+    if (contract.CHOICES.indexOf(v) >= 0 && !(v === 'update' && row && (row.action === 'added' || (row.action === 'excluded' && !row.file)))) { deps[a] = v; }
   }
   o.deps = deps;
   // Same in all environments (inlineValues): the source value becomes a literal everywhere, so nothing is asked per env.
@@ -54,6 +62,8 @@ const applyOptions = () => {
       if (o.inline.indexOf(k) >= 0) { continue; }
       const v = envValue(vals[k]);
       if (v === '') { continue; }
+      // The source env's ID of an excluded dependency is prefilled from the export; only a changed value is sent.
+      if (e === s.req.source && r && r.changes.some((c) => c.var === k && c.sourceId === v)) { continue; }
       if (lib.looksSecret(JSON.stringify(v))) { errors['envValues.' + e + '.' + k] = 'This looks like a secret. Secrets come from Vault through customer_secrets.yml, not from here.'; continue; }
       (env[e] = env[e] || {})[k] = v;
     }
@@ -74,8 +84,8 @@ const applyOptions = () => {
   o.secrets = secrets;
   o.confirmed = confirmed;
   // The job's own rules, checked here first (contract.validateRequest).
-  const req = contract.buildRequest({ requestId: s.req.requestId, requestedBy: s.user.username, source: s.req.source, flow: s.req.flow, options: o, dryRun: true });
-  for (const p of contract.validateRequest(req, cfg)) { if (!errors[p.field]) { errors[p.field] = p.message; } }
+  const req = buildReq(true);
+  for (const p of contract.validateRequest(req, cfg, knownOf())) { if (!errors[p.field]) { errors[p.field] = p.message; } }
   s.errors = errors;
   // #57: an edit clears a failed submit and re-enables Submit; an unknown outcome stays until Check GitLab.
   if (lib.optionsKey(o) !== before) {
@@ -88,9 +98,8 @@ const applyOptions = () => {
 const commit = (dryRun) => {
   const why = dryRun ? lib.canPreview(s) : lib.canSubmit(s);
   if (why) { lib.note(s, 'bad', why); return render(); }
-  const req = contract.buildRequest({ requestId: s.req.requestId, requestedBy: s.user.username, source: s.req.source, flow: s.req.flow,
-    options: s.req.options, dryRun: dryRun });
-  const problems = contract.validateRequest(req, cfg);
+  const req = buildReq(dryRun);
+  const problems = contract.validateRequest(req, cfg, knownOf());
   if (problems.length) { for (const p of problems) { lib.note(s, 'bad', p.field + ': ' + p.message); } return render(); }
   const body = contract.commitBody(req, cfg.defaultBranch, s.req.lastCommit || '');
   s.url = lib.gl(cfg, 'commit').url;
@@ -115,18 +124,38 @@ const pickIndex = (prefix, list) => {
 if (btn === 'SIGNOUT') { s.screen = 'signedout'; return done('signout'); }
 if (btn === 'NAV_NEW') {
   if (s.req && s.req.lastCommit && s.sub.state !== 'done') { lib.note(s, 'info', 'The previous request still has a branch in GitLab. You can cancel it from Requests.'); }
-  s.req = null; s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null;
+  s.req = null; s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null; s.exc = null;
   return render('search');
 }
 if (btn === 'NAV_REQUESTS') { s.screen = 'requests'; return done(lib.queue(s, 'requests', [{ k: 'mrList' }, { k: 'requestBranches' }])); }
 
 switch (s.screen) {
   case 'search': {
+    // What to bring into Git: the items you search for (default), or the whole source env (needs a tick).
+    if (btn.indexOf('SCOPE:') === 0) {
+      const source = T(form.source).slice(0, 63);
+      s.search = Object.assign({ matches: null, total: 0, query: '' }, s.search || {}, { scope: btn === 'SCOPE:ALL' ? 'all' : 'selected' });
+      if (lib.has(cfg.sources, source)) { s.search.source = source; }
+      s.errors = {};
+      return render();
+    }
+    if (btn === 'START_ALL') {
+      const source = T(form.source).slice(0, 63);
+      if (!lib.has(cfg.sources, source)) { lib.note(s, 'bad', 'Choose a source env.'); return render(); }
+      s.search = Object.assign({ matches: null, total: 0, query: '' }, s.search || {}, { scope: 'all', source: source });
+      if (form.confirmAll !== true) { s.errors = { confirmAll: 'Tick the box to confirm: this brings the whole ' + source + ' environment into Git.' }; return render(); }
+      const id = contract.newRequestId(now, Math.random().toString(36).slice(2, 8));
+      const title = 'PingOne Promote: whole ' + source + ' environment';
+      s.req = { requestId: id, branch: contract.branchFor(id), source: source, scope: 'all', confirmAll: true, flow: null, lastCommit: '',
+        options: { mode: 'mr', title: title, commitMessage: title, description: '', deps: {}, env: {}, secrets: {}, inline: [], applications: [], flowPolicies: [], exclude: [], confirmed: {} } };
+      s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null; s.exc = null;
+      return render('options');
+    }
     if (btn === 'SEARCH') {
       const source = T(form.source).slice(0, 63);
       const query = T(form.query).trim().slice(0, 200);
       if (!lib.has(cfg.sources, source)) { lib.note(s, 'bad', 'Choose a source env.'); return render(); }
-      s.search = { source: source, query: query, matches: null, total: 0 };
+      s.search = { source: source, query: query, matches: null, total: 0, scope: 'selected' };
       if (!query) { s.errors = { query: 'Type part of a flow name, or a flow ID.' }; return render(); }
       s.errors = {};
       if (flows.source === source && flows.complete) {
@@ -144,10 +173,10 @@ switch (s.screen) {
       const rnd = Math.random().toString(36).slice(2, 8);
       const id = contract.newRequestId(now, rnd);
       const title = 'PingOne Promote: ' + f.name + ' from ' + s.search.source;
-      s.req = { requestId: id, branch: contract.branchFor(id), source: s.search.source, flow: { id: f.id, name: f.name }, lastCommit: '',
+      s.req = { requestId: id, branch: contract.branchFor(id), source: s.search.source, scope: 'selected', flow: { id: f.id, name: f.name }, lastCommit: '',
         options: { mode: 'mr', title: title.slice(0, contract.LIMITS.title), commitMessage: title.slice(0, contract.LIMITS.title), description: '', deps: {}, env: {}, secrets: {},
-          inline: [], applications: [], flowPolicies: [], confirmed: {} } };
-      s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null;
+          inline: [], applications: [], flowPolicies: [], exclude: [], confirmed: {} } };
+      s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null; s.exc = null;
       return render('options');
     }
     return render();
@@ -158,7 +187,8 @@ switch (s.screen) {
     if (btn === 'PREVIEW') { return commit(true); }
     if (btn === 'SUBMIT') { return commit(false); }
     if (btn === 'EDIT') { return render('options'); }
-    if (btn === 'EXTRAS' && cfg.pathApplications && s.req) { s.extras = s.extras || { apps: null, pol: null }; s.errors = {}; return render('extras'); }
+    if (btn === 'EXTRAS' && cfg.pathApplications && s.req && s.req.scope !== 'all') { s.extras = s.extras || { apps: null, pol: null }; s.errors = {}; return render('extras'); }
+    if (btn === 'EXCLUDE' && s.req) { s.exc = s.exc || { kind: 'flow', query: '', res: null, pol: null }; s.errors = {}; return render('exclude'); }
     if (btn === 'BACK') { return render('search'); }
     if (btn === 'CHECK' && s.req) { return done(lib.queue(s, 'check', [{ k: 'requestFile', branch: s.req.branch }])); }
     if (btn === 'CANCEL' && s.req && s.req.lastCommit && s.sub.state !== 'done') {
@@ -224,6 +254,84 @@ switch (s.screen) {
     }
     if (btn.indexOf('DROPAPP:') === 0) { const x = pickIndex('DROPAPP:', o.applications); if (x) { o.applications = o.applications.filter((y) => y !== x); } return render(); }
     if (btn.indexOf('DROPPOL:') === 0) { const x = pickIndex('DROPPOL:', o.flowPolicies); if (x) { o.flowPolicies = o.flowPolicies.filter((y) => y !== x); } return render(); }
+    return render();
+  }
+  case 'exclude': {
+    // Items to leave out, found by name in the source env like an include is: none, several (listed), or one. Own step, own REST budget:
+    // a first search of a kind reads 1 token + its list pages; everything after that is free. Flow policies are read per application.
+    if (!s.req) { return render('search'); }
+    const ex = s.exc = s.exc || { kind: 'flow', query: '', res: null, pol: null };
+    const o = s.req.options;
+    const kinds = { flow: true, application: true, connection: !!cfg.pathConnections, variable: !!cfg.pathVariables };
+    const listKind = (k) => contract.EXCLUDE_KINDS[k].list;
+    const startList = (kind, more) => { s.list = Object.assign({ kind: kind, source: s.req.source, pages: 0, forExclude: true }, more); s.url = lib.tokenUrl(cfg); return done('token'); };
+    const cached = (bucket, appId) => flows.source === s.req.source && bucket && bucket.complete && (appId === undefined || bucket.appId === appId);
+    const bucketOf = (kind) => (kind === 'flow' ? flows : (kind === 'application' ? flows.apps : (kind === 'connection' ? flows.conns : flows.vars)));
+    const fill = (target, bucket, query) => { const m = lib.searchFlows(bucket.items, query); target.matches = m.matches; target.total = m.total; target.listed = bucket.items.length; };
+    // The job finds a resource by name (a flow also by ID), so two listed items with one name cannot be told apart.
+    const add = (type, what, item, bucket, label) => {
+      const name = type === 'variable' ? item.name + '_' + item.ctx : item.name;
+      const show = type === 'variable' ? item.name + ' (' + item.ctx + ')' : item.name;
+      if (o.exclude.some((x) => x.type === type && (x.name === name || (x.id && x.id === item.id)))) { lib.note(s, 'info', show + ' is already excluded.'); return; }
+      if (o.exclude.length >= contract.LIMITS.excludes) { lib.note(s, 'bad', 'A request can exclude at most ' + contract.LIMITS.excludes + ' items.'); return; }
+      if (type === 'flow' && s.req.flow && (s.req.flow.id === item.id || s.req.flow.name.toLowerCase() === item.name.toLowerCase())) {
+        lib.note(s, 'bad', item.name + ' is the main flow of this request; a request cannot include and exclude the same flow.');
+        return;
+      }
+      if (type === 'application' && o.applications.some((x) => x.name.toLowerCase() === item.name.toLowerCase())) {
+        lib.note(s, 'bad', item.name + ' is included in this request. Remove it from the included applications first.');
+        return;
+      }
+      if (type === 'flowPolicy' && o.flowPolicies.some((x) => x.name.toLowerCase() === item.name.toLowerCase())) {
+        lib.note(s, 'bad', item.name + ' is included in this request. Remove it from the included flow policies first.');
+        return;
+      }
+      if (type !== 'flow' && bucket && bucket.items.filter((x) => x.name.toLowerCase() === item.name.toLowerCase() && (type !== 'variable' || x.ctx === item.ctx)).length > 1) {
+        lib.note(s, 'bad', 'Two ' + what + 's are named “' + show + '”. The request job selects by name, so it could not tell them apart. Rename one in the source env first.');
+        return;
+      }
+      o.exclude.push(Object.assign({ type: type, name: name, show: label ? show + ' (application ' + label + ')' : show }, type === 'flow' ? { id: item.id } : {}));
+    };
+    if (btn === 'EXC_DONE') { s.errors = {}; return render('options'); }
+    if (btn === 'EXC_SEARCH') {
+      const kind = T(form.excKind);
+      ex.kind = lib.has(kinds, kind) && kinds[kind] ? kind : ex.kind;
+      const query = T(form.excQuery).trim().slice(0, 200);
+      ex.query = query;
+      ex.res = { kind: ex.kind, query: query, matches: null, total: 0 };
+      ex.pol = null;
+      if (!query) { s.errors = { excQuery: 'Type part of a name' + (ex.kind === 'flow' ? ', or a flow ID.' : '.') }; ex.res = null; return render(); }
+      s.errors = {};
+      const bucket = bucketOf(ex.kind);
+      if (cached(bucket)) { fill(ex.res, bucket, query); return render(); }
+      return startList(listKind(ex.kind), { query: query });
+    }
+    if (btn.indexOf('EXC_POLICIES:') === 0 && cfg.pathFlowPolicies) {
+      const a = pickIndex('EXC_POLICIES:', ex.res && ex.res.kind === 'application' && ex.res.matches);
+      if (!a) { return render(); }
+      ex.pol = { app: { id: a.id, name: a.name }, query: '', matches: null, total: 0 };
+      s.errors = {};
+      if (cached(flows.pol, a.id)) { fill(ex.pol, flows.pol, ''); return render(); }
+      return startList('policies', { appId: a.id, query: '' });
+    }
+    if (btn === 'EXC_SEARCH_POL' && ex.pol) {
+      const query = T(form.excPolQuery).trim().slice(0, 200);
+      ex.pol.query = query;
+      s.errors = {};
+      if (cached(flows.pol, ex.pol.app.id)) { fill(ex.pol, flows.pol, query); return render(); }
+      return startList('policies', { appId: ex.pol.app.id, query: query });
+    }
+    if (btn.indexOf('EXC_ADD:') === 0) {
+      const m = pickIndex('EXC_ADD:', ex.res && ex.res.matches);
+      if (m) { add(ex.res.kind, contract.EXCLUDE_KINDS[ex.res.kind].label, m, bucketOf(ex.res.kind)); }
+      return render();
+    }
+    if (btn.indexOf('EXC_ADDPOL:') === 0 && ex.pol) {
+      const m = pickIndex('EXC_ADDPOL:', ex.pol.matches);
+      if (m) { add('flowPolicy', 'flow policy', m, flows.pol, ex.pol.app.name); }
+      return render();
+    }
+    if (btn.indexOf('EXC_DROP:') === 0) { const x = pickIndex('EXC_DROP:', o.exclude); if (x) { o.exclude = o.exclude.filter((y) => y !== x); } return render(); }
     return render();
   }
   case 'working': {

@@ -52,7 +52,7 @@ DEFAULTS = _lib_defaults()
 SETTINGS = {k: DEFAULTS.get(k, "") for k in (
     "apiOrigin", "authOrigin", "workerEnvironmentId", "sourceEnvs", "pathFlows", "flowsListQuery", "rolloutEnvs", "gitlabApi", "gitlabProjectId",
     "defaultBranch", "applyJobPattern", "environmentPattern", "mrLabel", "allowedGroups", "runTimeoutSeconds", "pipelineAppearSeconds",
-    "statusRefreshSeconds", "statusMaxMinutes", "childPipelines", "pathApplications", "pathFlowPolicies")}
+    "statusRefreshSeconds", "statusMaxMinutes", "childPipelines", "pathApplications", "pathFlowPolicies", "pathConnections", "pathVariables")}
 assert set(DEFAULTS) <= set(SETTINGS), "lib.DEFAULTS names a setting the export does not declare"
 EMPTY_SETTINGS = ("workerEnvironmentId", "sourceEnvs", "gitlabProjectId", "allowedGroups")
 PRESETTABLE = {k for k in SETTINGS if k not in EMPTY_SETTINGS}
@@ -342,6 +342,11 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
   // #57: an edit turns Submit back on when only these options blocked it. The server checks again.
   function edited(e) {
     collect();
+    // The source env named in the "whole environment" tick box follows the source env list.
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-pp-source')) {
+      var names = document.querySelectorAll('[data-pp-source-name]');
+      for (var n = 0; n < names.length; n++) { names[n].textContent = e.target.value; }
+    }
     if (!e.target || !e.target.hasAttribute || !e.target.hasAttribute('data-pp')) { return; }
     // Same in all environments: every box for one variable shows the same state.
     var mine = e.target.getAttribute('data-pp');

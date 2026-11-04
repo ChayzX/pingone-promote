@@ -127,7 +127,7 @@ eq(lib.searchFlows(flowsFake, 'zzz').total, 0, 'no match');
 const req0 = contract.buildRequest({ requestId: rid, requestedBy: 'pat', source: 'dev', flow: { id: dvid(1), name: 'Login' },
   options: { mode: 'mr', title: 't', description: 'd', commitMessage: 'c', deps: {}, env: {}, secrets: {}, inline: [] }, dryRun: true });
 // Every field the job's Request struct accepts (internal/request/request.go); unknown fields fail there.
-const ALLOWED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'applications', 'flowPolicies', 'dependencyChoices', 'envValues', 'secretMappings',
+const ALLOWED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'scope', 'confirmAll', 'flows', 'applications', 'flowPolicies', 'exclude', 'dependencyChoices', 'envValues', 'secretMappings',
   'connectorEnvLocal', 'inlineValues', 'baseCommit', 'mode', 'branchName', 'commitMessage', 'title', 'description', 'dryRun'];
 const REQUIRED_KEYS = ['requestVersion', 'requestId', 'requestedBy', 'source', 'flows', 'mode', 'branchName', 'dryRun'];
 const keysOk = (r) => Object.keys(r).every((k) => ALLOWED_KEYS.indexOf(k) >= 0) && REQUIRED_KEYS.every((k) => lib.has(r, k));
@@ -196,6 +196,69 @@ ok(contract.useLogFallback(302) && contract.useLogFallback(301) && contract.useL
 eq(contract.footerOf('x\nRequested-by: pat\nRequest-id: ' + rid), { requestedBy: 'pat', requestId: rid }, 'MR footer parsed');
 eq(contract.mrIid(GLWEB + '/-/merge_requests/17'), '17', 'MR iid from URL');
 
+// ---- whole environment and exclusions: the client-side rules mirror the job's ----------------------------------------
+const PC = '/v1/environments/{envId}/connectorInstances';
+const PV = '/v1/environments/{envId}/variables';
+const cfgC = lib.checkSettings(Object.assign({}, baseSettings, { pathApplications: PA, pathFlowPolicies: PP }));
+ok(cfgC.problems.length === 0 && cfgC.cfg.pathConnections === PC && cfgC.cfg.pathVariables === PV, 'the connection and variable list paths default from lib.DEFAULTS (ADR 0007)');
+eq(lib.checkSettings(Object.assign({}, baseSettings, { pathConnections: 'none', pathVariables: 'none' })).cfg.pathConnections, '', '"none" switches the connection list off');
+eq(lib.listUrl(cfgC.cfg, { kind: 'connections', source: 'dev' }), 'https://api.pingone.com/v1/environments/' + SRC + '/connectorInstances', 'connection list URL');
+eq(lib.listUrl(cfgC.cfg, { kind: 'variables', source: 'dev' }), 'https://api.pingone.com/v1/environments/' + SRC + '/variables', 'variable list URL');
+assert.throws(() => lib.listUrl(lib.checkSettings(Object.assign({}, baseSettings, { pathConnections: 'none' })).cfg, { kind: 'connections', source: 'dev' })); passed += 1;
+for (const bad of [{ pathConnections: 'http://evil.example/x' }, { pathConnections: '/v1/environments/{envId}/../x' }, { pathVariables: '/v1/environments/x/variables' }, { pathVariables: '/v1/environments/{envId}/{other}' }]) {
+  ok(lib.checkSettings(Object.assign({}, baseSettings, bad)).problems.some((x) => /^path(Connections|Variables)$/.test(x.name)), 'a bad exclude list path is a settings problem: ' + JSON.stringify(bad).slice(0, 60));
+}
+const wholeOpts = { mode: 'mr', deps: {}, env: {}, secrets: {}, inline: [], exclude: [] };
+const reqAll = contract.buildRequest({ requestId: rid, requestedBy: 'pat', source: 'dev', scope: 'all', confirmAll: true, flow: null, options: wholeOpts, dryRun: true });
+ok(keysOk(reqAll) && reqAll.scope === 'all' && reqAll.confirmAll === true && reqAll.flows.length === 0 && !lib.has(reqAll, 'exclude'), 'a whole-environment request: scope all, confirmAll, no flow, empty optionals left out');
+eq(contract.validateRequest(reqAll, cfgV), [], 'scope all with confirmAll passes the job rules, with no flow and no cap');
+eq(contract.validateRequest(Object.assign({}, reqAll, { flows: Array(40).fill({ name: 'a' }), applications: Array(25).fill({ name: 'b' }) }), cfgV), [], 'the 20-item cap does not apply to scope all');
+ok(!lib.has(req0, 'scope') && !lib.has(req0, 'confirmAll'), 'a selected request leaves scope and confirmAll out (the job defaults to selected)');
+const vfield = (patch, field, base) => ok(contract.validateRequest(Object.assign(JSON.parse(JSON.stringify(base || req0)), patch), cfgV).map((x) => x.field).indexOf(field) >= 0, 'client-side check refuses ' + field + ' (' + JSON.stringify(patch).slice(0, 70) + ')');
+vfield({ confirmAll: undefined }, 'confirmAll', reqAll);
+vfield({ confirmAll: false }, 'confirmAll', reqAll);
+vfield({ confirmAll: true }, 'confirmAll');
+vfield({ scope: 'everything' }, 'scope');
+vfield({ scope: 'selected', flows: [] }, 'flows');
+vfield({ exclude: [{ type: 'folder', name: 'x' }] }, 'exclude[0].type');
+vfield({ exclude: [{ type: 'flow' }] }, 'exclude[0]');
+vfield({ exclude: [{ address: 'nope' }] }, 'exclude[0].address');
+vfield({ exclude: [{ type: 'flow', address: 'pingone_davinci_flow.pingcli__A' }] }, 'exclude[0]');
+vfield({ exclude: [{ type: 'flow', id: 'not an id' }] }, 'exclude[0].id');
+vfield({ exclude: [{ type: 'variable', name: ' ' }] }, 'exclude[0].name');
+vfield({ exclude: Array(201).fill({ type: 'flow', name: 'x' }) }, 'exclude');
+vfield({ exclude: [{ type: 'flow', name: 'login' }] }, 'exclude[0]');
+vfield({ exclude: [{ type: 'flow', id: dvid(1) }] }, 'exclude[0]');
+vfield({ applications: [{ name: 'Web' }], exclude: [{ type: 'application', name: ' web ' }] }, 'exclude[0]');
+vfield({ dependencyChoices: { 'pingone_davinci_flow.pingcli__x': 'delete' } }, 'dependencyChoices.pingone_davinci_flow.pingcli__x');
+const conflict = contract.validateRequest(Object.assign(JSON.parse(JSON.stringify(req0)), { exclude: [{ type: 'flow', name: 'Login' }] }), cfgV)[0];
+ok(/exclude/.test(conflict.field) && /flows\[0\]/.test(conflict.message) && /both included and excluded/.test(conflict.message), 'an include/exclude conflict names both entries');
+eq(contract.validateRequest(Object.assign(JSON.parse(JSON.stringify(req0)), { exclude: [{ type: 'flow', name: 'Password reset' }, { type: 'connection', name: 'Login' }, { type: 'variable', name: 'apiKey_company' },
+  { type: 'application', name: 'Login' }, { type: 'flowPolicy', name: 'P' }, { address: 'pingone_davinci_connector_instance.pingcli__Http' }] }), cfgV), [], 'excludes of other flows and of other types pass');
+eq(contract.validateRequest(Object.assign(JSON.parse(JSON.stringify(req0)), { dependencyChoices: { 'pingone_davinci_flow.pingcli__x': 'exclude' } }), cfgV, { selected: [] }), [], 'exclude is a dependency choice');
+eq(contract.validateRequest(Object.assign(JSON.parse(JSON.stringify(req0)), { dependencyChoices: { 'pingone_davinci_flow.pingcli__x': 'exclude' } }), cfgV, { selected: ['pingone_davinci_flow.pingcli__x'] }).map((x) => x.field),
+  ['dependencyChoices.pingone_davinci_flow.pingcli__x'], 'excluding the selected item itself is refused');
+eq(contract.excludeEntry({ type: 'flow', id: dvid(1), name: 'Login', show: 'x' }), { type: 'flow', id: dvid(1), name: 'Login' }, 'a flow is excluded by ID and name');
+eq(contract.excludeEntry({ type: 'connection', id: dvid(1), name: 'Http', show: 'x' }), { type: 'connection', name: 'Http' }, 'everything else is excluded by name');
+eq(contract.companions('pingone_davinci_flow.pingcli__A'), ['pingone_davinci_flow_deploy.pingcli__A', 'pingone_davinci_flow_enable.pingcli__A'], 'a flow comes with its deploy and enable');
+const nrAll = contract.normalizeResult({ resultVersion: 1, status: 'previewed', scope: 'all', summary: { added: 1, updated: 0, kept_differs: 0, unchanged: 3, moved: 0, excluded: 1,
+  byType: { pingone_davinci_flow: { total: 5, added: 1, unchanged: 3, excluded: 1 }, 'bad type': { total: 9 } } },
+changes: [{ address: 'pingone_davinci_flow.a', role: 'environment', action: 'added', status: 'new' }, { address: 'pingone_davinci_flow.b', role: 'environment', action: 'unchanged', status: 'matches' },
+  { address: 'pingone_davinci_flow.c', role: 'dependency', action: 'excluded', status: 'not-compared', reason: 'excluded; referenced by ID variable `pingone_davinci_flow_c_id`', var: 'pingone_davinci_flow_c_id', sourceId: dvid(9) },
+  { address: 'pingone_davinci_flow.d', role: 'weird', action: 'unchanged' }] });
+ok(nrAll.scope === 'all' && nrAll.changes.length === 2 && nrAll.unchangedOmitted === 2 && nrAll.summary.unchanged === 3 && nrAll.summary.excluded === 1, 'a whole-environment result drops the unchanged rows and counts them');
+ok(nrAll.byType.pingone_davinci_flow.total === 5 && nrAll.byType.pingone_davinci_flow.excluded === 1 && !lib.has(nrAll.byType, 'bad type'), 'the per-type counts are kept, for valid type names only');
+ok(nrAll.changes[1].var === 'pingone_davinci_flow_c_id' && nrAll.changes[1].sourceId === dvid(9) && nrAll.changes[1].role === 'dependency', 'an excluded dependency keeps its variable and source ID');
+const many = contract.normalizeResult({ resultVersion: 1, status: 'previewed', scope: 'all', changes: Array.from({ length: 2500 }, (_, i) => ({ address: 'pingone_davinci_flow.f' + i, role: 'environment', action: 'added', status: 'new' })) });
+ok(many.changes.length === contract.MAX_CHANGES && many.notShown === 500 && many.problems.some((x) => /500 more changes/.test(x)), 'a huge change list is capped in the state and says so');
+ok(lib.choosable({ scope: 'selected', changes: [{ address: 'pingone_davinci_flow.new', role: 'dependency', action: 'added', status: 'new' }, { address: 'pingone_davinci_flow.sel', role: 'selected', action: 'updated', status: 'changed-in-source' },
+  { address: 'pingone_davinci_flow.both', role: 'selected', action: 'kept_differs', status: 'changed-in-both' }, { address: 'pingone_davinci_flow.ex', role: 'dependency', action: 'excluded', status: 'not-compared' },
+  { address: 'pingone_davinci_flow.free', role: 'excluded', action: 'excluded', status: 'not-compared' }] }).join() === 'pingone_davinci_flow.new,pingone_davinci_flow.both,pingone_davinci_flow.ex',
+'choices: new and excluded dependencies and any changed-in-both; never the selected item otherwise, nor an exclusion made in the exclude list');
+eq(lib.choicesFor({ role: 'selected', action: 'kept_differs' }), ['update', 'keep'], 'the selected item cannot be excluded');
+eq(lib.choicesFor({ role: 'dependency', action: 'kept_differs' }), ['update', 'keep', 'exclude'], 'a differing dependency: Update, Keep Git version or Exclude');
+eq(lib.choicesFor({ role: 'dependency', action: 'added' }), ['update', 'exclude'], 'a new dependency has no Git version to keep');
+
 // ---- 3. fake PingOne + fake GitLab --------------------------------------------------------------
 let CLOCK = Date.UTC(2026, 10, 3, 9, 0, 0);
 const realNow = Date.now;
@@ -216,6 +279,7 @@ function makeFlows() {
 const JOB_RE = { requestId: /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/, env: /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/, ident: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
   secretName: /^[A-Za-z][A-Za-z0-9_]{0,127}$/, address: /^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$/, id: /^[0-9a-fA-F]{32}$/ };
 const JOB_SOURCES = ['dev', 'sandbox'];
+const JOB_EXCLUDE_TYPES = ['flow', 'application', 'flowPolicy', 'connection', 'variable'];
 const JOB_ROLLOUT = ['qa', 'stage', 'prod'];
 function jobValidate(req, branch) {
   const fail = (field, msg) => ({ field: field, msg: msg });
@@ -226,10 +290,15 @@ function jobValidate(req, branch) {
   if (typeof req.requestedBy !== 'string' || req.requestedBy.length > 128 || /[\n\t]/.test(req.requestedBy)) { return fail('requestedBy', 'bad'); }
   if (JOB_SOURCES.indexOf(req.source) < 0 || JOB_ROLLOUT.indexOf(req.source) >= 0) { return fail('source', 'not an allowed source'); }
   const kinds = [['flows', true], ['applications', false], ['flowPolicies', false]];
-  if (kinds.reduce((n, k) => n + (req[k[0]] || []).length, 0) === 0) { return fail('flows', 'select at least one flow, application or flow policy'); }
+  // scope all: confirmAll is required, the lists may be empty and are not capped (internal/request/request.go Validate).
+  if (req.scope !== undefined && ['selected', 'all'].indexOf(req.scope) < 0) { return fail('scope', 'must be selected or all'); }
+  const all = req.scope === 'all';
+  if (all && req.confirmAll !== true) { return fail('confirmAll', 'a whole-environment request (scope all) requires confirmAll: true'); }
+  if (!all && req.confirmAll !== undefined) { return fail('confirmAll', 'confirmAll only applies to scope all'); }
+  if (!all && kinds.reduce((n, k) => n + (req[k[0]] || []).length, 0) === 0) { return fail('flows', 'select at least one flow, application or flow policy'); }
   for (const [kind, allowId] of kinds) {
     const list = req[kind] || [];
-    if (list.length > 20) { return fail('flows', 'at most 20 of each kind per request'); }
+    if (!all && list.length > 20) { return fail('flows', 'at most 20 of each kind per request'); }
     for (const [i, f] of list.entries()) {
       if (!f.id && !f.name) { return fail(kind + '[' + i + ']', 'set id or name'); }
       if (f.id && (!allowId || !JOB_RE.id.test(f.id))) { return fail(kind + '[' + i + '].id', 'must be a DaVinci ID (flows only)'); }
@@ -237,9 +306,27 @@ function jobValidate(req, branch) {
       if (Object.keys(f).some((k) => ['id', 'name'].indexOf(k) < 0)) { return fail(kind + '[' + i + ']', 'unknown field'); }
     }
   }
+  // exclude: a type with an id or name, or an address; never also included (the job names both).
+  if ((req.exclude || []).length > 200) { return fail('exclude', 'at most 200 entries'); }
+  const incl = { flow: ['flows', req.flows || []], application: ['applications', req.applications || []], flowPolicy: ['flowPolicies', req.flowPolicies || []] };
+  for (const [i, x] of (req.exclude || []).entries()) {
+    const f = 'exclude[' + i + ']';
+    if (Object.keys(x).some((k) => ['type', 'id', 'name', 'address'].indexOf(k) < 0)) { return fail(f, 'unknown field'); }
+    if (x.address !== undefined) {
+      if (x.type || x.id || x.name || !JOB_RE.address.test(x.address)) { return fail(f + '.address', 'must be a terraform resource address'); }
+      continue;
+    }
+    if (JOB_EXCLUDE_TYPES.indexOf(x.type) < 0) { return fail(f + '.type', 'must be flow, application, flowPolicy, connection or variable'); }
+    if (!x.id && !x.name) { return fail(f, 'set id, name or address'); }
+    if (x.id && !/^[0-9A-Za-z][0-9A-Za-z_-]{0,63}(\/[0-9A-Za-z][0-9A-Za-z_-]{0,63})?$/.test(x.id)) { return fail(f + '.id', 'is not an ID'); }
+    if (x.name !== undefined && (!x.name.trim() || x.name.length > 200 || /[\u0000-\u001f]/.test(x.name))) { return fail(f + '.name', 'at most 200 printable characters'); }
+    const hit = incl[x.type] && incl[x.type][1].findIndex((y) => (x.id && y.id && x.id.toLowerCase() === y.id.toLowerCase()) || (x.name && y.name && x.name.trim().toLowerCase() === y.name.trim().toLowerCase()));
+    if (hit >= 0 && incl[x.type]) { return fail(f, 'excludes ' + (x.name || x.id) + ', which ' + incl[x.type][0] + '[' + hit + '] includes; a resource cannot be both included and excluded'); }
+  }
+  if (req.dependencyChoices && req.dependencyChoices[SEL] === 'exclude') { return fail('dependencyChoices.' + SEL, 'is the selected item itself; it cannot be excluded'); }
   for (const v of req.inlineValues || []) { if (!JOB_RE.ident.test(v)) { return fail('inlineValues', v + ' is not a variable name'); } }
   if (lib.has(req, 'remove')) { return fail('', 'unknown field remove'); }
-  for (const a of Object.keys(req.dependencyChoices || {})) { if (!JOB_RE.address.test(a) || ['update', 'keep'].indexOf(req.dependencyChoices[a]) < 0) { return fail('dependencyChoices', a); } }
+  for (const a of Object.keys(req.dependencyChoices || {})) { if (!JOB_RE.address.test(a) || ['update', 'keep', 'exclude'].indexOf(req.dependencyChoices[a]) < 0) { return fail('dependencyChoices', a); } }
   for (const env of Object.keys(req.envValues || {})) {
     if ([req.source].concat(JOB_ROLLOUT).indexOf(env) < 0) { return fail('envValues', env + ' is not the source or a rollout env'); }
     for (const k of Object.keys(req.envValues[env])) {
@@ -255,33 +342,75 @@ function jobValidate(req, branch) {
   return null;
 }
 const SEL = 'pingone_davinci_flow.pingcli__Registration';
+const MFA = 'pingone_davinci_flow.pingcli__MFA-0020-sub';
+const MFA_VAR = 'pingone_davinci_flow_pingcli__MFA_0020_sub_id';
+const TYPE_OF = { flow: 'pingone_davinci_flow', application: 'pingone_davinci_application', flowPolicy: 'pingone_davinci_application_flow_policy', connection: 'pingone_davinci_connector_instance', variable: 'pingone_davinci_variable' };
+// A whole-environment preview: every resource of the source env, mostly identical to Git (the job lists them all).
+function wholeChanges() {
+  const out = [];
+  for (let i = 1; i <= 30; i++) { out.push({ address: 'pingone_davinci_flow.pingcli__Flow_' + i, role: 'environment', action: 'unchanged', status: 'matches', file: 'definitions/pingone_davinci_flow.tf' }); }
+  out.push({ address: 'pingone_davinci_flow.pingcli__Brand-0020-new', role: 'environment', action: 'added', status: 'new', file: 'definitions/pingone_davinci_flow.tf' });
+  out.push({ address: 'pingone_davinci_flow.pingcli__Login', role: 'environment', action: 'kept_differs', status: 'changed-in-source', file: 'definitions/pingone_davinci_flow.tf', reason: 'differs from Git; kept (choose update to use the source version)' });
+  out.push({ address: 'pingone_davinci_connector_instance.pingcli__Http', role: 'environment', action: 'kept_differs', status: 'changed-in-source', file: 'definitions/pingone_davinci_connector_instance.tf', reason: 'differs from Git; kept (choose update to use the source version)' });
+  out.push({ address: 'pingone_davinci_variable.pingcli__color_company', role: 'environment', action: 'added', status: 'new', file: 'definitions/pingone_davinci_variable.tf' });
+  out.push({ address: 'pingone_davinci_application.pingcli__Web-0020-Portal', role: 'environment', action: 'unchanged', status: 'matches', file: 'definitions/pingone_davinci_application.tf' });
+  return out;
+}
 const PREVIEW = (req, o) => {
   const env = req.envValues || {};
   const blockers = {};
+  const choices = req.dependencyChoices || {};
+  const all = req.scope === 'all';
   for (const e of JOB_ROLLOUT) {
     // inlineValues: the source value is a literal everywhere, so nothing is missing per environment.
-    if ((req.inlineValues || []).indexOf('base_url') < 0 && !(env[e] && env[e].base_url)) { blockers[e] = [{ code: 'missing_value', var: 'base_url', message: e + '.tfvars must set base_url' }]; }
+    if (!all && (req.inlineValues || []).indexOf('base_url') < 0 && !(env[e] && env[e].base_url)) { blockers[e] = [{ code: 'missing_value', var: 'base_url', message: e + '.tfvars must set base_url' }]; }
   }
   if (o.requestBlocker) { blockers._request = [{ code: 'customer_secrets', message: 'customer_secrets.yml is not valid YAML' }]; }
   const unchanged = o.noChanges;
-  const changes = unchanged ? [{ address: SEL, role: 'selected', action: 'unchanged', status: 'matches', file: 'definitions/pingone_davinci_flow.tf' }] : [
+  let changes = all ? wholeChanges() : unchanged ? [{ address: SEL, role: 'selected', action: 'unchanged', status: 'matches', file: 'definitions/pingone_davinci_flow.tf' }] : [
     { address: SEL, role: 'selected', action: 'updated', status: 'changed-in-source', file: 'definitions/pingone_davinci_flow.tf' },
-    { address: 'pingone_davinci_flow.pingcli__MFA-0020-sub', role: 'dependency', action: 'added', status: 'new', file: 'definitions/pingone_davinci_flow.tf' },
+    { address: MFA, role: 'dependency', action: 'added', status: 'new', file: 'definitions/pingone_davinci_flow.tf' },
     { address: 'pingone_davinci_connector_instance.pingcli__Http', role: 'dependency', action: 'kept_differs', status: 'changed-in-source', reason: 'differs from Git; kept because it is a shared dependency (choose update to use the source version)' },
     { address: 'pingone_davinci_variable.pingcli__color', role: 'dependency', action: 'kept_differs', status: 'changed-in-both' },
     { address: 'pingone_davinci_variable.pingcli__theme_new', role: 'dependency', action: 'moved', status: 'matches', from: 'pingone_davinci_variable.pingcli__theme' },
     { address: 'pingone_davinci_variable.pingcli__lang', role: 'dependency', action: 'unchanged', status: 'matches' }];
-  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, moved: 0 };
-  for (const c of changes) { summary[c.action] += 1; }
-  const res = { resultVersion: 1, requestId: req.requestId, requestedBy: req.requestedBy, status: 'previewed', dryRun: true, mode: req.mode, source: req.source, branch: req.branchName,
+  // Excluding a dependency: a resource Git manages keeps its Git copy; one it does not becomes a per-environment ID variable.
+  changes = changes.map((c) => {
+    if (choices[c.address] !== 'exclude') { return c; }
+    if (c.address === MFA) {
+      return { address: c.address, role: 'dependency', action: 'excluded', status: 'not-compared', reason: 'excluded; referenced by ID variable `' + MFA_VAR + '`', var: MFA_VAR, sourceId: dvid(7) };
+    }
+    return { address: c.address, role: 'dependency', action: 'excluded', status: 'not-compared', file: c.file || 'definitions/x.tf', reason: 'excluded; Git-managed copy kept' };
+  });
+  for (const x of req.exclude || []) {
+    const name = x.name || x.id;
+    changes.push({ address: x.address || (TYPE_OF[x.type] + '.pingcli__' + name.replace(/[^A-Za-z0-9]/g, '_')), role: 'excluded', action: 'excluded', status: 'not-compared', file: 'definitions/' + TYPE_OF[x.type] + '.tf', reason: 'excluded; Git-managed copy kept' });
+  }
+  for (const c of changes.filter((x) => x.var)) {
+    for (const e of JOB_ROLLOUT) {
+      if (!(env[e] && env[e][c.var])) {
+        (blockers[e] = blockers[e] || []).push({ code: 'missing_value', var: c.var, address: c.address, message: e + '.tfvars must set ' + c.var + ': the ID of the existing ' + c.address + ' in ' + e + ' (it was excluded from the export, so the shared definitions refer to it by ID)' });
+      }
+    }
+  }
+  const summary = { added: 0, updated: 0, kept_differs: 0, unchanged: 0, moved: 0, excluded: 0, byType: {} };
+  for (const c of changes) {
+    summary[c.action] += 1;
+    const t = c.address.split('.')[0];
+    const row = summary.byType[t] = summary.byType[t] || { total: 0, added: 0, updated: 0, kept_differs: 0, unchanged: 0, moved: 0, excluded: 0 };
+    row.total += 1; row[c.action] += 1;
+  }
+  const sel = (all ? [] : [{ query: req.flows[0].id || req.flows[0].name, address: SEL, name: req.flows[0].name, id: req.flows[0].id }]
+    .concat((req.applications || []).map((a) => ({ query: a.name, address: 'pingone_davinci_application.pingcli__' + a.name.replace(/[^A-Za-z0-9]/g, '_'), name: a.name })))
+    .concat((req.flowPolicies || []).map((a) => ({ query: a.name, address: 'pingone_davinci_application_flow_policy.pingcli__' + a.name.replace(/[^A-Za-z0-9]/g, '_'), name: a.name }))));
+  const res = { resultVersion: 1, requestId: req.requestId, requestedBy: req.requestedBy, status: 'previewed', dryRun: true, mode: req.mode, source: req.source, scope: all ? 'all' : 'selected', branch: req.branchName,
     commitId: '', mrUrl: '', mrIid: 0, branchUrl: GLWEB + '/-/tree/' + encodeURIComponent(req.branchName), diffUrl: GLWEB + '/-/compare/main...' + encodeURIComponent(req.branchName),
-    selected: [{ query: req.flows[0].id || req.flows[0].name, address: SEL, name: req.flows[0].name, id: req.flows[0].id }]
-      .concat((req.applications || []).map((a) => ({ query: a.name, address: 'pingone_davinci_application.pingcli__' + a.name.replace(/[^A-Za-z0-9]/g, '_'), name: a.name })))
-      .concat((req.flowPolicies || []).map((a) => ({ query: a.name, address: 'pingone_davinci_application_flow_policy.pingcli__' + a.name.replace(/[^A-Za-z0-9]/g, '_'), name: a.name }))), changes: changes, summary: summary, files: [],
+    selected: sel, changes: changes, summary: summary, files: [],
     requiredSecrets: [{ key: 'davinci_variable_PingFedAuthNCreds_value', varName: 'davinci_variable_PingFedAuthNCreds_value', field: 'davinci_variable_PingFedAuthNCreds_value', declared: false,
       vault: 'apps/pingone-davinci/${VAULT_PATH_ENV}/pingone/davinci_variable_PingFedAuthNCreds_value@secret' }],
     blockers: blockers, warnings: o.warning ? ['flows[0]: name does not match ' + SRC] : [], diff: '--- a/definitions/pingone_davinci_flow.tf\n' + '+ x\n'.repeat(4000), diffTruncated: false, error: null };
   if (o.noBlockers) { res.blockers = o.requestBlocker ? { _request: blockers._request } : {}; res.requiredSecrets = []; }
+  if (all) { res.requiredSecrets = []; }
   if (Object.keys(res.blockers).length) { res.status = 'blocked'; res.error = { code: 'blocked', type: 'validation', message: 'readiness blockers', retryable: false }; }
   return res;
 };
@@ -307,6 +436,9 @@ function world(opt) {
     { id: dvid(21), name: 'Web Portal' }, { id: dvid(22), name: 'Mobile App' }, { id: dvid(23), name: 'Mobile App Beta' }, { id: dvid(24), name: 'Admin Console' },
     { id: dvid(25), name: 'Partner API' }, { id: dvid(26), name: 'Partner API' }, { id: dvid(27), name: '<img src=x onerror=alert(1)> app' }, { id: dvid(28), name: 'Kiosk' }])
     .map((a) => Object.assign({ oauth: { clientSecret: 'secret-value-for-tests', redirectUris: ['https://x.example.com/cb'] } }, a));
+  const conns = [{ id: dvid(41), name: 'Http' }, { id: dvid(42), name: 'PingOne' }, { id: dvid(43), name: 'Legacy SMTP' }].map((c) => Object.assign({ properties: { clientSecret: { value: 'secret-value-for-tests' } } }, c));
+  const vars = [{ id: dvid(51), name: 'apiKey', context: 'company' }, { id: dvid(52), name: 'attempts', context: 'flowInstance' }, { id: dvid(53), name: 'color', context: 'company' }, { id: dvid(54), name: 'color', context: 'user' }]
+    .map((v) => Object.assign({ value: 'secret-value-for-tests' }, v));
   const policiesOf = { [dvid(21)]: ['Sign in policy', 'Sign in policy - MFA', 'Registration policy', 'Recovery policy'], [dvid(28)]: ['Kiosk policy'] };
   const runJob = (p) => {
     // The request job finishes: decide the result and do what the backend would do.
@@ -318,6 +450,11 @@ function world(opt) {
     if (bad) {
       g.jobRefusals.push(bad);
       res = failed('preflight', 'validation', 'request: ' + bad.field + ': ' + bad.msg, { field: bad.field });
+    } else if (o.excludeAmbiguous && (req.exclude || []).some((x) => x.name === o.excludeAmbiguous)) {
+      // The job resolves an exclude like an include: several matches are a preflight error with candidates.
+      const i = req.exclude.findIndex((x) => x.name === o.excludeAmbiguous);
+      res = failed('preflight', 'validation', '2 flows match "' + o.excludeAmbiguous + '" in ' + req.source + '; select one by ID', { field: 'exclude[' + i + ']',
+        candidates: [{ query: o.excludeAmbiguous, address: TYPE_OF.flow + '.pingcli__Login', name: 'Login', id: dvid(1) }, { query: o.excludeAmbiguous, address: TYPE_OF.flow + '.pingcli__Login_2', name: 'Login v2', id: dvid(8) }] });
     } else if (req.dryRun) {
       res = PREVIEW(req, o);
       if (o.previewError) { res = failed(o.previewError.code, o.previewError.type || 'export', o.previewError.message, o.previewError); }
@@ -340,7 +477,7 @@ function world(opt) {
         res.commitId = g.submitted[req.requestId];
         if (prior) { res.mrUrl = prior.web_url; res.mrIid = prior.iid; }
       } else {
-        const sha = commitTo(req.branchName, 'PingOne: ' + req.flows[0].name + ' from ' + req.source);
+        const sha = commitTo(req.branchName, req.scope === 'all' ? 'PingOne: whole ' + req.source + ' environment' : 'PingOne: ' + req.flows[0].name + ' from ' + req.source);
         g.submitted[req.requestId] = sha;
         delete g.files[req.branchName];
         res.status = 'submitted';
@@ -348,7 +485,7 @@ function world(opt) {
         res.diffUrl = GLWEB + '/-/commit/' + sha;
         if (req.mode === 'mr') {
           g.nextMr += 1;
-          g.mrs.push({ iid: g.nextMr, title: req.title, state: 'opened', web_url: GLWEB + '/-/merge_requests/' + g.nextMr, source_branch: req.branchName,
+          g.mrs.push({ iid: g.nextMr, title: req.scope === 'all' && (req.title || '').indexOf('[whole environment]') < 0 ? '[whole environment] ' + req.title : req.title, state: 'opened', web_url: GLWEB + '/-/merge_requests/' + g.nextMr, source_branch: req.branchName,
             description: req.description + '\n\n| change table |\n\nRequested-by: ' + req.requestedBy + '\nRequest-id: ' + req.requestId + '\n', labels: ['pingone-promote'], updated_at: '2026-11-03T09:10:00Z' });
           res.mrUrl = GLWEB + '/-/merge_requests/' + g.nextMr;
           res.mrIid = g.nextMr;
@@ -370,6 +507,8 @@ function world(opt) {
       assert.strictEqual(headers.Authorization, 'Bearer ' + ACCESS);
       const ma = /^https:\/\/api\.pingone\.com\/v1\/environments\/([^/]+)\/davinciApplications(?:\?cursor=([0-9]+))?$/.exec(url);
       if (ma) { return page(ma[1] === SRC ? apps : [], Number(ma[2] || 0), 'https://api.pingone.com/v1/environments/' + ma[1] + '/davinciApplications', 'davinciApplications', ''); }
+      const mc = /^https:\/\/api\.pingone\.com\/v1\/environments\/([^/]+)\/(connectorInstances|variables)(?:\?cursor=([0-9]+))?$/.exec(url);
+      if (mc) { return page(mc[1] === SRC ? (mc[2] === 'variables' ? vars : conns) : [], Number(mc[3] || 0), 'https://api.pingone.com/v1/environments/' + mc[1] + '/' + mc[2], mc[2], ''); }
       const mp = /^https:\/\/api\.pingone\.com\/v1\/environments\/([^/]+)\/davinciApplications\/([A-Za-z0-9_-]+)\/flowPolicies(?:\?cursor=([0-9]+))?$/.exec(url);
       if (mp) {
         const list = (policiesOf[mp[2]] || []).map((n, i) => ({ id: dvid(200 + i), name: n, status: 'enabled' }));
@@ -626,7 +765,7 @@ async function run(opt, steps) {
           if (step.auto && step.until.test(visible(html))) { si += 1; continue; }
           break;
         }
-        if (step.expect) { ok(step.expect.test(visible(html)), 'screen matches ' + step.expect + ': ' + visible(html).slice(0, 400)); }
+        if (step.expect) { ok(step.expect.test(visible(html)), 'screen matches ' + step.expect + ': ' + visible(html).slice(0, 1400)); }
         let click;
         if (step.auto) {
           const a = autoOf(html);
@@ -689,7 +828,7 @@ function common(r, label) {
       ok(keysOk(JSON.parse(req)), label + ': request.json has only the job\'s fields');
     }
   }
-  const LIMITS = { START: 0, SEARCH: 2 + 3, SEARCH_APP: 2 + 3, POLICIES: 2 + 2, POLL: 4, KEEP: 4, PREVIEW: 1, SUBMIT: 1, CHECK: 5, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
+  const LIMITS = { START: 0, SEARCH: 2 + 3, SEARCH_APP: 2 + 3, POLICIES: 2 + 2, EXC_SEARCH: 2 + 3, EXC_POLICIES: 2 + 2, POLL: 4, KEEP: 4, PREVIEW: 1, SUBMIT: 1, CHECK: 5, CANCEL: 2, CANCELB: 2, REFRESH: lib.MAX_CALLS, RESUME: lib.MAX_CALLS, WATCH: lib.MAX_CALLS, NAV_REQUESTS: 2 };
   for (const b of r.budget) {
     const key = b.button.split(':')[0].replace(/^OPENB?$/, 'WATCH');
     const lim = lib.has(LIMITS, key) ? LIMITS[key] : 0;
@@ -1126,6 +1265,187 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
       .concat([{ click: 'EXTRAS_DONE', expect: /A request can hold at most 20 applications/ }, { click: 'PREVIEW', expect: /Applications and flow policies/ }, auto(/Preview: ready/), { click: 'SIGNOUT' }])));
     eq(commitsOf(r4).map(decodeReq)[0].applications.length, 20, 'at most 20 applications are sent');
     common(r4, 'applications limit');
+  }
+  // ---- whole environment ---------------------------------------------------------------------------------------------------
+  {
+    const START = [{ click: 'SCOPE:ALL', expect: /New request/ }, { click: 'START_ALL', form: { confirmAll: true }, expect: /Bring the whole dev environment into Git/ }];
+    const r = await run({ worldOpt: { noBlockers: true } }, START.concat([
+      { click: 'PREVIEW', expect: /Review the change.*The whole environment/ }, auto(/Predicted changes/),
+      { click: 'SUBMIT', expect: /Changes by type.*pingone_davinci_flow.*Full list: 4 resources that change or differ/ }, auto(/Request submitted/), { click: 'SIGNOUT' }]));
+    const first = r.pages[0];
+    ok(buttonOf(first.html, 'SCOPE:SELECTED') && buttonOf(first.html, 'SCOPE:ALL') && buttonOf(first.html, 'SEARCH'), 'the new request screen offers Selected items (default) and Whole environment');
+    const allPage = r.pages[1];
+    ok(!buttonOf(allPage.html, 'SEARCH') && !/Main flow name or ID/.test(visible(allPage.html)) && /Bring the whole <span data-pp-source-name="1">dev<\/span> environment into Git/.test(allPage.html) && /type="checkbox"[^>]*required/.test(allPage.html),
+      'Whole environment hides the flow search and shows the required tick box');
+    const opt = r.pages.filter((p) => /Review the change/.test(p.html))[0].html;
+    ok(!buttonOf(opt, 'EXTRAS') && buttonOf(opt, 'EXCLUDE') && /Back to the start/.test(opt) && !/Flow<\/dt>/.test(opt), 'a whole-environment request has no flow and no include step, but the exclude step');
+    const reqs = commitsOf(r).map(decodeReq);
+    eq(reqs.length, 2, 'preview and submit each make one commit');
+    ok(reqs[0].scope === 'all' && reqs[0].confirmAll === true && reqs[0].flows.length === 0 && !lib.has(reqs[0], 'exclude') && reqs[0].dryRun === true, 'request.json: scope all, confirmAll, no flows');
+    ok(reqs[1].dryRun === false && reqs[1].title === 'PingOne Promote: whole dev environment', 'the title says what the request is');
+    const pv = r.pages.filter((p) => /Predicted changes/.test(p.html))[0].html;
+    const v = visible(pv);
+    ok(v.indexOf('Changes by type') > 0 && v.indexOf('Changes by type') < v.indexOf('Full list'), 'the per-type summary comes before the full list');
+    ok(/<details><summary>Full list: 4 resources/.test(pv) && !/<details open/.test(pv), 'the full list is folded');
+    ok(/31 more match Git and are not listed/.test(v) && !/pingcli__Flow_12/.test(pv), 'resources identical to Git are counted, not listed');
+    ok(/pingone_davinci_flow.*Total.*34/.test(v) === false && /<th scope="row"><code>pingone_davinci_flow<\/code><\/th><td>32<\/td>/.test(pv), 'the summary counts every resource of a type');
+    ok(!/selected flow/.test(pv) && !/Selected:/.test(v), 'nothing is the selected flow');
+    eq(r.w.g.mrs[0].title, '[whole environment] PingOne Promote: whole dev environment', 'the merge request title is prefixed');
+    ok(r.w.g.jobRefusals.length === 0, 'the job accepted the whole-environment request');
+    ok(JSON.stringify(r.inst.ppState).length < 40000, 'the state stays small');
+    common(r, 'whole environment');
+  }
+  // ---- whole environment: the tick box is required --------------------------------------------------------------------------
+  {
+    const r = await run({}, [{ click: 'SCOPE:ALL' }, { click: 'START_ALL', form: { confirmAll: false }, expect: /Bring the whole dev environment/ },
+      { click: 'SCOPE:SELECTED', expect: /Tick the box to confirm: this brings the whole dev environment into Git/ }, { click: 'SIGNOUT', expect: /Main flow name or ID/ }]);
+    ok(/Fix 1 field.*Tick the box to confirm/.test(visible(r.pages[2].html)) && buttonOf(r.pages[2].html, 'START_ALL'), 'without the tick the request is refused, with the reason');
+    eq(commitsOf(r).length, 0, 'nothing reaches GitLab');
+    eq(r.w.calls.length, 0, 'and nothing is read');
+    common(r, 'whole environment without confirm');
+    // The job refuses it too, whatever the app does.
+    eq(jobValidate({ requestVersion: 1, requestId: rid, requestedBy: 'p', source: 'dev', scope: 'all', flows: [], mode: 'mr', branchName: 'pingone-promote/' + rid, dryRun: true }, 'pingone-promote/' + rid).field, 'confirmAll', 'the job refuses scope all without confirmAll');
+    const r2 = await run({}, [{ click: 'SCOPE:ALL' }, { click: 'START_ALL', form: { confirmAll: false, source: 'sandbox' } }, { click: 'SIGNOUT' }]);
+    ok(/whole sandbox environment/.test(visible(r2.last)) || /Tick the box to confirm: this brings the whole sandbox/.test(visible(r2.pages[2].html)), 'the message names the source that was chosen');
+    common(r2, 'whole environment without confirm, sandbox');
+  }
+  // ---- exclude a flow from the whole environment; the picker; budgets ------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, [{ click: 'SCOPE:ALL' }, { click: 'START_ALL', form: { confirmAll: true } },
+      { click: 'EXCLUDE', expect: /Leave out Nothing\. Optional/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'flow', excQuery: '' }, expect: /Nothing excluded/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'flow', excQuery: 'zzz' }, expect: /Type part of a name, or a flow ID/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'flow', excQuery: 'login' }, expect: /No flow in dev matches .zzz./ },
+      { click: 'EXC_ADD:1', expect: /2 matches\. Choose one; the app never picks for you.*Login.*Login - MFA/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'flow', excQuery: dvid(4) }, expect: /Left out of this request \(1\).*Flow: Login - MFA/ },
+      { click: 'EXC_ADD:0', expect: /1 match.*Password reset/ },
+      { click: 'EXC_ADD:0', expect: /Left out of this request \(2\)/ },
+      { click: 'EXC_DROP:1', expect: /Password reset is already excluded/ },
+      { click: 'EXC_DONE', expect: /Left out of this request \(1\)/ },
+      { click: 'PREVIEW', expect: /Leave out Flow: Login - MFA/ }, auto(/Predicted changes/),
+      { click: 'SIGNOUT', expect: /Excluded Left out of the export\..*pingone_davinci_flow.pingcli__Login___MFA.*excluded; Git-managed copy kept/ }]);
+    const reqs = commitsOf(r).map(decodeReq);
+    eq(reqs[0].exclude, [{ type: 'flow', id: dvid(2), name: 'Login - MFA' }], 'the excluded flow is sent by ID and name');
+    ok(r.w.g.jobRefusals.length === 0, 'the job accepted the exclude list');
+    eq(glCalls(r, /api\.pingone\.com.*\/flows/).length, 3, 'the flow list is read once for every flow search in the exclude picker');
+    eq(r.budget.filter((b) => b.button === 'EXC_SEARCH').map((b) => b.calls).join(','), '0,4,0,0', 'REST calls: 1 token + 3 pages for the first search, none for the rest (an empty search reads nothing)');
+    const pv = r.pages[r.pages.length - 2].html;
+    ok(/<h2>Excluded<\/h2>/.test(pv) && !/<td class="same"><span aria-hidden="true">⊘ <\/span>Excluded/.test(pv), 'excluded items are listed apart from the changes, not in the change table');
+    common(r, 'exclude a flow');
+  }
+  // ---- the exclude picker covers applications, flow policies, connections and variables -------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([
+      { click: 'EXCLUDE' },
+      { click: 'EXC_SEARCH', form: { excKind: 'connection', excQuery: 'smtp' }, expect: /Exclude items/ },
+      { click: 'EXC_ADD:0', expect: /1 match.*Legacy SMTP/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'variable', excQuery: 'color' }, expect: /Connection: Legacy SMTP/ },
+      { click: 'EXC_ADD:1', expect: /2 matches\. Choose one.*color.*company.*color.*user/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'application', excQuery: 'web' }, expect: /Variable: color \(user\)/ },
+      { click: 'EXC_POLICIES:0', expect: /1 match.*Web Portal.*Its flow policies/ },
+      { click: 'EXC_SEARCH_POL', form: { excPolQuery: 'recovery' }, expect: /Flow policies of Web Portal/ },
+      { click: 'EXC_ADDPOL:0', expect: /1 match.*Recovery policy/ },
+      { click: 'EXC_ADD:0', expect: /Flow policy: Recovery policy \(application Web Portal\)/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'connection', excQuery: 'pingone' }, expect: /Application: Web Portal/ },
+      { click: 'EXC_ADD:0' }, { click: 'EXC_SEARCH', form: { excKind: 'connection', excQuery: 'http' } }, { click: 'EXC_ADD:0' },
+      { click: 'EXC_DONE' },
+      { click: 'PREVIEW', expect: /Connection: Legacy SMTP.*Variable: color \(user\).*Flow policy: Recovery policy.*Application: Web Portal/ }, auto(/Preview: ready/), { click: 'SIGNOUT' }]));
+    const ex = commitsOf(r).map(decodeReq)[0].exclude;
+    eq(ex, [{ type: 'connection', name: 'Legacy SMTP' }, { type: 'variable', name: 'color_user' }, { type: 'flowPolicy', name: 'Recovery policy' }, { type: 'application', name: 'Web Portal' },
+      { type: 'connection', name: 'PingOne' }, { type: 'connection', name: 'Http' }], 'applications, flow policies, connections and variables are excluded by name (a variable as name_context)');
+    ok(r.w.g.jobRefusals.length === 0, 'the job accepted them all');
+    eq(glCalls(r, /connectorInstances/).length, 1, 'the connection list is read once (one page) for every connection search');
+    eq(glCalls(r, /\/variables/).length, 2, 'the variable list is read once (two pages)');
+    eq(glCalls(r, /as\/token/).length, 5, 'one worker token per list: flows, connections, variables, applications, flow policies');
+    ok(r.w.calls.filter((c) => c.url.indexOf('api.pingone.com') > 0).every((c) => c.method === 'GET'), 'the lists are read-only');
+    ok(JSON.stringify(r.inst).indexOf('secret-value-for-tests') < 0, 'secrets in the connection and variable lists never reach the state');
+    const b = r.budget.filter((x) => /^EXC_/.test(x.button)).map((x) => x.button + '=' + x.calls);
+    ok(b.indexOf('EXC_SEARCH=3') >= 0 || b.indexOf('EXC_SEARCH=2') >= 0, 'REST calls per list: 1 token + its pages: ' + b.join(' '));
+    common(r, 'exclude kinds');
+    const r2 = await run({ worldOpt: { noBlockers: true }, settings: { ppPathConnections: 'none', ppPathVariables: 'none' } }, toOptions.concat([{ click: 'EXCLUDE' }, { click: 'SIGNOUT' }]));
+    const kindsPage = r2.pages[r2.pages.length - 2].html;
+    ok(!/<option value="connection"/.test(kindsPage) && !/<option value="variable"/.test(kindsPage) && /<option value="application"/.test(kindsPage), 'without the connection and variable paths only flows and applications are offered');
+    common(r2, 'exclude kinds off');
+    const r3 = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([{ do: (wd) => { wd.o.tokenStatus = 401; } }, { click: 'EXCLUDE' }, { click: 'EXC_SEARCH', form: { excKind: 'connection', excQuery: 'http' } }, { click: 'SIGNOUT', expect: /PingOne did not let the app read connections \(HTTP 401\)/ }]));
+    common(r3, 'exclude token failure');
+  }
+  // ---- the exclude picker will not exclude what the request includes ------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([{ click: 'EXCLUDE' },
+      { click: 'EXC_SEARCH', form: { excKind: 'flow', excQuery: 'registration' } }, { click: 'EXC_ADD:0', expect: /1 match.*Registration/ },
+      { click: 'EXC_SEARCH', form: { excKind: 'application', excQuery: 'partner' }, expect: /Registration is the main flow of this request; a request cannot include and exclude the same flow/ },
+      { click: 'EXC_ADD:0', expect: /2 matches\. Choose one.*Partner API.*Partner API/ },
+      { click: 'EXC_DONE', expect: /Two applications are named .Partner API./ }, { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'SIGNOUT' }]));
+    eq(commitsOf(r).map(decodeReq)[0].exclude, undefined, 'nothing was excluded');
+    common(r, 'exclude the include');
+    // The job reports a conflict the app could not see (the same flow named two ways): the message names both.
+    const r2 = await run({ worldOpt: { noBlockers: true, previewError: { code: 'preflight', type: 'validation', field: 'exclude[0]', message: 'exclude[0] resolves to pingone_davinci_flow.pingcli__Registration, which flows[0] also includes; a resource cannot be both included and excluded' } } },
+      toOptions.concat([{ click: 'PREVIEW' }, auto(/The request did not pass the checks/), { click: 'SIGNOUT', expect: /exclude\[0\] resolves to .*flows\[0\] also includes/ }]));
+    ok(/Field: <code>exclude\[0\]<\/code>/.test(r2.pages[r2.pages.length - 2].html), 'the field the job refused is shown');
+    common(r2, 'job reports a conflict');
+  }
+  // ---- exclude: the job finds several matches --------------------------------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { excludeAmbiguous: 'Login' } }, [{ click: 'SCOPE:ALL' }, { click: 'START_ALL', form: { confirmAll: true } }, { click: 'EXCLUDE' },
+      { click: 'EXC_SEARCH', form: { excKind: 'flow', excQuery: 'login' } }, { click: 'EXC_ADD:0' }, { click: 'EXC_DONE' }, { click: 'PREVIEW' }, auto(/The request did not pass the checks/),
+      { click: 'SIGNOUT', expect: /2 flows match .Login. in dev.*Field: exclude\[0\].*Several resources match what you chose to exclude.*Login.*Login v2/ }]);
+    const pv = r.pages[r.pages.length - 2].html;
+    ok(/Login v2/.test(pv) && /pingone_davinci_flow.pingcli__Login_2/.test(pv), 'ambiguous exclude: every candidate is listed');
+    eq(commitsOf(r).length, 1, 'and nothing is guessed or written');
+    ok(buttonOf(pv, 'EDIT') && buttonOf(pv, 'SUBMIT') && buttonOf(pv, 'SUBMIT').disabled, 'the person edits the options to choose again; Submit stays off');
+    common(r, 'exclude ambiguity');
+  }
+  // ---- Update / Keep Git version / Exclude for a dependency ---------------------------------------------------------------------------------
+  {
+    const r = await run({ worldOpt: { noBlockers: true } }, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'EDIT' },
+      { click: 'PREVIEW', form: { deps: { [HTTP]: 'exclude' } }, expect: /Shared definitions/ }, auto(/Predicted changes/),
+      { click: 'SIGNOUT', expect: /Excluded Left out of the export\..*pingone_davinci_connector_instance.pingcli__Http dependency.*excluded; Git-managed copy kept/ }]));
+    const opt = r.pages.filter((p) => /Review the change/.test(p.html) && /Keep Git version/.test(p.html))[0].html;
+    const group = (addr) => { const i = opt.indexOf('<legend>' + addr); return opt.slice(i, opt.indexOf('</fieldset>', i)); };
+    ok(/Update<\/label>/.test(group(HTTP)) && /Keep Git version<\/label>/.test(group(HTTP)) && /Exclude<\/label>/.test(group(HTTP)), 'a differing dependency offers Update, Keep Git version and Exclude');
+    ok(/value="keep" checked/.test(group(HTTP)), 'and still defaults to Keep Git version');
+    ok(/Update<\/label>/.test(group('pingone_davinci_flow.pingcli__MFA-0020-sub')) && !/Keep Git version/.test(group('pingone_davinci_flow.pingcli__MFA-0020-sub')) && /Exclude<\/label>/.test(group('pingone_davinci_flow.pingcli__MFA-0020-sub')),
+      'a new dependency offers Update and Exclude (there is no Git version to keep)');
+    ok(!/<legend>pingone_davinci_flow.pingcli__Registration/.test(opt), 'the selected item cannot be excluded');
+    const reqs = commitsOf(r).map(decodeReq);
+    ok(reqs[reqs.length - 1].dependencyChoices[HTTP] === 'exclude' && !lib.has(reqs[reqs.length - 1].dependencyChoices, 'pingone_davinci_flow.pingcli__MFA-0020-sub'), 'exclude is sent; an untouched new dependency is not');
+    const last = r.pages.filter((p) => /Predicted changes/.test(p.html)).pop().html;
+    ok(/value="exclude" checked|Excluded/.test(last), 'the choice is kept after the preview');
+    common(r, 'exclude a managed dependency');
+  }
+  // ---- exclude a dependency that Git does not manage: an ID per environment ---------------------------------------------------------------
+  {
+    const idEnv = { env: { qa: { [MFA_VAR]: dvid(30) }, stage: { [MFA_VAR]: dvid(31) }, prod: { [MFA_VAR]: dvid(32) } } };
+    const r = await run({ worldOpt: {} }, toOptions.concat([
+      { click: 'PREVIEW', form: ENV_FORM }, auto(/Predicted changes/), { click: 'EDIT' },
+      { click: 'PREVIEW', form: Object.assign({ deps: { [MFA]: 'exclude' } }, ENV_FORM), expect: /Shared definitions/ }, auto(/Predicted changes/),
+      { click: 'SIGNOUT', expect: /qa ✕ 1 to fix.*missing environment value.*qa\.tfvars must set pingone_davinci_flow_pingcli__MFA_0020_sub_id.*pingone_davinci_flow\.pingcli__MFA-0020-sub/ }]));
+    const pv = r.pages[r.pages.length - 2].html;
+    ok(/excluded; referenced by ID variable `?pingone_davinci_flow_pingcli__MFA_0020_sub_id/.test(visible(pv).replace(/`/g, '')), 'the excluded dependency shows its reason');
+    ok(!/id="[a-z0-9]+" [^>]*data-pp="\[&quot;env&quot;,&quot;qa&quot;,&quot;pingone_davinci_flow_pingcli__MFA_0020_sub_id/.test(pv), 'the preview itself is read-only');
+    const r2 = await run({ worldOpt: {} }, toOptions.concat([
+      { click: 'PREVIEW', form: ENV_FORM }, auto(/Predicted changes/), { click: 'EDIT' },
+      { click: 'PREVIEW', form: Object.assign({ deps: { [MFA]: 'exclude' } }, ENV_FORM) }, auto(/Predicted changes/), { click: 'EDIT' }]));
+    const ed = r2.last;
+    const ids = (html) => (html.match(/data-pp="\[&quot;env&quot;,&quot;[a-z]+&quot;,&quot;pingone_davinci_flow_pingcli__MFA_0020_sub_id&quot;\]"/g) || []).length;
+    eq(ids(ed), 4, 'one input per environment for the excluded dependency\'s ID: the source and the three rollout envs');
+    ok(/dev: ID of pingone_davinci_flow\.pingcli__MFA-0020-sub/.test(visible(ed)) && /qa: ID of pingone_davinci_flow\.pingcli__MFA-0020-sub/.test(visible(ed)), 'each input names the dependency');
+    const srcInput = new RegExp('data-pp="\\[&quot;env&quot;,&quot;dev&quot;,&quot;pingone_davinci_flow_pingcli__MFA_0020_sub_id&quot;\\]" value="' + dvid(7) + '"').test(ed);
+    ok(srcInput, 'the source env input is prefilled from the export');
+    ok(!/inline&quot;,&quot;pingone_davinci_flow_pingcli__MFA_0020_sub_id/.test(ed), 'an ID is never "the same in all environments"');
+    const r3 = await run({ worldOpt: {} }, toOptions.concat([
+      { click: 'PREVIEW', form: ENV_FORM }, auto(/Predicted changes/), { click: 'EDIT' },
+      { click: 'PREVIEW', form: Object.assign({ deps: { [MFA]: 'exclude' } }, ENV_FORM) }, auto(/Predicted changes/), { click: 'EDIT' },
+      { click: 'PREVIEW', form: { env: Object.assign({}, ENV_FORM.env, { qa: Object.assign({}, ENV_FORM.env.qa, idEnv.env.qa), stage: Object.assign({}, ENV_FORM.env.stage, idEnv.env.stage), prod: Object.assign({}, ENV_FORM.env.prod, idEnv.env.prod) }) } }, auto(/Preview: ready/),
+      { click: 'SUBMIT' }, auto(/Request submitted/), { click: 'SIGNOUT' }]));
+    const reqs = commitsOf(r3).map(decodeReq);
+    const sent = reqs[reqs.length - 1];
+    eq(sent.envValues.qa[MFA_VAR], dvid(30), 'the ID for each environment is sent as an environment value');
+    ok(sent.envValues.stage[MFA_VAR] === dvid(31) && sent.envValues.prod[MFA_VAR] === dvid(32) && !(sent.envValues.dev && sent.envValues.dev[MFA_VAR]), 'and the source env\'s prefilled value is not repeated');
+    eq(sent.dependencyChoices[MFA], 'exclude', 'the dependency is excluded');
+    ok(r3.w.g.jobRefusals.length === 0, 'the job accepted it');
+    common(r, 'exclude an unmanaged dependency, blocked'); common(r2, 'exclude an unmanaged dependency, inputs'); common(r3, 'exclude an unmanaged dependency, submitted');
   }
   // ---- artifact fallback: the download is a redirect (or 404); the job log's last line is used ------------------------------
   {
