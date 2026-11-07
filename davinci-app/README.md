@@ -138,7 +138,7 @@ The request job's side is specified in the backend's `docs/gitlab-ci-integration
    - `PINGONE_PROMOTE_WORKER_CLIENT_ID`, `PINGONE_PROMOTE_WORKER_CLIENT_SECRET` and `PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID`: the read-only worker for the source env;
    - `PINGONE_PROMOTE_REGION_CODE`;
    - `PINGONE_PROMOTE_GITLAB_TOKEN`;
-   - `PINGONE_PROMOTE_TERRAFORMER_SHA256`.
+   - optionally `PINGONE_PROMOTE_TERRAFORMER_SHA256` (leave it unset for the first test).
    In the CI file, set `PINGONE_PROMOTE_SOURCES` and `PINGONE_PROMOTE_ROLLOUT` to the same env names as `ppSourceEnvs` and `ppRolloutEnvs`.
 5. **Protect `pingone-promote/*`** as a wildcard, with Developers and Maintainers allowed to push and merge (the backend's recommendation). Protected variables then reach the request job, and only project members can create request branches.
    - On a protected branch, DaVinci's Developer token cannot **delete** it. Cancel then says so (HTTP 403), and a Maintainer deletes the branch.

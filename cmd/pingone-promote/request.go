@@ -59,7 +59,8 @@ Environment (names configurable with --<name>-env):
   PINGONE_PROMOTE_WORKER_CLIENT_ID / _CLIENT_SECRET / _ENVIRONMENT_ID,
   PINGONE_PROMOTE_REGION_CODE         read-only worker for the source env
   PINGONE_PROMOTE_GITLAB_TOKEN        project access token (Developer, api)
-  PINGONE_PROMOTE_TERRAFORMER_PATH / _SHA256 / _VERSION   the pin
+  PINGONE_PROMOTE_TERRAFORMER_PATH / _VERSION   the pin
+  PINGONE_PROMOTE_TERRAFORMER_SHA256  optional digest; unset skips it
   PINGONE_PROMOTE_ROLLOUT             e.g. qa,stage,prod
   PINGONE_PROMOTE_SOURCES             allowed sources, e.g. dev
   PINGONE_PROMOTE_TERRAFORM_BIN       terraform for the fmt gate (or PATH)

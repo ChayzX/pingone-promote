@@ -34,8 +34,9 @@
 #   PINGONE_PROMOTE_REGION_CODE             e.g. NA
 #   PINGONE_PROMOTE_GITLAB_TOKEN            masked, protected (project access
 #                                           token: Developer role, api scope)
-#   PINGONE_PROMOTE_TERRAFORMER_SHA256      sha256 of the terraformer this job
-#                                           builds with the pinned image
+#   PINGONE_PROMOTE_TERRAFORMER_SHA256      OPTIONAL sha256 of the terraformer
+#                                           this job builds; unset = trust the
+#                                           pinned commit (version still checked)
 
 variables:
   PINGONE_PROMOTE_GO_IMAGE: "golang:1.27"                       # pin by digest in production: golang:1.27@sha256:<digest>
