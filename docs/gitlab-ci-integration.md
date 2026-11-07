@@ -70,13 +70,17 @@ job that only runs on MRs or the default branch):
 - terraform for the fmt gate, from releases.hashicorp.com, checked with
   `sha256sum -c` against `TERRAFORM_SHA256`.
 
-`PINGONE_PROMOTE_TERRAFORMER_SHA256` must be the SHA-256 of the
-terraformer binary the job builds. The build is reproducible for a given Go
-toolchain (`-trimpath`), so pin the image by digest
-(`golang:1.27@sha256:<digest>`), build once, and record the digest the job
-prints on its first, failing run (`terraformer binary checksum does not
-match`) or build locally with the same image. Change it only together with
-`TERRAFORMER_VERSION` or the image.
+`PINGONE_PROMOTE_TERRAFORMER_SHA256` is **optional**. Leave it unset (or
+empty) and the job trusts the terraformer it just built: the source is
+already pinned by `TERRAFORMER_COMMIT` and the Go checksum database, and the
+tool still checks the binary reports `TERRAFORMER_VERSION` and runs only a
+private copy. Set it when you want to detect a changed build toolchain as
+well. It must then be the SHA-256 of the binary the job builds. The build is
+reproducible for a given Go toolchain (`-trimpath`), so pin the image by
+digest (`golang:1.27@sha256:<digest>`) and record the digest the job prints
+when it does not match (`terraformer binary checksum does not match ... the
+binary's sha256 is <digest>`), or build locally with the same image. Change
+it only together with `TERRAFORMER_VERSION` or the image.
 
 Replace the `tags:` list with the project's runner tags
 (`PINGONE_PROMOTE_RUNNER_TAG` holds one).
@@ -90,7 +94,7 @@ Replace the `tags:` list with the project's runner tags
 | `PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID` | project | yes | no | environment holding the worker app |
 | `PINGONE_PROMOTE_REGION_CODE` | project or file | no | no | `AP`, `AU`, `CA`, `EU`, `NA` or `SG` |
 | `PINGONE_PROMOTE_GITLAB_TOKEN` | project | yes | yes | project access token, Developer role, `api` scope; the job's commits and MRs (`CI_JOB_TOKEN` cannot push) |
-| `PINGONE_PROMOTE_TERRAFORMER_SHA256` | project | yes | no | pinned digest of the built terraformer |
+| `PINGONE_PROMOTE_TERRAFORMER_SHA256` | project | no | no | optional pinned digest of the built terraformer; unset skips the digest check |
 | `PINGONE_PROMOTE_GO_IMAGE` | file | - | - | `golang:1.27` (pin by digest) |
 | `PINGONE_PROMOTE_REPO_URL`, `PINGONE_PROMOTE_REF` | file | - | - | the tool's source and pinned commit |
 | `TERRAFORMER_VERSION`, `TERRAFORMER_COMMIT` | file | - | - | `v0.6.0`, `9aa51edd1930b1b2724183f7c56911aad0c47556` |

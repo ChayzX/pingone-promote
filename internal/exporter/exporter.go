@@ -31,9 +31,12 @@
 //   - internal/utils/sanitize.go: label and variable-name sanitization.
 //
 // Every exec verifies the binary first: the configured file is copied into a
-// private 0700 directory, the copy's SHA-256 must equal Config.SHA256, and
-// the copy's --version output must report Config.Version. Only the verified
-// copy is executed, so the file cannot change between check and use.
+// private 0700 directory, the copy's SHA-256 must equal Config.SHA256 (when
+// one is set), and the copy's --version output must report Config.Version.
+// Only the verified copy is executed, so the file cannot change between
+// check and use. An empty Config.SHA256 skips only the digest comparison:
+// CI that builds terraformer from a pinned commit through the Go checksum
+// database already pins the source, and the version check still runs.
 package exporter
 
 import (
@@ -60,7 +63,7 @@ import (
 // Config pins the terraformer binary.
 type Config struct {
 	Version string `json:"version"` // e.g. "0.6.0" (a leading "v" is ignored)
-	SHA256  string `json:"sha256"`  // hex digest of the binary
+	SHA256  string `json:"sha256"`  // hex digest of the binary; "" skips the digest check
 	Path    string `json:"path"`    // the binary
 }
 
@@ -131,8 +134,8 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.Path) == "" {
 		return errors.New("exporter: terraformer path is required")
 	}
-	if !sha256RE.MatchString(c.SHA256) {
-		return errors.New("exporter: terraformer sha256 must be 64 lowercase hex characters")
+	if c.SHA256 != "" && !sha256RE.MatchString(c.SHA256) {
+		return errors.New("exporter: terraformer sha256 must be empty or 64 lowercase hex characters")
 	}
 	if strings.TrimPrefix(c.Version, "v") == "" {
 		return errors.New("exporter: terraformer version is required")
@@ -252,6 +255,9 @@ func (r *Runner) install(w *workspace) error {
 }
 
 func (r *Runner) verifyDigest(w *workspace) error {
+	if r.Config.SHA256 == "" {
+		return nil
+	}
 	f, err := os.Open(w.bin)
 	if err != nil {
 		return err

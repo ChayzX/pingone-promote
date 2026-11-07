@@ -89,6 +89,34 @@ func TestVerifyChecksumAndVersion(t *testing.T) {
 	}
 }
 
+// An empty digest skips only the digest comparison; the version check and
+// the private-copy exec still apply, and a malformed digest is still refused.
+func TestVerifyWithoutDigest(t *testing.T) {
+	f := getFake(t)
+	ctx := context.Background()
+	r := runner(f)
+	r.Config.SHA256 = ""
+	if err := r.Verify(ctx); err != nil {
+		t.Fatalf("empty sha256 should skip the digest check, got %v", err)
+	}
+	if _, err := r.ListResources(ctx, creds); err != nil {
+		t.Fatalf("empty sha256 should still export, got %v", err)
+	}
+	r = runner(f)
+	r.Config.SHA256 = ""
+	r.Config.Version = "0.5.0"
+	if err := r.Verify(ctx); !errors.Is(err, ErrVersion) {
+		t.Fatalf("want version error without a digest, got %v", err)
+	}
+	for _, bad := range []string{"abc", strings.Repeat("A", 64), " " + strings.Repeat("0", 63)} {
+		r = runner(f)
+		r.Config.SHA256 = bad
+		if err := r.Verify(ctx); err == nil || errors.Is(err, ErrChecksum) {
+			t.Fatalf("sha256 %q: want a config error, got %v", bad, err)
+		}
+	}
+}
+
 func copyFile(t *testing.T, from, to string) {
 	src, err := os.Open(from)
 	if err != nil {
