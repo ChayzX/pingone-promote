@@ -24,6 +24,11 @@ for (const e of flow.graphData.elements.edges) {
 }
 const title = (id) => (NODES[id].properties && NODES[id].properties.nodeTitle ? NODES[id].properties.nodeTitle.value : id);
 const byTitle = (t) => Object.keys(NODES).filter((x) => title(x) === t)[0];
+// The export is built with sign-in off (gen_app.py --sign-in none, the default) or with a sign-in subflow (--sign-in subflow).
+const MODE = Object.keys(NODES).some((x) => NODES[x].capabilityName === 'startUiSubFlow') ? 'subflow' : 'none';
+console.log('sign-in: ' + MODE);
+// What request.json and the commit record as requestedBy for the test person.
+const requester = (identity) => (MODE === 'none' ? identity.name + ' (unverified)' : identity.username);
 
 let passed = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); passed += 1; };
@@ -753,6 +758,15 @@ async function run(opt, steps) {
       case 'customHTMLTemplate': {
         const html = template(p.customHTML.value);
         ok(html.indexOf('{{') < 0, 'no {{reference}} survives on a screen (' + title(id) + ')');
+        // Sign-in off: the person types their name on the first screen. Tests that are not about that screen do it here,
+        // so their steps and pages are the same in both modes.
+        if (MODE === 'none' && !o.manualIdentify && buttonOf(html, 'IDENTIFY') && (!steps[si] || steps[si].click !== 'IDENTIFY')) {
+          outputs[id] = { buttonValue: 'IDENTIFY', ppForm: JSON.stringify(formOf(html, { name: w.o.identity.name })) };
+          segButton = 'IDENTIFY';
+          segCalls = 0;
+          CLOCK += 2000;
+          break;
+        }
         budget.push({ button: segButton, calls: segCalls });
         segCalls = 0;
         pages.push({ title: title(id), html: html, state: JSON.parse(JSON.stringify(inst.ppState || {})) });
@@ -847,7 +861,24 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
 
 (async () => {
   // ---- access -----------------------------------------------------------------------------------
-  {
+  if (MODE === 'none') {
+    const r = await run({ manualIdentify: true }, [
+      { click: 'IDENTIFY', form: { name: '  ' }, expect: /Who is making this request\?.*Sign-in is switched off/ },
+      { click: 'IDENTIFY', form: { name: 'x'.repeat(81) }, expect: /Type your name\./ },
+      { click: 'IDENTIFY', form: { name: ' Pat  <b>Operator</b> ' }, expect: /Use at most 80 characters\./ },
+      { click: 'SIGNOUT', expect: /New request.*Not signed in: Pat bOperator\/b \(unverified\)/ }]);
+    ok(!buttonOf(r.pages[0].html, 'NAV_NEW') && !buttonOf(r.pages[0].html, 'NAV_REQUESTS') && buttonOf(r.pages[0].html, 'SIGNOUT'), 'before a name is given, only Leave is offered');
+    eq(r.w.calls.length, 0, 'nothing is called before a name is given');
+    ok(/You have left PingOne Promote/.test(r.last), 'leaving ends the flow');
+    common(r, 'identify');
+    const r2 = await run({ manualIdentify: true }, [{ click: 'SIGNOUT' }]);
+    ok(/You have left PingOne Promote/.test(r2.last) && r2.w.calls.length === 0, 'leaving from the name screen ends the flow');
+    common(r2, 'identify leave');
+    const r3 = await run({ settings: { ppGitlabProjectId: '', ppSourceEnvs: 'dev=nope', ppAllowedGroups: '' } }, []);
+    ok(/not set up yet/.test(r3.last) && /ppGitlabProjectId: not set/.test(r3.last) && /ppSourceEnvs/.test(r3.last) && r3.last.indexOf('nope') < 0 && !/ppAllowedGroups/.test(r3.last),
+      'settings problems name the variable, never its value; ppAllowedGroups is not needed with sign-in off');
+    common(r3, 'settings');
+  } else {
     const r = await run({ worldOpt: { identity: {} } }, []);
     ok(/Sign-in required/.test(r.last) && r.pages.length === 1 && r.w.calls.length === 0, 'no identity from the sign-in subflow: nothing runs');
     common(r, 'no identity');
@@ -935,7 +966,7 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
       } },
       { click: 'REFRESH', expect: /qa ✓ Live stage ⏸ Needs approval 1 of 2 approvals prod ○ Waiting/ },
       { click: 'NAV_REQUESTS', expect: /stage ✓ Live prod ✕ Failed.*no more automatic checks/ },
-      { click: 'OPEN:0', expect: /Requested by.*pat\.operator/ },
+      { click: 'OPEN:0', expect: MODE === 'none' ? /Requested by.*Pat Operator \(unverified\)/ : /Requested by.*pat\.operator/ },
       { click: 'SIGNOUT', expect: /prod ✕ Failed/ }
     ]));
     mainRun = r;
@@ -948,7 +979,8 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     eq(bodies.map((b) => b.branch), reqs.map((x) => x.branchName), 'every commit goes to the request branch named in request.json');
     eq(reqs.map((x) => x.dryRun), [true, true, false], 'Preview is dryRun true; Submit is dryRun false');
     eq(reqs.map((x) => x.requestId).filter((x, i, a) => a.indexOf(x) === i).length, 1, 'one requestId across preview and submit');
-    ok(reqs.every((x) => x.requestedBy === 'pat.operator') && /Requested-by: pat\.operator/.test(bodies[2].commit_message), 'requestedBy in request.json and in the commit message');
+    const by = requester({ username: 'pat.operator', name: 'Pat Operator' });
+    ok(reqs.every((x) => x.requestedBy === by) && bodies[2].commit_message.indexOf('Requested-by: ' + by + '\n') >= 0, 'requestedBy in request.json and in the commit message');
     eq(reqs[2].dependencyChoices, { [HTTP]: 'update', [COLOR]: 'keep' }, 'dependency choices are sent: the changed one, and the changed-in-both default');
     eq(reqs[2].envValues, { qa: ENV_FORM.env.qa, stage: ENV_FORM.env.stage, prod: { base_url: ['https://www.example.com', 'https://example.com'] } }, 'environment values per rollout env are sent; JSON text becomes a list');
     eq(reqs[2].secretMappings, { davinci_variable_PingFedAuthNCreds_value: 'PingFedAuthNCreds' }, 'secret mappings: terraformer name to customer_secrets name');

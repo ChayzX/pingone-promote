@@ -144,7 +144,8 @@ lib.withDefaults = (p) => {
   return out;
 };
 lib.varName = (n) => 'pp' + n.charAt(0).toUpperCase() + n.slice(1);
-lib.checkSettings = (raw) => {
+// signIn: "subflow" (the export calls a sign-in subflow first) or "none" (the export has no sign-in; allowedGroups is not used).
+lib.checkSettings = (raw, signIn) => {
   const p = lib.withDefaults(raw);
   const cfg = {};
   const problems = [];
@@ -199,9 +200,10 @@ lib.checkSettings = (raw) => {
   cfg.environmentPattern = need('environmentPattern', /^[A-Za-z0-9 :._\/-]{0,80}\{env\}[A-Za-z0-9 :._\/-]{0,80}$/, 'must contain {env}', '{env}');
   cfg.mrLabel = need('mrLabel', /^[A-Za-z0-9 :._-]{1,60}$/, 'must be a GitLab label name', 'pingone-promote');
   // Who may use the app: PingOne group names, or * for every user the sign-in subflow admits.
+  cfg.signIn = signIn === 'none' ? 'none' : 'subflow';
   const groups = lib.str(p.allowedGroups);
-  cfg.allowedGroups = groups === '*' ? ['*'] : groups.split(',').map((x) => x.trim()).filter((x) => x);
-  if (!cfg.allowedGroups.length) { problems.push({ name: 'allowedGroups', issue: 'not set (use PingOne group names, or * to admit every signed-in user)' }); }
+  cfg.allowedGroups = cfg.signIn === 'none' ? [] : groups === '*' ? ['*'] : groups.split(',').map((x) => x.trim()).filter((x) => x);
+  if (cfg.signIn !== 'none' && !cfg.allowedGroups.length) { problems.push({ name: 'allowedGroups', issue: 'not set (use PingOne group names, or * to admit every signed-in user)' }); }
   cfg.runTimeoutSeconds = lib.int(p.runTimeoutSeconds, 600, 60, 7200);
   cfg.pipelineAppearSeconds = lib.int(p.pipelineAppearSeconds, 120, 10, 3600);
   cfg.statusRefreshSeconds = lib.int(p.statusRefreshSeconds, 30, 10, 600);

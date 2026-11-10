@@ -315,8 +315,9 @@ The server always enforces this table: `lib.canPreview` and `lib.canSubmit` run 
 ## 3. The graph
 
 ```
-[Sign in with PingOne SSO (your sign-in subflow)]            startUiSubFlow, the one start node
-   → [Check sign-in and settings] fn signin ──stop──▶ [Cannot continue] (end screen)
+[Check settings (sign-in is off)] fn signin, the one start node ──stop──▶ [Cannot continue] (end screen)
+   (with --sign-in subflow: [Sign in with PingOne SSO (your sign-in subflow)] startUiSubFlow comes first,
+    then [Check sign-in and settings] fn signin)
    │ ok (keep state; ppFlows={}, ppBody="")
    ▼
 [Render screen] fn render → keep state → [App screen] (buttonValue, ppForm) → [Handle input] fn handle
@@ -343,7 +344,11 @@ The server always enforces this table: `lib.canPreview` and `lib.canSubmit` run 
 
 Splitting the flow into subflows would mean passing that state across subflow boundaries on every hop. That adds DaVinci behaviour we have not confirmed, and buys nothing. The only subflow is the sign-in, which is the operator's own flow.
 
-### Sign-in subflow contract
+### Sign-in off (the shipped export)
+
+`gen_app.py` builds the export with sign-in off by default (`--sign-in none`). The first node is **Check settings (sign-in is off)**, the `signin` step with the literal input `signIn = none`, and the first screen, `identify`, asks for a name of 1 to 80 characters. Braces, angle brackets, quotes and backslashes are removed. The name is recorded as `requestedBy = "<name> (unverified)"`, and the header says "Not signed in: <name> (unverified)". `ppAllowedGroups` is not read. Until a name is given, `handle` accepts only Continue and Leave, and makes no REST call. The launch link is the only gate, so the controls that matter are GitLab's: protected `main`, MR approval and manual env jobs with prod approval. The request branch and the read-only export cannot change an environment.
+
+### Sign-in subflow contract (`--sign-in subflow`)
 
 The main flow's first node is a **Flow Conductor → Start UI Subflow** node. Point it at your tenant's PingOne SSO sign-in subflow, for example the PingOne sign-on template that your other DaVinci apps already use, with password, MFA and existing-session reuse.
 
@@ -641,7 +646,7 @@ Open points, none of them blocking:
 - Ask 13 (new): `PINGONE_PROMOTE_RESULT` carries no `requiredSecrets`, so a submit read from the log cannot be gated on the Vault tick.
 
 ## 12. Assumptions to verify in a live tenant
-1. A `startUiSubFlow` node returns the subflow's outputs as `{{local.<node>.payload.output.<field>}}`, and the sign-in subflow can return `userId`, `username`, `name` and `groups`.
+1. (Only for a `--sign-in subflow` build; the shipped export has no sign-in, see "Sign-in off" below.) A `startUiSubFlow` node returns the subflow's outputs as `{{local.<node>.payload.output.<field>}}`, and the sign-in subflow can return `userId`, `username`, `name` and `groups`.
 2. A Custom HTML screen whose HTML is entirely `{{local.<render>.payload.output.html}}` renders that HTML unescaped, and binds `skbutton` handlers on buttons inside it. The feasibility flow injected HTML fragments the same way. Two more points:
    - the screen's hidden-looking text field `ppForm` is captured;
    - a click handler registered in the capture phase runs before DaVinci reads the form.

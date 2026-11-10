@@ -397,10 +397,15 @@ APP_SCRIPT = """// pp-app: gather the screen's inputs into ppForm, move focus, a
 
 def build():
     f = Flow()
-    sub = f.subflow("Sign in with PingOne SSO (your sign-in subflow)")
     settings_in = [(n, "string", cv(setting_var(n))) for n in SETTINGS]
-    signin = f.fn("Check sign-in and settings", "signin", [(k, "string", out(sub, k)) for k in IDENTITY] + settings_in, dict(STD_OUT, html="string"))
-    f.link(sub, signin)
+    if SIGN_IN == "subflow":
+        sub = f.subflow("Sign in with PingOne SSO (your sign-in subflow)")
+        signin = f.fn("Check sign-in and settings", "signin", [(k, "string", out(sub, k)) for k in IDENTITY] + [("signIn", "string", "subflow")] + settings_in,
+                      dict(STD_OUT, html="string"))
+        f.link(sub, signin)
+    else:
+        # Sign-in is off: the settings check is the first node, and the first screen asks for a name (recorded as unverified).
+        signin = f.fn("Check settings (sign-in is off)", "signin", [("signIn", "string", "none")] + settings_in, dict(STD_OUT, html="string"))
     stop = f.page("Cannot continue", stop_html(signin), [])
     render = f.fn("Render screen", "render", [("state", "object", iv("ppState"))], {"state": "object", "html": "string"})
     f.route(signin, [("ok", render)], stop, [("ppFlows", "object", "{}"), ("ppBody", "string", "")])
@@ -451,11 +456,15 @@ def build():
 
 
 def main():
-    global VALUES_SETTINGS, SIGNIN_FLOW_PLACEHOLDER
+    global VALUES_SETTINGS, SIGNIN_FLOW_PLACEHOLDER, SIGN_IN
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--values")
+    ap.add_argument("--sign-in", choices=["none", "subflow"], default="none",
+                    help="none (default): no sign-in, people type a name that is recorded as unverified; "
+                         "subflow: the first node calls your PingOne SSO sign-in subflow")
     a = ap.parse_args()
+    SIGN_IN = a.sign_in
     VALUES_SETTINGS = {}
     if a.values:
         vals = json.loads(pathlib.Path(a.values).read_text(encoding="utf-8"))
@@ -483,5 +492,6 @@ def main():
 
 
 VALUES_SETTINGS = {}
+SIGN_IN = "none"
 if __name__ == "__main__":
     main()

@@ -1,6 +1,6 @@
 # PingOne Promote: DaVinci app (operator guide)
 
-**PingOne Promote - request app** is a DaVinci flow. People sign in to it with PingOne SSO. In the flow they:
+**PingOne Promote - request app** is a DaVinci flow. The shipped export has no sign-in: people type their name, and it is recorded as unverified (see [§1](#1-sign-in-and-launching-the-app)). In the flow they:
 1. pick a **source env** and a **main flow**, or bring the **whole environment**;
 2. preview the change, optionally with applications and flow policies, things to **leave out** (flows, applications, flow policies, connections, variables) and values that are the same in every env;
 3. submit it as a request to the config repo in GitLab;
@@ -16,7 +16,6 @@ The flow does light work only. It writes a single file, `.pingone-promote/reques
 
 1. **PingOne with DaVinci.** You need:
    - the **source env** (usually dev), whose flows are read;
-   - the env where operators sign in. This is often your workforce or administrators env.
 2. **A read-only DaVinci worker.** Add a **Worker** application in the env that will hold it.
    - Give it **only** the **DaVinci Admin Read Only** role, on each source env.
    - Note its client ID and secret. The secret goes into DaVinci only (see [Configure](#configure-after-import)).
@@ -26,39 +25,37 @@ The flow does light work only. It writes a single file, `.pingone-promote/reques
    - scope **`api`**;
    - the shortest expiry you can manage.
    It is the only GitLab credential the app holds. There is no trigger token.
-5. A DaVinci admin who can import flows and create company variables, and a PingOne admin who can create applications and groups.
+5. A DaVinci admin who can import flows and create company variables, and a PingOne admin who can create the worker application.
 6. To rebuild or check the export: Python 3 and Node 18 or later. No tenant is needed for that.
 
-## 1. PingOne SSO: application, policy and groups
+## 1. Sign-in and launching the app
 
-The app opens only after a PingOne sign-in. Its first node calls **your sign-in subflow**. The rest of the app trusts only what that subflow returns.
+**The shipped export has no sign-in.** Its first node checks the settings, and its first screen asks the person for their name. That name is recorded on every request and merge request as `Requested-by: <name> (unverified)`. Nothing checks it.
 
-1. **A group for operators.** In the env where operators sign in, create a group such as `Promote Operators` and add the people who may raise requests. You will put its name in `ppAllowedGroups`.
-2. **The PingOne application, recommended.** Add an **OIDC Web App** called *PingOne Promote* in the same env.
-   - **Sign-on policy:** your workforce policy, with MFA.
-   - **Access:** restrict it to the `Promote Operators` group, so PingOne itself refuses everyone else.
-   - **Attribute mapping:** add `groups` → *Group Names* (`memberOfGroupNames`), next to the standard `sub`, `preferred_username` and `name`.
-   - **Redirect URI:** the callback URL of the DaVinci OIDC connection in the next step.
-   - **Scopes:** `openid profile`.
-3. **The sign-in subflow.** Use the sign-in flow your other DaVinci apps already use, or build a small one:
-   - an **OpenID Connect** connection to the PingOne application above. It reuses the operator's PingOne session and asks for MFA as the policy says;
-   - then a **Flow Conductor return** node that outputs:
+What protects you with sign-in off:
+- **The launch link is the only gate.** Anyone who has it can raise requests. Share it only with the people who should, and do not post it in a public channel.
+- **Requests cannot change an environment.** A request only commits `.pingone-promote/request.json` to a `pingone-promote/<id>` branch. The CI job exports `dev` with the read-only worker and opens a merge request. `main` stays protected, the MR needs approval, and the env jobs stay manual, with prod approval. That review and approval are the real controls.
+- **Who did what is in GitLab, not in the app.** Treat `Requested-by` as a hint. The person who approves and merges the MR, and whoever runs each env job, is recorded by GitLab.
 
-     | Output | From |
-     | --- | --- |
-     | `userId` | `sub` |
-     | `username` | `preferred_username` |
-     | `name` | `name` |
-     | `groups` | `groups`: an array, or comma-separated names |
+**Launching the app.** In DaVinci:
+1. add an **Application** called *PingOne Promote*;
+2. give it a **Flow Policy** that runs **PingOne Promote - request app** at 100%;
+3. give operators the policy's launch link. This is the same launch method as the feasibility flow. A widget page also works.
 
-   - The subflow must finish **only** for a signed-in user.
-   - The app refuses to start if `userId` or `username` is empty, or if no group matches `ppAllowedGroups`. `*` admits every signed-in user, which is not recommended.
-4. **Launching the app.** In DaVinci:
-   1. add an **Application** called *PingOne Promote*;
-   2. give it a **Flow Policy** that runs **PingOne Promote - request app** at 100%;
-   3. give operators the policy's launch link. This is the same launch method as the feasibility flow and the prior iteration. A widget page also works.
+### Optional: sign-in through a subflow
 
-> The connector and capability names in step 3 are what we expect to find; DESIGN.md §12 lists them as assumptions to verify. If your subflow returns the identity under other names, rewire the four inputs of **Check sign-in and settings**. Nothing else reads the identity.
+If you later get PingOne SSO, or any other sign-in your DaVinci apps already use, build the export with `python3 gen_app.py --sign-in subflow`. Its first node is a **Flow Conductor** node that calls your sign-in subflow, and the app then checks the identity and `ppAllowedGroups`. **Do not import that build without a sign-in subflow to point it at.** Its placeholder subflow ID `f0d00a7e00000000000000000000fe11` does not exist, so the flow waits on it and times out.
+
+The subflow must finish **only** for a signed-in user, and must return these outputs from a **Flow Conductor return** node:
+
+| Output | For example, from an OpenID Connect sign-in |
+| --- | --- |
+| `userId` | `sub` |
+| `username` | `preferred_username` |
+| `name` | `name` |
+| `groups` | `groups`: an array, or comma-separated names |
+
+With this build, the app refuses to start if `userId` or `username` is empty, or if no group matches `ppAllowedGroups`. `*` admits every signed-in user, which is not recommended. DESIGN.md §12 lists the connector names as assumptions to verify.
 
 ## 2. Import (DaVinci console)
 
@@ -70,9 +67,9 @@ The app opens only after a PingOne sign-in. Its first node calls **your sign-in 
    | `a1f0d00a000000000000000000000002` | Http (REST calls and screens) |
    | `a1f0d00a000000000000000000000003` | Functions (custom functions and A = B) |
    | `a1f0d00a000000000000000000000005` | Variables (Save Value) |
-   | `a1f0d00a000000000000000000000006` | Flow Conductor (the sign-in subflow call) |
+   | `a1f0d00a000000000000000000000006` | Flow Conductor (only in a `--sign-in subflow` build) |
 
-3. Open the first node, **Sign in with PingOne SSO (your sign-in subflow)**, and choose your sign-in subflow. It points at the placeholder `f0d00a7e00000000000000000000fe11` until you do.
+3. Only for a `--sign-in subflow` build: open the first node, **Sign in with PingOne SSO (your sign-in subflow)**, and choose your sign-in subflow. The shipped export has no such node.
 4. Set these in **Flow → Settings**:
    - **Flow Timeout:** at least 1800 s, so a person can watch a rollout. See DESIGN.md §12, item 10.
    - **Flow HTTP Response Timeout:** 15 s.
@@ -99,7 +96,7 @@ Settings (empty means the default; a variable with no default must be set):
 | `ppWorkerEnvironmentId` | empty | the env that holds the worker app |
 | `ppSourceEnvs` | empty | the envs a person may pick as the source: `dev=<envId>`, or several separated by commas. The names must be in the job's `PINGONE_PROMOTE_SOURCES`, and must not be in the rollout |
 | `ppRolloutEnvs` | `qa,stage,prod` | the rollout order of your pipeline. It must equal the job's `PINGONE_PROMOTE_ROLLOUT` |
-| `ppAllowedGroups` | empty | `Promote Operators` (comma-separated names), or `*` |
+| `ppAllowedGroups` | empty | only in a `--sign-in subflow` build: `Promote Operators` (comma-separated names), or `*`. The shipped export ignores it |
 | `ppApiOrigin` / `ppAuthOrigin` | `https://api.pingone.com` / `https://auth.pingone.com` | your region, for example `.eu`, `.ca` or `.asia` |
 | `ppGitlabApi` | `https://gitlab.com/api/v4` | your GitLab API base |
 | `ppGitlabProjectId` | empty | the config repo's numeric ID, or its `group/project` path |
@@ -158,7 +155,7 @@ Use a **private, disposable** project and a **sandbox** PingOne env. Never use p
 
 The full operator test plan, with the exact names, is `docs/acceptance/live-acceptance.md`. A short version:
 
-1. **Search.** Open the launch link and sign in. Search for a name that matches nothing, then one that matches two flows, then one exact flow ID. The two-flow search must list both, and the app must not pick one.
+1. **Search.** Open the launch link and type your name. Search for a name that matches nothing, then one that matches two flows, then one exact flow ID. The two-flow search must list both, and the app must not pick one.
 2. **Preview.** Preview with the defaults. The commit appears on `pingone-promote/<requestId>`, `pingone-promote:request` runs in `.pre`, and Predicted changes, Readiness and Secrets appear. `result.json` has `status: previewed` or `blocked`. Nothing else is committed.
 3. **Readiness.** Fill in the env values, tick each secret, choose Update for one differing dependency, and preview again. The same branch gets an update commit (`last_commit_id`).
 4. **Submit.** Submit (mode MR). The job makes one commit that adds the change and deletes `request.json`, and opens a labelled MR (`status: submitted`). The app shows **Open merge request**. Submitting the same request again shows "already submitted" and the same MR.
@@ -176,12 +173,14 @@ The full operator test plan, with the exact names, is `docs/acceptance/live-acce
 
 ```sh
 cd davinci-app
-python3 gen_app.py                 # fn/*.js -> flow/pingone-promote-app.flow.json (deterministic)
+python3 gen_app.py                 # fn/*.js -> flow/pingone-promote-app.flow.json (deterministic; sign-in off)
 python3 check_app.py --self-test   # wiring, trust boundary, repo-wide ID/secret scan, broken-copy self-test
 node test_app.js                   # unit tests + the exported graph against fake PingOne and fake GitLab
+# the sign-in subflow build, checked and tested the same way:
+python3 gen_app.py --sign-in subflow --out out/sso.flow.json && python3 check_app.py out/sso.flow.json && node test_app.js out/sso.flow.json
 ```
 
-- To write a private copy with your connection IDs and your sign-in subflow ID:
+- To write a private copy with your connection IDs (and, with `--sign-in subflow`, your sign-in subflow ID):
   1. start from `values.example.json`;
   2. run `gen_app.py --values values.json --out out/private.flow.json`;
   3. check it with `check_app.py out/private.flow.json --allow-connection-ids`.

@@ -27,3 +27,7 @@ terraform/modules/**/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfplan
+
+# DaVinci app: private copies and alternate builds (davinci-app/README.md "Rebuild and check").
+/davinci-app/out/
+/davinci-app/values.json

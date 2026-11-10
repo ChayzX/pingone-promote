@@ -213,6 +213,10 @@ const actions = () => {
 };
 
 const screens = {};
+screens.identify = () => head('Who is making this request?', 'Sign-in is switched off for this app, so it cannot check who you are. ' +
+  'Your name is recorded on each request and its merge request as <strong>Requested-by: &lt;your name&gt; (unverified)</strong>.') +
+  errorSummary() + text(['name'], 'Your name', s.ident || '', { err: (s.errors || {}).name, hint: 'For example Pat Smith or your GitLab username. At most 80 characters.', enter: 'IDENTIFY' }) +
+  '<div class="pp-actions">' + button('IDENTIFY', 'Continue') + '</div>';
 screens.search = () => {
   const sr = s.search || {};
   const scope = sr.scope === 'all' ? 'all' : 'selected';
@@ -430,10 +434,12 @@ screens.requests = () => {
     '<div class="pp-actions">' + button('REFRESH', 'Refresh', { ghost: true }) + '</div>';
 };
 
-const screen = screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' && s.screen !== 'extras' && s.screen !== 'exclude' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
+const screen = !s.user ? 'identify' : screens[s.screen] && (s.screen !== 'options' && s.screen !== 'preview' && s.screen !== 'working' && s.screen !== 'extras' && s.screen !== 'exclude' || s.req) && (s.screen !== 'working' || s.run) && (s.screen !== 'status' || s.st) ? s.screen : 'search';
 s.screen = screen;
-const nav = '<nav class="pp-nav" aria-label="App">' + button('NAV_NEW', 'New request', { ghost: screen !== 'search' }) + button('NAV_REQUESTS', 'Requests', { ghost: screen !== 'requests' }) +
-  '<span class="pp-user">Signed in as ' + e(s.user.name || s.user.username) + '</span>' + button('SIGNOUT', 'Leave the app', { ghost: true }) + '</nav>';
+const who = !s.user ? '<span class="pp-user">Sign-in is off</span>' : s.user.unverified ? '<span class="pp-user">Not signed in: ' + e(s.user.name) + ' (unverified)</span>'
+  : '<span class="pp-user">Signed in as ' + e(s.user.name || s.user.username) + '</span>';
+const nav = '<nav class="pp-nav" aria-label="App">' + (s.user ? button('NAV_NEW', 'New request', { ghost: screen !== 'search' }) + button('NAV_REQUESTS', 'Requests', { ghost: screen !== 'requests' }) : '') +
+  who + button('SIGNOUT', 'Leave the app', { ghost: true }) + '</nav>';
 const html = nav + '<main class="pp-main" id="pp-content">' + notes() + screens[screen]() + '</main>';
 s.notes = [];
 return { state: s, html: html };
