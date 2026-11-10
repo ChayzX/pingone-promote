@@ -5,7 +5,7 @@ usage: python3 check_app.py [EXPORT.json] [--repo DIR] [--allow-connection-ids]
 Structure (as ../davinci-feasibility/check_flow.py, adapted to the app):
 - JSON parses; one flow in the {"flows": [...]} wrapper with the export fields
 - unique 10-character node IDs; every edge endpoint exists; the sign-in
-  subflow is the one start node; every node reachable; evaluator false
+  subflow (or, with sign-in off, the settings check) is the one start node; every node reachable; evaluator false
   branches are real edges; only screens end a path
 - every {{local.<node>...}} reference names a node that can run before it, and
   a function output it reads is declared in that function's output schema
@@ -112,10 +112,14 @@ def check_export(path, allow_conn_ids):
         succ[e["source"]].add(e["target"])
         pred[e["target"]].add(e["source"])
     starts = [i for i in nodes if not pred[i]]
-    if len(starts) != 1 or nodes[starts[0]].get("capabilityName") != "startUiSubFlow":
-        problems.append(f"expected the sign-in subflow as the one start node, found {starts}")
-    if sum(1 for n in nodes.values() if n.get("capabilityName") == "startUiSubFlow") != 1:
-        problems.append("expected exactly one subflow node (sign-in)")
+    # Two shapes: the sign-in subflow is the one start node (--sign-in subflow), or there is no
+    # subflow and the settings check function is the one start node (--sign-in none).
+    subflows = [i for i, n in nodes.items() if n.get("capabilityName") == "startUiSubFlow"]
+    if len(subflows) > 1:
+        problems.append("expected at most one subflow node (sign-in)")
+    want = "startUiSubFlow" if subflows else "customFunction"
+    if len(starts) != 1 or nodes[starts[0]].get("capabilityName") != want:
+        problems.append(f"expected {'the sign-in subflow' if subflows else 'the settings check'} as the one start node, found {starts}")
     seen, q = set(), list(starts[:1])
     while q:
         i = q.pop()
@@ -278,9 +282,12 @@ def check_export(path, allow_conn_ids):
             step = code.split("// ---- step: ", 1)[-1]
             read = set(re.findall(r"params\.([A-Za-z0-9_]+)", step))
             given = {x["name"] for x in p["variableInputList"]["value"]}
+            if not subflows and "signIn" in given:
+                # Sign-in off: the settings check has no sign-in subflow to read the identity from.
+                read -= {"userId", "username", "name", "groups"}
             if read - given:
                 problems.append(f"{i} ({title(i)}) reads params not wired: {sorted(read - given)}")
-            dynamic = re.search(r"\(params\)|params\[", step)
+            dynamic = re.search(r"\(params[,)]|params\[", step)
             if not dynamic and given - read:
                 problems.append(f"{i} ({title(i)}) wires unused inputs: {sorted(given - read)}")
         if cap == "AEqualsB":

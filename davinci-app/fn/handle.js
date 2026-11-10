@@ -6,11 +6,28 @@ const form = lib.obj(params.form);
 const btn = lib.str(params.buttonValue).toUpperCase();
 const now = lib.now();
 s.notes = [];
-if (!s.user || !s.cfg) { return lib.out(s, 'signout', { body: '' }); }
+if (!s.cfg || (!s.user && s.cfg.signIn !== 'none')) { return lib.out(s, 'signout', { body: '' }); }
 const cfg = s.cfg;
 const T = (v) => lib.str(v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
 const done = (action, extra) => lib.out(s, action, Object.assign({ body: '' }, extra || {}));
 const render = (screen) => { if (screen) { s.screen = screen; } return done('render'); };
+// Sign-in is off: the first screen asks for a name. It is recorded as "<name> (unverified)" and nothing checks it.
+if (!s.user) {
+  if (btn === 'SIGNOUT') { s.screen = 'signedout'; return done('signout'); }
+  const name = T(form.name).replace(/[{}<>"\\]/g, '').replace(/\s+/g, ' ').trim();
+  s.ident = name.slice(0, 80);
+  s.errors = {};
+  if (btn === 'IDENTIFY') {
+    if (!name) { s.errors.name = 'Type your name.'; }
+    else if (name.length > 80) { s.errors.name = 'Use at most 80 characters.'; }
+    else {
+      s.user = { id: '', username: name + ' (unverified)', name: name, unverified: true };
+      delete s.ident;
+      return render('search');
+    }
+  }
+  return render('identify');
+}
 // An env value is text, or JSON when it starts with [ or { (lists such as redirect URIs).
 const envValue = (v) => {
   if (v && typeof v === 'object') { return v; }

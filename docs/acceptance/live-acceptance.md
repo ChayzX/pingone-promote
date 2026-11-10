@@ -29,7 +29,6 @@ Fill in the [results form](#results-form-send-this-back) at the end and send it 
 | A **non-production** PingOne environment to export from (call it `dev`) | Must contain at least 2 DaVinci flows. One of them should call a subflow and use a connection and a variable. |
 | At least one **downstream** non-production environment (call it `qa`) | Must be one your pipeline can apply to. Use a second one (`stage`) if you have it. |
 | A **read-only worker** app in PingOne | Role: DaVinci Admin Read Only on `dev`. Client ID and secret. |
-| A PingOne **SSO application and group** for the DaVinci app | See `davinci-app/README.md` §1. Add yourself to the group. |
 | A **disposable copy** of your config repo in GitLab | It must not be the production config repo. It needs the same enterprise `include:` and protected `main`, and its environments must point at the non-prod envs above. |
 | Runner access with your tags | The same runners your pipeline uses today. |
 | Two GitLab project access tokens on the disposable repo | Both Developer role with `api` scope. Token **A** is for the CI request job (CI variable `PINGONE_PROMOTE_GITLAB_TOKEN`). Token **B** is for DaVinci (company variable `ppGitlabToken`). |
@@ -42,7 +41,7 @@ Timing: groups 0–2 take about 1 hour. Groups 3–6 take about 2–3 hours, inc
 
 | ID | Do | Expect | Capture |
 | --- | --- | --- | --- |
-| **S-1 [STOP]** | Follow `davinci-app/README.md` §1–2. Create the SSO app, policy and group. Import `davinci-app/flow/pingone-promote-app.flow.json`. | The import succeeds with no errors. The flow shows about 76 nodes. | Pass/fail. Paste any import error text. |
+| **S-1 [STOP]** | Follow `davinci-app/README.md` §1–2. Import `davinci-app/flow/pingone-promote-app.flow.json` (the shipped export, sign-in off) and add the DaVinci application and flow policy. | The import succeeds with no errors. The flow shows about 84 nodes, and its first node is **Check settings (sign-in is off)**, not a Flow Conductor node. | Pass/fail. Paste any import error text. |
 | **S-2 [STOP]** | Set the company variables `ppWorkerBasicAuth` and `ppGitlabToken` (token **B**). Set the company variables from README "Configure after import" (they survive a re-import; an empty one uses its default). Then import the flow a second time and check that the values are still set (DESIGN.md §12, assumption 16). Use `ppRolloutEnvs` = your real order, e.g. `qa,stage,prod`, and set `ppApplyJobPattern` / `ppEnvironmentPattern` to match your pipeline's job and environment names. | Saved. | The values of `ppApplyJobPattern`, `ppEnvironmentPattern` and `ppRolloutEnvs` (these names are not secret). |
 | **S-3** | Open the app before setting one variable, e.g. temporarily blank `ppGitlabProjectId`. | You see "PingOne Promote is not set up yet", the setting **name** is listed, and no value is shown. Restore the variable afterwards. | Screenshot with values blurred. |
 | **S-4 (engine PR)** | In the disposable repo, follow these steps. (1) Copy `examples/gitlab-ci/pingone-promote.yml` to `.gitlab/pingone-promote.yml`. (2) Add `- local: '/.gitlab/pingone-promote.yml'` after the enterprise `include:`. (3) In that file, set `PINGONE_PROMOTE_SOURCES` (your source, e.g. `dev`) and `PINGONE_PROMOTE_ROLLOUT` (e.g. `qa,stage,prod`) to the same names as `ppSourceEnvs` and `ppRolloutEnvs`, and set `PINGONE_PROMOTE_REPO_URL`, `PINGONE_PROMOTE_REF` and `PINGONE_PROMOTE_RUNNER_TAG`. (4) Add the masked, protected project variables `PINGONE_PROMOTE_WORKER_CLIENT_ID`, `PINGONE_PROMOTE_WORKER_CLIENT_SECRET`, `PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID`, `PINGONE_PROMOTE_GITLAB_TOKEN` (token **A**), plus `PINGONE_PROMOTE_REGION_CODE`. Leave the optional `PINGONE_PROMOTE_TERRAFORMER_SHA256` unset. (5) Protect the wildcard `pingone-promote/*` with Developers + Maintainers allowed to push and merge. | The MR pipeline that adds the file passes `pingone-promote:check`. Enterprise jobs behave as before. | Pipeline status. Job names that ran. Whether any job failed on the terraformer pin (with the digest unset it should not; a version error means `TERRAFORMER_VERSION` and the build disagree). |
@@ -51,14 +50,14 @@ Timing: groups 0–2 take about 1 hour. Groups 3–6 take about 2–3 hours, inc
 
 ---
 
-## 2. DaVinci app: sign-in, search, screens
+## 2. DaVinci app: name screen, search, screens
 
 These tests check the 12 DaVinci assumptions in `davinci-app/DESIGN.md` §12. The assumption number is shown in brackets after each test ID.
 
 | ID | Do | Expect | Capture |
 | --- | --- | --- | --- |
-| **D-01 [STOP] (A1)** | Open the app as a user **in** the allowed group. | You are signed in through PingOne SSO and land on "New request". Your name or username shows in the header. | Pass/fail. Does your display name appear correctly? |
-| **D-02** | Open the app as a user **not** in the group. Or temporarily set `ppAllowedGroups` to a group you're not in. | Access is refused, with a clear message. No app screens appear. | Screenshot. |
+| **D-01 [STOP]** | Open the launch link. | Within a few seconds you see "Who is making this request?" and a name box. No timeout. Only **Leave the app** is in the header. | Pass/fail. Seconds until the screen appeared. If it times out, the time and any error text. |
+| **D-02** | Choose Continue with the box empty, then type your name and choose Continue. | Empty: "Type your name." With a name: "New request", and the header says "Not signed in: <your name> (unverified)". Later, `request.json` and the commit show `Requested-by: <your name> (unverified)`. | Screenshot of the header. |
 | **D-03 [STOP] (A2, A3)** | On "New request", pick source `dev` and type part of a flow name. | Matching flows are listed. The buttons work, which means the page script bound correctly. | Time from click to result (seconds). Number of flows in `dev`. |
 | **D-04 (A11)** | Search with a term that matches nothing, then one that matches several flows. | "No flows match" in the first case. In the second, a list to choose from: the app never auto-picks. | Pass/fail each. |
 | **D-05** | Search by an exact flow **ID** (copy it from the DaVinci console). | Exactly that flow is selected. | Pass/fail. |
@@ -132,7 +131,6 @@ These tests check the 12 DaVinci assumptions in `davinci-app/DESIGN.md` §12. Th
 ## Cleanup
 - Delete the `pingone-promote/*` test branches and close the test MRs.
 - Revoke tokens A and B.
-- Remove the test SSO group members, if they were temporary.
 - Revert any test flows in `dev`/`qa`/`stage`.
 - Keep the DaVinci app imported if you plan to continue.
 
@@ -195,4 +193,4 @@ Anything surprising:
 
 ### How to read the results
 - **DaVinci is a good home** if all [STOP] tests pass, D-03 (search) answers in a few seconds, and E-02 (preview) completes within your patience, roughly under 3 minutes, which is mostly runner time.
-- **DaVinci is not a good home** if sign-in, screens or REST behaviour (D-01, D-03, A2/A3/A5/A6) can't be made to work, or if DaVinci's flow time limits cut off normal use. The fallback is the local app (#75). The engine and CI job stay the same.
+- **DaVinci is not a good home** if screens or REST behaviour (D-01, D-03, A2/A3/A5/A6) can't be made to work, or if DaVinci's flow time limits cut off normal use. The fallback is the local app (#75). The engine and CI job stay the same.

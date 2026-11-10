@@ -1,9 +1,12 @@
-// After the PingOne SSO sign-in subflow: check who signed in, check the
-// settings, and start the session state. Nothing else runs before this passes.
+// The first step. With a sign-in subflow (signIn "subflow"): check who signed in,
+// check the settings, and start the session state. With sign-in off (signIn
+// "none"): check the settings and ask the person for a name on the next screen;
+// that name is recorded as unverified. Nothing else runs before this passes.
 const s = lib.state({});
 s.v = lib.VERSION;
 s.startedAt = lib.now();
-const r = lib.checkSettings(params);
+const mode = lib.str(params.signIn) === 'none' ? 'none' : 'subflow';
+const r = lib.checkSettings(params, mode);
 const clean = (v, max) => lib.str(v).replace(/[\u0000-\u001f\u007f{}<>"\\]/g, '').slice(0, max);
 const user = { id: clean(params.userId, 64), username: clean(params.username, 120), name: clean(params.name, 120) };
 let groups = lib.parse(params.groups);
@@ -13,6 +16,19 @@ const stop = (title, lines) => {
   const items = lines.map((l) => '<li>' + lib.esc(l) + '</li>').join('');
   return lib.out(s, 'stop', { html: '<h1 data-pp-focus>' + lib.esc(title) + '</h1><ul class="pp-list">' + items + '</ul>' });
 };
+if (mode === 'none') {
+  if (r.problems.length) {
+    return stop('PingOne Promote is not set up yet', ['Ask your DaVinci administrator to fix these flow variables:']
+      .concat(r.problems.map((p) => lib.varName(p.name) + ': ' + p.issue)));
+  }
+  s.user = null;
+  s.cfg = r.cfg;
+  s.screen = 'identify';
+  s.search = { source: Object.keys(r.cfg.sources)[0], query: '', matches: null, total: 0 };
+  s.sub = { state: 'idle' };
+  s.errors = {};
+  return lib.out(s, 'ok', { html: '' });
+}
 if (!user.id || !user.username) {
   return stop('Sign-in required', ['PingOne Promote opens only after a PingOne sign-in. The sign-in step did not return a user. Close this tab and start again.']);
 }
