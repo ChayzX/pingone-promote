@@ -86,7 +86,7 @@ Secrets (always set these):
 
 | Variable | Value |
 | --- | --- |
-| `ppWorkerBasicAuth` | `base64(clientId:clientSecret)` of the read-only worker, for example `printf '%s:%s' "$ID" "$SECRET" \| base64` |
+| `ppWorkerBasicAuth` | `base64(clientId:clientSecret)` of the read-only worker, **on one line, without `Basic ` in front**. macOS or Linux: `printf '%s:%s' "$ID" "$SECRET" \| base64 \| tr -d '\n'` (Linux `base64` otherwise breaks the line after 76 characters, and PingOne answers HTTP 400 "invalid authorization header"). PowerShell: `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${ID}:${SECRET}"))`. The worker's **Token Endpoint Authentication Method** must be **Client Secret Basic** |
 | `ppGitlabToken` | The GitLab project access token (Developer, `api`) |
 
 Settings (empty means the default; a variable with no default must be set):

@@ -932,8 +932,10 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
     ok(evil.indexOf('&lt;img src=x onerror=alert(1)&gt;') >= 0 && evil.indexOf('<img') < 0, 'a flow name with markup is shown as text');
     ok(r.pages.filter((p) => /ppGitlabToken/.test(p.html))[0].html.indexOf('&#123;&#123;global.company.variables.ppGitlabToken&#125;&#125;') >= 0, 'a flow name shaped like a reference cannot resolve');
     common(r, 'search');
-    const r2 = await run({ worldOpt: { tokenStatus: 401 } }, [{ click: 'SEARCH', form: { query: 'x' } }, { click: 'SIGNOUT', expect: /did not let the app read flows \(HTTP 401\)/ }]);
+    const r2 = await run({ worldOpt: { tokenStatus: 401 } }, [{ click: 'SEARCH', form: { query: 'x' } }, { click: 'SIGNOUT', expect: /did not let the app read flows \(HTTP 401\)\. Check ppWorkerBasicAuth: it must be base64 of clientId:clientSecret, on one line/ }]);
     ok(r2.pages[1].html.indexOf(WORKER) < 0, 'a token failure message is redacted');
+    const r2b = await run({ worldOpt: { tokenStatus: 503 } }, [{ click: 'SEARCH', form: { query: 'x' } }, { click: 'SIGNOUT', expect: /\(HTTP 503\)\. Ask your DaVinci administrator to check the worker credentials/ }]);
+    common(r2b, 'token unavailable');
     common(r2, 'token failure');
     const r3 = await run({}, [{ click: 'SEARCH', form: { source: 'sandbox', query: 'login' } }, { click: 'SIGNOUT', expect: /No flow in sandbox matches/ }]);
     common(r3, 'empty env');
