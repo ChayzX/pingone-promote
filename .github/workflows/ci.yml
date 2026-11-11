@@ -102,15 +102,49 @@ jobs:
         run: docker build -f deploy/container/Containerfile -t pingone-promote:ci .
 
       # The entrypoint is `serve --config ...`; override it to run the binary
-      # directly. Switch to --check-config against deploy/config.example.json
-      # once the server ships that flag (the example's terraform digest is a
-      # placeholder, so the check would fail until then).
+      # directly.
       - name: Run the image (version, user, tools)
         run: |
           docker run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:ci --version
           test "$(docker run --rm --entrypoint id pingone-promote:ci -u)" = 10001
           docker run --rm --read-only --tmpfs /tmp --entrypoint /opt/pingone-promote/tools/terraform pingone-promote:ci version
           docker run --rm --entrypoint /opt/pingone-promote/tools/pingcli-terraformer pingone-promote:ci --version
+
+      # --check-config against a test config whose tool digests are computed
+      # from the image itself, then the real server answering /healthz for
+      # the Host header the probes send (localhost). Nothing here contacts
+      # GitLab or PingOne; the secrets are dummies.
+      - name: Check the configuration and serve /healthz
+        run: |
+          set -eu
+          work="$(mktemp -d)"
+          cid="$(docker create pingone-promote:ci)"
+          docker cp "$cid:/opt/pingone-promote/tools/terraform" "$work/terraform"
+          docker cp "$cid:/opt/pingone-promote/tools/pingcli-terraformer" "$work/pingcli-terraformer"
+          docker rm "$cid" >/dev/null
+          tf_sum="$(sha256sum "$work/terraform" | cut -d' ' -f1)"
+          ptf_sum="$(sha256sum "$work/pingcli-terraformer" | cut -d' ' -f1)"
+          jq --arg tf "$tf_sum" --arg ptf "$ptf_sum" '
+            .listen = "0.0.0.0:8080" | .exposure = "behind-proxy" | .allowedHosts = ["promote.example.com"]
+            | .secretsFile = "/run/pingone-promote/secrets.env"
+            | .tools.terraformSha256 = $tf | .tools.terraformerSha256 = $ptf' deploy/config.example.json > "$work/config.json"
+          printf 'PINGONE_PROMOTE_WORKER_CLIENT_ID=ci-dummy-id\nPINGONE_PROMOTE_WORKER_CLIENT_SECRET=ci-dummy-secret\nPINGONE_PROMOTE_GITLAB_TOKEN=ci-dummy-token\n' > "$work/secrets.env"
+          sudo chown 10001:10001 "$work/secrets.env"
+          sudo chmod 0400 "$work/secrets.env"
+          chmod 0644 "$work/config.json"
+          run_args="--read-only --tmpfs /tmp -v $work/config.json:/etc/pingone-promote/config.json:ro -v $work/secrets.env:/run/pingone-promote/secrets.env:ro"
+          docker run --rm $run_args pingone-promote:ci --check-config
+          docker run -d --name promote-ci -p 127.0.0.1:18080:8080 $run_args pingone-promote:ci
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -fsS -H 'Host: localhost' http://127.0.0.1:18080/healthz; then ok=1; break; fi
+            sleep 1
+          done
+          code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://127.0.0.1:18080/healthz)"
+          docker logs promote-ci 2>&1 | tail -20
+          docker rm -f promote-ci >/dev/null
+          test -n "$ok"
+          test "$code" = 421
 
   rhel9-systemd:
     name: systemd unit (UBI 9)

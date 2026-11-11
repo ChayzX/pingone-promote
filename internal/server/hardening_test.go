@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"pingone-promote/internal/exporter"
+	"pingone-promote/internal/gitlab/gitlabtest"
 	"pingone-promote/internal/request"
 )
 
@@ -228,5 +229,23 @@ func TestExportErrorsArePlain(t *testing.T) {
 	}
 	if !errors.Is(p.wrap("export", context.Canceled), context.Canceled) {
 		t.Fatal("cancellation must pass through")
+	}
+}
+
+// The exact loaded secret values are removed from every free-text field of
+// a result, whatever the heuristic redaction let through.
+func TestResultScrubbedOfExactSecrets(t *testing.T) {
+	e := newEnv(t, failingExporter{})
+	res := &request.Result{Diff: "+ description = \"" + sentinelClientSecret + "\"", Warnings: []string{"w " + sentinelClientID},
+		Blockers: map[string][]request.BlockerOut{"qa": {{Message: "m " + gitlabtest.Token}}},
+		Changes:  []request.ChangeOut{{Reason: "r " + sentinelClientSecret}},
+		Selected: []request.Selected{{Query: sentinelClientSecret}},
+		Error:    &request.ErrorOut{Message: "e " + sentinelClientSecret, Candidates: []request.Selected{{Query: gitlabtest.Token}}}}
+	e.srv.scrub(res)
+	all := fmt.Sprintf("%+v %+v %+v", res, res.Error, res.Blockers)
+	for _, v := range sentinels {
+		if strings.Contains(all, v) {
+			t.Fatalf("a secret value survived scrubbing: %s", all)
+		}
 	}
 }

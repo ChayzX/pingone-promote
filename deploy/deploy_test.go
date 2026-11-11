@@ -207,3 +207,47 @@ func TestContainerfile(t *testing.T) {
 		}
 	}
 }
+
+// loadAsServer runs the server's own configuration check on an example,
+// with the placeholder digest replaced.
+func loadAsServer(t *testing.T, raw []byte) server.Config {
+	t.Helper()
+	fixed := strings.Replace(string(raw), "REPLACE_WITH_sha256sum_OF_tools/terraform", strings.Repeat("a", 64), 1)
+	p := t.TempDir() + "/config.json"
+	if err := os.WriteFile(p, []byte(fixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := server.LoadConfig(p)
+	if err != nil {
+		t.Fatalf("the server refuses the example: %v", err)
+	}
+	return c
+}
+
+func TestExamplesPassTheServerCheck(t *testing.T) {
+	c := loadAsServer(t, read(t, "config.example.json"))
+	if c.Exposure != "" || !server.LoopbackListen(c.Listen) {
+		t.Errorf("the plain example must stay on loopback: %q %q", c.Listen, c.Exposure)
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(read(t, "kubernetes/deployment.yaml")))
+	for {
+		var doc map[string]any
+		if err := dec.Decode(&doc); err != nil {
+			break
+		}
+		if doc["kind"] != "ConfigMap" {
+			continue
+		}
+		k := loadAsServer(t, []byte(doc["data"].(map[string]any)["config.json"].(string)))
+		// The pod binds every interface behind the cluster proxy: that needs
+		// the explicit opt-in and the proxy's host name.
+		if k.Exposure != server.ExposureBehindProxy || len(k.AllowedHosts) == 0 {
+			t.Errorf("kubernetes config: exposure %q, allowedHosts %v", k.Exposure, k.AllowedHosts)
+		}
+		// Never the Secret volume itself (its files are symlinks the server
+		// refuses): the init container's owner-only copy.
+		if k.SecretsFile != "/run/pingone-promote/secrets.env" {
+			t.Errorf("secretsFile %q must be the init container's copy", k.SecretsFile)
+		}
+	}
+}

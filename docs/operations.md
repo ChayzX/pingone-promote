@@ -25,12 +25,13 @@ rejected. Secrets never go in this file.
 
 | Field | Meaning |
 | --- | --- |
-| `listen` | `host:port`. Default `127.0.0.1:8080` (this machine only). |
+| `listen` | `host:port`. Default `127.0.0.1:8080` (this machine only). Any non-loopback address (including `0.0.0.0` and `:8080`) is refused unless `exposure` is set. |
+| `exposure` | Empty (loopback only), `tls` (the server terminates TLS; requires `tlsCertFile`/`tlsKeyFile`) or `behind-proxy` (a TLS-terminating proxy in front; requires `allowedHosts`). Either value logs a startup warning: there is no sign-in, so anyone who can reach the port can file requests under any name. With `behind-proxy` the server expects browsers to use `https://` (form origins are checked against it). |
 | `tlsCertFile`, `tlsKeyFile` | Both or neither. Leave empty behind a TLS-terminating proxy or on localhost. |
 | `allowedHosts` | Exact `Host` header names (no port) the server answers, besides localhost and loopback. Required when reached under any other name (proxy, Service, Ingress). Forwarded-host headers are not trusted. |
 | `signIn` | `none` (the only working value). |
 | `secretsFile` | Path of the secrets file (below). |
-| `gitlab.baseUrl`, `gitlab.projectId`, `gitlab.mrLabels` | GitLab origin, project (id or path), labels for merge requests. |
+| `gitlab.baseUrl`, `gitlab.projectId`, `gitlab.mrLabels` | GitLab origin, numeric project ID, labels for merge requests. |
 | `pingone.regionCode` | One of `NA`, `EU`, `CA`, `AP`, `AU`, `SG`. |
 | `pingone.workerEnvironmentId` | Environment holding the **read-only** source worker app. |
 | `sources` | Environments a request may export from (`development` means `development.tfvars`). |
@@ -195,8 +196,9 @@ Pin both base images by digest before shared use (instructions at the top of
     podman run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:dev --version
     podman run --rm --entrypoint sha256sum pingone-promote:dev /opt/pingone-promote/tools/terraform
 
-Run locally (config must say `"listen": "0.0.0.0:8080"` inside the container
-and `secretsFile` `/run/secrets/secrets.env`; the secrets file on the host must
+Run locally (config must say `"listen": "0.0.0.0:8080"` with
+`"exposure": "behind-proxy"` and your host name in `allowedHosts` inside the
+container, and `secretsFile` `/run/secrets/secrets.env`; the secrets file on the host must
 be `chmod 600` and owned by uid 10001 or be mapped, e.g. with
 `--userns=keep-id:uid=10001,gid=10001`):
 
@@ -215,8 +217,10 @@ Kubernetes:
 
 Points to know:
 
-- **Listening and `allowedHosts`.** Inside a pod the server must listen on
-  `0.0.0.0:8080` for the Service to reach it. That is only safe because the
+- **Listening, `exposure` and `allowedHosts`.** Inside a pod the server must listen on
+  `0.0.0.0:8080` for the Service to reach it, so the ConfigMap sets
+  `"exposure": "behind-proxy"` (the server refuses a non-loopback address
+  without it and logs a no-sign-in warning with it). That is only safe because the
   `Host` header allow-list (`allowedHosts`, e.g. the Ingress hostname) is
   exact and the pod sits behind an authenticating proxy or private network.
   Probes send `Host: localhost`, which is always allowed. Without an
@@ -234,14 +238,21 @@ Points to know:
   on your cluster: `kubectl exec ... -- ls -ln /run/pingone-promote`.
   The secret is then in tmpfs only, not on node disk beyond the Secret object
   itself; restrict RBAC on that Secret.
+- **Never point `secretsFile` at the Secret volume.** Files in a Secret (or
+  projected) volume are symbolic links into a `..data` directory, and the
+  server refuses a symbolic link (it opens the file with `O_NOFOLLOW`). Keep
+  `secretsFile` at the init container's copy, `/run/pingone-promote/secrets.env`,
+  as the shipped manifest does. A `subPath` mount also yields a regular file,
+  but it is never updated when the Secret changes and still has the 0440
+  ownership problem above, so prefer the init-container copy.
 - **Egress.** Core NetworkPolicy matches IPs, not names. Use CIDRs you have
   reviewed (they can change), an egress gateway/proxy with a fixed address, or
   a CNI with FQDN policy (Cilium `toFQDNs`, Calico). Allow DNS, the PingOne
   API/auth hosts and the GitLab host on 443.
 - One replica, `Recreate` strategy. Drafts are in memory.
-- `/healthz` is expected to return 200 for an allowed Host; confirm it exists
-  in the server build you deploy (if not, switch the probes to
-  `tcpSocket` on port `http`).
+- `/healthz` returns 200 for an allowed Host and needs no session. Probes
+  must send `Host: localhost` (or another allowed name); CI runs the image
+  with `--check-config` and checks `/healthz` that way.
 
 ## Upgrade, tool pin changes
 

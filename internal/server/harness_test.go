@@ -159,9 +159,18 @@ func testConfig(t *testing.T, gl *gitlabtest.Fake) Config {
 // exp replaces the exporter when not nil.
 func newEnv(t *testing.T, exp request.Exporter) *env {
 	t.Helper()
+	return newEnvWith(t, exp, nil)
+}
+
+// newEnvWith is newEnv with a configuration change.
+func newEnvWith(t *testing.T, exp request.Exporter, mut func(*Config)) *env {
+	t.Helper()
 	gl := gitlabtest.New(t, repoFiles(t))
 	st := gitlabtest.NewStatus(gl)
 	cfg := testConfig(t, gl)
+	if mut != nil {
+		mut(&cfg)
+	}
 	if exp == nil {
 		f := fakeTerraformer(t)
 		exp = &exporter.Runner{Config: exporter.Config{Version: f.Version, SHA256: f.SHA256, Path: f.Path}}
