@@ -65,6 +65,7 @@ type Server struct {
 	stop      context.CancelFunc
 	wg        sync.WaitGroup
 	closeOnce sync.Once
+	reqCache  requestsCache
 }
 
 // New checks the options and builds the server.
@@ -99,6 +100,7 @@ func New(o Options) (*Server, error) {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	s.log = slog.New(redactingHandler{next: logger.Handler(), redact: s.redact})
+	s.exporter = plainErrors{inner: o.Exporter, log: s.log, redact: s.redact}
 	gl, err := gitlab.NewClient(gitlab.Config{BaseURL: o.Config.GitLab.BaseURL, ProjectID: o.Config.GitLab.ProjectID, TerraformBin: o.Config.Tools.Terraform}, o.Secrets.GitLabToken)
 	if err != nil {
 		return nil, errors.New("server: GitLab configuration: " + s.redact(err.Error()))
@@ -257,6 +259,10 @@ func (s *Server) Run(ctx context.Context, ready func(addr string)) error {
 		ready(ln.Addr().String())
 	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "tls", s.tls)
+	if s.cfg.Exposure != "" {
+		s.log.Warn("the server is exposed beyond this machine and there is no sign-in: anyone who can reach it can file requests under any name; merge request review is the control",
+			"exposure", s.cfg.Exposure)
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	select {

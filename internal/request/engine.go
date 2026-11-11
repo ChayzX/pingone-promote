@@ -10,6 +10,7 @@ import (
 	"pingone-promote/internal/catalog"
 	"sort"
 	"strings"
+	"unicode"
 
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/gitlab"
@@ -710,7 +711,9 @@ func (r *runner) commitMessage() string {
 	if msg == "" {
 		var names []string
 		for _, s := range r.res.Selected {
-			names = append(names, s.Name)
+			// Names come from the tenant: keep them on one line so they
+			// cannot add trailers or a second paragraph.
+			names = append(names, oneLine(s.Name))
 		}
 		msg = "PingOne: " + strings.Join(names, ", ") + " from " + req.Source
 	}
@@ -724,6 +727,26 @@ func (r *runner) commitMessage() string {
 	}
 	msg = strings.TrimRight(strings.Join(keep, "\n"), "\n")
 	return msg + "\n\n" + r.footer()
+}
+
+// oneLine replaces control characters (newlines included) and Unicode
+// line separators with spaces.
+func oneLine(s string) string {
+	return strings.Map(func(c rune) rune {
+		if unicode.IsControl(c) || c == '\u2028' || c == '\u2029' || c == '\u0085' {
+			return ' '
+		}
+		return c
+	}, s)
+}
+
+// fencedNote quotes free text from the requester as a code block whose
+// fence the text cannot close, so it cannot hide or imitate the generated
+// summary.
+func fencedNote(text string) string {
+	text = strings.ReplaceAll(text, "`", "'")
+	text = strings.ReplaceAll(text, "~~~", "~ ~ ~")
+	return "```text\n" + text + "\n```\n"
 }
 
 func (r *runner) footer() string {
@@ -740,9 +763,8 @@ const maxDescriptionRows = 300
 
 func (r *runner) description() string {
 	var b strings.Builder
-	if d := strings.TrimSpace(r.req.Description); d != "" {
-		b.WriteString(d + "\n\n")
-	}
+	// The generated summary comes first; the requester's text follows,
+	// fenced, under its own heading.
 	b.WriteString("Source environment: `" + r.req.Source + "`\n\n")
 	if r.req.Whole() {
 		b.WriteString("Scope: the whole environment. Nothing is deleted; a resource that differs from Git keeps its Git version unless it is listed as updated.\n\n")
@@ -780,6 +802,9 @@ func (r *runner) description() string {
 	}
 	if len(newSecrets) > 0 {
 		b.WriteString("\nNew Vault entries to create for every environment:\n\n" + strings.Join(newSecrets, "\n") + "\n")
+	}
+	if d := strings.TrimSpace(r.req.Description); d != "" {
+		b.WriteString("\n### Requester's note\n\n" + fencedNote(d))
 	}
 	b.WriteString("\n" + r.footer() + "\n")
 	return b.String()

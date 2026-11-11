@@ -33,8 +33,12 @@ func (s *Server) withDraft(w http.ResponseWriter, r *http.Request, fn func(w htt
 		return
 	}
 	buf := newBufferedWriter()
-	fn(buf, d)
-	s.drafts.mu.Unlock()
+	func() {
+		// A panic in fn still releases the lock; protect turns it into a
+		// plain 500 page.
+		defer s.drafts.mu.Unlock()
+		fn(buf, d)
+	}()
 	buf.flushTo(w)
 }
 
@@ -286,6 +290,9 @@ type jobView struct {
 	Err     string
 	Running bool
 	Back    string
+	// AutoRefresh is off after "Stop refreshing" (?refresh=0), so the
+	// page meets WCAG 2.2.1 (timing adjustable).
+	AutoRefresh bool
 }
 
 var jobTitles = map[string]string{"search": "Listing resources", "preview": "Preparing the preview", "submit": "Submitting"}
@@ -312,7 +319,8 @@ func (s *Server) jobPage(w http.ResponseWriter, r *http.Request) {
 		if j.Kind == "submit" {
 			back = draftURL(d, "/preview")
 		}
-		s.render(w, r, http.StatusOK, "job", jobTitles[j.Kind], jobView{D: d, Kind: j.Kind, Stage: j.Stage, Err: j.Err, Running: j.Running, Back: back}, j.Running)
+		auto := j.Running && r.URL.Query().Get("refresh") != "0"
+		s.render(w, r, http.StatusOK, "job", jobTitles[j.Kind], jobView{D: d, Kind: j.Kind, Stage: j.Stage, Err: j.Err, Running: j.Running, Back: back, AutoRefresh: auto}, auto)
 	})
 }
 

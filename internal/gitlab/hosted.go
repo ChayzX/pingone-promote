@@ -216,6 +216,11 @@ func (h HostedCommitter) CommitToBranch(ctx context.Context, bc BranchCommit) (R
 	if err != nil {
 		return Result{}, &PreflightError{Err: err}
 	}
+	if exists && b.Protected {
+		// A protected branch under the request prefix is not one this
+		// server made: never commit to it.
+		return Result{}, &PreflightError{Err: errors.New("the request branch " + bc.Branch + " exists and is protected; it is not a request branch this server can write")}
+	}
 	created := false
 	if !exists {
 		if err := c.CreateBranch(ctx, bc.Branch, bc.ExpectedHead); err != nil {

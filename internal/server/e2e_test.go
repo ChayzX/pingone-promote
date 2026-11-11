@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -56,7 +57,7 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 
 	// Search by name lists type, name and ID; search by ID finds one item.
 	p := b.wait(b.post(draft+"/search", url.Values{"q": {"Flow"}}))
-	mustContain(t, p.body, flowB, flowBID, "davinci flow", subflowAddr)
+	mustContain(t, p.body, flowB, flowBID, "DaVinci flow", subflowAddr)
 	p = b.post(draft+"/search", url.Values{"q": {flowBID}})
 	if strings.Contains(p.body, subflowAddr) || !strings.Contains(p.body, flowB) {
 		t.Fatalf("search by ID:\n%s", p.body)
@@ -127,6 +128,11 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 	mustContain(t, p.body, "pingone-promote/"+id, "!1", "opened", "not started")
 	sha := e.status.MergeMR("pingone-promote/" + id)
 	e.status.SetPipeline(sha, "main", map[string]string{"apply:qa": "success", "apply:stage": "running", "apply:prod": "manual", "plan:prod": "success"})
+	// GitLab reads are cached for a while.
+	if p = b.get("/requests"); !strings.Contains(p.body, "opened") {
+		t.Fatal("the Requests page did not reuse its cached GitLab reads")
+	}
+	e.clock.advance(RequestsCacheFor + time.Second)
 	p = b.get("/requests")
 	mustContain(t, p.body, "merged")
 	row := p.body[strings.Index(p.body, "pingone-promote/"+id):]

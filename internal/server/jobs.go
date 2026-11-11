@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
@@ -48,7 +49,7 @@ func (s *Server) startJob(d *Draft, kind string, fn func(ctx context.Context, st
 		select {
 		case s.jobs <- struct{}{}:
 			stage("Working")
-			err = fn(ctx, stage)
+			err = s.safeRun(ctx, fn, stage)
 			<-s.jobs
 		case <-ctx.Done():
 			err = ctx.Err()
@@ -73,6 +74,21 @@ func (s *Server) startJob(d *Draft, kind string, fn func(ctx context.Context, st
 		}
 	}()
 	return nil
+}
+
+// errInternal is shown when a job panicked; nothing about the panic is.
+var errInternal = errors.New("Something went wrong on the server. Try again; if it keeps happening, tell the operator.")
+
+// safeRun runs a job and turns a panic into errInternal, so a bug cannot
+// take the server down or leave the job marked running.
+func (s *Server) safeRun(ctx context.Context, fn func(context.Context, func(string)) error, stage func(string)) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			s.log.Error("job panic")
+			err = errInternal
+		}
+	}()
+	return fn(ctx, stage)
 }
 
 // snapshotDirs are the directories besides the root that a snapshot reads.
@@ -110,6 +126,7 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		stage("Exporting the source environment and merging")
 		rec, frozen := newRecorder(s.exporter)
 		res := request.Run(ctx, s.env(project, snap, head, req.RequestID, rec), req)
+		s.scrub(res)
 		if ctx.Err() != nil {
 			os.RemoveAll(snap)
 			return ctx.Err()
@@ -164,6 +181,7 @@ func (s *Server) runSubmit(d *Draft, req *request.Request, p *preview) func(cont
 		}
 		stage("Committing to GitLab")
 		res := request.Run(ctx, s.env(project, p.snapshot, p.head, req.RequestID, replayer{f: p.frozen}), req)
+		s.scrub(res)
 		finish(res, res.Error != nil && res.Error.Code == request.ErrConflict)
 		return nil
 	}
@@ -261,7 +279,43 @@ func searchItems(items []Item, query string) []Item {
 	return out
 }
 
+// friendlyNames name common types the way people say them; every other
+// type uses catalog.DisplayName.
+var friendlyNames = map[string]string{
+	"pingone_davinci_flow":                          "DaVinci flow",
+	"pingone_davinci_flow_deploy":                   "DaVinci flow deployment",
+	"pingone_davinci_flow_enable":                   "DaVinci flow enablement",
+	"pingone_davinci_variable":                      "DaVinci variable",
+	"pingone_davinci_connector_instance":            "DaVinci connection",
+	"pingone_davinci_application":                   "DaVinci application",
+	"pingone_davinci_application_flow_policy":       "DaVinci flow policy",
+	"pingone_application":                           "application",
+	"pingone_application_sign_on_policy_assignment": "application sign-on policy assignment",
+	"pingone_application_flow_policy_assignment":    "application flow policy assignment",
+	"pingone_notification_template_content":         "notification template",
+	"pingone_notification_policy":                   "notification policy",
+	"pingone_sign_on_policy":                        "sign-on policy",
+	"pingone_sign_on_policy_action":                 "sign-on policy step",
+	"pingone_mfa_device_policy":                     "MFA policy",
+	"pingone_mfa_fido2_policy":                      "FIDO2 policy",
+	"pingone_mfa_settings":                          "MFA settings",
+	"pingone_password_policy":                       "password policy",
+	"pingone_identity_provider":                     "external identity provider",
+	"pingone_resource":                              "resource (API)",
+	"pingone_resource_scope":                        "resource scope",
+	"pingone_schema_attribute":                      "user attribute",
+	"pingone_branding_theme":                        "branding theme",
+	"pingone_custom_domain":                         "custom domain",
+	"pingone_risk_predictor":                        "risk predictor",
+	"pingone_risk_policy":                           "risk policy",
+	"pingone_verify_policy":                         "identity verification policy",
+	"pingone_authorize_api_service":                 "API service (Authorize)",
+}
+
 // resourceLabel is how a type is named on screens.
 func resourceLabel(typ string) string {
-	return strings.ReplaceAll(strings.TrimPrefix(typ, "pingone_"), "_", " ")
+	if n, ok := friendlyNames[typ]; ok {
+		return n
+	}
+	return catalog.DisplayName(typ)
 }

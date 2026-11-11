@@ -222,6 +222,7 @@ func TestConfigAcceptsExplicitValues(t *testing.T) {
 	m := validConfig()
 	m["listen"] = "0.0.0.0:8443"
 	m["tlsCertFile"], m["tlsKeyFile"] = "/etc/tls/cert.pem", "/etc/tls/key.pem"
+	m["exposure"] = "tls"
 	m["allowedHosts"] = []string{"promote.example.com"}
 	m["signIn"] = "none"
 	m["branchPrefix"] = "CIAM-"
@@ -232,6 +233,42 @@ func TestConfigAcceptsExplicitValues(t *testing.T) {
 	}
 	if c.BranchPrefix != "CIAM-" || c.ApplyJobPattern != "deploy {env}" || c.Listen != "0.0.0.0:8443" {
 		t.Fatalf("%+v", c)
+	}
+}
+
+func TestConfigExposure(t *testing.T) {
+	cases := []struct {
+		listen, exposure string
+		tls, hosts       bool
+		ok               bool
+	}{
+		{"127.0.0.1:8080", "", false, false, true},
+		{"localhost:8080", "", false, false, true},
+		{"[::1]:8080", "", false, false, true},
+		{"0.0.0.0:8080", "", false, false, false},
+		{":8080", "", false, false, false},
+		{"10.1.2.3:8080", "", true, true, false},
+		{"0.0.0.0:8443", "tls", true, false, true},
+		{"0.0.0.0:8443", "tls", false, true, false},
+		{"0.0.0.0:8080", "behind-proxy", false, true, true},
+		{"0.0.0.0:8080", "behind-proxy", false, false, false},
+		{"0.0.0.0:8080", "public", true, true, false},
+	}
+	for _, tc := range cases {
+		m := validConfig()
+		m["listen"] = tc.listen
+		if tc.exposure != "" {
+			m["exposure"] = tc.exposure
+		}
+		if tc.tls {
+			m["tlsCertFile"], m["tlsKeyFile"] = "/etc/tls/cert.pem", "/etc/tls/key.pem"
+		}
+		if tc.hosts {
+			m["allowedHosts"] = []string{"promote.example.com"}
+		}
+		if _, err := loadMap(t, m); (err == nil) != tc.ok {
+			t.Errorf("listen %s exposure %q tls=%v hosts=%v: err=%v, want ok=%v", tc.listen, tc.exposure, tc.tls, tc.hosts, err, tc.ok)
+		}
 	}
 }
 
