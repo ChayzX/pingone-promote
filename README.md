@@ -125,7 +125,7 @@ These settings are the real safety controls. Don't skip them.
 
 ### 7. First test
 
-Follow the test cases in [`docs/acceptance/live-acceptance.md`](docs/acceptance/live-acceptance.md). Start with S-1 to S-4, then D-01.
+Follow the test cases in [`docs/acceptance/live-acceptance.md`](docs/acceptance/live-acceptance.md). Start with S-1 to S-4, then D-01 to D-03b. D-03b (25 searches in one session) decides whether DaVinci can host the app, so run it early.
 
 ---
 
@@ -148,6 +148,7 @@ Follow the test cases in [`docs/acceptance/live-acceptance.md`](docs/acceptance/
 | Preview waits and says "no pipeline yet" | Check that the branch prefix matches in all three places, that `CIAM-*` is protected, and that the runner tag is right. |
 | Job error `must run on branch …` | `ppBranchPrefix` and `PINGONE_PROMOTE_BRANCH_PREFIX` differ. |
 | Job error about the terraformer version | `TERRAFORMER_VERSION` in the CI file doesn't match what was built. |
+| The app stops with an error after about 20 clicks or checks | DaVinci's limit on how often a node can run in one session (test case D-03b). Reopen the launch link to continue, and report it: this decides whether the app stays in DaVinci. |
 | Rollout screen shows no environments | `ppApplyJobPattern` / `ppEnvironmentPattern` don't match your job and environment names. |
 
 ## More detail
