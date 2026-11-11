@@ -23,7 +23,7 @@ func TestNoSubcommandPrintsUsageAndExits2(t *testing.T) {
 
 func TestUnknownCommandExits2(t *testing.T) {
 	// The retired local server flags must not start anything.
-	for _, args := range [][]string{{"serve"}, {"--listen", "127.0.0.1:8787"}} {
+	for _, args := range [][]string{{"--listen", "127.0.0.1:8787"}} {
 		code, _, errs := run(args...)
 		if code != 2 || !strings.Contains(errs, "unknown command") {
 			t.Fatalf("%v: code=%d err=%q", args, code, errs)

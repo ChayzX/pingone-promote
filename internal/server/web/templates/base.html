@@ -1,0 +1,21 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Refresh}}<meta http-equiv="refresh" content="2">{{end}}
+<title>{{.Title}} - PingOne Promote</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">PingOne Promote</a>
+  <nav><a href="/">Drafts</a><a href="/requests">Requests</a></nav>
+</header>
+<main>
+<h1>{{.Title}}</h1>
+{{template "content" .}}
+</main>
+<footer>Names typed here are recorded as unverified. This server prepares changes in Git; the pipeline applies them after review.</footer>
+</body>
+</html>{{end}}

@@ -17,6 +17,7 @@ Commands:
   check --root DIR   validate a config repository root offline
   export             export, neutralize and merge a source environment
   request            run the CI request job (see docs/gitlab-ci-integration.md)
+  serve --config FILE  run the hosted server (ADR 0018)
 
   --version          print the version and exit
 
@@ -38,6 +39,8 @@ func dispatch(ctx context.Context, args []string, getenv func(string) string, st
 		return runRequest(ctx, args[1:], getenv, stdout, stderr)
 	case "export":
 		return runExport(ctx, args[1:], getenv, stdout, stderr)
+	case "serve":
+		return runServe(ctx, args[1:], stdout, stderr)
 	case "--version", "-version", "version":
 		fmt.Fprintf(stdout, "pingone-promote %s\n", buildinfo.Version)
 		return 0
