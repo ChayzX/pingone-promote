@@ -128,17 +128,11 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		if d.Singleton {
 			o.ID = env
 		}
-		o.Builtin = d.Builtin != "" && Cond(d.Builtin, raw)
-		switch d.Import {
-		case catalog.ImportParentID:
-			pid := ""
-			if parent != nil {
-				pid = parent.ID
-			}
-			o.ImportID = pid + "/" + o.ID
-		case catalog.ImportEnvironment:
-		default:
-			o.ImportID = o.ID
+		// A child of a built-in object is built-in too (the default sign-on
+		// policy's actions exist wherever the policy does).
+		o.Builtin = (d.Builtin != "" && Cond(d.Builtin, raw)) || (parent != nil && parent.Builtin && d.Owned)
+		if d.Import != catalog.ImportEnvironment {
+			o.ImportID = importID(d.Import, o)
 		}
 		out = append(out, o)
 	}
@@ -381,18 +375,33 @@ func (inv *Inventory) assignLabels() error {
 		o.Name = strings.Join(keys, " / ")
 		seen[o.Address()] = append(seen[o.Address()], o)
 	}
+	// Same-named objects: the oldest keeps the plain label, so a label
+	// already in Git does not change when a namesake appears; the newer ones
+	// get the first 8 characters of their ID.
+	collided := make([]string, 0)
 	for addr, objs := range seen {
-		if len(objs) == 1 {
-			continue
+		if len(objs) > 1 {
+			collided = append(collided, addr)
 		}
-		for _, o := range objs {
+	}
+	sort.Strings(collided)
+	for _, addr := range collided {
+		objs := seen[addr]
+		sort.SliceStable(objs, func(i, j int) bool {
+			ci, cj := str(objs[i].Raw["createdAt"]), str(objs[j].Raw["createdAt"])
+			if ci != cj && ci != "" && cj != "" {
+				return ci < cj
+			}
+			return objs[i].ID < objs[j].ID
+		})
+		for _, o := range objs[1:] {
 			short := o.ID
 			if len(short) > 8 {
 				short = short[:8]
 			}
 			o.Label = neutralize.Label(append(name(o), short)...)
 		}
-		inv.Warnings = append(inv.Warnings, fmt.Sprintf("%d objects share the label %s; their labels end with the first 8 characters of their IDs", len(objs), addr))
+		inv.Warnings = append(inv.Warnings, fmt.Sprintf("%d objects share the label %s; the oldest keeps it, the others end with the first 8 characters of their IDs", len(objs), addr))
 	}
 	for _, o := range inv.Objects {
 		if inv.byAddr[o.Address()] != nil {
@@ -411,4 +420,19 @@ func camel(snake string) string {
 		}
 	}
 	return strings.Join(parts, "")
+}
+
+// importID fills an import template ({id}, {parent}, {grandparent}).
+func importID(tmpl string, o *Object) string {
+	if tmpl == "" {
+		tmpl = catalog.ImportID
+	}
+	parent, grand := "", ""
+	if o.Parent != nil {
+		parent = o.Parent.ID
+		if o.Parent.Parent != nil {
+			grand = o.Parent.Parent.ID
+		}
+	}
+	return strings.NewReplacer("{id}", o.ID, "{parent}", parent, "{grandparent}", grand).Replace(tmpl)
 }

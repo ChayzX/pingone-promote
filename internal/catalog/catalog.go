@@ -46,6 +46,12 @@ const (
 	// ImportEnvironment is a singleton: the import ID is the environment ID
 	// itself, so the import block needs no import_ids entry.
 	ImportEnvironment = "{env}"
+	// ImportGrandparentID and ImportGrandparentParentID are for grandchild
+	// and derived types (agreement localization enable and revision).
+	ImportGrandparentID       = "{grandparent}/{id}"
+	ImportGrandparentParentID = "{grandparent}/{parent}/{id}"
+	// ImportIDParent is for a nesting whose own ID comes first.
+	ImportIDParent = "{id}/{parent}"
 )
 
 // Def describes one resource type.
@@ -90,6 +96,9 @@ type Def struct {
 	// Rename maps a schema attribute path to its API field path when the
 	// default (camelCase of each segment) does not hold; "-" skips it.
 	Rename map[string]string `json:"rename,omitempty"`
+	// Ancestors maps a schema attribute to an ancestor type whose ID it
+	// holds (a localization revision's agreement_id).
+	Ancestors map[string]string `json:"ancestors,omitempty"`
 	// Fallback lists API sub-objects searched when a field is not at the
 	// object's root (a theme's colours live under "configuration").
 	Fallback []string `json:"fallback,omitempty"`
@@ -168,8 +177,8 @@ var defs = []Def{
 			"saml_options.slo_endpoint", "saml_options.slo_response_endpoint", "wsfed_options.domain_name", "wsfed_options.reply_url",
 			"wsfed_options.slo_endpoint", "login_page_url", "external_link_options.home_page_url"}
 	}),
-	limit(child("pingone_application_attribute_mapping", "applications", "pingone_application", "application_id", "applications/{parent}/attributes", "attributes", true, "name"),
-		"core mappings that PingOne creates with the application (sub and similar) are adopted by import, not created"),
+	with(limit(child("pingone_application_attribute_mapping", "applications", "pingone_application", "application_id", "applications/{parent}/attributes", "attributes", true, "name"),
+		"core mappings that PingOne creates with the application (sub and similar) are adopted by import, not created"), func(d *Def) { d.Builtin = "mappingType=CORE" }),
 	child("pingone_application_sign_on_policy_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/signOnPolicyAssignments", "signOnPolicyAssignments", true, "priority"),
 	child("pingone_application_flow_policy_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/flowPolicyAssignments", "flowPolicyAssignments", true, "priority"),
 	with(child("pingone_application_resource_grant", "applications", "pingone_application", "application_id", "applications/{parent}/grants", "grants", true, "resource.id"), func(d *Def) {
@@ -195,8 +204,8 @@ var defs = []Def{
 	with(child("pingone_resource_scope", "resources_scopes_grants", "pingone_resource", "resource_id", "resources/{parent}/scopes", "scopes", true, "name"), func(d *Def) {
 		d.ParentMatch = "type=CUSTOM"
 	}),
-	limit(child("pingone_resource_attribute", "resources_scopes_grants", "pingone_resource", "custom_resource_id", "resources/{parent}/attributes", "attributes", true, "name"),
-		"predefined attributes of the built-in resources are adopted by import"),
+	with(limit(child("pingone_resource_attribute", "resources_scopes_grants", "pingone_resource", "custom_resource_id", "resources/{parent}/attributes", "attributes", true, "name"),
+		"predefined attributes of the built-in resources are adopted by import"), func(d *Def) { d.Builtin = "type=CORE|PREDEFINED" }),
 	with(child("pingone_resource_scope_openid", "resources_scopes_grants", "pingone_resource", "", "resources/{parent}/scopes", "scopes", false, "name"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin = Limited, "scopes of the built-in OpenID Connect resource; built-in ones (openid, profile, email, ...) are adopted by import", "builtin=true"
 		d.ParentMatch = "type=OPENID_CONNECT"
@@ -231,7 +240,12 @@ var defs = []Def{
 	}),
 	child("pingone_population_default_identity_provider", "directory", "pingone_population", "population_id", "populations/{parent}/defaultIdentityProvider", "", true),
 	api("pingone_group", "directory", "groups", "groups", "name"),
-	child("pingone_group_nesting", "directory", "pingone_group", "group_id", "groups/{parent}/memberOfGroups", "groupMemberships", true, "id"),
+	with(child("pingone_group_nesting", "directory", "pingone_group", "nested_group_id", "groups/{parent}/memberOfGroups", "groupMemberships", true, "name"), func(d *Def) {
+		// memberOfGroups lists the groups the parent belongs to: the parent is
+		// the nested group, each item the group that contains it.
+		d.Status, d.Reason = Limited, "read from each group's memberOfGroups list; the API field names are assumptions to confirm live"
+		d.Rename, d.Import = map[string]string{"group_id": "id"}, ImportIDParent
+	}),
 	child("pingone_group_role_assignment", "directory", "pingone_group", "group_id", "groups/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"),
 	with(child("pingone_schema_attribute", "directory", "", "", "schemas/{schema}/attributes", "attributes", false, "name"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin, d.Import = Limited, "the API returns the user schema's standard attributes too; only CUSTOM attributes are created, standard ones are adopted", "schemaType=CORE|STANDARD", ImportParentID
@@ -259,7 +273,7 @@ var defs = []Def{
 	child("pingone_identity_provider_attribute", "identity_providers", "pingone_identity_provider", "identity_provider_id", "identityProviders/{parent}/attributes", "attributes", true, "name"),
 	with(api("pingone_gateway", "gateways", "gateways", "gateways", "name"), func(d *Def) {
 		d.Status, d.Reason = Limited, "bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); LDAP servers and bind DN are per-environment values"
-		d.EnvLocal = []string{"servers", "bind_dn", "radius_clients"}
+		d.EnvLocal = []string{"servers", "bind_dn", "kerberos.service_account_upn", "radius_network_policy_server"}
 		d.Secrets = map[string]string{"bind_password": "type=LDAP", "radius_default_shared_secret": "type=RADIUS"}
 	}),
 	none("pingone_gateway_credential", "gateways", "gateway credentials are generated per environment and installed on that environment's gateway; never copied"),
@@ -285,11 +299,13 @@ var defs = []Def{
 	with(api("pingone_notification_template_content", "notifications", "templates/{template}/contents", "contents", "template.id", "locale", "deliveryMethod", "variant"), func(d *Def) {
 		d.Import = ImportParentID
 		d.Hoist = map[string]string{"email": "deliveryMethod=Email", "sms": "deliveryMethod=SMS", "voice": "deliveryMethod=Voice", "push": "deliveryMethod=Push"}
+		d.EnvLocal = []string{"email.from.address", "email.reply_to.address"}
 		d.Rename = map[string]string{"template_name": "template.id"}
 	}),
 	api("pingone_notification_policy", "notifications", "notificationsPolicies", "notificationsPolicies", "name"),
 	with(single("pingone_phone_delivery_settings", "notifications", "notificationsSettings/phoneDeliverySettings"), func(d *Def) {
-		d.Status, d.Reason = Limited, "custom provider auth tokens are secrets (customer_secrets.yml)"
+		d.Status, d.Reason = Limited, "custom provider auth tokens are secrets (customer_secrets.yml); request headers of custom providers are never exported (they can carry credentials) and are set by hand"
+		d.Rename = map[string]string{"provider_custom.requests.headers": "-"}
 	}),
 	api("pingone_form", "forms", "forms", "forms", "name"),
 	with(single("pingone_forms_recaptcha_v2", "forms", "forms/recaptchaV2"), func(d *Def) {
@@ -304,13 +320,17 @@ var defs = []Def{
 	child("pingone_agreement_localization", "agreements", "pingone_agreement", "agreement_id", "agreements/{parent}/languages", "languages", true, "locale"),
 	with(child("pingone_agreement_localization_enable", "agreements", "pingone_agreement_localization", "agreement_localization_id", "", "", true), func(d *Def) {
 		d.Reason = "derived from the localization's enabled flag"
+		d.Ancestors, d.Import = map[string]string{"agreement_id": "pingone_agreement"}, ImportGrandparentID
 	}),
-	child("pingone_agreement_localization_revision", "agreements", "pingone_agreement_localization", "agreement_localization_id", "agreements/{grandparent}/languages/{parent}/revisions", "revisions", true, "effectiveAt"),
+	with(child("pingone_agreement_localization_revision", "agreements", "pingone_agreement_localization", "agreement_localization_id", "agreements/{grandparent}/languages/{parent}/revisions", "revisions", true, "effectiveAt"), func(d *Def) {
+		d.Ancestors, d.Import = map[string]string{"agreement_id": "pingone_agreement"}, ImportGrandparentParentID
+	}),
 	with(api("pingone_language", "languages", "languages", "languages", "locale"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin = Limited, "the predefined languages exist in every environment and are adopted; only custom locales are created", "customerAdded=false"
 	}),
 	with(child("pingone_language_update", "languages", "pingone_language", "language_id", "", "", true), func(d *Def) {
 		d.Reason = "derived from the language's enabled and default flags"
+		d.Import = ImportID
 	}),
 	with(api("pingone_language_translation", "languages", "languages/{parent}/localizationStrings", "localizationStrings", "locale"), func(d *Def) {
 		d.Parent = "pingone_language"
@@ -323,13 +343,15 @@ var defs = []Def{
 	with(api("pingone_risk_predictor", "protect", "riskPredictors", "riskPredictors", "compactName"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin = Limited, "predefined predictors exist in every environment and are adopted by import", "default=true"
 	}),
-	api("pingone_authorize_api_service", "authorize", "apiServers", "apiServers", "name"),
+	with(api("pingone_authorize_api_service", "authorize", "apiServers", "apiServers", "name"), func(d *Def) {
+		d.EnvLocal = []string{"base_urls"}
+	}),
 	with(child("pingone_authorize_api_service_deployment", "authorize", "pingone_authorize_api_service", "api_service_id", "apiServers/{parent}/deployment", "", true), func(d *Def) {
 		d.Status, d.Reason = Limited, "a deployment is an action; it is written so the pipeline deploys the API service after changes"
 	}),
 	child("pingone_authorize_api_service_operation", "authorize", "pingone_authorize_api_service", "api_service_id", "apiServers/{parent}/operations", "operations", true, "name"),
 	api("pingone_authorize_application_role", "authorize", "applicationRoles", "applicationRoles", "name"),
-	child("pingone_authorize_application_role_permission", "authorize", "pingone_authorize_application_role", "application_role_id", "applicationRoles/{parent}/permissions", "permissions", true, "id"),
+	limit(child("pingone_authorize_application_role_permission", "authorize", "pingone_authorize_application_role", "application_role_id", "applicationRoles/{parent}/permissions", "permissions", true, "id"), "labels end with the permission ID (the API object has no name), so they differ between source environments"),
 	api("pingone_application_resource", "authorize", "applicationResources", "applicationResources", "name"),
 	child("pingone_application_resource_permission", "authorize", "pingone_application_resource", "application_resource_id", "applicationResources/{parent}/permissions", "permissions", true, "action"),
 	with(api("pingone_authorize_decision_endpoint", "authorize", "decisionEndpoints", "decisionEndpoints", "name"), func(d *Def) {
@@ -341,7 +363,7 @@ var defs = []Def{
 	child("pingone_verify_voice_phrase_content", "verify", "pingone_verify_voice_phrase", "voice_phrase_id", "voicePhrases/{parent}/contents", "contents", true, "locale"),
 	single("pingone_credential_issuer_profile", "credentials", "credentialIssuerProfile"),
 	api("pingone_credential_type", "credentials", "credentialTypes", "credentialTypes", "title"),
-	child("pingone_credential_issuance_rule", "credentials", "pingone_credential_type", "credential_type_id", "credentialTypes/{parent}/issuanceRules", "issuanceRules", true, "id"),
+	limit(child("pingone_credential_issuance_rule", "credentials", "pingone_credential_type", "credential_type_id", "credentialTypes/{parent}/issuanceRules", "issuanceRules", true, "id"), "labels end with the rule ID (the API object has no name)"),
 
 	// --- Platform ---
 	single("pingone_administrator_security", "platform", "adminConfig"),
@@ -357,7 +379,11 @@ var defs = []Def{
 	}),
 	none("pingone_custom_domain_ssl", "platform", "the TLS private key is a per-environment secret file; install it per environment outside this tool"),
 	none("pingone_custom_domain_verify", "platform", "an action that verifies DNS in one environment; not configuration"),
-	with(api("pingone_custom_role", "platform", "roles", "roles", "name"), func(d *Def) { d.Builtin = "type=PLATFORM" }),
+	with(api("pingone_custom_role", "platform", "roles", "roles", "name"), func(d *Def) {
+		// Predefined platform roles have the same ID everywhere and cannot
+		// be changed; only custom roles are exported.
+		d.Match = "type=CUSTOM"
+	}),
 	with(api("pingone_identity_propagation_plan", "platform", "propagation/plans", "plans", "name"), func(d *Def) {
 		d.Status, d.Reason = Limited, "only the plan is exported; its stores and rules reference per-environment gateways and credentials"
 	}),

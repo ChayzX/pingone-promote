@@ -4,7 +4,7 @@ Generated from `internal/catalog` by `PINGONE_PROMOTE_WRITE_COVERAGE=1 go test .
 
 Every resource of the pinned `pingidentity/pingone` provider 1.24.0 is listed. **Exporter**: `pingcli-terraformer` (pinned v0.6.0, DaVinci) or `pingone-api` (the native read-only PingOne exporter, ADR 0019). **Environment-specific values** become per-environment variables in `<env>.tfvars`; the environment ID, certificate and key IDs, and IDs of resources that are not exported are always per-environment. **Built-in** objects exist in every environment and are adopted with `import_ids`, never created. **Live** is `no` until the live acceptance case in `docs/acceptance/core-export.md` has passed on a real tenant: API paths and field names are assumptions until then.
 
-Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 resources).
+Totals: 54 covered, 32 covered with documented limits, 15 not possible (101 resources).
 
 
 ## davinci
@@ -26,7 +26,7 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `pingone_application` | covered | pingone-api | per environment: `oidc_options.redirect_uris`, `oidc_options.post_logout_redirect_uris`, `oidc_options.initiate_login_uri`, `oidc_options.target_link_uri`, `oidc_options.home_page_url`, `oidc_options.jwks_url`, `oidc_options.device_custom_verification_uri`, `saml_options.acs_urls`, `saml_options.sp_entity_id`, `saml_options.default_target_url`, `saml_options.home_page_url`, `saml_options.slo_endpoint`, `saml_options.slo_response_endpoint`, `wsfed_options.domain_name`, `wsfed_options.reply_url`, `wsfed_options.slo_endpoint`, `login_page_url`, `external_link_options.home_page_url` | - | no | - |
-| `pingone_application_attribute_mapping` | covered with documented limits | pingone-api | exported with its application | - | no | core mappings that PingOne creates with the application (sub and similar) are adopted by import, not created |
+| `pingone_application_attribute_mapping` | covered with documented limits | pingone-api | built-in adopted when `mappingType=CORE`; exported with its application | - | no | core mappings that PingOne creates with the application (sub and similar) are adopted by import, not created |
 | `pingone_application_flow_policy_assignment` | covered | pingone-api | exported with its application | - | no | - |
 | `pingone_application_metadata` | covered with documented limits | pingone-api | exported with its application | - | no | metadata is read as a key/value map; nested values are exported as strings |
 | `pingone_application_resource_grant` | covered | pingone-api | exported with its application | - | no | - |
@@ -40,7 +40,7 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `pingone_resource` | covered | pingone-api | per environment: `audience`; built-in adopted when `type=OPENID_CONNECT|PINGONE_API` | - | no | - |
-| `pingone_resource_attribute` | covered with documented limits | pingone-api | exported with its resource | - | no | predefined attributes of the built-in resources are adopted by import |
+| `pingone_resource_attribute` | covered with documented limits | pingone-api | built-in adopted when `type=CORE|PREDEFINED`; exported with its resource | - | no | predefined attributes of the built-in resources are adopted by import |
 | `pingone_resource_scope` | covered | pingone-api | exported with its resource | - | no | - |
 | `pingone_resource_scope_openid` | covered with documented limits | pingone-api | built-in adopted when `builtin=true` | - | no | scopes of the built-in OpenID Connect resource; built-in ones (openid, profile, email, ...) are adopted by import |
 | `pingone_resource_scope_pingone_api` | covered with documented limits | pingone-api | built-in adopted when `builtin=true` | - | no | scopes of the built-in PingOne API resource; predefined ones are adopted by import |
@@ -58,7 +58,7 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `pingone_group` | covered | pingone-api | - | - | no | - |
-| `pingone_group_nesting` | covered | pingone-api | exported with its group | - | no | - |
+| `pingone_group_nesting` | covered with documented limits | pingone-api | exported with its group | - | no | read from each group's memberOfGroups list; the API field names are assumptions to confirm live |
 | `pingone_group_role_assignment` | covered | pingone-api | exported with its group | - | no | - |
 | `pingone_password_policy` | covered | pingone-api | built-in adopted when `default=true` | - | no | - |
 | `pingone_population` | covered with documented limits | pingone-api | - | - | no | the default population is managed by pingone_population_default and adopted by import |
@@ -87,7 +87,7 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pingone_gateway` | covered with documented limits | pingone-api | per environment: `servers`, `bind_dn`, `radius_clients` | - | no | bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); LDAP servers and bind DN are per-environment values |
+| `pingone_gateway` | covered with documented limits | pingone-api | per environment: `servers`, `bind_dn`, `kerberos.service_account_upn`, `radius_network_policy_server` | - | no | bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); LDAP servers and bind DN are per-environment values |
 | `pingone_gateway_credential` | not possible | - | - | - | no | gateway credentials are generated per environment and installed on that environment's gateway; never copied |
 | `pingone_gateway_role_assignment` | covered | pingone-api | exported with its gateway | - | no | - |
 
@@ -107,8 +107,8 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 | `pingone_notification_policy` | covered | pingone-api | - | - | no | - |
 | `pingone_notification_settings` | covered | pingone-api | per environment: `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | - |
 | `pingone_notification_settings_email` | covered with documented limits | pingone-api | per environment: `host`, `port`, `username`, `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | SMTP host, port and user are per-environment values; the SMTP password and OAuth client secret are secrets (customer_secrets.yml) |
-| `pingone_notification_template_content` | covered | pingone-api | - | - | no | - |
-| `pingone_phone_delivery_settings` | covered with documented limits | pingone-api | one per environment, imported by environment ID | - | no | custom provider auth tokens are secrets (customer_secrets.yml) |
+| `pingone_notification_template_content` | covered | pingone-api | per environment: `email.from.address`, `email.reply_to.address` | - | no | - |
+| `pingone_phone_delivery_settings` | covered with documented limits | pingone-api | one per environment, imported by environment ID | - | no | custom provider auth tokens are secrets (customer_secrets.yml); request headers of custom providers are never exported (they can carry credentials) and are set by hand |
 
 ## forms
 
@@ -148,11 +148,11 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 | --- | --- | --- | --- | --- | --- | --- |
 | `pingone_application_resource` | covered | pingone-api | - | - | no | - |
 | `pingone_application_resource_permission` | covered | pingone-api | exported with its application resource | - | no | - |
-| `pingone_authorize_api_service` | covered | pingone-api | - | - | no | - |
+| `pingone_authorize_api_service` | covered | pingone-api | per environment: `base_urls` | - | no | - |
 | `pingone_authorize_api_service_deployment` | covered with documented limits | pingone-api | exported with its authorize api service | - | no | a deployment is an action; it is written so the pipeline deploys the API service after changes |
 | `pingone_authorize_api_service_operation` | covered | pingone-api | exported with its authorize api service | - | no | - |
 | `pingone_authorize_application_role` | covered | pingone-api | - | - | no | - |
-| `pingone_authorize_application_role_permission` | covered | pingone-api | exported with its authorize application role | - | no | - |
+| `pingone_authorize_application_role_permission` | covered with documented limits | pingone-api | exported with its authorize application role | - | no | labels end with the permission ID (the API object has no name), so they differ between source environments |
 | `pingone_authorize_decision_endpoint` | covered with documented limits | pingone-api | per environment: `authorization_version_id` | - | no | the policy version (authorization_version_id) is per environment and becomes a per-environment variable |
 
 ## verify
@@ -167,7 +167,7 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pingone_credential_issuance_rule` | covered | pingone-api | exported with its credential type | - | no | - |
+| `pingone_credential_issuance_rule` | covered with documented limits | pingone-api | exported with its credential type | - | no | labels end with the rule ID (the API object has no name) |
 | `pingone_credential_issuer_profile` | covered | pingone-api | one per environment, imported by environment ID | - | no | - |
 | `pingone_credential_type` | covered | pingone-api | - | - | no | - |
 | `pingone_digital_wallet_application` | covered | pingone-api | - | - | no | - |
@@ -183,7 +183,7 @@ Totals: 57 covered, 29 covered with documented limits, 15 not possible (101 reso
 | `pingone_custom_domain` | covered with documented limits | pingone-api | per environment: `domain_name` | - | no | the domain name is per environment (variable); DNS verification and the TLS certificate are per-environment steps outside Git |
 | `pingone_custom_domain_ssl` | not possible | - | - | - | no | the TLS private key is a per-environment secret file; install it per environment outside this tool |
 | `pingone_custom_domain_verify` | not possible | - | - | - | no | an action that verifies DNS in one environment; not configuration |
-| `pingone_custom_role` | covered | pingone-api | built-in adopted when `type=PLATFORM` | - | no | - |
+| `pingone_custom_role` | covered | pingone-api | - | - | no | - |
 | `pingone_environment` | not possible | - | - | - | no | each environment's own definition (licence, region, services) is managed with that environment's state, not promoted from another environment |
 | `pingone_identity_propagation_plan` | covered with documented limits | pingone-api | - | - | no | only the plan is exported; its stores and rules reference per-environment gateways and credentials |
 | `pingone_key` | covered with documented limits | pingone-api | built-in adopted when `default=true` | - | no | key material is never exported: a generated key is recreated in each environment from its settings; imported PKCS#12 keys are per-environment secrets; default signing keys are adopted |

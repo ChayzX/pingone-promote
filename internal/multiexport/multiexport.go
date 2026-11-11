@@ -129,9 +129,21 @@ func (e *Exporter) CatalogAllIDs(ctx context.Context, creds exporter.Credentials
 // IsDaVinci reports types exported by terraformer.
 func IsDaVinci(addr string) bool { return strings.HasPrefix(addr, "pingone_davinci_") }
 
+// matches compares exclusion patterns: an exact address, or a glob. Core
+// labels are case-sensitive; terraformer's own matching of DaVinci patterns
+// is case-insensitive (ADR 0015), so DaVinci addresses compare that way.
 func matches(patterns []string, addr string) bool {
 	for _, p := range patterns {
-		if ok, _ := path.Match(strings.ToLower(p), strings.ToLower(addr)); ok {
+		if p == addr {
+			return true
+		}
+		if IsDaVinci(addr) {
+			if ok, _ := path.Match(strings.ToLower(p), strings.ToLower(addr)); ok {
+				return true
+			}
+			continue
+		}
+		if ok, _ := path.Match(p, addr); ok {
 			return true
 		}
 	}
@@ -175,7 +187,7 @@ func deps(o *coreexport.Object, ids map[string]string) []string {
 			for k, vv := range x {
 				// The object's own ID is not a reference; nested {"id": ...}
 				// objects are.
-				if k == "_links" || k == "environment" || (top && k == "id") {
+				if k == "_links" || k == "environment" || (top && k == "id" && !idIsReference(o)) {
 					continue
 				}
 				walk(vv, false)
@@ -300,7 +312,11 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 	}
 	var dvExp *exporter.Export
 	dvKey := ""
-	for round := 0; round < 8; round++ {
+	// Each round adds at least one object, so the loop ends; the bound is a
+	// guard against a bug, not a limit on dependency depth.
+	maxRounds := len(c.inv.Objects) + len(c.dv) + 2
+	converged := false
+	for round := 0; round < maxRounds; round++ {
 		changed := false
 		// Owned children travel with their parent.
 		for _, o := range c.inv.Objects {
@@ -353,8 +369,12 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 			return nil, fmt.Errorf("multiexport: %s needs the DaVinci exporter, which is not configured", sortedKeys(dv)[0])
 		}
 		if !changed {
+			converged = true
 			break
 		}
+	}
+	if !converged {
+		return nil, errors.New("multiexport: following dependencies did not converge")
 	}
 	exported := map[string]bool{}
 	for a := range core {
@@ -374,7 +394,18 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 	if err != nil {
 		return nil, err
 	}
-	return combine(c, dvExp, rendered, ids, exported)
+	out, err := combine(c, dvExp, rendered, ids, exported)
+	if err != nil {
+		return nil, err
+	}
+	out.Owners = map[string]string{}
+	for a := range core {
+		o := c.inv.Object(a)
+		if d, _ := catalog.Get(o.Type); d.Owned && o.Parent != nil && o.Parent.Label != "" && core[o.Parent.Address()] {
+			out.Owners[a] = o.Parent.Address()
+		}
+	}
+	return out, nil
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -399,8 +430,8 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 	out := &exporter.Export{EnvironmentID: c.inv.EnvironmentID, ModuleDir: exporter.ModuleDir, ModuleName: exporter.ModuleName,
 		Files: map[string][]byte{}, Referenced: map[string]string{}, Adopt: core.Adopt}
 	out.Warnings = append(out.Warnings, c.inv.Warnings...)
-	for t, why := range c.inv.Skipped {
-		out.Warnings = append(out.Warnings, fmt.Sprintf("%s was not read: %s", t, why))
+	for _, t := range sortedKeysS(c.inv.Skipped) {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("%s was not read: %s", t, c.inv.Skipped[t]))
 	}
 	for a, id := range core.Referenced {
 		out.Referenced[a] = id
@@ -412,12 +443,19 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 			out.Files[p] = b
 		}
 		out.Findings = append(out.Findings, dvExp.Findings...)
-		// Core IDs inside DaVinci blocks.
-		for p, src := range dvExp.Files {
+		// Core IDs inside DaVinci blocks (sorted, so the generated
+		// variables come out in a stable order).
+		paths := make([]string, 0, len(dvExp.Files))
+		for p := range dvExp.Files {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			src := dvExp.Files[p]
 			if path.Dir(p) != dvExp.ModuleDir || !strings.HasSuffix(p, ".tf") || path.Base(p) == "variables.tf" {
 				continue
 			}
-			out.Files[p] = quotedUUID.ReplaceAllFunc(src, func(m []byte) []byte {
+			out.Files[p] = replaceUUIDValues(src, func(m []byte) []byte {
 				id := string(m[1 : len(m)-1])
 				a, ok := ids[id]
 				if !ok || IsDaVinci(a) {
@@ -519,4 +557,40 @@ func (e *Exporter) Verify(ctx context.Context) error {
 		return v.Verify(ctx)
 	}
 	return nil
+}
+
+// replaceUUIDValues rewrites quoted UUIDs that are values, leaving object
+// keys ("<uuid>" = ... or "<uuid>" : ...) alone.
+func replaceUUIDValues(src []byte, f func([]byte) []byte) []byte {
+	var out []byte
+	last := 0
+	for _, loc := range quotedUUID.FindAllIndex(src, -1) {
+		rest := src[loc[1]:]
+		i := 0
+		for i < len(rest) && (rest[i] == ' ' || rest[i] == '\t') {
+			i++
+		}
+		if i < len(rest) && (rest[i] == '=' || rest[i] == ':') && !(i+1 < len(rest) && rest[i] == '=' && rest[i+1] == '=') {
+			continue
+		}
+		out = append(out, src[last:loc[0]]...)
+		out = append(out, f(src[loc[0]:loc[1]])...)
+		last = loc[1]
+	}
+	return append(out, src[last:]...)
+}
+
+// idIsReference reports types whose "id" field names another object (a
+// group nesting's item is the containing group).
+func idIsReference(o *coreexport.Object) bool {
+	d, ok := catalog.Get(o.Type)
+	if !ok {
+		return false
+	}
+	for _, v := range d.Rename {
+		if v == "id" {
+			return true
+		}
+	}
+	return false
 }

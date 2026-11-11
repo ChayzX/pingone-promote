@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"pingone-promote/internal/catalog"
+	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/pingone/pingonetest"
@@ -160,5 +162,61 @@ func TestRenderEverythingParsesAndNeutralizes(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("definitions lack the reference %s", want)
 		}
+	}
+}
+
+// Every rendered resource sets every attribute its schema requires, and the
+// import IDs follow each type's template.
+func TestRenderedBlocksHaveRequiredAttributes(t *testing.T) {
+	_, inv := tenant(t)
+	r := renderAll(t, inv, addrs(inv), nil)
+	for p, src := range r.Files {
+		if !strings.HasPrefix(p, "ping-export-module/") || strings.HasSuffix(p, "variables.tf") {
+			continue
+		}
+		body, err := hclblocks.Parse(src, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, b := range body.Blocks {
+			schema, _ := catalog.Schema(b.Labels[0])
+			for name, a := range schema {
+				if !a.Required {
+					continue
+				}
+				_, attr := b.Body.Attributes[name]
+				blk := false
+				for _, nb := range b.Body.Blocks {
+					blk = blk || nb.Type == name
+				}
+				if !attr && !blk {
+					t.Errorf("%s.%s lacks the required attribute %s", b.Labels[0], b.Labels[1], name)
+				}
+			}
+		}
+	}
+	want := map[string]string{
+		"pingone_agreement_localization_enable.pingcli__Terms-0020-of-0020-Service_en":                                  "34000000-0000-4000-8000-000000000001/34100000-0000-4000-8000-000000000001",
+		"pingone_agreement_localization_revision.pingcli__Terms-0020-of-0020-Service_en_2026-01-01T00-003A-00-003A-00Z": "34000000-0000-4000-8000-000000000001/34100000-0000-4000-8000-000000000001/34200000-0000-4000-8000-000000000001",
+		"pingone_language_update.pingcli__fr-CA":                                                                        "35000000-0000-4000-8000-000000000002",
+		"pingone_group_nesting.pingcli__Support-0020-Agents_Staff":                                                      "22000000-0000-4000-8000-000000000002/22000000-0000-4000-8000-000000000001",
+	}
+	for a, id := range want {
+		o := inv.Object(a)
+		if o == nil {
+			t.Errorf("%s is not in the inventory", a)
+			continue
+		}
+		if o.ImportID != id {
+			t.Errorf("%s import ID = %s, want %s", a, o.ImportID, id)
+		}
+	}
+	// Children of a built-in object are adopted too.
+	if o := inv.Object("pingone_sign_on_policy_action.pingcli__Single_Factor_1"); o == nil || !o.Builtin {
+		t.Error("the default sign-on policy's action must be adopted, not created")
+	}
+	// A deprecated <x>_id is not written next to its object attribute <x>.
+	if strings.Contains(string(r.Files["ping-export-module/pingone_population.tf"]), "password_policy_id") {
+		t.Error("population sets both password_policy and password_policy_id")
 	}
 }

@@ -459,6 +459,9 @@ type Export struct {
 	// adopt by import ID (they exist there already and must not be created).
 	Adopt    []string
 	Warnings []string
+	// Owners maps an exported owned child (a sign-on policy action, an
+	// application's attribute mapping) to its parent's address.
+	Owners map[string]string
 }
 
 // Module directory and name we pass explicitly (terraformer's defaults).

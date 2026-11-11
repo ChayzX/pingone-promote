@@ -11,9 +11,14 @@
       {"id": "21000000-0000-4000-8000-000000000002", "name": "Strict", "default": false, "excludesCommonlyUsedPasswords": true, "excludesProfileData": true, "maxRepeatedCharacters": 2}
     ]},
     "groups": {"embedded": "groups", "items": [
-      {"id": "22000000-0000-4000-8000-000000000001", "name": "Support Agents", "description": "Help desk", "population": {"id": "20000000-0000-4000-8000-000000000002"}}
+      {"id": "22000000-0000-4000-8000-000000000001", "name": "Support Agents", "description": "Help desk", "population": {"id": "20000000-0000-4000-8000-000000000002"}},
+      {"id": "22000000-0000-4000-8000-000000000002", "name": "Staff", "description": "All staff"}
     ]},
-    "groups/22000000-0000-4000-8000-000000000001/memberOfGroups": {"embedded": "groupMemberships", "items": []},
+    "groups/22000000-0000-4000-8000-000000000001/memberOfGroups": {"embedded": "groupMemberships", "items": [
+      {"id": "22000000-0000-4000-8000-000000000002", "name": "Staff", "type": "DIRECT"}
+    ]},
+    "groups/22000000-0000-4000-8000-000000000002/memberOfGroups": {"embedded": "groupMemberships", "items": []},
+    "groups/22000000-0000-4000-8000-000000000002/roleAssignments": {"embedded": "roleAssignments", "items": []},
     "groups/22000000-0000-4000-8000-000000000001/roleAssignments": {"embedded": "roleAssignments", "items": []},
     "schemas": {"embedded": "schemas", "items": [{"id": "23000000-0000-4000-8000-000000000001", "name": "User"}]},
     "schemas/23000000-0000-4000-8000-000000000001/attributes": {"embedded": "attributes", "items": [
@@ -32,11 +37,14 @@
       {"id": "24100000-0000-4000-8000-000000000003", "type": "MULTI_FACTOR_AUTHENTICATION", "priority": 2, "deviceAuthenticationPolicy": {"id": "25000000-0000-4000-8000-000000000002"}, "noDeviceMode": "BYPASS"}
     ]},
     "deviceAuthenticationPolicies": {"embedded": "deviceAuthenticationPolicies", "items": [
-      {"id": "25000000-0000-4000-8000-000000000001", "name": "Default MFA Policy", "default": true},
-      {"id": "25000000-0000-4000-8000-000000000002", "name": "Strong MFA", "default": false}
+      {"id": "25000000-0000-4000-8000-000000000001", "name": "Default MFA Policy", "default": true, "policyType": "PINGONE_MFA", "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}},
+      {"id": "25000000-0000-4000-8000-000000000002", "name": "Strong MFA", "default": false, "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}}
     ]},
     "fido2Policies": {"embedded": "fido2Policies", "items": [
-      {"id": "25100000-0000-4000-8000-000000000001", "name": "Passkeys", "relyingPartyId": "dev.example.com", "userVerification": {"enforceDuringAuthentication": true, "option": "REQUIRED"}}
+      {"id": "25100000-0000-4000-8000-000000000001", "name": "Passkeys", "relyingPartyId": "dev.example.com", "userVerification": {"enforceDuringAuthentication": true, "option": "REQUIRED"},
+        "attestationRequirements": "NONE", "authenticatorAttachment": "BOTH", "backupEligibility": {"allow": true, "enforceDuringAuthentication": true},
+        "deviceDisplayName": "fidoDeviceName", "discoverableCredentials": "REQUIRED", "mdsAuthenticatorsRequirements": {"enforceDuringAuthentication": false, "option": "NONE"},
+        "userDisplayNameAttributes": {"attributes": [{"name": "email"}]}}
     ]},
     "applications": {"embedded": "applications", "items": [
       {"id": "26000000-0000-4000-8000-000000000001", "name": "Web Portal", "protocol": "OPENID_CONNECT", "type": "WEB_APP", "enabled": true,
@@ -105,7 +113,7 @@
       {"id": "32000000-0000-4000-8000-000000000001", "name": "Default quotas", "quotas": [{"type": "ENVIRONMENT", "deliveryMethods": ["SMS"], "total": 100}]}
     ]},
     "forms": {"embedded": "forms", "items": [
-      {"id": "33000000-0000-4000-8000-000000000001", "name": "Customer signup", "category": "CUSTOM", "cols": 4, "markRequired": true, "markOptional": false, "components": {"fields": []}}
+      {"id": "33000000-0000-4000-8000-000000000001", "name": "Customer signup", "category": "CUSTOM", "cols": 4, "markRequired": true, "markOptional": false, "components": {"fields": [{"type": "TEXT", "key": "user.email", "label": "Email", "position": {"row": 0, "col": 0}, "required": true}]}}
     ]},
     "agreements": {"embedded": "agreements", "items": [
       {"id": "34000000-0000-4000-8000-000000000001", "name": "Terms of Service", "enabled": true, "reconsentPeriodDays": 365}

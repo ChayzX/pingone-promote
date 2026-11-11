@@ -1014,7 +1014,7 @@ func (m *merger) withImportIDs(cur cty.Value, extra map[string]string) (cty.Valu
 func (m *merger) adoption() ([]Blocker, error) {
 	var out []Blocker
 	for _, a := range m.req.Adopt {
-		if !importable(a) {
+		if !importable(a) || !m.written[a] {
 			continue
 		}
 		key := m.l.ModuleAddress(a)

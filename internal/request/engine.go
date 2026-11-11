@@ -220,7 +220,7 @@ func (r *runner) run(ctx context.Context) {
 		if strings.HasPrefix(s, neutralize.TypeFlow+".") {
 			selected = append(selected, exporter.Companions(s)...)
 		}
-		selected = append(selected, ownedChildren(neu, s)...)
+		selected = append(selected, ownedChildren(exp.Owners, s)...)
 	}
 	choices := map[string]promote.Choice{}
 	for a, c := range req.DependencyChoices {
@@ -887,24 +887,17 @@ func LiftRules() []neutralize.LiftRule {
 }
 
 // ownedChildren lists the exported children that belong to a selected core
-// item (a sign-on policy's actions, an application's attribute mappings):
-// they are part of the selection, not dependencies. Child labels start with
-// the parent's label.
-func ownedChildren(neu *neutralize.Result, seed string) []string {
-	typ, label, _ := strings.Cut(seed, ".")
-	kids := map[string]bool{}
-	for _, c := range catalog.Children(typ) {
-		kids[c] = true
-	}
-	if len(kids) == 0 || strings.HasPrefix(typ, "pingone_davinci_") {
-		return nil
-	}
+// item (a sign-on policy's actions, an application's attribute mappings),
+// transitively: they are part of the selection, not dependencies. The
+// combined exporter reports the parent links.
+func ownedChildren(owners map[string]string, seed string) []string {
 	var out []string
-	for _, b := range neu.Blocks {
-		if kids[b.Type] && (b.Label == label || strings.HasPrefix(b.Label, label+"_")) {
-			out = append(out, b.Address)
-			out = append(out, ownedChildren(neu, b.Address)...)
+	for child, parent := range owners {
+		if parent == seed {
+			out = append(out, child)
+			out = append(out, ownedChildren(owners, child)...)
 		}
 	}
+	sort.Strings(out)
 	return out
 }

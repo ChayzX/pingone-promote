@@ -222,7 +222,7 @@ func (c *Client) List(ctx context.Context, env, path, embedded string) ([]map[st
 			if next, ok := links["next"].(map[string]any); ok {
 				if href, ok := next["href"].(string); ok && href != "" {
 					nu, err := url.Parse(href)
-					if err != nil || nu.Scheme != base.Scheme || nu.Host != base.Host {
+					if err != nil || nu.Scheme != base.Scheme || nu.Host != base.Host || !strings.HasPrefix(nu.Path, base.Path+"/environments/"+env+"/") {
 						return nil, fmt.Errorf("pingone: GET %s: the next page link points to another host", path)
 					}
 					u = nu.String()

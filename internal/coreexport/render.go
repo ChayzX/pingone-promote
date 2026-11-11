@@ -3,6 +3,7 @@ package coreexport
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,10 +133,20 @@ func (r *renderer) block() (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "resource %q %q {\n", o.Type, o.Label)
 	b.WriteString("  environment_id = var." + neutralize.EnvironmentIDVariable + "\n")
+	skip := map[string]bool{"id": true, "environment_id": true, d.ParentAttr: true}
 	if d.ParentAttr != "" && o.Parent != nil {
 		b.WriteString("  " + d.ParentAttr + " = " + r.idExpr(o.Parent.ID, d.ParentAttr) + "\n")
 	}
-	body, err := r.attrs(attrs, o.Raw, "", o.Raw, map[string]bool{"id": true, "environment_id": true, d.ParentAttr: true})
+	for _, attr := range sortedKeysS(d.Ancestors) {
+		for p := o.Parent; p != nil; p = p.Parent {
+			if p.Type == d.Ancestors[attr] {
+				b.WriteString("  " + attr + " = " + r.idExpr(p.ID, attr) + "\n")
+				skip[attr] = true
+				break
+			}
+		}
+	}
+	body, err := r.attrs(attrs, o.Raw, "", o.Raw, skip)
 	if err != nil {
 		return "", err
 	}
@@ -158,6 +169,13 @@ func (r *renderer) attrs(schema map[string]catalog.Attr, src map[string]any, pat
 		full := path + n
 		if skip[n] || !a.Configurable() {
 			continue
+		}
+		// A deprecated "<x>_id" next to an object attribute "<x>" that the
+		// API fills would set the same thing twice.
+		if base, ok := strings.CutSuffix(n, "_id"); ok {
+			if _, sib := schema[base]; sib && src[camel(base)] != nil {
+				continue
+			}
 		}
 		var v any
 		if cond, ok := r.def.Hoist[full]; ok {
@@ -311,6 +329,9 @@ func (r *renderer) value(a catalog.Attr, v any, path string, root map[string]any
 				}
 				parts = append(parts, "{\n"+inner+"}")
 			}
+			if a.Nesting == "set" {
+				sort.Strings(parts) // sets come back in no stable order
+			}
 			if len(parts) == 0 {
 				return "", nil
 			}
@@ -370,7 +391,7 @@ func (r *renderer) typed(t json.RawMessage, v any, path string) (string, error) 
 			case json.Number:
 				return x.String(), nil
 			case string:
-				if _, err := strconv.ParseFloat(x, 64); err == nil {
+				if f, err := strconv.ParseFloat(x, 64); err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) {
 					return x, nil
 				}
 			}
@@ -544,4 +565,13 @@ func quote(s string) string {
 	q = strings.ReplaceAll(q, "${", "$${")
 	q = strings.ReplaceAll(q, "%{", "%%{")
 	return q
+}
+
+func sortedKeysS(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
