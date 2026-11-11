@@ -1,4 +1,6 @@
-# PingOne Promote: DaVinci app (operator guide)
+# PingOne Promote: DaVinci app (reference)
+
+> **Setting up?** Follow the step-by-step checklist in the [main README](../README.md#setup-what-you-do-by-hand). This page is the full reference: every setting, the security model, and how to rebuild the export.
 
 **PingOne Promote - request app** is a DaVinci flow. The shipped export has no sign-in: people type their name, and it is recorded as unverified (see [§1](#1-sign-in-and-launching-the-app)). In the flow they:
 1. pick a **source env** and a **main flow**, or bring the **whole environment**;
@@ -138,7 +140,7 @@ The request job's side is specified in the backend's `docs/gitlab-ci-integration
    - `PINGONE_PROMOTE_GITLAB_TOKEN`;
    - optionally `PINGONE_PROMOTE_TERRAFORMER_SHA256` (leave it unset for the first test).
    In the CI file, set `PINGONE_PROMOTE_SOURCES` and `PINGONE_PROMOTE_ROLLOUT` to the same env names as `ppSourceEnvs` and `ppRolloutEnvs`. If your push rules require a branch prefix, see [Branch names](#branch-names).
-5. **Protect `pingone-promote/*`** (or `<your prefix>*`) as a wildcard, with Developers and Maintainers allowed to push and merge (the backend's recommendation). Protected variables then reach the request job, and only project members can create request branches.
+5. **Protect `pingone-promote/*`** (or `<your prefix>*`) as a wildcard. Allow only the token bot users to push and merge if your tier lets you pick users, otherwise Developers and Maintainers (see `docs/gitlab-ci-integration.md`, "Who may push request branches"). Protected variables then reach the request job, and only project members can create request branches.
    - On a protected branch, DaVinci's Developer token cannot **delete** it. Cancel then says so (HTTP 403), and a Maintainer deletes the branch.
 6. **Protect `main`.** Allow nobody to push, require MR approval, and do not let either token's bot approve.
 7. **Protect every rollout environment.** Only Maintainers or a release group may run its jobs, and **prod** needs an approval. The manual env jobs and these approvals are the safety boundary, not DaVinci.
