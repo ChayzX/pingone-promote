@@ -123,6 +123,15 @@ available on protected branches. Two options:
 - Unprotected but masked variables: simpler, but any branch pipeline (any
   developer's branch) can read them. Not recommended.
 
+**Who may push request branches.** A pipeline runs the CI file of its own
+branch. Anyone who can push a protected request branch can therefore change
+`.gitlab/pingone-promote.yml` on it, and that pipeline sees the protected
+variables. Where the GitLab tier allows picking users, set "Allowed to push
+and merge" on the request wildcard to the project access token bot users
+only. Keep `.gitlab-ci.yml` and `.gitlab/` under `CODEOWNERS` on the default
+branch. Where available, a pipeline execution policy that pins the job
+definition closes this completely. (DevSecOps review, 2026-11-11.)
+
 ## Tokens
 
 - **DaVinci's token:** a project access token on the config repository,
