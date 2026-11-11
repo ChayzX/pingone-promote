@@ -1,74 +1,39 @@
-# Hosted server handoff
+# Hosted server handoff (current state)
 
-This branch is an incomplete implementation. Do not merge it on the strength of this document. The full work request is the hosted, source-only, full PingOne server described in ADR 0018. PR #105 began as a four-file scaffold.
+The hosted, source-only server of [ADR 0018](adr/0018-hosted-source-only-server.md) with the native core exporter of [ADR 0019](adr/0019-core-pingone-exporter.md). Operators: see the [README](../README.md). Developers: [development.md](development.md).
 
-## Binding requirements
+## Built and tested (fixtures only)
 
-Reuse `internal/request`, exporter, neutralizer, additive HCL merger, overlay, formatter, GitLab and pipeline-secret engines. Add `serve --config FILE`, server-rendered pages and in-memory session-owned drafts. Everything executes in the server, then commits HCL and secret declarations directly to a GitLab request branch. No tool CI job/variable/request file/protected request branch. Enterprise CI alone plans and deploys.
+- `pingone-promote serve --config FILE [--check-config]`: net/http server, embedded pages, no JavaScript, strict CSP, Host allow-list (421), CSRF plus same-origin checks on every POST, `/healthz`. Drafts, previews and submissions are in memory and run as cancellable background jobs. Phase 1 has no sign-in: typed names are `NAME (unverified)` behind the `server.Identity` interface.
+- Secrets file checks (regular file, not a symlink, mode 0600/0400, owned by the server user), config refusals, pinned tool digests.
+- GitLab: private snapshot of one commit, `HostedCommitter` rooted at the previewed SHA, refuses when the default branch moved, keeps the branch on uncertain outcomes, Requests page with apply-job status.
+- `request.Run` redacts every status. Additive merge, overlays, secret declarations and the `terraform fmt` gate are shared with the legacy path.
+- DaVinci export through pinned pingcli-terraformer 0.6.0; core PingOne export through `internal/coreexport` (GET-only client). `internal/catalog` classifies all 101 provider resources (57 covered, 29 with limits, 15 not possible); see [coverage.md](coverage.md).
+- Deploy files (`deploy/`) are drift-tested by `deploy/deploy_test.go`.
 
-Only a source is selected; the configured rollout supplies later environments. Every environment's missing values block submission. All POSTs need CSRF, Host is allow-listed, CSP is strict. No sign-in yet: typed names are always `(unverified)`, behind an identity interface. Secrets only from an owner-readable server file, never config/pages/logs/Git. Exporters get a read-only worker only. Native promotion APIs are forbidden.
+## Only fixture-tested
 
-Full selection must cover every feasible provider configuration type, with include/exclude lists, optional transitive dependencies and update/keep/exclude choices. Never users, sessions, user data or audit logs. Keep existing DaVinci app and example CI checks passing without extending them.
+All core types are `Live: no`. The PingOne API paths and field names, worker role needs, the GitLab API assumptions, SELinux, systemd and Kubernetes behavior, and enterprise pipeline compatibility have not been verified on a real tenant, GitLab or host. Cases: [core-export.md](acceptance/core-export.md), [hosted-server.md](acceptance/hosted-server.md), [live-acceptance.md](acceptance/live-acceptance.md).
 
-## Current checkpoint (2026-11-10)
+## Open items
 
-- Existing `feat/server` scaffold: `request.Env.NoRequestFile`, GitLab hosted helpers, server config.
-- ADR 0018 records the authorized hosted design and supersedes ADR 0017 for this workflow.
-- Security review found starting-slice issues. Status on `feat/server-safety` (fixture tests only; still needs independent review and a Linux/macOS CI run, because the local run was on Windows where POSIX mode/owner tests skip):
-  - Fixed: secrets file must be a regular non-symlink file (Lstat + SameFile), mode exactly 0600/0400, owned by the server's user; errors never carry values or unknown names; Windows refuses (unsupported). Tests: `internal/server` `TestSecretsFileModes`, `TestSecretsFileRefusesSymlink`, `TestSecretsFileOwnerIsChecked`, `TestParseSecrets`, `TestSecretsWindowsRefusesUnverifiable`.
-  - Fixed: config defaults/refusals and no secret-shaped config field. Tests: `TestConfigDefaults`, `TestConfigRefusals`, `TestConfigRejectTrailingDataAndMalformed`, `TestConfigHasNoSecretField`.
-  - Fixed: `gitlab.Client.Snapshot(ctx, branch, dirs)` now creates and returns its own private 0700 temp dir (never deletes a caller's directory), resolves the head once and reads tree and files with `ref=<sha>`, bounds files/bytes, and skips dot/CI files and refuses directories outside the allow-list. Tests: `TestSnapshotReadsOneCommitDespiteConcurrentPush`, `TestSnapshotDirectoryIsPrivate`, `TestSnapshotLimitsAndCleanup`, `TestSnapshotRefusesPathsOutsideAllowList`.
-  - Fixed: `HostedCommitter` creates the branch from the previewed SHA, refuses with "preview again" when the default branch moved, restricts branches to `BranchPrefix + requestID`, deletes only a branch it created when the failure is certain (4xx/preflight/conflict) and the head is still the start SHA, and keeps the branch with `PartialError{Stage: "commit_uncertain"}` on timeout/5xx. Tests: `TestHostedCommitSucceedsRootedAtReviewedSHA`, `TestHostedCommitConflictWhenDefaultBranchMoved`, `TestHostedCommitUncertainKeepsBranch`, `TestHostedCommitCertainFailureRemovesOnlyItsOwnBranch`, `TestHostedCommitNeverDeletesPreexistingBranch`, `TestHostedCommitBranchNames`. The server must set `HostedCommitter.BranchPrefix` from config.
-  - Fixed: `request.Run` redacts diff, error, warnings, blocker messages, change reasons and queries for every status (private keys, JWTs, literals under secret-suffixed names). Tests: `TestRedactEveryStatus`, `TestRedactLeavesOrdinaryTextAlone`, `TestFailedRunRedactsEchoedInput`. Redaction is heuristic (secretscan); it is defense in depth, not a guarantee.
-  - Fixed test: `TestSelectedWithoutUpstreamDoesNotAddDependencies` now supplies the excluded subflow's per-environment ID (the engine was right to block without it).
-  - Open: the CI `GitLabCommitter` path still reports a 5xx/timeout on the commit call as a generic preflight-type failure in `request.commit`; a GitLab TOCTOU remains between the default-branch check and the commit, and between the head check and branch deletion (no conditional API).
-- Go 1.27.3 and Terraform 1.16.7 were downloaded with verified SHA-256. Local first compilation encountered a full root disk; build caches moved to a separate work volume. No passing integrated suite yet.
-- Independent work is in progress on hosted GitLab safety, HTTP server/UI, and exporter research; checkpoint commits may contain tests before their implementation.
+- Import IDs: `request.Request` has no per-environment import ID field; the preview form for `missing_import` blockers passes values to `server.ImportIDRecorder`, whose default refuses non-empty IDs. Implement `SetImportIDs`.
+- A non-loopback `listen` should require an explicit exposure opt-in in the config (security fixes, pending).
+- No real sign-in (OIDC reserved, unimplemented).
+- GitLab TOCTOU remains between the default-branch check and the commit, and between the head check and branch deletion (no conditional API). The legacy CI `GitLabCommitter` still reports a 5xx/timeout on commit as a generic preflight failure.
+- Redaction is heuristic (secretscan), defense in depth only.
+- Race tests could not run on the Windows dev box; run `go test -race ./internal/server/...` on Linux/macOS CI.
+- Terraform binary digest is not printed by `fetch-tools.sh`; operators compute it.
+- Egress hostnames per region in operations.md are marked to verify.
+- Upstream: pingcli-terraformer is DaVinci-only; Ping CLI 1.x has no export (issue #175).
 
-## Hosted server HTTP/UI (feat/server-http, 2026-11-11)
+## Security notes to keep
 
-`pingone-promote serve --config FILE [--check-config]` and `internal/server`: net/http, embedded html/template pages and CSS, no JavaScript; strict CSP and headers on every response; Host allow-list (421); per-session CSRF token plus Sec-Fetch-Site/Origin/Referer same-origin evidence on every POST; 256 KiB form limit; `GET /healthz`. Identity is the `server.Identity` interface; phase 1 `TypedName` records `NAME (unverified)`. Drafts are in memory, bound to the browser session, bounded and expiring. Search, preview and submit run as background jobs (one per draft, cancellable, never on the HTTP request context) with a meta-refresh progress page. Preview snapshots the default branch and records the export; submit replays that frozen export with the snapshot head as `ExpectedHead`, and refuses when the inputs fingerprint changed. The Requests page reads branches, labelled MRs and the merge commit's `apply:{env}` jobs (`internal/gitlab/status.go`, fake in `gitlabtest/status.go`).
+- Exporters get only the read-only source worker; no write credential, no rollout credential, no native promotion APIs.
+- Secrets only from the owner-only file; never in config, pages, logs, Git or tfvars.
+- Run one instance; do not expose without an authenticating, TLS-terminating proxy.
+- Never run Terraform plan or apply in the server; roll forward, never revert ([recovery.md](recovery.md)).
 
-- **TODO (import IDs):** `request.Request` has no per-environment import ID field yet. The preview renders a form for `missing_import` blockers (field `address`), and the server passes the values through `server.ImportIDRecorder`. The default recorder refuses non-empty IDs with a message. When the field lands, implement `SetImportIDs` (env -> address -> ID) and pass it in `server.Options.ImportIDs` (or make it the default).
-- `cmd/pingone-promote/serve.go` has the `newExporter` hook; the core PingOne exporter replaces the terraformer runner there.
-- Race tests could not run on the Windows dev box (no cgo); run `go test -race ./internal/server/...` on Linux/macOS CI.
-- Live cases and the unverified GitLab API assumptions: `docs/acceptance/hosted-server.md`.
+## How to verify
 
-## Exporter findings that change the implementation
-
-Verified against upstream sources and actual binaries:
-
-- `pingcli-plugin-terraformer` v0.6.0 (`9aa51edd1930b1b2724183f7c56911aad0c47556`) remains DaVinci-only: seven enabled resource definitions and seven hardcoded resource handlers. The environment definition is disabled. There is no runtime custom-definitions flag.
-- Ping CLI v1.11.0 removed `platform export`; old documentation is stale (upstream issue #175).
-- Ping CLI v0.8.4 (`8b93d3c06e7c2674d83203f100b09111b600e784`) exports import blocks only. Its usual config-generation path requires `terraform plan -generate-config-out`, which this server must not run.
-- Adding YAML alone cannot expand the existing binary: new handlers/API dispatch require an upstream change or fork. A second exporter needs an explicit ADR and fixtures. One candidate is read-only import/state/schema extraction in isolated temporary state; evaluate thoroughly before choosing it. Do not claim full coverage from import-ID enumeration.
-- Provider stable v1.24.0 is pinned by tag `d5019dec50baddf344540249219023f839874f2b`; its full resource inventory must populate the matrix. Provider #1360 was fixed in v1.22.0; current/published DaVinci versions, injected defaults and unreadable secrets still need explicit fixtures/live cases.
-
-## Next work
-
-1. Finish and independently review safety fixes and server flow. Preserve a frozen source export and immutable Git snapshot between preview and submit. Generic request selectors should coexist with legacy flow/application/policy fields.
-2. Complete exporter decision and implementation family by family, with cross DaVinci/core graph tests, one notification template, no-dependencies selection and whole-environment exclusions. Publish an honest full-provider coverage matrix.
-3. Add pinned tool installation, Containerfile/pod/systemd/RHEL notes, short operator README, developer details and live acceptance cases. macOS/RHEL/live service behavior cannot be inferred from fixture success.
-4. Rewrite issues #82–85 for this hosted design and open concrete new issues. Read all requested issue context (#58/#61/#62/#69/#73/#82–85/#92) and archived HANDOFF; do not carry forward their retired transport assumptions.
-5. Independent code/security/UX review. Fix findings with regression tests. Small PRs to main, merge only green CI. Keep this handoff current on frequent pushes.
-
-## Required verification before push/merge
-
-With Go 1.27.3 and Terraform **1.16.7** on PATH:
-
-```sh
-gofmt -w cmd internal
-go build ./...
-go vet ./...
-go test ./...
-terraform fmt -check -recursive terraform/
-python3 -I davinci-app/check_app.py
-node davinci-app/test_app.js
-python3 -m unittest discover -s scripts -p test_release.py
-```
-
-Also run race tests for draft/background concurrency and meaningful security/HTTP end-to-end tests. Record failures and skips. A WIP checkpoint is not a completion claim. Review every code piece using an agent other than its author before merge. Only a real tenant/GitLab acceptance run can verify service assumptions; document those steps under `docs/acceptance/`.
-
-### First development check
-
-The first full development snapshot (including uncommitted work in progress) ran all required Go commands and Terraform formatting on the authorized dev box with Go1.27.3/Terraform1.16.7. Build/vet/test failed because server templates were being implemented and the GitLab positive snapshot fixture was not mode0700. Terraform formatting passed. Existing exporter, neutralizer, merger, request, formatter, pipeline-secret and CI-example package tests passed in that run. This is a development observation, not green CI or a release gate. The secret-file focused regression subsequently passed; the optional-dependency test still needs its missing-value fixture completed. Rerun everything against the final reviewed commit.
+With Go 1.27.3 and Terraform 1.16.7 on PATH (`scripts/fetch-tools.sh --with-go`): `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./...`, `terraform fmt -check -recursive terraform/`, plus the legacy `python3 -I davinci-app/check_app.py`, `node davinci-app/test_app.js` and `python3 -m unittest discover -s scripts -p test_release.py`. Fixture success is not live proof.
