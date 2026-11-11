@@ -41,7 +41,7 @@ Full detail: [docs/operations.md](docs/operations.md#container-and-kubernetes).
 5. `kubectl create namespace pingone-promote`
 6. `kubectl -n pingone-promote create secret generic pingone-promote-secrets --from-file=secrets.env=./secrets.env`
 7. `kubectl apply -f deploy/kubernetes/deployment.yaml`, then replace the CIDRs in `deploy/kubernetes/networkpolicy.yaml` and apply it.
-8. Put an authenticating proxy or private network in front. Run exactly one replica.
+8. Put an authenticating proxy or private network in front and list its host name in `allowedHosts`. Inside a pod the server listens on `0.0.0.0:8080`; the coming security fixes will refuse a non-loopback address unless the config explicitly opts in to exposure (TLS, or behind a proxy with `allowedHosts`). That config field does not exist yet. Run exactly one replica.
 
 ## Checklist: RHEL 9 (systemd)
 
@@ -55,6 +55,7 @@ Full detail: [docs/operations.md](docs/operations.md#rhel-9-install-systemd). Ru
 6. `install -m 0644 deploy/systemd/pingone-promote.service /etc/systemd/system/`
 7. `systemctl daemon-reload && systemctl enable --now pingone-promote`
 8. `journalctl -u pingone-promote -f` and check for a clean start.
+9. Keep `listen` on `127.0.0.1:8080` and publish through an authenticating reverse proxy on 443 with its name in `allowedHosts`. A non-loopback `listen` will need an explicit exposure opt-in in the config (coming in the security fixes; the field does not exist yet).
 
 ## Daily use
 

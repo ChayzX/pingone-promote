@@ -1,5 +1,10 @@
 # GitLab CI integration: the DaVinci request flow
 
+> **Legacy.** This is the contract for the DaVinci app and the CI job
+> (`pingone-promote request`). The hosted server needs no CI job, CI variable
+> or protected request branch in the config repository (see
+> [ADR 0018](adr/0018-hosted-source-only-server.md)); use it for new work.
+
 This is the contract between the DaVinci front end and the pingone-promote
 job in the config repository (ADR 0017). One repository, one parent
 pipeline, a `.pre` job triggered by a branch push. Deploys stay in the

@@ -3,9 +3,11 @@
 These records cover the move from PingOne's native Configuration Management
 API to Terraform (epic #58). Each record uses the format decision /
 alternatives / consequences. Since 2026-11-03 the design is v2: a
-source-only export through pingcli-terraformer, neutralized into shared
-definitions plus one overlay per environment, triggered from a DaVinci
-front end as a GitLab CI job.
+source-only export, neutralized into shared definitions plus one overlay
+per environment. Since ADR 0018 the primary path is a hosted server that
+exports DaVinci (pingcli-terraformer) and core PingOne (a native read-only
+exporter, ADR 0019) and commits to GitLab directly; the DaVinci front end
+plus CI job (ADR 0017) remains as the legacy path.
 
 | ADR | Title | Status |
 | --- | --- | --- |
@@ -25,13 +27,16 @@ front end as a GitLab CI job.
 | [0014](0014-source-only-rollout.md) | Source-only rollout | Accepted |
 | [0015](0015-pingcli-terraformer-exporter.md) | pingcli-terraformer as the exporter, plus a neutralizer (scoped export and additive merge) | Accepted |
 | [0016](0016-import-mechanism.md) | Conditional imports on static addresses (spike S1) | Accepted |
-| [0017](0017-davinci-frontend-ci-backend.md) | DaVinci front end, GitLab CI job backend | Accepted |
+| [0017](0017-davinci-frontend-ci-backend.md) | DaVinci front end, GitLab CI job backend | Superseded by 0018 for the hosted workflow; kept as the legacy DaVinci/CI path |
+| [0018](0018-hosted-source-only-server.md) | Hosted source-only promotion server | Accepted |
+| [0019](0019-core-pingone-exporter.md) | A native read-only exporter for core PingOne | Accepted |
 
 v1 packages, the local web UI and the native API path were deleted in
 issue #44 (see ADR 0012); old documents are in `../archive/`.
 
 v2 code:
 
+- `internal/server`, `internal/multiexport`, `internal/coreexport`, `internal/pingone`, `internal/catalog`: the hosted server and native core exporter (ADRs 0018, 0019)
 - `internal/exporter`: the pinned pingcli-terraformer runner and search
 - `internal/neutralize`: export to shared definitions plus source values
 - `internal/hclblocks`: byte-range block edits
