@@ -196,13 +196,19 @@ Pin both base images by digest before shared use (instructions at the top of
     podman run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:dev --version
     podman run --rm --entrypoint sha256sum pingone-promote:dev /opt/pingone-promote/tools/terraform
 
+`/tmp` must allow executing files: the exporter runs its checksum-verified
+copy of the tool from a private directory under `$TMPDIR`, so a `noexec`
+tmpfs (the Docker and Podman `--tmpfs` default) fails with "permission
+denied". Pass `--tmpfs /tmp:rw,exec,nosuid,nodev`; a Kubernetes `emptyDir`
+allows it.
+
 Run locally (config must say `"listen": "0.0.0.0:8080"` with
 `"exposure": "behind-proxy"` and your host name in `allowedHosts` inside the
 container, and `secretsFile` `/run/secrets/secrets.env`; the secrets file on the host must
 be `chmod 600` and owned by uid 10001 or be mapped, e.g. with
 `--userns=keep-id:uid=10001,gid=10001`):
 
-    podman run --rm -p 127.0.0.1:8080:8080 --read-only --tmpfs /tmp \
+    podman run --rm -p 127.0.0.1:8080:8080 --read-only --tmpfs /tmp:rw,exec,nosuid,nodev \
       --userns=keep-id:uid=10001,gid=10001 \
       -v "$PWD/config.json:/etc/pingone-promote/config.json:ro" \
       -v "$PWD/secrets.env:/run/secrets/secrets.env:ro" pingone-promote:dev

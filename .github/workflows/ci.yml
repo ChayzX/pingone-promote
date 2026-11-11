@@ -132,8 +132,8 @@ jobs:
           sudo chown 10001:10001 "$work/secrets.env"
           sudo chmod 0400 "$work/secrets.env"
           chmod 0644 "$work/config.json"
-          run_args="--read-only --tmpfs /tmp -v $work/config.json:/etc/pingone-promote/config.json:ro -v $work/secrets.env:/run/pingone-promote/secrets.env:ro"
-          docker run --rm $run_args pingone-promote:ci --check-config
+          run_args="--read-only --tmpfs /tmp:rw,exec,nosuid,nodev,size=512m -v $work/config.json:/etc/pingone-promote/config.json:ro -v $work/secrets.env:/run/pingone-promote/secrets.env:ro"
+          docker run --rm $run_args pingone-promote:ci --check-config || { echo "check-config failed"; exit 1; }
           docker run -d --name promote-ci -p 127.0.0.1:18080:8080 $run_args pingone-promote:ci
           ok=""
           for i in $(seq 1 30); do

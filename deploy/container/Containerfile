@@ -34,7 +34,7 @@ USER 10001:10001
 ENV TMPDIR=/tmp HOME=/tmp
 EXPOSE 8080
 # The server writes only private temp files under $TMPDIR (export staging,
-# Git snapshots): run with --read-only and a writable /tmp (emptyDir or
+# Git snapshots): run with --read-only and a writable, exec-allowed /tmp (emptyDir, or
 # --tmpfs). Probes expect GET /healthz -> 200 (the server must answer it for
 # the configured Host; send "Host: localhost"). Verify it exists in the
 # server build you ship. Kubernetes ignores HEALTHCHECK and uses its own
