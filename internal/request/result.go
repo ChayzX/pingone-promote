@@ -164,6 +164,26 @@ type Result struct {
 	Diff            string                  `json:"diff"`
 	DiffTruncated   bool                    `json:"diffTruncated"`
 	Error           *ErrorOut               `json:"error"`
+	// Variables describes the per-environment values of this change, so a
+	// screen can explain each missing value in plain language. Additive
+	// (resultVersion stays 1); secrets are never listed.
+	Variables map[string]VariableOut `json:"variables,omitempty"`
+}
+
+// VariableOut describes one per-environment value.
+type VariableOut struct {
+	// Kind is env_local (an environment-specific attribute or value) or
+	// excluded_ref (the ID of an item that was not copied).
+	Kind string `json:"kind"`
+	// Resource is the address the value belongs to, or the address of the
+	// item whose ID it holds.
+	Resource string `json:"resource,omitempty"`
+	// Attribute is the attribute path for a lifted value ("email.from.address").
+	Attribute   string `json:"attribute,omitempty"`
+	Description string `json:"description,omitempty"`
+	// SourceValue is the source environment's value, shown as an example
+	// (never a secret: secrets are not per-environment values).
+	SourceValue string `json:"sourceValue,omitempty"`
 }
 
 // MaxDiff bounds result.diff. A whole-environment diff is cut at

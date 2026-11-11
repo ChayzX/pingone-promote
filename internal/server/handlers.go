@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"pingone-promote/internal/request"
@@ -84,6 +86,7 @@ func (s *Server) newDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 type draftView struct {
+	Types        []typeOption
 	D            *Draft
 	Sources      []string
 	Rollout      []string
@@ -123,7 +126,7 @@ func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 		v := draftView{D: d, Sources: s.cfg.Sources, Rollout: s.cfg.Rollout, Notice: d.notice, Problem: d.problem,
 			Running: d.job != nil && d.job.Running, HasPreview: d.preview != nil,
 			Results: viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
-			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != ""}
+			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != "" || d.TypeFilter != "", Types: typeOptions(d)}
 		d.notice, d.problem = "", ""
 		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
 	})
@@ -140,10 +143,15 @@ func contains(list []string, v string) bool {
 
 // saveDraft stores the main form. With action=preview it then starts a
 // preview.
-func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
+// applyMain stores step 1 of the request form; ok is false when the page
+// was redirected because of a problem.
+func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok bool) {
 	person, idErr := s.identity.Who(r)
-	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
-		f := r.PostForm
+	f := r.PostForm
+	if !f.Has("source") {
+		return true // an older form without step 1
+	}
+	{
 		d.Name = strings.TrimSpace(f.Get("name"))
 		if idErr == nil {
 			d.RequestedBy = person.Recorded()
@@ -154,7 +162,7 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
 			if !contains(s.cfg.Sources, src) {
 				d.problem = "Choose one of the listed source environments."
 				s.redirect(w, r, draftURL(d, ""))
-				return
+				return false
 			}
 			if len(d.Selected)+len(d.Excluded) > 0 {
 				d.notice = "The source environment changed, so the selected and excluded lists were cleared."
@@ -170,7 +178,22 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
 		d.Title = strings.TrimSpace(f.Get("title"))
 		d.Description = f.Get("description")
 		d.Updated = s.now()
-		if idErr != nil {
+		if idErr != nil && f.Get("action") == "preview" {
+			d.problem = idErr.Error()
+			s.redirect(w, r, draftURL(d, ""))
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		f := r.PostForm
+		if !s.applyMain(w, r, d) {
+			return
+		}
+		if _, idErr := s.identity.Who(r); idErr != nil {
 			d.problem = idErr.Error()
 			s.redirect(w, r, draftURL(d, ""))
 			return
@@ -205,15 +228,22 @@ func (s *Server) startPreview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		if !s.applyMain(w, r, d) {
+			return
+		}
 		q := strings.TrimSpace(r.PostForm.Get("q"))
 		if len(q) > 200 {
 			q = q[:200]
 		}
 		d.Query = q
+		d.TypeFilter = ""
+		if t := r.PostForm.Get("t"); t != "" && resourceLabel(t) != "" && strings.HasPrefix(t, "pingone_") {
+			d.TypeFilter = t
+		}
 		d.Updated = s.now()
 		c := d.catalogs[d.Source]
 		if c != nil && r.PostForm.Get("refresh") != "yes" && s.now().Sub(c.at) < catalogMaxAge {
-			d.Results = searchItems(c.items, q)
+			d.Results = filterItems(c.items, q, d.TypeFilter)
 			s.redirect(w, r, draftURL(d, "#results"))
 			return
 		}
@@ -334,21 +364,29 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 type envView struct {
+	// Summary replaces the blocker list when every blocker is a value or
+	// an ID filled in on the page.
+	Summary  string
 	Env      string
 	Label    string
 	Ready    bool
-	Blockers []request.BlockerOut
+	Blockers []blockerView
 	Values   []valueField
 	Imports  []valueField
 }
 
 type valueField struct {
 	Name, Key, Value string
+	// Label and Hint explain the value in plain language.
+	Label, Hint string
+	// List values (URL lists) are typed one per line.
+	List bool
 }
 
 type changeView struct {
 	request.ChangeOut
 	Kind       string
+	Name       string
 	StatusText string
 	ActionText string
 	Dependency bool
@@ -372,12 +410,17 @@ type previewView struct {
 	Envs        []envView
 	HasBlockers bool
 	Unchanged   int
+	// AlmostReady: the only blockers are values the person fills in here.
+	AlmostReady bool
+	NeedEnvs    []string
+	Skipped     []string
+	Warnings    []string
 }
 
 var statusText = map[string]string{"new": "new", "changed-in-source": "changed in source", "git-newer": "Git is newer",
 	"changed-in-both": "changed in both", "matches": "matches", "not-compared": "not compared"}
 
-var actionText = map[string]string{"added": "added", "updated": "updated", "kept_differs": "kept", "unchanged": "kept",
+var actionText = map[string]string{"added": "added", "updated": "updated", "kept_differs": "Git version kept", "unchanged": "no change",
 	"excluded": "excluded", "moved": "moved"}
 
 func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +437,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 			v.Fresh = true
 		}
 		for t, c := range res.Summary.ByType {
-			v.Types = append(v.Types, typeView{Kind: resourceLabel(t), TypeCounts: c})
+			v.Types = append(v.Types, typeView{Kind: capitalize(resourceLabel(t)), TypeCounts: c})
 		}
 		sort.Slice(v.Types, func(i, j int) bool { return v.Types[i].Kind < v.Types[j].Kind })
 		for _, c := range res.Changes {
@@ -403,8 +446,9 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			typ, _, _ := strings.Cut(c.Address, ".")
-			cv := changeView{ChangeOut: c, Kind: resourceLabel(typ), StatusText: statusText[c.Status], ActionText: actionText[c.Action],
-				Dependency: c.Role == "dependency", Choice: d.Choices[c.Address]}
+			cv := changeView{ChangeOut: c, Kind: resourceLabel(typ), Name: itemName(d, c.Address), StatusText: statusText[c.Status], ActionText: actionText[c.Action],
+				Dependency: c.Role == "dependency" && (c.Action != "unchanged" || d.Choices[c.Address] != ""), Choice: d.Choices[c.Address]}
+			cv.Kind = capitalize(cv.Kind)
 			if cv.StatusText == "" {
 				cv.StatusText = c.Status
 			}
@@ -418,22 +462,47 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 			envs = append(envs, request.RequestBlockers)
 		}
 		for _, env := range envs {
-			ev := envView{Env: env, Label: env, Blockers: res.Blockers[env]}
+			ev := envView{Env: env, Label: env}
 			if env == request.RequestBlockers {
 				ev.Label = "Whole request"
 			}
-			ev.Ready = len(ev.Blockers) == 0
-			for _, b := range ev.Blockers {
+			ev.Ready = len(res.Blockers[env]) == 0
+			for _, b := range res.Blockers[env] {
+				ev.Blockers = append(ev.Blockers, blockerText(d, res, env, b))
 				switch {
 				case b.Code == "missing_value" && b.Var != "":
-					ev.Values = append(ev.Values, valueField{Name: "v:" + env + ":" + b.Var, Key: b.Var, Value: d.Values[env][b.Var]})
+					label, hint := valueLabel(d, res, b.Var)
+					f := valueField{Name: "v:" + env + ":" + b.Var, Key: b.Var, Value: d.Values[env][b.Var], Label: capitalize(label), Hint: hint, List: isListValue(d, b.Var)}
+					if f.List {
+						f.Value = jsonToLines(f.Value)
+						f.Hint = "One per line."
+						if sv := res.Variables[b.Var].SourceValue; sv != "" {
+							f.Hint += " In " + d.Source + ": " + strings.ReplaceAll(jsonToLines(sv), "\n", ", ")
+						}
+					}
+					ev.Values = append(ev.Values, f)
 				case b.Code == "missing_import" && b.Address != "":
-					ev.Imports = append(ev.Imports, valueField{Name: "i:" + env + ":" + b.Address, Key: b.Address, Value: d.ImportIDs[env][b.Address]})
+					ev.Imports = append(ev.Imports, valueField{Name: "i:" + env + ":" + b.Address, Key: b.Address, Value: d.ImportIDs[env][b.Address],
+						Label: capitalize("ID of the existing " + describe(d, b.Address)), Hint: "It already exists in " + env + "; find its ID in the PingOne admin console there."})
 				}
+			}
+			if !ev.Ready && env != request.RequestBlockers {
+				v.NeedEnvs = append(v.NeedEnvs, env)
+			}
+			if !ev.Ready && len(ev.Values)+len(ev.Imports) == len(res.Blockers[env]) {
+				var parts []string
+				for _, t := range []string{countText(len(ev.Values), "value", "values"), countText(len(ev.Imports), "ID of an existing item", "IDs of existing items")} {
+					if t != "" {
+						parts = append(parts, t)
+					}
+				}
+				ev.Summary = strings.Join(parts, " and ") + " to fill in below"
 			}
 			v.Envs = append(v.Envs, ev)
 		}
 		v.HasBlockers = len(res.Blockers) > 0
+		v.AlmostReady = onlyMissingValues(res)
+		v.Skipped, v.Warnings = splitWarnings(res.Warnings)
 		v.CanSubmit = v.Fresh && !v.HasBlockers && res.Status == request.StatusPreviewed && res.Error == nil && !v.Running
 		s.render(w, r, http.StatusOK, "preview", "Preview", v, false)
 	})
@@ -509,10 +578,14 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 			if dst[env] == nil {
 				dst[env] = map[string]string{}
 			}
-			if strings.TrimSpace(vals[0]) == "" {
+			text := strings.TrimSpace(vals[0])
+			if kind == "v" && isListValue(d, name) && text != "" && !strings.HasPrefix(text, "[") {
+				text = linesToJSON(text)
+			}
+			if text == "" {
 				delete(dst[env], name)
 			} else {
-				dst[env][name] = strings.TrimSpace(vals[0])
+				dst[env][name] = text
 			}
 		}
 		oldV, oldI := d.Values, d.ImportIDs
@@ -596,4 +669,76 @@ func (s *Server) resultPage(w http.ResponseWriter, r *http.Request) {
 		}
 		s.render(w, r, http.StatusOK, "result", "Submission", v, false)
 	})
+}
+
+type typeOption struct {
+	Value, Label string
+	Selected     bool
+}
+
+// typeOptions lists the types to filter the search by: those in the loaded
+// list of the source environment, or nothing before the first search.
+func typeOptions(d *Draft) []typeOption {
+	c := d.catalogs[d.Source]
+	if c == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []typeOption
+	for _, it := range c.items {
+		if seen[it.Type] {
+			continue
+		}
+		seen[it.Type] = true
+		out = append(out, typeOption{Value: it.Type, Label: resourceLabel(it.Type), Selected: it.Type == d.TypeFilter})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
+}
+
+// isListValue reports a per-environment value that holds a list (its
+// source value is a JSON array), such as redirect URLs.
+func isListValue(d *Draft, name string) bool {
+	if d.preview == nil || d.preview.result == nil {
+		return false
+	}
+	return strings.HasPrefix(d.preview.result.Variables[name].SourceValue, "[")
+}
+
+// linesToJSON turns one value per line into a JSON array of strings.
+func linesToJSON(text string) string {
+	var items []string
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			items = append(items, l)
+		}
+	}
+	b, _ := json.Marshal(items)
+	return string(b)
+}
+
+// jsonToLines shows a stored JSON array of strings one per line.
+func jsonToLines(v string) string {
+	var items []string
+	if json.Unmarshal([]byte(v), &items) != nil {
+		return v
+	}
+	return strings.Join(items, "\n")
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func countText(n int, one, many string) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
 }

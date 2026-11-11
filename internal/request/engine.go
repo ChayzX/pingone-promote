@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -215,6 +217,7 @@ func (r *runner) run(ctx context.Context) {
 			Message: fmt.Sprintf("the raw export looks like it contains a secret (%s) at %s:%d", f.Kind, f.File, f.Line)})
 	}
 	res.Warnings = append(res.Warnings, neu.Warnings...)
+	res.Variables = describeVariables(neu)
 	var selected []string
 	for _, s := range sel.seeds {
 		selected = append(selected, s)
@@ -924,5 +927,38 @@ func ownedChildren(owners map[string]string, seed string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// describeVariables explains each per-environment value of a neutralized
+// export for screens.
+func describeVariables(neu *neutralize.Result) map[string]VariableOut {
+	out := map[string]VariableOut{}
+	for name, v := range neu.Variables {
+		if !v.PerEnvironment() || name == neutralize.EnvironmentIDVariable {
+			continue
+		}
+		vo := VariableOut{Kind: string(v.Kind), Description: v.Description}
+		switch {
+		case v.Kind == neutralize.KindExcludedRef:
+			vo.Resource = v.Excluded
+		case strings.HasPrefix(v.Origin, "lift:"):
+			rest := strings.TrimPrefix(v.Origin, "lift:")
+			typ, after, _ := strings.Cut(rest, ".")
+			label, attr, _ := strings.Cut(after, ".")
+			vo.Resource, vo.Attribute = typ+"."+label, attr
+		}
+		if sv, ok := neu.SourceValues[name]; ok && sv.IsKnown() && !sv.IsNull() {
+			if sv.Type() == cty.String {
+				vo.SourceValue = sv.AsString()
+			} else if b, err := ctyjson.Marshal(sv, sv.Type()); err == nil {
+				vo.SourceValue = string(b)
+			}
+		}
+		if len(vo.SourceValue) > 300 {
+			vo.SourceValue = vo.SourceValue[:300] + "..."
+		}
+		out[name] = vo
+	}
 	return out
 }

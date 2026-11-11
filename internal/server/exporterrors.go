@@ -106,6 +106,10 @@ func (s *Server) scrub(res *request.Result) {
 	for i := range res.Selected {
 		res.Selected[i].Query = s.redact(res.Selected[i].Query)
 	}
+	for name, v := range res.Variables {
+		v.SourceValue, v.Description = s.redact(v.SourceValue), s.redact(v.Description)
+		res.Variables[name] = v
+	}
 	if res.Error != nil {
 		res.Error.Message = s.redact(res.Error.Message)
 		for i := range res.Error.Candidates {

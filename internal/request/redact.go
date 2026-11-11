@@ -66,6 +66,14 @@ func (r *Result) redact() {
 	for i := range r.Changes {
 		r.Changes[i].Reason = redactText(r.Changes[i].Reason)
 	}
+	for name, v := range r.Variables {
+		// A source value that looks like a secret is never shown.
+		if v.SourceValue != "" && (len(secretscan.ScanText("", []byte(v.SourceValue))) > 0 || secretscan.SuspectLiteral(name, v.SourceValue)) {
+			v.SourceValue = ""
+		}
+		v.Description = redactText(v.Description)
+		r.Variables[name] = v
+	}
 	if r.Error != nil {
 		r.Error.Message = redactText(r.Error.Message)
 		for i := range r.Error.Candidates {

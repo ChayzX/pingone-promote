@@ -66,7 +66,7 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 
 	// Preview: statuses, actions, warning, readiness.
 	p = previewDraft(t, b, draft, mainForm("Jane Doe", nil))
-	mustContain(t, p.body, "Summary by type", "changed in source", "updated", "kept", "Readiness by environment",
+	mustContain(t, p.body, "What this request changes", "changed in source", "updated", "kept", "Readiness by environment",
 		"Merging adds and changes resources; it never deletes. A Git revert can delete resources in Terraform &mdash; fix forward with a new request instead.",
 		"lifecycle { prevent_destroy = true }", "Submit to GitLab", "Diff")
 	for _, word := range []string{"target", "Target", "destination", "Destination"} {
@@ -78,7 +78,7 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 	// Exclude an unmanaged dependency: every rollout environment now needs
 	// its ID, which blocks submit and shows a form.
 	p = b.wait(b.post(draft+"/choices", url.Values{"c:" + subflowAddr: {"exclude"}}))
-	mustContain(t, p.body, "Fill in missing values", "blocked", `name="v:qa:`+subflowIDVar+`"`, `name="v:prod:`+subflowIDVar+`"`)
+	mustContain(t, p.body, "Fill in what each environment needs", "not ready", `name="v:qa:`+subflowIDVar+`"`, `name="v:prod:`+subflowIDVar+`"`)
 	if strings.Contains(p.body, "Submit to GitLab") {
 		t.Fatal("submit offered while blocked")
 	}
@@ -99,7 +99,7 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 	}
 	p = b.wait(b.post(draft+"/values", vals))
 	mustContain(t, p.body, "Submit to GitLab")
-	if strings.Contains(p.body, ">blocked<") {
+	if strings.Contains(p.body, "</span>not ready<") {
 		t.Fatalf("still blocked:\n%s", p.body)
 	}
 	id := requestID(t, p.body)
@@ -125,11 +125,11 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 
 	// Requests page: merged, with rollout from the default-branch pipeline.
 	p = b.get("/requests")
-	mustContain(t, p.body, "pingone-promote/"+id, "!1", "opened", "not started")
+	mustContain(t, p.body, "pingone-promote/"+id, "!1", "waiting for review", "Rolls out after the merge request is reviewed and merged.")
 	sha := e.status.MergeMR("pingone-promote/" + id)
 	e.status.SetPipeline(sha, "main", map[string]string{"apply:qa": "success", "apply:stage": "running", "apply:prod": "manual", "plan:prod": "success"})
 	// GitLab reads are cached for a while.
-	if p = b.get("/requests"); !strings.Contains(p.body, "opened") {
+	if p = b.get("/requests"); !strings.Contains(p.body, "waiting for review") {
 		t.Fatal("the Requests page did not reuse its cached GitLab reads")
 	}
 	e.clock.advance(RequestsCacheFor + time.Second)

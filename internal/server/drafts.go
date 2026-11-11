@@ -93,8 +93,10 @@ type Draft struct {
 	Values      map[string]map[string]string // env -> variable -> text
 	ImportIDs   map[string]map[string]string // env -> address -> ID
 
-	Query   string
-	Results []Item
+	Query string
+	// TypeFilter limits search results to one resource type ("" all).
+	TypeFilter string
+	Results    []Item
 
 	catalogs map[string]*catalogEntry
 	job      *Job

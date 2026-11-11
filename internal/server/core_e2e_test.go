@@ -117,7 +117,7 @@ func TestCoreNotificationTemplateAloneAsMergeRequest(t *testing.T) {
 	}
 	p = b.wait(b.post(draft+"/values", form))
 	mustContain(t, p.body, "Submit to GitLab")
-	if strings.Contains(p.body, ">blocked<") {
+	if strings.Contains(p.body, "</span>not ready<") {
 		t.Fatalf("still blocked after the values:\n%s", p.body)
 	}
 	id := requestID(t, p.body)
@@ -159,7 +159,7 @@ func TestCoreDefaultSignOnPolicyNeedsImportIDs(t *testing.T) {
 	for _, env := range e.cfg.Rollout {
 		mustContain(t, p.body, `name="i:`+env+`:`+addr+`"`, `name="i:`+env+`:`+action+`"`)
 	}
-	if strings.Count(p.body, ">blocked<") != len(e.cfg.Rollout) || strings.Contains(p.body, "Submit to GitLab") {
+	if strings.Count(p.body, "</span>not ready<") != len(e.cfg.Rollout) || strings.Contains(p.body, "Submit to GitLab") {
 		t.Fatalf("every rollout environment must be blocked until adopted:\n%s", p.body)
 	}
 	ids := map[string]string{"qa": "51000000-0000-4000-8000-0000000000a1", "stage": "51000000-0000-4000-8000-0000000000b1", "prod": "51000000-0000-4000-8000-0000000000c1"}
@@ -170,7 +170,7 @@ func TestCoreDefaultSignOnPolicyNeedsImportIDs(t *testing.T) {
 	}
 	p = b.wait(b.post(draft+"/values", form))
 	mustContain(t, p.body, "Submit to GitLab")
-	if strings.Contains(p.body, ">blocked<") {
+	if strings.Contains(p.body, "</span>not ready<") {
 		t.Fatalf("still blocked after the import IDs:\n%s", p.body)
 	}
 	id := requestID(t, p.body)

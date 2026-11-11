@@ -219,7 +219,7 @@ func (s *Server) runSearch(d *Draft, source string) func(context.Context, func(s
 		defer s.drafts.mu.Unlock()
 		d.catalogs[source] = &catalogEntry{at: s.now(), items: items}
 		if d.Source == source {
-			d.Results = searchItems(items, d.Query)
+			d.Results = filterItems(items, d.Query, d.TypeFilter)
 		}
 		d.Updated = s.now()
 		return nil
@@ -318,4 +318,25 @@ func resourceLabel(typ string) string {
 		return n
 	}
 	return catalog.DisplayName(typ)
+}
+
+// filterItems searches by name or ID within one type, or lists every item
+// of the type when the query is empty.
+func filterItems(items []Item, query, typ string) []Item {
+	if typ == "" {
+		return searchItems(items, query)
+	}
+	var of []Item
+	for _, it := range items {
+		if it.Type == typ {
+			of = append(of, it)
+		}
+	}
+	if strings.TrimSpace(query) == "" {
+		if len(of) > 200 {
+			of = of[:200]
+		}
+		return of
+	}
+	return searchItems(of, query)
 }
