@@ -77,6 +77,15 @@ func ImportBlock(moduleName, addr string) []byte {
 		"  id       = \"${var." + EnvironmentIDVariable + "}/${each.value}\"\n}\n")
 }
 
+// SingletonImportBlock adopts a resource that exists once per environment
+// (settings): its import ID is the environment ID itself, so the block is
+// the same in every environment and needs no import_ids entry. Importing an
+// address that is already in state is a no-op.
+func SingletonImportBlock(moduleName, addr string) []byte {
+	full := "module." + moduleName + "." + addr
+	return format("import {\n  to = " + full + "\n  id = var." + EnvironmentIDVariable + "\n}\n")
+}
+
 // ModuleInput is one "<name> = var.<name>" line of the module block.
 func ModuleInput(name string) string { return "  " + name + " = var." + name + "\n" }
 

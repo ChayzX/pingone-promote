@@ -450,6 +450,15 @@ type Export struct {
 	ModuleName    string
 	Files         map[string][]byte
 	Findings      []secretscan.Finding
+	// Referenced are resources the export refers to by ID but does not
+	// contain (address -> source ID). Their references are ID variables
+	// named neutralize.ExcludedVariableName(address), like excluded
+	// resources. Only the combined exporter sets it.
+	Referenced map[string]string
+	// Adopt lists exported built-in objects that every environment must
+	// adopt by import ID (they exist there already and must not be created).
+	Adopt    []string
+	Warnings []string
 }
 
 // Module directory and name we pass explicitly (terraformer's defaults).

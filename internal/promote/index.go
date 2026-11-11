@@ -3,6 +3,7 @@ package promote
 import (
 	"fmt"
 	"path"
+	"pingone-promote/internal/catalog"
 	"sort"
 	"strings"
 
@@ -171,9 +172,18 @@ func overlayFiles(r Repo, l Layout) (map[string]string, error) {
 
 // importable reports whether the provider supports importing a type
 // (every type terraformer exports has an import_id_format).
+// importable reports addresses adopted through var.import_ids: every
+// pingone type except singletons, whose import ID is the environment ID
+// (see singleton).
 func importable(addr string) bool {
 	typ, _, _ := strings.Cut(addr, ".")
-	return strings.HasPrefix(typ, "pingone_davinci_")
+	return strings.HasPrefix(typ, "pingone_") && !singleton(addr)
+}
+
+// singleton reports types with one object per environment.
+func singleton(addr string) bool {
+	typ, _, _ := strings.Cut(addr, ".")
+	return catalog.ImportFormat(typ) == catalog.ImportEnvironment
 }
 
 // ManagedAddresses lists the resource addresses the repository's shared

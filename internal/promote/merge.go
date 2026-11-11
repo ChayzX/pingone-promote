@@ -106,6 +106,10 @@ const (
 	BlockSecretFinding   = "secret_finding"
 	BlockMissingDep      = "missing_dependency"
 	BlockAutoTfvars      = "auto_tfvars"
+	// BlockMissingImport: a built-in object (default population, default
+	// sign-on policy, predefined scope, ...) exists in every environment
+	// and must be adopted by its ID there, never created.
+	BlockMissingImport = "missing_import"
 )
 
 // MergeRequest is one additive merge.
@@ -134,6 +138,13 @@ type MergeRequest struct {
 	// SecretsConfig is the Vault path convention (default
 	// pipelinesecrets.DefaultConfig).
 	SecretsConfig *pipelinesecrets.Config
+	// Adopt lists built-in addresses of the export that every environment
+	// must adopt by import ID; one without an import_ids entry in an
+	// environment is a missing_import blocker there.
+	Adopt []string
+	// ImportIDs are operator-supplied adoption IDs: env -> address -> ID
+	// (without the environment prefix). Existing entries are replaced.
+	ImportIDs map[string]map[string]string
 }
 
 // MergeResult is the change set and its report.
@@ -709,7 +720,7 @@ func (m *merger) imports() error {
 	}
 	sort.Strings(addrs)
 	if len(addrs) == 0 {
-		return nil
+		return m.singletonImports()
 	}
 	f, err := m.file(m.l.ImportsFile)
 	if err != nil {
@@ -721,7 +732,7 @@ func (m *merger) imports() error {
 		}
 	}
 	m.save(f)
-	return nil
+	return m.singletonImports()
 }
 
 // --- overlays ---
@@ -771,10 +782,18 @@ func (m *merger) overlays() error {
 				}
 			}
 		}
+		ids := cur.Values["import_ids"]
+		changed := false
 		if env == m.req.SourceEnv {
-			if ids, changed := m.sourceImportIDs(cur.Values["import_ids"]); changed {
-				set["import_ids"] = ids
-			}
+			ids, changed = m.sourceImportIDs(ids)
+		}
+		if extra := m.req.ImportIDs[env]; len(extra) > 0 {
+			var more bool
+			ids, more = m.withImportIDs(ids, extra)
+			changed = changed || more
+		}
+		if changed {
+			set["import_ids"] = ids
 		}
 		for k, val := range m.req.EnvValues[env] {
 			if m.req.Export.Variables[k] != nil && m.req.Export.Variables[k].Kind == neutralize.KindSecret {
@@ -888,6 +907,11 @@ func (m *merger) finish() error {
 		return err
 	}
 	m.res.Blockers = append(m.res.Blockers, m.nameExcluded(blockers)...)
+	adoptBlockers, err := m.adoption()
+	if err != nil {
+		return err
+	}
+	m.res.Blockers = append(m.res.Blockers, adoptBlockers...)
 	for _, f := range m.req.Export.Findings {
 		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretFinding, Address: f.Name,
 			Message: "suspected secret (" + f.Kind + ") in the export at " + f.File + lineSuffix(f.Line) + "; secrets must come from customer_secrets.yml"})
@@ -934,4 +958,95 @@ func sortBlockers(b []Blocker) {
 		}
 		return b[i].Variable+b[i].Address < b[j].Variable+b[j].Address
 	})
+}
+
+// singletonImports adopts written settings resources by environment ID.
+func (m *merger) singletonImports() error {
+	var addrs []string
+	for a := range m.written {
+		if singleton(a) && !m.head.imports[m.l.ModuleAddress(a)] {
+			addrs = append(addrs, a)
+		}
+	}
+	if len(addrs) == 0 {
+		return nil
+	}
+	sort.Strings(addrs)
+	f, err := m.file(m.l.ImportsFile)
+	if err != nil {
+		return err
+	}
+	for _, a := range addrs {
+		if err := f.AppendText(neutralize.SingletonImportBlock(m.l.ModuleName, a)); err != nil {
+			return err
+		}
+	}
+	m.save(f)
+	return nil
+}
+
+// withImportIDs sets operator-supplied adoption IDs on import_ids.
+func (m *merger) withImportIDs(cur cty.Value, extra map[string]string) (cty.Value, bool) {
+	mp := map[string]cty.Value{}
+	if !cur.IsNull() && cur.CanIterateElements() {
+		for it := cur.ElementIterator(); it.Next(); {
+			k, v := it.Element()
+			mp[k.AsString()] = v
+		}
+	}
+	changed := false
+	for a, id := range extra {
+		key := m.l.ModuleAddress(a)
+		if old, ok := mp[key]; ok && old.Type() == cty.String && old.AsString() == id {
+			continue
+		}
+		mp[key] = cty.StringVal(id)
+		changed = true
+	}
+	if !changed {
+		return cur, false
+	}
+	return cty.ObjectVal(mp), true
+}
+
+// adoption reports built-in objects that an environment has no import ID
+// for. The source environment's IDs come from the export.
+func (m *merger) adoption() ([]Blocker, error) {
+	var out []Blocker
+	for _, a := range m.req.Adopt {
+		if !importable(a) {
+			continue
+		}
+		key := m.l.ModuleAddress(a)
+		for _, env := range m.envs() {
+			p, err := m.l.Overlay(env)
+			if err != nil {
+				return nil, err
+			}
+			src, ok, err := m.view.Read(p)
+			if err != nil {
+				return nil, err
+			}
+			has := false
+			if ok {
+				o, err := overlay.ParseOverlay(src, p)
+				if err != nil {
+					return nil, err
+				}
+				if ids, ok := o.Values["import_ids"]; ok && !ids.IsNull() && ids.CanIterateElements() {
+					for it := ids.ElementIterator(); it.Next(); {
+						k, v := it.Element()
+						if k.AsString() == key && v.Type() == cty.String && v.AsString() != "" {
+							has = true
+						}
+					}
+				}
+			}
+			if !has {
+				out = append(out, Blocker{Env: env, Code: BlockMissingImport, Address: a, Variable: "import_ids",
+					Message: a + " already exists in every environment (a built-in object); enter its ID for " + env + " so it is adopted, not created"})
+			}
+		}
+	}
+	return out, nil
 }

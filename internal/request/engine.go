@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"pingone-promote/internal/catalog"
 	"sort"
 	"strings"
 
@@ -181,9 +182,26 @@ func (r *runner) run(ctx context.Context) {
 		res.fail(code, "export", err.Error(), !errors.As(err, &lc))
 		return
 	}
+	// Resources the export refers to but does not contain (the combined
+	// exporter reports them) are treated like excluded ones: a Git-managed
+	// copy keeps its address, any other becomes a per-environment ID
+	// variable.
+	if len(exp.Referenced) > 0 {
+		managed, err := promote.ManagedAddresses(head, r.layout)
+		if err != nil {
+			res.fail(ErrPreflight, "internal", err.Error(), false)
+			return
+		}
+		for a, id := range exp.Referenced {
+			if _, ok := sel.excluded[a]; !ok {
+				sel.excluded[a] = &exclusion{id: id, managed: managed[a], referenced: true}
+			}
+		}
+	}
+	res.Warnings = append(res.Warnings, exp.Warnings...)
 	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName}, neutralize.Options{
 		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings,
-		Excluded: sel.neutralizeExcluded()})
+		Excluded: sel.neutralizeExcluded(), Lift: LiftRules()})
 	if err != nil {
 		res.fail(ErrBlocked, "merge", err.Error(), false)
 		return
@@ -200,13 +218,15 @@ func (r *runner) run(ctx context.Context) {
 		if strings.HasPrefix(s, neutralize.TypeFlow+".") {
 			selected = append(selected, exporter.Companions(s)...)
 		}
+		selected = append(selected, ownedChildren(neu, s)...)
 	}
 	choices := map[string]promote.Choice{}
 	for a, c := range req.DependencyChoices {
 		choices[a] = promote.Choice(c)
 	}
 	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, WholeEnvironment: req.Whole(),
-		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig}
+		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig,
+		Adopt: exp.Adopt, ImportIDs: req.ImportIDs}
 	if req.BaseCommit != "" {
 		if r.env.BaseRepo == nil {
 			res.fail(ErrPreflight, "validation", "baseCommit was given but this run cannot read history", false)
@@ -370,6 +390,9 @@ type exclusion struct {
 	// derived marks a flow's deploy and enable: they follow their flow and
 	// are not reported on their own.
 	derived bool
+	// referenced marks a resource the export refers to without containing
+	// it (not chosen by the request).
+	referenced bool
 }
 
 func (s *selection) patterns() []string {
@@ -622,7 +645,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 	// explicit omission. This repairs embedded references just like an exclude.
 	if !req.Whole() && !req.Upstream() {
 		for _, c := range cat {
-			if !selected[c.String()] {
+			if !selected[c.String()] && strings.HasPrefix(c.Type, "pingone_davinci_") {
 				exclude(c.String(), "includeUpstream")
 			}
 		}
@@ -847,4 +870,39 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 	if out.MR != nil {
 		res.MRUrl, res.MRIid = out.MR.WebURL, out.MR.IID
 	}
+}
+
+// LiftRules are the neutralizer's per-environment attributes: the default
+// rules plus every catalog type's environment-specific attributes.
+func LiftRules() []neutralize.LiftRule {
+	rules := append([]neutralize.LiftRule(nil), neutralize.DefaultLiftRules...)
+	for _, d := range catalog.All() {
+		for _, a := range d.EnvLocal {
+			rules = append(rules, neutralize.LiftRule{ResourceType: d.Type, Attribute: a})
+		}
+	}
+	return rules
+}
+
+// ownedChildren lists the exported children that belong to a selected core
+// item (a sign-on policy's actions, an application's attribute mappings):
+// they are part of the selection, not dependencies. Child labels start with
+// the parent's label.
+func ownedChildren(neu *neutralize.Result, seed string) []string {
+	typ, label, _ := strings.Cut(seed, ".")
+	kids := map[string]bool{}
+	for _, c := range catalog.Children(typ) {
+		kids[c] = true
+	}
+	if len(kids) == 0 || strings.HasPrefix(typ, "pingone_davinci_") {
+		return nil
+	}
+	var out []string
+	for _, b := range neu.Blocks {
+		if kids[b.Type] && (b.Label == label || strings.HasPrefix(b.Label, label+"_")) {
+			out = append(out, b.Address)
+			out = append(out, ownedChildren(neu, b.Address)...)
+		}
+	}
+	return out
 }

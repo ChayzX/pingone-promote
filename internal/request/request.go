@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"pingone-promote/internal/catalog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -102,6 +103,10 @@ type Request struct {
 	Flows []FlowRef `json:"flows"`
 	// Resources selects any supported configuration resource by type/name/ID or exact address.
 	Resources []ExcludeRef `json:"resources,omitempty"`
+	// ImportIDs adopt built-in objects (default population, default sign-on
+	// policy, predefined scopes, ...): env -> resource address -> that
+	// environment's ID. IDs are not secrets.
+	ImportIDs map[string]map[string]string `json:"importIds,omitempty"`
 	// IncludeUpstream defaults true for compatibility; false exports selected items only.
 	IncludeUpstream *bool `json:"includeUpstream,omitempty"`
 	// Applications and FlowPolicies are included only when listed, by
@@ -306,6 +311,24 @@ func (r *Request) Validate() error {
 			}
 		}
 	}
+	for env, ids := range r.ImportIDs {
+		if !envRE.MatchString(env) {
+			return invalid("importIds", env+" is not an environment name")
+		}
+		for a, id := range ids {
+			field := "importIds." + env + "." + a
+			typ, _, _ := strings.Cut(a, ".")
+			if !addressRE.MatchString(a) {
+				return invalid(field, "must be a resource address")
+			}
+			if _, ok := resourceType(typ); !ok {
+				return invalid(field, "is not an exportable resource type")
+			}
+			if !importIDRE.MatchString(id) {
+				return invalid(field, "must be a PingOne ID (or <parent ID>/<ID>)")
+			}
+		}
+	}
 	for k, v := range r.SecretMappings {
 		if !identRE.MatchString(k) || !secretNameRE.MatchString(v) {
 			return invalid("secretMappings."+k, "keys and values must be variable names")
@@ -357,6 +380,8 @@ func (r *Request) Whole() bool { return r.Scope == ScopeAll }
 // Upstream reports whether to include transitive dependencies.
 func (r *Request) Upstream() bool { return r.IncludeUpstream == nil || *r.IncludeUpstream }
 
+var importIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_.\-]{0,127}(/[0-9A-Za-z][0-9A-Za-z_.\-]{0,127}){0,2}$`)
+
 var excludeIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_\-]{0,63}(/[0-9A-Za-z][0-9A-Za-z_\-]{0,63})?$`)
 
 // checkExcludes validates the exclude list and refuses to exclude what the
@@ -402,22 +427,14 @@ func (r *Request) checkExcludes() error {
 	return nil
 }
 
-// resourceType accepts legacy aliases and configuration types. Identity data is never selectable.
+// resourceType accepts the short aliases and every exportable type of the
+// catalog (internal/catalog). Identity data and types that cannot be
+// exported are refused.
 func resourceType(kind string) (string, bool) {
 	if typ, ok := ExcludeTypes[kind]; ok {
 		return typ, true
 	}
-	if !regexp.MustCompile(`^pingone_[a-z0-9_]+$`).MatchString(kind) {
-		return "", false
-	}
-	for _, part := range []string{"user", "session", "audit"} {
-		for _, segment := range strings.Split(strings.TrimPrefix(kind, "pingone_"), "_") {
-			if segment == part || segment == part+"s" {
-				return "", false
-			}
-		}
-	}
-	return kind, true
+	return catalog.Resolve(kind)
 }
 
 func (r *Request) checkResources() error {

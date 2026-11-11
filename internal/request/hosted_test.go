@@ -9,7 +9,7 @@ import (
 
 func TestGenericSelectionContract(t *testing.T) {
 	for _, s := range []string{
-		`"resources":[{"type":"pingone_notification_template","id":"template-1"}]`,
+		`"resources":[{"type":"pingone_notification_template_content","name":"recovery_code_template"}]`,
 		`"resources":[{"address":"pingone_population.pingcli__Default"}],"includeUpstream":false`,
 	} {
 		raw := []byte(`{"requestVersion":1,"requestId":"request-fixture-001","source":"dev",` + s + `}`)
