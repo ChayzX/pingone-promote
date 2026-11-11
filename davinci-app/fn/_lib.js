@@ -129,11 +129,11 @@ lib.ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 lib.GITLAB_API = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-]{1,64})*\/api\/v4$/;
 lib.SETTINGS = ['apiOrigin', 'authOrigin', 'workerEnvironmentId', 'sourceEnvs', 'pathFlows', 'flowsListQuery', 'rolloutEnvs', 'gitlabApi',
   'gitlabProjectId', 'defaultBranch', 'applyJobPattern', 'environmentPattern', 'mrLabel', 'allowedGroups', 'runTimeoutSeconds',
-  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies', 'pathConnections', 'pathVariables'];
+  'pipelineAppearSeconds', 'statusRefreshSeconds', 'statusMaxMinutes', 'childPipelines', 'pathApplications', 'pathFlowPolicies', 'pathConnections', 'pathVariables', 'branchPrefix'];
 // The defaults live here, not in the export: the export declares the company variables without values (so a re-import cannot
 // overwrite what the operator set), and an empty variable means its default. gen_app.py reads this line. "none" switches off the
 // optional ones (an empty value cannot, because empty means the default).
-lib.DEFAULTS = {"apiOrigin": "https://api.pingone.com", "authOrigin": "https://auth.pingone.com", "pathFlows": "/v1/environments/{envId}/flows", "flowsListQuery": "attributes=id,name", "rolloutEnvs": "qa,stage,prod", "gitlabApi": "https://gitlab.com/api/v4", "defaultBranch": "main", "applyJobPattern": "apply:{env}", "environmentPattern": "{env}", "mrLabel": "pingone-promote", "runTimeoutSeconds": "600", "pipelineAppearSeconds": "120", "statusRefreshSeconds": "30", "statusMaxMinutes": "30", "childPipelines": "yes", "pathApplications": "/v1/environments/{envId}/davinciApplications", "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies", "pathConnections": "/v1/environments/{envId}/connectorInstances", "pathVariables": "/v1/environments/{envId}/variables"};
+lib.DEFAULTS = {"apiOrigin": "https://api.pingone.com", "authOrigin": "https://auth.pingone.com", "pathFlows": "/v1/environments/{envId}/flows", "flowsListQuery": "attributes=id,name", "rolloutEnvs": "qa,stage,prod", "gitlabApi": "https://gitlab.com/api/v4", "defaultBranch": "main", "applyJobPattern": "apply:{env}", "environmentPattern": "{env}", "mrLabel": "pingone-promote", "runTimeoutSeconds": "600", "pipelineAppearSeconds": "120", "statusRefreshSeconds": "30", "statusMaxMinutes": "30", "childPipelines": "yes", "pathApplications": "/v1/environments/{envId}/davinciApplications", "pathFlowPolicies": "/v1/environments/{envId}/davinciApplications/{appId}/flowPolicies", "pathConnections": "/v1/environments/{envId}/connectorInstances", "pathVariables": "/v1/environments/{envId}/variables", "branchPrefix": "pingone-promote/"};
 lib.OFFABLE = ['flowsListQuery', 'pathApplications', 'pathFlowPolicies', 'pathConnections', 'pathVariables'];
 lib.withDefaults = (p) => {
   const out = {};
@@ -198,6 +198,9 @@ lib.checkSettings = (raw, signIn) => {
   cfg.defaultBranch = need('defaultBranch', /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,99}$/, 'must be a branch name', 'main');
   cfg.applyJobPattern = need('applyJobPattern', /^[A-Za-z0-9 :._\/-]{0,80}\{env\}[A-Za-z0-9 :._\/-]{0,80}$/, 'must contain {env}, such as apply:{env}', 'apply:{env}');
   cfg.environmentPattern = need('environmentPattern', /^[A-Za-z0-9 :._\/-]{0,80}\{env\}[A-Za-z0-9 :._\/-]{0,80}$/, 'must contain {env}', '{env}');
+  // Request branches are <branchPrefix><requestId>; the job's PINGONE_PROMOTE_BRANCH_PREFIX must be the same.
+  cfg.branchPrefix = lib.str(p.branchPrefix) || contract.BRANCH_PREFIX;
+  if (!contract.validBranchPrefix(cfg.branchPrefix)) { problems.push({ name: 'branchPrefix', issue: 'must start with a letter or digit and end with / or -, such as pingone-promote/ or CIAM-' }); cfg.branchPrefix = contract.BRANCH_PREFIX; }
   cfg.mrLabel = need('mrLabel', /^[A-Za-z0-9 :._-]{1,60}$/, 'must be a GitLab label name', 'pingone-promote');
   // Who may use the app: PingOne group names, or * for every user the sign-in subflow admits.
   cfg.signIn = signIn === 'none' ? 'none' : 'subflow';
@@ -248,7 +251,7 @@ lib.gl = (cfg, kind, a) => {
   const base = cfg.gitlabApi + '/projects/' + lib.enc(cfg.gitlabProjectId);
   const num = (v) => { if (!lib.NUM.test(String(v))) { throw new Error('bad id'); } return String(v); };
   const sha = (v) => { if (!lib.SHA.test(String(v))) { throw new Error('bad sha'); } return String(v); };
-  const reqBranch = (b) => { if (!contract.isRequestBranch(b)) { throw new Error('not a request branch'); } return lib.enc(b); };
+  const reqBranch = (b) => { if (!contract.isRequestBranch(b, cfg.branchPrefix)) { throw new Error('not a request branch'); } return lib.enc(b); };
   switch (kind) {
     case 'commit': return { method: 'POST', url: base + '/repository/commits' };
     case 'deleteBranch': return { method: 'DELETE', url: base + '/repository/branches/' + reqBranch(a.branch) };
@@ -262,7 +265,7 @@ lib.gl = (cfg, kind, a) => {
     case 'mr': return { method: 'GET', url: base + '/merge_requests/' + num(a.iid) };
     case 'mrsBySource': return { method: 'GET', url: base + '/merge_requests?source_branch=' + reqBranch(a.branch) + '&state=all&per_page=5' };
     case 'mrList': return { method: 'GET', url: base + '/merge_requests?labels=' + lib.enc(cfg.mrLabel) + '&state=all&order_by=updated_at&sort=desc&per_page=20' };
-    case 'requestBranches': return { method: 'GET', url: base + '/repository/branches?search=' + lib.enc('^' + contract.BRANCH_PREFIX) + '&per_page=20' };
+    case 'requestBranches': return { method: 'GET', url: base + '/repository/branches?search=' + lib.enc('^' + (cfg.branchPrefix || contract.BRANCH_PREFIX)) + '&per_page=20' };
     case 'mainPipelines': return { method: 'GET', url: base + '/pipelines?ref=' + lib.enc(cfg.defaultBranch) + '&sha=' + sha(a.sha) + '&order_by=id&sort=asc&per_page=5' };
     case 'deployments': return { method: 'GET', url: base + '/deployments?environment=' + lib.enc(a.environment) + '&order_by=id&sort=desc&per_page=5' };
     case 'deployment': return { method: 'GET', url: base + '/deployments/' + num(a.id) };

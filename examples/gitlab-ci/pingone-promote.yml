@@ -13,7 +13,8 @@
 # enterprise template defines. They run in the PARENT pipeline (no child
 # pipeline). Neither job plans or applies anything:
 #
-#   pingone-promote:request  only on a push to pingone-promote/<requestId>
+#   pingone-promote:request  only on a push to <prefix><requestId> (default
+#                            prefix pingone-promote/, see PINGONE_PROMOTE_BRANCH_PREFIX)
 #                            that contains .pingone-promote/request.json
 #                            (DaVinci creates that branch). It previews
 #                            (dryRun) or makes ONE commit on the same branch
@@ -54,6 +55,12 @@ variables:
   PINGONE_PROMOTE_ROLLOUT: "testing,production"
   PINGONE_PROMOTE_OVERLAY_PATTERN: "{env}.tfvars"
   PINGONE_PROMOTE_MR_LABELS: "pingone-promote"
+  # Request branches are <prefix><requestId>, e.g. pingone-promote/20261111-101500-abc123.
+  # If your push rules require another name, set the prefix here, in the
+  # pingone-promote:request rule below (the two must match), and in DaVinci
+  # (ppBranchPrefix). For example CIAM- gives CIAM-20261111-101500-abc123.
+  # It must end with / or -.
+  PINGONE_PROMOTE_BRANCH_PREFIX: "pingone-promote/"
 
 .pingone_promote_build:
   image: $PINGONE_PROMOTE_GO_IMAGE
@@ -97,6 +104,7 @@ pingone-promote:request:
   variables:
     GIT_DEPTH: "50" # enough history to find an earlier commit of this request
   rules:
+    # Keep the regex in step with PINGONE_PROMOTE_BRANCH_PREFIX, e.g. /^CIAM-/ for CIAM-.
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^pingone-promote\//'
       exists:
         - .pingone-promote/request.json

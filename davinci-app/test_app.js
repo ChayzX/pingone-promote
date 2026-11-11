@@ -90,7 +90,9 @@ ok(lib.redact('Bearer ' + ACCESS + ' ' + GLTOKEN + ' env ' + SRC).indexOf(ACCESS
 ok(lib.looksSecret(GLTOKEN) && lib.looksSecret('Bearer ' + ACCESS) && !lib.looksSecret('https://login.example.com/qa'), 'secret-looking values are spotted');
 const rid = contract.newRequestId(Date.UTC(2026, 10, 3, 14, 5, 1), 'k3j9q2');
 eq(rid, '20261103-140501-k3j9q2', 'request id format');
-ok(contract.isRequestBranch('pingone-promote/' + rid) && !contract.isRequestBranch('main') && !contract.isRequestBranch('pingone-promote/x') && !contract.isRequestBranch('pingone-promote/' + rid + '/../main'), 'request branch check');
+ok(contract.isRequestBranch('CIAM-' + rid, 'CIAM-') && !contract.isRequestBranch('CIAM-1234-fix', 'CIAM-') && !contract.isRequestBranch('pingone-promote/' + rid, 'CIAM-') &&
+  contract.validBranchPrefix('CIAM-') && contract.validBranchPrefix('team/pingone-promote/') && !contract.validBranchPrefix('CIAM') && !contract.validBranchPrefix('a//b/') && !contract.validBranchPrefix('a..b-') &&
+  contract.isRequestBranch('pingone-promote/' + rid) && !contract.isRequestBranch('main') && !contract.isRequestBranch('pingone-promote/x') && !contract.isRequestBranch('pingone-promote/' + rid + '/../main'), 'request branch check');
 const cfg0 = lib.checkSettings({ apiOrigin: 'https://api.pingone.com', authOrigin: 'https://auth.pingone.com', workerEnvironmentId: WORKER, sourceEnvs: 'dev=' + SRC,
   pathFlows: '/v1/environments/{envId}/flows', rolloutEnvs: 'qa,stage,prod', gitlabApi: GLAPI, gitlabProjectId: PROJECT, allowedGroups: '*', pathApplications: 'none', pathFlowPolicies: 'none' }).cfg;
 assert.throws(() => lib.gl(cfg0, 'deleteBranch', { branch: 'main' })); passed += 1;
@@ -286,12 +288,12 @@ const JOB_RE = { requestId: /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/, env: /^[A-Za-z0-
 const JOB_SOURCES = ['dev', 'sandbox'];
 const JOB_EXCLUDE_TYPES = ['flow', 'application', 'flowPolicy', 'connection', 'variable'];
 const JOB_ROLLOUT = ['qa', 'stage', 'prod'];
-function jobValidate(req, branch) {
+function jobValidate(req, branch, prefix) {
   const fail = (field, msg) => ({ field: field, msg: msg });
   for (const k of Object.keys(req)) { if (ALLOWED_KEYS.indexOf(k) < 0) { return fail('', 'unknown field ' + k); } }
   if (req.requestVersion !== 1) { return fail('requestVersion', 'must be 1'); }
   if (!JOB_RE.requestId.test(req.requestId)) { return fail('requestId', 'bad'); }
-  if (branch !== 'pingone-promote/' + req.requestId || (req.branchName && req.branchName !== branch)) { return fail('branchName', 'must be the request branch'); }
+  if (branch !== (prefix || 'pingone-promote/') + req.requestId || (req.branchName && req.branchName !== branch)) { return fail('branchName', 'must be the request branch'); }
   if (typeof req.requestedBy !== 'string' || req.requestedBy.length > 128 || /[\n\t]/.test(req.requestedBy)) { return fail('requestedBy', 'bad'); }
   if (JOB_SOURCES.indexOf(req.source) < 0 || JOB_ROLLOUT.indexOf(req.source) >= 0) { return fail('source', 'not an allowed source'); }
   const kinds = [['flows', true], ['applications', false], ['flowPolicies', false]];
@@ -422,10 +424,10 @@ const PREVIEW = (req, o) => {
 
 function world(opt) {
   const o = Object.assign({ pageSize: 3, tokenStatus: 200, pipelineDelay: 0, submitPipelineDelay: 0, jobStatuses: ['pending', 'running', 'success'], submitError: null,
-    commitFail: null, noBlockers: false, artifactAsText: false, identity: { userId: 'u-1', username: 'pat.operator', name: 'Pat Operator', groups: ['Promote Operators'] } }, opt || {});
+    commitFail: null, noBlockers: false, artifactAsText: false, branchPrefix: 'pingone-promote/', extraBranches: [], identity: { userId: 'u-1', username: 'pat.operator', name: 'Pat Operator', groups: ['Promote Operators'] } }, opt || {});
   const flows = makeFlows();
   const calls = [];
-  const g = { branches: { main: { commits: [newSha()] } }, files: {}, pipelines: [], mrs: [], deployments: [], commits: [], nextPipe: 500, nextJob: 9000, nextMr: 40, deletes: [], jobRefusals: [], submitted: {}, traces: [] };
+  const g = { branches: Object.assign({ main: { commits: [newSha()] } }, ...o.extraBranches.map((b) => ({ [b]: { commits: [newSha()], titles: ['CIAM-1234 fix login'] } }))), files: {}, pipelines: [], mrs: [], deployments: [], commits: [], nextPipe: 500, nextJob: 9000, nextMr: 40, deletes: [], jobRefusals: [], submitted: {}, traces: [] };
   const head = (b) => g.branches[b].commits[g.branches[b].commits.length - 1];
   const branchObj = (b) => ({ name: b, web_url: GLWEB + '/-/tree/' + b, commit: { id: head(b), title: g.branches[b].titles[g.branches[b].titles.length - 1], committed_date: '2026-11-03T09:00:00Z' } });
   g.branches.main.titles = ['init'];
@@ -450,7 +452,7 @@ function world(opt) {
     const req = p.req;
     const failed = (code, type, message, extra) => Object.assign(PREVIEW(req, o), { status: 'failed', dryRun: req.dryRun, changes: [], blockers: {},
       error: Object.assign({ code: code, type: type, message: message, retryable: false }, extra || {}) });
-    const bad = jobValidate(req, p.ref);
+    const bad = jobValidate(req, p.ref, o.branchPrefix);
     let res;
     if (bad) {
       g.jobRefusals.push(bad);
@@ -535,7 +537,7 @@ function world(opt) {
       assert.strictEqual(bare, '/repository/commits', 'the only GitLab write is the request-file commit');
       const b = JSON.parse(body);
       g.commits.push(b);
-      assert.ok(contract.isRequestBranch(b.branch), 'commits go to a request branch only');
+      assert.ok(contract.isRequestBranch(b.branch, o.branchPrefix), 'commits go to a request branch only');
       assert.strictEqual(b.actions.length, 1);
       const a = b.actions[0];
       assert.strictEqual(a.file_path, '.pingone-promote/request.json');
@@ -564,7 +566,7 @@ function world(opt) {
     if (method === 'DELETE' && o.protectedBranches) { return { status: 403, body: { message: '403 Forbidden' } }; }
     if (method === 'DELETE') {
       const m = /^\/repository\/branches\/(.+)$/.exec(bare);
-      assert.ok(m && contract.isRequestBranch(rb(m[1])), 'only request branches are deleted');
+      assert.ok(m && contract.isRequestBranch(rb(m[1]), o.branchPrefix), 'only request branches are deleted');
       g.deletes.push(rb(m[1]));
       delete g.branches[rb(m[1])];
       delete g.files[rb(m[1])];
@@ -579,12 +581,12 @@ function world(opt) {
     }
     if ((m = /^\/repository\/branches\/(.+)$/.exec(bare))) { const b = rb(m[1]); return g.branches[b] ? { status: 200, body: branchObj(b) } : { status: 404, body: { message: '404 Branch Not Found' } }; }
     if (bare === '/repository/branches') {
-      assert.strictEqual(qs.search, '^pingone-promote/');
-      return { status: 200, body: Object.keys(g.branches).filter((b) => b.indexOf('pingone-promote/') === 0).map(branchObj) };
+      assert.strictEqual(qs.search, '^' + o.branchPrefix);
+      return { status: 200, body: Object.keys(g.branches).filter((b) => b.indexOf(o.branchPrefix) === 0).map(branchObj) };
     }
     if (bare === '/pipelines') {
       if (qs.ref === 'main') { return { status: 200, body: g.pipelines.filter((p) => p.ref === 'main' && p.sha === qs.sha).map((p) => ({ id: p.id, status: p.status, web_url: GLWEB + '/-/pipelines/' + p.id })) }; }
-      assert.ok(contract.isRequestBranch(qs.ref) && /^[0-9a-f]{40}$/.test(qs.sha), 'branch pipelines by ref and sha');
+      assert.ok(contract.isRequestBranch(qs.ref, o.branchPrefix) && /^[0-9a-f]{40}$/.test(qs.sha), 'branch pipelines by ref and sha');
       const ps = g.pipelines.filter((p) => p.ref === qs.ref && p.sha === qs.sha);
       for (const p of ps) { p.seen += 1; }
       return { status: 200, body: ps.filter((p) => p.seen > (p.req.dryRun ? o.pipelineDelay : o.submitPipelineDelay)).map((p) => ({ id: p.id, status: p.status, ref: p.ref, sha: p.sha, web_url: GLWEB + '/-/pipelines/' + p.id })) };
@@ -1117,6 +1119,26 @@ const toOptions = [{ click: 'SEARCH', form: { query: 'registration' } }, { click
       { click: 'PREVIEW' }, auto(/No runner has picked up the job yet/), auto(/Preview: ready/), { click: 'SIGNOUT' }]));
     ok(r.pages.some((p) => /The job is waiting for a runner/.test(p.html)), 'a pending job reads as waiting for a runner');
     common(r, 'slow runner');
+  }
+  // ---- branch prefix: a project whose push rules need CIAM- (ppBranchPrefix, the job's PINGONE_PROMOTE_BRANCH_PREFIX) --------
+  {
+    const C = { settings: { ppBranchPrefix: 'CIAM-' }, worldOpt: { noBlockers: true, branchPrefix: 'CIAM-', extraBranches: ['CIAM-1234-fix-login', 'CIAM-20261103-140501-k3j9q2x'] } };
+    const r = await run(C, toOptions.concat([
+      { click: 'PREVIEW' }, auto(/Preview: ready/), { click: 'NAV_NEW' },
+      { click: 'NAV_REQUESTS', expect: /still has a branch in GitLab/ },
+      { click: 'CANCELB:0', expect: /CIAM-[0-9]{8}-[0-9]{6}-[a-z0-9]{6}/ },
+      { click: 'SIGNOUT', expect: /Request canceled/ }]));
+    const cs = commitsOf(r);
+    ok(cs.length === 1 && /^CIAM-[0-9]{8}-[0-9]{6}-[a-z0-9]{6}$/.test(JSON.parse(cs[0].body).branch) && decodeReq(cs[0]).branchName === JSON.parse(cs[0].body).branch,
+      'with ppBranchPrefix CIAM- the request branch is CIAM-<requestId>, in the commit and in request.json');
+    eq(r.w.g.jobRefusals, [], 'the job (prefix CIAM-) accepts the request');
+    const listed = r.pages.filter((p) => /still has a branch in GitLab/.test(p.html))[0].html;
+    ok(listed.indexOf('CIAM-1234-fix-login') < 0 && listed.indexOf('k3j9q2x') < 0 && !buttonOf(listed, 'CANCELB:1'), 'a person\'s CIAM- branch is never listed or offered for cancel');
+    ok(r.w.g.deletes.length === 1 && /^CIAM-[0-9]{8}-/.test(r.w.g.deletes[0]) && r.w.g.branches['CIAM-1234-fix-login'], 'only the request branch is deleted');
+    common(r, 'branch prefix');
+    const r2 = await run({ settings: { ppBranchPrefix: 'CIAM' } }, []);
+    ok(/not set up yet/.test(r2.last) && /ppBranchPrefix: must start with a letter or digit and end with \/ or -/.test(r2.last), 'a prefix that does not end with / or - is a settings problem');
+    common(r2, 'bad branch prefix');
   }
   // ---- cancel: allowed while the head is the request commit, refused after -------------------------------------------
   {

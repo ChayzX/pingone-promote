@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -18,8 +19,20 @@ import (
 // RequestTrailer marks the commit a request job made (ADR 0017).
 const RequestTrailer = "PingOne-Promote-Request: "
 
-// RequestBranchPrefix is the only branch namespace a request job commits to.
+// RequestBranchPrefix is the default request branch namespace. A project
+// whose push rules require another one (for example "CIAM-") sets
+// BranchCommit.BranchPrefix; a request job only ever commits to
+// <prefix><requestId>.
 const RequestBranchPrefix = "pingone-promote/"
+
+// branchPrefixRE: starts with a letter or digit, ends with "/" or "-" so the
+// request ID stays a separate part, no "//", at most 60 characters.
+var branchPrefixRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]|/[A-Za-z0-9])*[/-]$`)
+
+// ValidRequestBranchPrefix reports whether p can prefix request branches.
+func ValidRequestBranchPrefix(p string) bool {
+	return len(p) <= 60 && branchPrefixRE.MatchString(p) && !strings.Contains(p, "..") && validBranchName(p+"x")
+}
 
 // RequestFile is the request DaVinci commits; the job deletes it.
 const RequestFile = ".pingone-promote/request.json"
@@ -82,6 +95,9 @@ type BranchCommit struct {
 	Policy            LayoutPolicy
 	// Labels are added to a merge request this call opens.
 	Labels []string
+	// BranchPrefix is the request branch namespace; empty means
+	// RequestBranchPrefix. Branch must be BranchPrefix + RequestID.
+	BranchPrefix string
 }
 
 // AlreadyCommittedError means the branch head already carries this
@@ -112,8 +128,15 @@ func (s *Submitter) prepareBranchCommit(ctx context.Context, bc *BranchCommit) e
 	default:
 		return errors.New("mode must be mr or branch")
 	}
-	if !validBranchName(bc.Branch) || !strings.HasPrefix(bc.Branch, RequestBranchPrefix) {
-		return errors.New("request jobs only commit to branches named " + RequestBranchPrefix + "<request>")
+	prefix := bc.BranchPrefix
+	if prefix == "" {
+		prefix = RequestBranchPrefix
+	}
+	if !ValidRequestBranchPrefix(prefix) {
+		return errors.New("the request branch prefix is invalid")
+	}
+	if !validBranchName(bc.Branch) || bc.Branch != prefix+bc.RequestID {
+		return errors.New("request jobs only commit to branches named " + prefix + "<request>")
 	}
 	if !commitIDRE.MatchString(bc.ExpectedHead) {
 		return errors.New("expected branch head must be a commit SHA")

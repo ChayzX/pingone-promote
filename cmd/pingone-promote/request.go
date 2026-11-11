@@ -35,6 +35,7 @@ var envNames = map[string]string{
 	"sources":         "PINGONE_PROMOTE_SOURCES",
 	"terraform":       "PINGONE_PROMOTE_TERRAFORM_BIN",
 	"labels":          "PINGONE_PROMOTE_MR_LABELS",
+	"branch-prefix":   "PINGONE_PROMOTE_BRANCH_PREFIX",
 	"source-env-id":   "PINGONE_PROMOTE_SOURCE_ENVIRONMENT_ID",
 	"overlay-pattern": "PINGONE_PROMOTE_OVERLAY_PATTERN",
 	"layout":          "PINGONE_PROMOTE_LAYOUT",
@@ -62,6 +63,7 @@ Environment (names configurable with --<name>-env):
   PINGONE_PROMOTE_TERRAFORMER_PATH / _VERSION   the pin
   PINGONE_PROMOTE_TERRAFORMER_SHA256  optional digest; unset skips it
   PINGONE_PROMOTE_ROLLOUT             e.g. qa,stage,prod
+  PINGONE_PROMOTE_BRANCH_PREFIX       request branch prefix (default pingone-promote/), e.g. CIAM-
   PINGONE_PROMOTE_SOURCES             allowed sources, e.g. dev
   PINGONE_PROMOTE_TERRAFORM_BIN       terraform for the fmt gate (or PATH)
   PINGONE_PROMOTE_MR_LABELS           default pingone-promote
@@ -115,7 +117,7 @@ func regexpEnvName(s string) bool {
 
 func buildEnv(c cliEnv, workspace string) (request.Env, error) {
 	env := request.Env{Workspace: workspace, Rollout: splitList(c.v("rollout")), AllowedSources: splitList(c.v("sources")),
-		SourceEnvironmentID: c.v("source-env-id"), TerraformBin: c.v("terraform")}
+		SourceEnvironmentID: c.v("source-env-id"), TerraformBin: c.v("terraform"), BranchPrefix: c.v("branch-prefix")}
 	l, err := layoutFlag(c.v("layout"))
 	if err != nil {
 		return env, err

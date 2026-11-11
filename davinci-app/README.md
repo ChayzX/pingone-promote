@@ -104,6 +104,7 @@ Settings (empty means the default; a variable with no default must be set):
 | `ppApplyJobPattern` | `apply:{env}` | the name of each env's job in the post-merge pipeline |
 | `ppEnvironmentPattern` | `{env}` | the GitLab environment name for each env |
 | `ppMrLabel` | `pingone-promote` | the label the request job puts on its MRs (`PINGONE_PROMOTE_MR_LABELS`) |
+| `ppBranchPrefix` | `pingone-promote/` | the request branch prefix, when your push rules require one, for example `CIAM-` (branches `CIAM-20261111-101500-abc123`). It must end with `/` or `-`, and must equal the CI file's `PINGONE_PROMOTE_BRANCH_PREFIX` and its rule. See [Branch names](#branch-names) |
 | `ppRunTimeoutSeconds` / `ppPipelineAppearSeconds` | `600` / `120` | how long to wait for a request job / when to say "no pipeline yet" |
 | `ppStatusRefreshSeconds` / `ppStatusMaxMinutes` | `30` / `30` | rollout refresh interval / how long the automatic refresh runs |
 | `ppChildPipelines` | `yes` | `no` if your env jobs are never in child pipelines |
@@ -122,7 +123,7 @@ A missing or malformed setting stops the app with "PingOne Promote is not set up
 The request job's side is specified in the backend's `docs/gitlab-ci-integration.md` and ADR 0017. The steps below are what the app depends on.
 
 1. **DaVinci's project access token.** Go to **Settings → Access tokens**, choose role *Developer* and scope `api`, and set an expiry. Store it only in `ppGitlabToken`.
-   - The app uses it for exactly three kinds of call: `POST /repository/commits` (the request file), `GET` status reads, and `DELETE` of a `pingone-promote/<requestId>` branch.
+   - The app uses it for exactly three kinds of call: `POST /repository/commits` (the request file), `GET` status reads, and `DELETE` of a `<prefix><requestId>` branch (default prefix `pingone-promote/`).
    - The validator and the tests enforce this; see DESIGN.md §4.
 2. **The job's own token.** This is a **different** project access token, also Developer with `api`, stored as the masked, protected CI variable `PINGONE_PROMOTE_GITLAB_TOKEN`. DaVinci never holds it.
 3. **The CI file.**
@@ -136,8 +137,8 @@ The request job's side is specified in the backend's `docs/gitlab-ci-integration
    - `PINGONE_PROMOTE_REGION_CODE`;
    - `PINGONE_PROMOTE_GITLAB_TOKEN`;
    - optionally `PINGONE_PROMOTE_TERRAFORMER_SHA256` (leave it unset for the first test).
-   In the CI file, set `PINGONE_PROMOTE_SOURCES` and `PINGONE_PROMOTE_ROLLOUT` to the same env names as `ppSourceEnvs` and `ppRolloutEnvs`.
-5. **Protect `pingone-promote/*`** as a wildcard, with Developers and Maintainers allowed to push and merge (the backend's recommendation). Protected variables then reach the request job, and only project members can create request branches.
+   In the CI file, set `PINGONE_PROMOTE_SOURCES` and `PINGONE_PROMOTE_ROLLOUT` to the same env names as `ppSourceEnvs` and `ppRolloutEnvs`. If your push rules require a branch prefix, see [Branch names](#branch-names).
+5. **Protect `pingone-promote/*`** (or `<your prefix>*`) as a wildcard, with Developers and Maintainers allowed to push and merge (the backend's recommendation). Protected variables then reach the request job, and only project members can create request branches.
    - On a protected branch, DaVinci's Developer token cannot **delete** it. Cancel then says so (HTTP 403), and a Maintainer deletes the branch.
 6. **Protect `main`.** Allow nobody to push, require MR approval, and do not let either token's bot approve.
 7. **Protect every rollout environment.** Only Maintainers or a release group may run its jobs, and **prod** needs an approval. The manual env jobs and these approvals are the safety boundary, not DaVinci.
@@ -168,6 +169,18 @@ The full operator test plan, with the exact names, is `docs/acceptance/live-acce
 11. **Requests.** The list shows the MR with *Requested by*, and the open request branches.
 12. **Whole environment and exclusions.** Choose **Whole environment** on the new request screen: the flow search disappears and Continue needs the tick. The preview leads with counts by type and folds the list; the MR title starts with `[whole environment]`. Use **Exclude items** to leave out a flow, then a connection that the flows use: if Git does not manage it, give its ID for each environment. See the cases E-15 to E-17 of `docs/acceptance/live-acceptance.md`.
 13. **Leaks.** With logging at Info, check that no screen shows a token, a secret or an env ID. Also check that `request.json` holds names and values only, never secret values.
+
+### Branch names
+
+Request branches are `<prefix><requestId>`. The request ID is the time plus a random part, `YYYYMMDD-HHMMSS-xxxxxx`, so the default gives `pingone-promote/20261111-101500-abc123`. If GitLab push rules require another name, set the prefix in three places, all to the same value:
+
+1. DaVinci company variable `ppBranchPrefix`, for example `CIAM-`;
+2. `PINGONE_PROMOTE_BRANCH_PREFIX` in `.gitlab/pingone-promote.yml`;
+3. the `pingone-promote:request` rule in the same file: `$CI_COMMIT_BRANCH =~ /^CIAM-/`.
+
+The prefix must end with `/` or `-`. With `CIAM-`, branches look like `CIAM-20261111-101500-abc123`. That also satisfies a rule such as `^CIAM-[0-9]+`, because the request ID starts with the date. The app only lists, reads and deletes branches that match `<prefix>` plus its own request ID format, so a person's `CIAM-1234-fix-login` branch is never touched.
+
+**Protection with a shared prefix.** The request job needs protected CI variables, which GitLab gives only to protected branches. Protecting `CIAM-*` protects every `CIAM-` branch, including people's own: they can still push and merge as Developers, but cannot force-push or delete. If your push rule accepts any name that starts with `CIAM-`, use a more specific prefix such as `CIAM-promote-`, and protect only `CIAM-promote-*`.
 
 ## Rebuild and check
 

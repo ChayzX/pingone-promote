@@ -52,7 +52,7 @@ DEFAULTS = _lib_defaults()
 SETTINGS = {k: DEFAULTS.get(k, "") for k in (
     "apiOrigin", "authOrigin", "workerEnvironmentId", "sourceEnvs", "pathFlows", "flowsListQuery", "rolloutEnvs", "gitlabApi", "gitlabProjectId",
     "defaultBranch", "applyJobPattern", "environmentPattern", "mrLabel", "allowedGroups", "runTimeoutSeconds", "pipelineAppearSeconds",
-    "statusRefreshSeconds", "statusMaxMinutes", "childPipelines", "pathApplications", "pathFlowPolicies", "pathConnections", "pathVariables")}
+    "statusRefreshSeconds", "statusMaxMinutes", "childPipelines", "pathApplications", "pathFlowPolicies", "pathConnections", "pathVariables", "branchPrefix")}
 assert set(DEFAULTS) <= set(SETTINGS), "lib.DEFAULTS names a setting the export does not declare"
 EMPTY_SETTINGS = ("workerEnvironmentId", "sourceEnvs", "gitlabProjectId", "allowedGroups")
 PRESETTABLE = {k for k in SETTINGS if k not in EMPTY_SETTINGS}

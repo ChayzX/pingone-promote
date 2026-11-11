@@ -448,7 +448,7 @@ The export carries placeholder connection IDs, as the feasibility flow does. Poi
 
 Source of truth: `internal/request/request.go` and `result.go`, `docs/gitlab-ci-integration.md` and ADR 0017 (PR #96).
 
-- **Branch:** `pingone-promote/<requestId>`.
+- **Branch:** `<ppBranchPrefix><requestId>`, default `pingone-promote/<requestId>`. The app acts only on branches with that prefix and its own ID format `YYYYMMDD-HHMMSS-xxxxxx` (`contract.isRequestBranch`).
   - `requestId` must match `^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$`. The app makes `YYYYMMDD-HHMMSS-xxxxxx` (UTC and 6 random base-36 characters), which is safe in branch names and carries no tenant data.
   - `branchName` is always sent, and always equals the branch.
 - **File:** `.pingone-promote/request.json`. The job refuses unknown fields and anything over 256 KiB.

@@ -82,7 +82,7 @@ func load(t *testing.T) (map[string]job, map[string]string, string) {
 }
 
 func TestRequestJobIsGuarded(t *testing.T) {
-	jobs, _, _ := load(t)
+	jobs, vars, _ := load(t)
 	j, ok := jobs["pingone-promote:request"]
 	if !ok {
 		t.Fatal("pingone-promote:request missing")
@@ -94,8 +94,14 @@ func TestRequestJobIsGuarded(t *testing.T) {
 		t.Fatalf("want exactly one rule, got %+v", j.Rules)
 	}
 	r := j.Rules[0]
-	if !strings.Contains(r.If, `$CI_PIPELINE_SOURCE == "push"`) || !strings.Contains(r.If, `$CI_COMMIT_BRANCH =~ /^pingone-promote\//`) || !strings.Contains(r.If, "&&") {
-		t.Fatalf("rule if: %q", r.If)
+	// The rule's regex must match exactly the configured request branch prefix.
+	prefix := vars["PINGONE_PROMOTE_BRANCH_PREFIX"]
+	if prefix == "" || !strings.HasSuffix(prefix, "/") && !strings.HasSuffix(prefix, "-") {
+		t.Fatalf("PINGONE_PROMOTE_BRANCH_PREFIX must be set and end with / or -: %q", prefix)
+	}
+	want := "$CI_COMMIT_BRANCH =~ /^" + strings.ReplaceAll(regexp.QuoteMeta(prefix), "/", `\/`) + "/"
+	if !strings.Contains(r.If, `$CI_PIPELINE_SOURCE == "push"`) || !strings.Contains(r.If, want) || !strings.Contains(r.If, "&&") {
+		t.Fatalf("rule if: %q (want %q)", r.If, want)
 	}
 	if len(r.Exists) != 1 || r.Exists[0] != ".pingone-promote/request.json" || r.When == "always" {
 		t.Fatalf("rule exists: %+v", r)

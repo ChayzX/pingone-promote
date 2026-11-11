@@ -128,3 +128,13 @@ the per-type table plus at most 300 changed rows, far below GitLab's limit.
   (`docs/gitlab-ci-integration.md`); changes bump `requestVersion` or
   `resultVersion`.
 - A request branch exists per request; MRs delete it on merge.
+
+## Addendum (2026-11-11): configurable branch prefix
+
+`pingone-promote/` is the default request branch prefix. A project whose push
+rules require another one sets it in `PINGONE_PROMOTE_BRANCH_PREFIX`, in the request
+job's rule, and in DaVinci's `ppBranchPrefix`, for example `CIAM-`. Wherever this
+ADR says `pingone-promote/<requestId>`, read `<prefix><requestId>`. The prefix must
+end with `/` or `-`. The app acts only on `<prefix>` plus its own request ID format
+(`YYYYMMDD-HHMMSS-xxxxxx`), so other branches that share the prefix are never
+listed, read or deleted.

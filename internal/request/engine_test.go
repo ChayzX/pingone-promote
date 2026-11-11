@@ -73,10 +73,14 @@ type harness struct {
 
 func newHarness(t *testing.T, req []byte) *harness {
 	t.Helper()
+	return newHarnessOn(t, req, "pingone-promote/"+reqID)
+}
+
+func newHarnessOn(t *testing.T, req []byte, branch string) *harness {
+	t.Helper()
 	tf := terraformBin(t)
 	files := repoFiles(t)
 	gl := gitlabtest.New(t, files)
-	branch := "pingone-promote/" + reqID
 	head := gl.CreateBranch(branch, "main", map[string]string{gitlab.RequestFile: string(req)})
 	ws := t.TempDir()
 	for p, c := range gl.Files(branch) {
@@ -202,6 +206,36 @@ func TestBranchModeDeletesRequestFileWithoutMR(t *testing.T) {
 	}
 	if _, ok := h.gl.Files(h.branch)[gitlab.RequestFile]; ok {
 		t.Fatal("branch mode must delete the request file too")
+	}
+}
+
+// A project whose push rules require another branch namespace (CIAM-) sets
+// the prefix; the job then runs only on CIAM-<requestId>.
+func TestCustomBranchPrefix(t *testing.T) {
+	req := requestJSON(func(m map[string]any) { m["branchName"] = "CIAM-" + reqID; m["mode"] = "branch" })
+	h := newHarnessOn(t, req, "CIAM-"+reqID)
+	h.env.BranchPrefix = "CIAM-"
+	res := h.run(req)
+	if res.Status != StatusSubmitted || res.Branch != "CIAM-"+reqID {
+		t.Fatalf("%+v %+v", res, res.Error)
+	}
+	if _, ok := h.gl.Files(h.branch)[gitlab.RequestFile]; ok {
+		t.Fatal("the request file must be deleted")
+	}
+	// The same branch with the default prefix configured is refused, and so is
+	// a request that names the default-prefix branch while the job uses CIAM-.
+	h2 := newHarnessOn(t, req, "CIAM-"+reqID)
+	if res := h2.run(req); res.Error == nil || res.Error.Code != ErrPreflight {
+		t.Fatalf("default prefix must refuse a CIAM- branch: %+v", res.Error)
+	}
+	other := requestJSON(nil)
+	h3 := newHarnessOn(t, other, "CIAM-"+reqID)
+	h3.env.BranchPrefix = "CIAM-"
+	if res := h3.run(other); res.Error == nil || !strings.Contains(res.Error.Message, "branchName: must be CIAM-"+reqID) {
+		t.Fatalf("a request naming pingone-promote/<id> must be refused under CIAM-: %+v", res.Error)
+	}
+	if len(h3.gl.MRs) != 0 {
+		t.Fatal("nothing may be opened on a refusal")
 	}
 }
 
