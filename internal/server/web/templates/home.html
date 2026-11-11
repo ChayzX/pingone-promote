@@ -1,0 +1,20 @@
+{{define "content"}}
+<form method="post" action="/drafts">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button type="submit" class="primary">Start a new request</button>
+</form>
+{{with .Data.Drafts}}
+<h2>Your drafts in this browser</h2>
+<table>
+  <thead><tr><th>Request</th><th>Source</th><th>Title</th><th>State</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr><td><a href="/drafts/{{.ID}}">{{.RequestID}}</a></td><td>{{.Source}}</td><td>{{.Title}}</td><td>{{.State}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No drafts yet. Drafts are kept in memory for this browser only and expire after some hours of inactivity; submitted requests live in GitLab.</p>
+{{end}}
+<p><a href="/requests">See submitted requests and their rollout</a></p>
+{{end}}

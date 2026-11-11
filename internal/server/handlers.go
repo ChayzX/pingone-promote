@@ -1,0 +1,591 @@
+package server
+
+import (
+	"net/http"
+	"sort"
+	"strings"
+
+	"pingone-promote/internal/request"
+)
+
+// Handlers only translate between forms, drafts and the request engine;
+// all resource-specific work happens in the engine.
+
+func (s *Server) redirect(w http.ResponseWriter, r *http.Request, to string) {
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+func draftURL(d *Draft, suffix string) string { return "/drafts/" + d.ID + suffix }
+
+// withDraft runs fn with this session's draft, holding the drafts lock.
+// fn writes to a buffer that is sent after the lock is released, so a slow
+// client never holds up other requests.
+func (s *Server) withDraft(w http.ResponseWriter, r *http.Request, fn func(w http.ResponseWriter, d *Draft)) {
+	sess := sessionFrom(r)
+	s.drafts.mu.Lock()
+	var d *Draft
+	if sess != nil {
+		d = s.drafts.get(sess.id, r.PathValue("id"))
+	}
+	if d == nil {
+		s.drafts.mu.Unlock()
+		s.renderStatus(w, r, http.StatusNotFound, "Not found", "This draft does not exist in this browser. Drafts expire after a while and belong to the browser that started them.")
+		return
+	}
+	buf := newBufferedWriter()
+	fn(buf, d)
+	s.drafts.mu.Unlock()
+	buf.flushTo(w)
+}
+
+type homeView struct {
+	Drafts []draftRow
+}
+
+type draftRow struct {
+	ID, RequestID, Source, Title, State string
+}
+
+func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r)
+	s.drafts.mu.Lock()
+	var rows []draftRow
+	for _, d := range s.drafts.list(sess.id) {
+		state := "Draft"
+		switch {
+		case d.job != nil && d.job.Running:
+			state = "Working"
+		case d.submitted != nil && d.submitted.Error == nil:
+			state = "Submitted"
+		case d.preview != nil:
+			state = "Previewed"
+		}
+		title := d.Title
+		if title == "" {
+			title = "(no title)"
+		}
+		rows = append(rows, draftRow{ID: d.ID, RequestID: d.RequestID, Source: d.Source, Title: title, State: state})
+	}
+	s.drafts.mu.Unlock()
+	s.render(w, r, http.StatusOK, "home", "Drafts", homeView{Drafts: rows}, false)
+}
+
+func (s *Server) newDraft(w http.ResponseWriter, r *http.Request) {
+	d, err := s.drafts.create(sessionFrom(r).id, s.cfg.Sources)
+	if err != nil {
+		s.renderStatus(w, r, http.StatusTooManyRequests, "Too many drafts", err.Error())
+		return
+	}
+	s.redirect(w, r, draftURL(d, ""))
+}
+
+type draftView struct {
+	D            *Draft
+	Sources      []string
+	Rollout      []string
+	Notice       string
+	Problem      string
+	Running      bool
+	HasPreview   bool
+	Results      []itemView
+	Selected     []itemView
+	Excluded     []itemView
+	ListLoaded   bool
+	SearchedOnce bool
+}
+
+type itemView struct {
+	Address, Kind, Name, ID string
+	Selected, Excluded      bool
+}
+
+func viewItems(items []Item, d *Draft) []itemView {
+	sel, exc := map[string]bool{}, map[string]bool{}
+	for _, it := range d.Selected {
+		sel[it.Address] = true
+	}
+	for _, it := range d.Excluded {
+		exc[it.Address] = true
+	}
+	out := make([]itemView, 0, len(items))
+	for _, it := range items {
+		out = append(out, itemView{Address: it.Address, Kind: resourceLabel(it.Type), Name: it.Name, ID: it.ID, Selected: sel[it.Address], Excluded: exc[it.Address]})
+	}
+	return out
+}
+
+func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		v := draftView{D: d, Sources: s.cfg.Sources, Rollout: s.cfg.Rollout, Notice: d.notice, Problem: d.problem,
+			Running: d.job != nil && d.job.Running, HasPreview: d.preview != nil,
+			Results: viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
+			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != ""}
+		d.notice, d.problem = "", ""
+		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
+	})
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// saveDraft stores the main form. With action=preview it then starts a
+// preview.
+func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
+	person, idErr := s.identity.Who(r)
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		f := r.PostForm
+		d.Name = strings.TrimSpace(f.Get("name"))
+		if idErr == nil {
+			d.RequestedBy = person.Recorded()
+		} else {
+			d.RequestedBy = ""
+		}
+		if src := f.Get("source"); src != d.Source {
+			if !contains(s.cfg.Sources, src) {
+				d.problem = "Choose one of the listed source environments."
+				s.redirect(w, r, draftURL(d, ""))
+				return
+			}
+			if len(d.Selected)+len(d.Excluded) > 0 {
+				d.notice = "The source environment changed, so the selected and excluded lists were cleared."
+			}
+			d.Source, d.Selected, d.Excluded, d.Results, d.Choices = src, nil, nil, nil, map[string]string{}
+		}
+		d.Whole = f.Get("scope") == request.ScopeAll
+		d.ConfirmAll = d.Whole && f.Get("confirm_all") == "yes"
+		d.Upstream = f.Get("upstream") == "yes"
+		if m := f.Get("mode"); m == "mr" || m == "branch" {
+			d.Mode = m
+		}
+		d.Title = strings.TrimSpace(f.Get("title"))
+		d.Description = f.Get("description")
+		d.Updated = s.now()
+		if idErr != nil {
+			d.problem = idErr.Error()
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		if f.Get("action") != "preview" {
+			d.notice = "Saved."
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		s.preview(w, r, d, draftURL(d, ""))
+	})
+}
+
+// preview validates the draft and starts a preview job; problems go back
+// to the page named by back.
+func (s *Server) preview(w http.ResponseWriter, r *http.Request, d *Draft, back string) {
+	req, err := s.buildRequest(d, true)
+	if err == nil {
+		err = s.startJob(d, "preview", s.runPreview(d, req))
+	}
+	if err != nil {
+		d.problem = s.redact(err.Error())
+		s.redirect(w, r, back)
+		return
+	}
+	s.redirect(w, r, draftURL(d, "/job"))
+}
+
+func (s *Server) startPreview(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) { s.preview(w, r, d, draftURL(d, "")) })
+}
+
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		q := strings.TrimSpace(r.PostForm.Get("q"))
+		if len(q) > 200 {
+			q = q[:200]
+		}
+		d.Query = q
+		d.Updated = s.now()
+		c := d.catalogs[d.Source]
+		if c != nil && r.PostForm.Get("refresh") != "yes" && s.now().Sub(c.at) < catalogMaxAge {
+			d.Results = searchItems(c.items, q)
+			s.redirect(w, r, draftURL(d, "#results"))
+			return
+		}
+		if d.Source == "" {
+			d.problem = "Choose a source environment first."
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		if err := s.startJob(d, "search", s.runSearch(d, d.Source)); err != nil {
+			d.problem = err.Error()
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		s.redirect(w, r, draftURL(d, "/job"))
+	})
+}
+
+// pick adds an item to, or removes it from, the selected or excluded list.
+func (s *Server) pick(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		addr, op := r.PostForm.Get("address"), r.PostForm.Get("op")
+		remove := func(list []Item) []Item {
+			out := list[:0:0]
+			for _, it := range list {
+				if it.Address != addr {
+					out = append(out, it)
+				}
+			}
+			return out
+		}
+		find := func() (Item, bool) {
+			if c := d.catalogs[d.Source]; c != nil {
+				for _, it := range c.items {
+					if it.Address == addr {
+						return it, true
+					}
+				}
+			}
+			return Item{}, false
+		}
+		switch op {
+		case "select", "exclude":
+			it, ok := find()
+			if !ok {
+				d.problem = "That resource is not in the source environment's list. Search again."
+				break
+			}
+			if len(d.Selected)+len(d.Excluded) >= MaxSelected {
+				d.problem = "The lists are full."
+				break
+			}
+			d.Selected, d.Excluded = remove(d.Selected), remove(d.Excluded)
+			if op == "select" {
+				d.Selected = append(d.Selected, it)
+			} else {
+				d.Excluded = append(d.Excluded, it)
+			}
+		case "unselect":
+			d.Selected = remove(d.Selected)
+		case "unexclude":
+			d.Excluded = remove(d.Excluded)
+		default:
+			d.problem = "Unknown action."
+		}
+		d.Updated = s.now()
+		s.redirect(w, r, draftURL(d, "#lists"))
+	})
+}
+
+type jobView struct {
+	D       *Draft
+	Kind    string
+	Stage   string
+	Err     string
+	Running bool
+	Back    string
+}
+
+var jobTitles = map[string]string{"search": "Listing resources", "preview": "Preparing the preview", "submit": "Submitting"}
+
+func (s *Server) jobPage(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		j := d.job
+		if j == nil {
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		if !j.Running && j.Err == "" {
+			switch j.Kind {
+			case "search":
+				s.redirect(w, r, draftURL(d, "#results"))
+			case "preview":
+				s.redirect(w, r, draftURL(d, "/preview"))
+			default:
+				s.redirect(w, r, draftURL(d, "/result"))
+			}
+			return
+		}
+		back := draftURL(d, "")
+		if j.Kind == "submit" {
+			back = draftURL(d, "/preview")
+		}
+		s.render(w, r, http.StatusOK, "job", jobTitles[j.Kind], jobView{D: d, Kind: j.Kind, Stage: j.Stage, Err: j.Err, Running: j.Running, Back: back}, j.Running)
+	})
+}
+
+func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		if d.job != nil && d.job.Running && d.job.cancel != nil {
+			d.job.cancel()
+		}
+		s.redirect(w, r, draftURL(d, "/job"))
+	})
+}
+
+type envView struct {
+	Env      string
+	Label    string
+	Ready    bool
+	Blockers []request.BlockerOut
+	Values   []valueField
+	Imports  []valueField
+}
+
+type valueField struct {
+	Name, Key, Value string
+}
+
+type changeView struct {
+	request.ChangeOut
+	Kind       string
+	StatusText string
+	ActionText string
+	Dependency bool
+	Choice     string
+}
+
+type typeView struct {
+	Kind string
+	request.TypeCounts
+}
+
+type previewView struct {
+	D           *Draft
+	R           *request.Result
+	Problem     string
+	Fresh       bool
+	CanSubmit   bool
+	Running     bool
+	Types       []typeView
+	Changes     []changeView
+	Envs        []envView
+	HasBlockers bool
+	Unchanged   int
+}
+
+var statusText = map[string]string{"new": "new", "changed-in-source": "changed in source", "git-newer": "Git is newer",
+	"changed-in-both": "changed in both", "matches": "matches", "not-compared": "not compared"}
+
+var actionText = map[string]string{"added": "added", "updated": "updated", "kept_differs": "kept", "unchanged": "kept",
+	"excluded": "excluded", "moved": "moved"}
+
+func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		p := d.preview
+		if p == nil {
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		res := p.result
+		v := previewView{D: d, R: res, Problem: d.problem, Running: d.job != nil && d.job.Running}
+		d.problem = ""
+		if req, err := s.buildRequest(d, true); err == nil && fingerprint(*req) == p.fingerprint {
+			v.Fresh = true
+		}
+		for t, c := range res.Summary.ByType {
+			v.Types = append(v.Types, typeView{Kind: resourceLabel(t), TypeCounts: c})
+		}
+		sort.Slice(v.Types, func(i, j int) bool { return v.Types[i].Kind < v.Types[j].Kind })
+		for _, c := range res.Changes {
+			if d.Whole && c.Action == "unchanged" {
+				v.Unchanged++
+				continue
+			}
+			typ, _, _ := strings.Cut(c.Address, ".")
+			cv := changeView{ChangeOut: c, Kind: resourceLabel(typ), StatusText: statusText[c.Status], ActionText: actionText[c.Action],
+				Dependency: c.Role == "dependency", Choice: d.Choices[c.Address]}
+			if cv.StatusText == "" {
+				cv.StatusText = c.Status
+			}
+			if cv.ActionText == "" {
+				cv.ActionText = c.Action
+			}
+			v.Changes = append(v.Changes, cv)
+		}
+		envs := append([]string{d.Source}, s.cfg.Rollout...)
+		if _, ok := res.Blockers[request.RequestBlockers]; ok {
+			envs = append(envs, request.RequestBlockers)
+		}
+		for _, env := range envs {
+			ev := envView{Env: env, Label: env, Blockers: res.Blockers[env]}
+			if env == request.RequestBlockers {
+				ev.Label = "Whole request"
+			}
+			ev.Ready = len(ev.Blockers) == 0
+			for _, b := range ev.Blockers {
+				switch {
+				case b.Code == "missing_value" && b.Var != "":
+					ev.Values = append(ev.Values, valueField{Name: "v:" + env + ":" + b.Var, Key: b.Var, Value: d.Values[env][b.Var]})
+				case b.Code == "missing_import" && b.Address != "":
+					ev.Imports = append(ev.Imports, valueField{Name: "i:" + env + ":" + b.Address, Key: b.Address, Value: d.ImportIDs[env][b.Address]})
+				}
+			}
+			v.Envs = append(v.Envs, ev)
+		}
+		v.HasBlockers = len(res.Blockers) > 0
+		v.CanSubmit = v.Fresh && !v.HasBlockers && res.Status == request.StatusPreviewed && res.Error == nil && !v.Running
+		s.render(w, r, http.StatusOK, "preview", "Preview", v, false)
+	})
+}
+
+// saveChoices stores per-dependency choices and previews again.
+func (s *Server) saveChoices(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		if d.preview == nil {
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		deps := map[string]bool{}
+		for _, c := range d.preview.result.Changes {
+			if c.Role == "dependency" {
+				deps[c.Address] = true
+			}
+		}
+		for a := range d.Choices {
+			deps[a] = true
+		}
+		next := map[string]string{}
+		for a := range deps {
+			switch c := r.PostForm.Get("c:" + a); c {
+			case "update", "keep", "exclude":
+				next[a] = c
+			case "":
+			default:
+				d.problem = "Choose update, keep the Git version or exclude."
+				s.redirect(w, r, draftURL(d, "/preview"))
+				return
+			}
+		}
+		d.Choices = next
+		d.Updated = s.now()
+		s.preview(w, r, d, draftURL(d, "/preview"))
+	})
+}
+
+// saveValues stores per-environment values (and import IDs) and previews
+// again. Nothing is kept when the request refuses a value, so a value that
+// looks like a secret is never shown again.
+func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		envs := append([]string{d.Source}, s.cfg.Rollout...)
+		values := map[string]map[string]string{}
+		imports := map[string]map[string]string{}
+		for env, m := range d.Values {
+			values[env] = map[string]string{}
+			for k, v := range m {
+				values[env][k] = v
+			}
+		}
+		for env, m := range d.ImportIDs {
+			imports[env] = map[string]string{}
+			for k, v := range m {
+				imports[env][k] = v
+			}
+		}
+		for key, vals := range r.PostForm {
+			kind, rest, ok := strings.Cut(key, ":")
+			if !ok || kind != "v" && kind != "i" || len(vals) != 1 {
+				continue
+			}
+			env, name, ok := strings.Cut(rest, ":")
+			if !ok || !contains(envs, env) || name == "" || len(name) > 512 || len(vals[0]) > 8<<10 {
+				continue
+			}
+			dst := values
+			if kind == "i" {
+				dst = imports
+			}
+			if dst[env] == nil {
+				dst[env] = map[string]string{}
+			}
+			if strings.TrimSpace(vals[0]) == "" {
+				delete(dst[env], name)
+			} else {
+				dst[env][name] = strings.TrimSpace(vals[0])
+			}
+		}
+		oldV, oldI := d.Values, d.ImportIDs
+		d.Values, d.ImportIDs = values, imports
+		if _, err := s.buildRequest(d, true); err != nil {
+			d.Values, d.ImportIDs = oldV, oldI
+			d.problem = "Nothing was saved. " + s.redact(err.Error())
+			s.redirect(w, r, draftURL(d, "/preview"))
+			return
+		}
+		d.Updated = s.now()
+		s.preview(w, r, d, draftURL(d, "/preview"))
+	})
+}
+
+func (s *Server) startSubmit(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		back := draftURL(d, "/preview")
+		p := d.preview
+		if p == nil {
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		}
+		if m := r.PostForm.Get("mode"); m == "mr" || m == "branch" {
+			d.Mode = m
+		}
+		if p.result.Status != request.StatusPreviewed || p.result.Error != nil || len(p.result.Blockers) > 0 {
+			d.problem = "The preview has problems. Fix them and preview again before submitting."
+			s.redirect(w, r, back)
+			return
+		}
+		req, err := s.buildRequest(d, false)
+		if err != nil {
+			d.problem = s.redact(err.Error())
+			s.redirect(w, r, back)
+			return
+		}
+		if fingerprint(*req) != p.fingerprint {
+			d.problem = "The request changed after the preview. Preview again."
+			s.redirect(w, r, back)
+			return
+		}
+		if err := s.startJob(d, "submit", s.runSubmit(d, req, p)); err != nil {
+			d.problem = err.Error()
+			s.redirect(w, r, back)
+			return
+		}
+		s.redirect(w, r, draftURL(d, "/job"))
+	})
+}
+
+type resultView struct {
+	D        *Draft
+	R        *request.Result
+	Conflict bool
+	Message  string
+}
+
+func (s *Server) resultPage(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		if d.submitted == nil && !d.conflict {
+			s.redirect(w, r, draftURL(d, "/preview"))
+			return
+		}
+		v := resultView{D: d, R: d.submitted, Conflict: d.conflict}
+		switch {
+		case d.conflict:
+			v.Message = ConflictMessage
+		case d.submitted.Status == request.StatusNoChanges:
+			v.Message = "Git already has all of this. Nothing was committed."
+		case d.submitted.Status == request.StatusAlreadySubmitted:
+			v.Message = "This request was already submitted. Nothing new was committed."
+		case d.submitted.Status == request.StatusSubmitted && d.submitted.MRUrl != "":
+			v.Message = "Submitted. A merge request is open for review."
+		case d.submitted.Status == request.StatusSubmitted:
+			v.Message = "Submitted to a branch. No merge request was opened."
+		case d.submitted.Error != nil && d.submitted.Error.Code == request.ErrPartial:
+			v.Message = "The result is uncertain; check GitLab. The request branch was kept so nothing is lost; do not submit again until you have checked it."
+		case d.submitted.Error != nil:
+			v.Message = "The submit did not complete."
+		}
+		s.render(w, r, http.StatusOK, "result", "Submission", v, false)
+	})
+}

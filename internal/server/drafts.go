@@ -1,0 +1,311 @@
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"pingone-promote/internal/exporter"
+	"pingone-promote/internal/request"
+)
+
+// Draft limits. Drafts live only in memory: a restart loses them, and
+// everything durable is in GitLab.
+const (
+	MaxDrafts           = 500
+	MaxDraftsPerSession = 20
+	DraftIdleExpiry     = 8 * time.Hour
+	MaxSelected         = 200
+	MaxSearchResults    = 50
+	catalogMaxAge       = 30 * time.Minute
+)
+
+// Item is one resource of the source environment.
+type Item struct {
+	Address string
+	Type    string
+	Name    string
+	ID      string
+}
+
+func itemOf(r exporter.Resource) Item {
+	return Item{Address: r.String(), Type: r.Type, Name: r.Name, ID: r.ID}
+}
+
+// Job is the one background job a draft can have at a time.
+type Job struct {
+	Kind     string // search, preview, submit
+	Running  bool
+	Started  time.Time
+	Finished time.Time
+	Stage    string
+	Err      string
+	cancel   context.CancelFunc
+}
+
+type catalogEntry struct {
+	at    time.Time
+	items []Item
+}
+
+// preview is the latest preview of a draft: its result, the inputs it was
+// for, the Git snapshot it read and the source export it used. Submit
+// reuses the snapshot and the export, so what was reviewed is what is
+// committed.
+type preview struct {
+	result        *request.Result
+	fingerprint   string
+	head          string
+	defaultBranch string
+	snapshot      string
+	frozen        *frozenExport
+	at            time.Time
+}
+
+// Draft is one request being prepared in one browser session.
+type Draft struct {
+	ID        string
+	SessionID string
+	RequestID string
+	Created   time.Time
+	Updated   time.Time
+
+	Name        string // as typed
+	RequestedBy string // Person.Recorded()
+	Source      string
+	Whole       bool
+	ConfirmAll  bool
+	Upstream    bool
+	Mode        string
+	Title       string
+	Description string
+	Selected    []Item
+	Excluded    []Item
+	Choices     map[string]string            // address -> update | keep | exclude
+	Values      map[string]map[string]string // env -> variable -> text
+	ImportIDs   map[string]map[string]string // env -> address -> ID
+
+	Query   string
+	Results []Item
+
+	catalogs map[string]*catalogEntry
+	job      *Job
+	preview  *preview
+	// submitted is the latest submit result; conflict marks a default
+	// branch that moved after the preview.
+	submitted *request.Result
+	conflict  bool
+	// notice and problem are shown once on the next page.
+	notice  string
+	problem string
+}
+
+type drafts struct {
+	mu   sync.Mutex
+	byID map[string]*Draft
+	now  func() time.Time
+}
+
+var errTooManyDrafts = errors.New("There are too many open drafts. Finish or wait for older drafts to expire.")
+
+func newRequestID(now time.Time) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := []byte(randomToken(6))
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return now.UTC().Format("20060102-150405") + "-" + string(b[:6])
+}
+
+func (ds *drafts) create(sessionID string, sources []string) (*Draft, error) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	mine := 0
+	for _, d := range ds.byID {
+		if d.SessionID == sessionID {
+			mine++
+		}
+	}
+	if mine >= MaxDraftsPerSession || len(ds.byID) >= MaxDrafts {
+		return nil, errTooManyDrafts
+	}
+	now := ds.now()
+	d := &Draft{ID: randomToken(18), SessionID: sessionID, RequestID: newRequestID(now), Created: now, Updated: now,
+		Upstream: true, Mode: "mr", Choices: map[string]string{}, Values: map[string]map[string]string{},
+		ImportIDs: map[string]map[string]string{}, catalogs: map[string]*catalogEntry{}}
+	if len(sources) > 0 {
+		d.Source = sources[0]
+	}
+	ds.byID[d.ID] = d
+	return d, nil
+}
+
+// get returns a draft of this session; another session's draft is "not
+// found", never "forbidden", so IDs cannot be probed. The caller holds
+// ds.mu while it reads or changes the draft.
+func (ds *drafts) get(sessionID, id string) *Draft {
+	d := ds.byID[id]
+	if d == nil || d.SessionID != sessionID {
+		return nil
+	}
+	return d
+}
+
+func (ds *drafts) list(sessionID string) []*Draft {
+	var out []*Draft
+	for _, d := range ds.byID {
+		if d.SessionID == sessionID {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	return out
+}
+
+// expire removes idle drafts and drafts of ended sessions, cancelling their
+// jobs and deleting their snapshots.
+func (ds *drafts) expire(goneSessions []string) {
+	gone := map[string]bool{}
+	for _, s := range goneSessions {
+		gone[s] = true
+	}
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	for id, d := range ds.byID {
+		running := d.job != nil && d.job.Running
+		if gone[d.SessionID] || !running && ds.now().Sub(d.Updated) > DraftIdleExpiry {
+			ds.dropLocked(id)
+		}
+	}
+}
+
+func (ds *drafts) dropLocked(id string) {
+	d := ds.byID[id]
+	if d == nil {
+		return
+	}
+	if d.job != nil && d.job.cancel != nil {
+		d.job.cancel()
+	}
+	if d.preview != nil {
+		os.RemoveAll(d.preview.snapshot)
+	}
+	delete(ds.byID, id)
+}
+
+func (ds *drafts) closeAll() {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	for id := range ds.byID {
+		ds.dropLocked(id)
+	}
+}
+
+// encodeValue turns a typed value into JSON: a JSON list or object as
+// written, anything else as a string (Terraform converts strings to
+// numbers and booleans where a variable needs one).
+func encodeValue(text string) json.RawMessage {
+	t := strings.TrimSpace(text)
+	if (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) && json.Valid([]byte(t)) {
+		return json.RawMessage(t)
+	}
+	b, _ := json.Marshal(t)
+	return b
+}
+
+// ImportIDRecorder puts per-environment import IDs (environment -> resource
+// address -> ID) on a request. request.Request has no field for them yet;
+// see docs/HANDOFF.md.
+type ImportIDRecorder interface {
+	SetImportIDs(req *request.Request, ids map[string]map[string]string) error
+}
+
+type noImportIDs struct{}
+
+func (noImportIDs) SetImportIDs(_ *request.Request, ids map[string]map[string]string) error {
+	for _, m := range ids {
+		if len(m) > 0 {
+			return errors.New("This version cannot record import IDs yet. Add them to the environment's tfvars file in Git, then preview again.")
+		}
+	}
+	return nil
+}
+
+// buildRequest turns the draft into a request.
+func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
+	up := d.Upstream
+	req := &request.Request{RequestVersion: request.Version, RequestID: d.RequestID, RequestedBy: d.RequestedBy, Source: d.Source,
+		Scope: request.ScopeSelected, IncludeUpstream: &up, Mode: d.Mode, BranchName: s.cfg.BranchPrefix + d.RequestID,
+		Title: d.Title, Description: d.Description, DryRun: dryRun}
+	if d.Whole {
+		req.Scope, req.ConfirmAll = request.ScopeAll, d.ConfirmAll
+	} else {
+		for _, it := range d.Selected {
+			req.Resources = append(req.Resources, request.ExcludeRef{Address: it.Address})
+		}
+	}
+	for _, it := range d.Excluded {
+		req.Exclude = append(req.Exclude, request.ExcludeRef{Address: it.Address})
+	}
+	if len(d.Choices) > 0 {
+		req.DependencyChoices = map[string]string{}
+		for a, c := range d.Choices {
+			req.DependencyChoices[a] = c
+		}
+	}
+	for env, vals := range d.Values {
+		for k, v := range vals {
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+			if req.EnvValues == nil {
+				req.EnvValues = map[string]map[string]json.RawMessage{}
+			}
+			if req.EnvValues[env] == nil {
+				req.EnvValues[env] = map[string]json.RawMessage{}
+			}
+			req.EnvValues[env][k] = encodeValue(v)
+		}
+	}
+	if d.RequestedBy == "" {
+		return nil, errors.New("Type your name.")
+	}
+	if err := s.importIDs.SetImportIDs(req, d.ImportIDs); err != nil {
+		return nil, err
+	}
+	if err := req.Validate(); err != nil {
+		return nil, plainValidation(err)
+	}
+	return req, nil
+}
+
+// plainValidation keeps the request package's message, which names the
+// field and never repeats a value.
+func plainValidation(err error) error {
+	var ve *request.ValidationError
+	if errors.As(err, &ve) {
+		if ve.Field != "" {
+			return fmt.Errorf("%s: %s", ve.Field, ve.Msg)
+		}
+		return errors.New(ve.Msg)
+	}
+	return err
+}
+
+// fingerprint identifies what a preview previewed: everything that changes
+// the export or the files, but not how it is delivered (mode, title,
+// description) or who asks.
+func fingerprint(r request.Request) string {
+	r.DryRun, r.Mode, r.Title, r.Description, r.CommitMessage, r.RequestedBy = false, "", "", "", "", ""
+	b, _ := json.Marshal(r)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}

@@ -1,0 +1,137 @@
+{{define "content"}}{{$csrf := .CSRF}}{{$d := .Data.D}}{{$r := .Data.R}}
+<p class="meta">Request {{$d.RequestID}} from {{$d.Source}} &middot; <a href="/drafts/{{$d.ID}}">edit the request</a></p>
+{{with .Data.Problem}}<p class="problem">{{.}}</p>{{end}}
+{{if .Data.Running}}<p class="notice">Something is running for this request. <a href="/drafts/{{$d.ID}}/job">See progress</a>.</p>{{end}}
+{{if not .Data.Fresh}}<p class="problem">The request changed after this preview. Preview again before submitting.</p>
+<form method="post" action="/drafts/{{$d.ID}}/preview"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="primary">Preview again</button></form>{{end}}
+
+{{with $r.Error}}
+<div class="problem">
+  <p>{{.Message}}</p>
+  {{with .Candidates}}<p>Several resources match. Use the search to pick one:</p>
+  <ul>{{range .}}<li>{{.Name}} <code>{{.ID}}</code> <code class="small">{{.Address}}</code></li>{{end}}</ul>{{end}}
+</div>
+{{end}}
+
+<p class="warning">Merging adds and changes resources; it never deletes. A Git revert can delete resources in Terraform &mdash; fix forward with a new request instead. Consider lifecycle { prevent_destroy = true } on critical resources.</p>
+
+{{with .Data.Types}}
+<section>
+<h2>Summary by type</h2>
+<table>
+  <thead><tr><th>Type</th><th>Total</th><th>Added</th><th>Updated</th><th>Kept (differs)</th><th>Unchanged</th><th>Moved</th><th>Excluded</th></tr></thead>
+  <tbody>{{range .}}
+  <tr><td>{{.Kind}}</td><td>{{.Total}}</td><td>{{.Added}}</td><td>{{.Updated}}</td><td>{{.KeptDiffers}}</td><td>{{.Unchanged}}</td><td>{{.Moved}}</td><td>{{.Excluded}}</td></tr>
+  {{end}}</tbody>
+</table>
+</section>
+{{end}}
+
+<section>
+<h2>Readiness by environment</h2>
+<table>
+  <thead><tr><th>Environment</th><th>State</th><th>What blocks it</th></tr></thead>
+  <tbody>{{range .Data.Envs}}
+  <tr><td>{{.Label}}</td><td>{{if .Ready}}<span class="ok">ready</span>{{else}}<span class="bad">blocked</span>{{end}}</td>
+  <td>{{range .Blockers}}<div>{{.Message}}{{with .Var}} <code>{{.}}</code>{{end}}</div>{{end}}</td></tr>
+  {{end}}</tbody>
+</table>
+</section>
+
+{{$needValues := false}}{{range .Data.Envs}}{{if or .Values .Imports}}{{$needValues = true}}{{end}}{{end}}
+{{if $needValues}}
+<section id="values">
+<h2>Fill in missing values</h2>
+<p class="hint">Values are written to each environment's tfvars file in Git. Never type a secret here: secrets come from Vault and a value that looks like one is refused.</p>
+<form method="post" action="/drafts/{{$d.ID}}/values">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  {{range .Data.Envs}}{{if or .Values .Imports}}
+  <fieldset>
+    <legend>{{.Label}}</legend>
+    {{range .Values}}<label>{{.Key}}<input type="text" name="{{.Name}}" value="{{.Value}}" maxlength="8192" autocomplete="off"></label>{{end}}
+    {{range .Imports}}<label>Import ID for {{.Key}}<input type="text" name="{{.Name}}" value="{{.Value}}" maxlength="512" autocomplete="off"></label>{{end}}
+  </fieldset>
+  {{end}}{{end}}
+  <button type="submit" class="primary">Save and preview again</button>
+</form>
+</section>
+{{end}}
+
+{{with .Data.Changes}}
+<section id="changes">
+<h2>Changes</h2>
+{{if $.Data.Unchanged}}<p class="hint">{{$.Data.Unchanged}} resources already match Git and are not listed.</p>{{end}}
+<form method="post" action="/drafts/{{$d.ID}}/choices">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <table>
+    <thead><tr><th>Resource</th><th>Role</th><th>Status</th><th>Action</th><th>Dependency choice</th></tr></thead>
+    <tbody>{{range .}}
+    <tr>
+      <td>{{.Kind}}<br><code class="small">{{.Address}}</code>{{with .Reason}}<div class="hint">{{.}}</div>{{end}}</td>
+      <td>{{.Role}}</td>
+      <td>{{.StatusText}}</td>
+      <td>{{.ActionText}}</td>
+      <td>{{if .Dependency}}
+        <select name="c:{{.Address}}">
+          <option value=""{{if eq .Choice ""}} selected{{end}}>(default)</option>
+          <option value="update"{{if eq .Choice "update"}} selected{{end}}>update</option>
+          <option value="keep"{{if eq .Choice "keep"}} selected{{end}}>keep the Git version</option>
+          <option value="exclude"{{if eq .Choice "exclude"}} selected{{end}}>exclude</option>
+        </select>{{end}}</td>
+    </tr>
+    {{end}}</tbody>
+  </table>
+  <button type="submit">Apply choices and preview again</button>
+</form>
+</section>
+{{end}}
+
+{{with $r.RequiredSecrets}}
+<section>
+<h2>Required secrets</h2>
+<p class="hint">Only names and Vault paths are shown. Values are never stored in Git or on this server.</p>
+<table>
+  <thead><tr><th>Name</th><th>Vault path</th><th>State</th></tr></thead>
+  <tbody>{{range .}}
+  <tr><td><code>{{.VarName}}</code></td><td><code>{{.Vault}}</code></td><td>{{if .Declared}}already declared{{else}}new: create it in Vault for every environment{{end}}</td></tr>
+  {{end}}</tbody>
+</table>
+</section>
+{{end}}
+
+{{with $r.Warnings}}
+<section>
+<h2>Warnings</h2>
+<ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
+</section>
+{{end}}
+
+{{with $r.Files}}
+<section>
+<h2>Files</h2>
+<ul>{{range .}}<li><code>{{.Path}}</code> ({{.Action}})</li>{{end}}</ul>
+</section>
+{{end}}
+
+{{if $r.Diff}}
+<section>
+<h2>Diff</h2>
+{{if $r.DiffTruncated}}<p class="hint">The diff is long and was cut.</p>{{end}}
+<pre class="diff">{{$r.Diff}}</pre>
+</section>
+{{end}}
+
+<section id="submit">
+<h2>Submit</h2>
+{{if .Data.CanSubmit}}
+<form method="post" action="/drafts/{{$d.ID}}/submit">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <label class="inline"><input type="radio" name="mode" value="mr"{{if eq $d.Mode "mr"}} checked{{end}}> Merge request</label>
+  <label class="inline"><input type="radio" name="mode" value="branch"{{if eq $d.Mode "branch"}} checked{{end}}> Branch only</label>
+  <button type="submit" class="primary">Submit to GitLab</button>
+</form>
+{{else}}
+<p>Submitting is possible once the latest preview has no blockers and the request has not changed since.</p>
+{{end}}
+</section>
+{{end}}
