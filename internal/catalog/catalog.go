@@ -272,7 +272,7 @@ var defs = []Def{
 	}),
 	child("pingone_identity_provider_attribute", "identity_providers", "pingone_identity_provider", "identity_provider_id", "identityProviders/{parent}/attributes", "attributes", true, "name"),
 	with(api("pingone_gateway", "gateways", "gateways", "gateways", "name"), func(d *Def) {
-		d.Status, d.Reason = Limited, "bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); LDAP servers and bind DN are per-environment values"
+		d.Status, d.Reason = Limited, "bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); all RADIUS clients of one gateway share one secret variable, so set per-client secrets by hand; LDAP servers, bind DN and the Kerberos account are per-environment values"
 		d.EnvLocal = []string{"servers", "bind_dn", "kerberos.service_account_upn", "radius_network_policy_server"}
 		d.Secrets = map[string]string{"bind_password": "type=LDAP", "radius_default_shared_secret": "type=RADIUS"}
 	}),

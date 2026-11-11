@@ -87,7 +87,7 @@ Totals: 54 covered, 32 covered with documented limits, 15 not possible (101 reso
 
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pingone_gateway` | covered with documented limits | pingone-api | per environment: `servers`, `bind_dn`, `kerberos.service_account_upn`, `radius_network_policy_server` | - | no | bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); LDAP servers and bind DN are per-environment values |
+| `pingone_gateway` | covered with documented limits | pingone-api | per environment: `servers`, `bind_dn`, `kerberos.service_account_upn`, `radius_network_policy_server` | - | no | bind passwords and RADIUS shared secrets are secrets (customer_secrets.yml); all RADIUS clients of one gateway share one secret variable, so set per-client secrets by hand; LDAP servers, bind DN and the Kerberos account are per-environment values |
 | `pingone_gateway_credential` | not possible | - | - | - | no | gateway credentials are generated per environment and installed on that environment's gateway; never copied |
 | `pingone_gateway_role_assignment` | covered | pingone-api | exported with its gateway | - | no | - |
 
