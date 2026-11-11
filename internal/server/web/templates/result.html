@@ -1,20 +1,21 @@
 {{define "content"}}{{$d := .Data.D}}
 <p class="meta">Request {{$d.RequestID}} from {{$d.Source}}</p>
 {{if .Data.Conflict}}
-<p class="problem">{{.Data.Message}}</p>
+<p class="problem" role="alert">{{.Data.Message}}</p>
 <form method="post" action="/drafts/{{$d.ID}}/preview">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <button type="submit" class="primary">Preview again</button>
 </form>
 {{else}}{{with .Data.R}}
-<p class="{{if .Error}}problem{{else}}notice{{end}}">{{$.Data.Message}}</p>
+<p class="{{if .Error}}problem{{else}}notice{{end}}" role="status">{{$.Data.Message}}</p>
 {{with .Error}}<p class="problem">{{.Message}}</p>{{end}}
 <ul class="links">
   {{with .MRUrl}}<li>Merge request: <a href="{{.}}">{{.}}</a></li>{{end}}
   {{with .BranchURL}}<li>Branch: <a href="{{.}}">{{$.Data.R.Branch}}</a></li>{{end}}
   {{if .CommitID}}<li>Commit: {{with .DiffURL}}<a href="{{.}}">{{short $.Data.R.CommitID}}</a>{{else}}{{short $.Data.R.CommitID}}{{end}}</li>{{end}}
 </ul>
-<p>The pipeline plans and applies after the merge request is reviewed and merged. Follow the rollout on the <a href="/requests">Requests</a> page.</p>
+<h2>What happens next</h2>
+<p>Someone reviews and merges the change in GitLab. After the merge the pipeline rolls it out one environment at a time. Follow each environment on the <a href="/requests">Requests</a> page.</p>
 {{end}}{{end}}
 <p><a href="/drafts/{{$d.ID}}/preview">Back to the preview</a> &middot; <a href="/">Your drafts</a></p>
 {{end}}

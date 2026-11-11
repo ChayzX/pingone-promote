@@ -6,7 +6,7 @@
 {{with .Data.Drafts}}
 <h2>Your drafts in this browser</h2>
 <table>
-  <thead><tr><th>Request</th><th>Source</th><th>Title</th><th>State</th></tr></thead>
+  <thead><tr><th scope="col">Request</th><th scope="col">Source</th><th scope="col">Title</th><th scope="col">State</th></tr></thead>
   <tbody>
   {{range .}}
     <tr><td><a href="/drafts/{{.ID}}">{{.RequestID}}</a></td><td>{{.Source}}</td><td>{{.Title}}</td><td>{{.State}}</td></tr>
@@ -14,7 +14,7 @@
   </tbody>
 </table>
 {{else}}
-<p>No drafts yet. Drafts are kept in memory for this browser only and expire after some hours of inactivity; submitted requests live in GitLab.</p>
+<p>You have no drafts yet. Drafts are kept for this browser only and are removed after some hours without use. Submitted requests are kept in GitLab.</p>
 {{end}}
-<p><a href="/requests">See submitted requests and their rollout</a></p>
+<p><a href="/requests">See submitted requests and how far each has rolled out</a></p>
 {{end}}

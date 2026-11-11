@@ -1,16 +1,17 @@
 {{define "content"}}
-<p class="hint">Request branches named {{.Data.Prefix}}&hellip; and merge requests labelled {{.Data.Label}}, newest first. Rollout comes from the default branch pipeline of each merge commit.</p>
+<p class="hint">Every request made here, newest first: Git branches named {{.Data.Prefix}}&hellip; and merge requests labelled {{.Data.Label}}. Each environment column shows how far the rollout has got after the merge, in the order the pipeline applies them.</p>
 {{with .Data.Problem}}<p class="problem">{{.}}</p>{{end}}
 {{if .Data.Rows}}
 <table>
-  <thead><tr><th>Request</th><th>Merge request</th>{{range .Data.Rollout}}<th>{{.}}</th>{{end}}</tr></thead>
+  <caption class="sr-only">Requests and their rollout per environment</caption>
+  <thead><tr><th scope="col">Request</th><th scope="col">Merge request</th>{{range .Data.Rollout}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
   <tbody>{{range .Data.Rows}}
   <tr>
     <td>{{if .BranchURL}}<a href="{{.BranchURL}}">{{.Branch}}</a>{{else}}{{.Branch}}{{end}}{{with .Note}}<div class="hint">{{.}}</div>{{end}}</td>
     <td>{{with .MR}}<a href="{{.WebURL}}">!{{.IID}}</a> {{.Title}} <span class="tag">{{.State}}</span>{{else}}none{{end}}</td>
-    {{range .Rollout}}<td><span class="state state-{{.State}}" title="{{.Detail}}">{{if .URL}}<a href="{{.URL}}">{{.State}}</a>{{else}}{{.State}}{{end}}</span></td>{{end}}
+    {{range .Rollout}}<td><span class="state state-{{.State}}">{{if .URL}}<a href="{{.URL}}">{{.State}}</a>{{else}}{{.State}}{{end}}</span>{{with .Detail}}<div class="hint">{{.}}</div>{{end}}</td>{{end}}
   </tr>
   {{end}}</tbody>
 </table>
-{{else}}{{if not .Data.Problem}}<p>No requests yet.</p>{{end}}{{end}}
+{{else}}{{if not .Data.Problem}}<p>No requests yet. Start one from <a href="/">Drafts</a>.</p>{{end}}{{end}}
 {{end}}

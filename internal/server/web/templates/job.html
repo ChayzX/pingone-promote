@@ -1,13 +1,13 @@
 {{define "content"}}{{$d := .Data.D}}
 {{if .Data.Running}}
-<p class="notice">{{.Data.Stage}}&hellip;</p>
-<p>This page refreshes by itself. You can leave it and come back; the work continues on the server.</p>
+<p class="notice" role="status">Now: {{.Data.Stage}}&hellip;</p>
+<p>This page reloads every few seconds. You can leave it and come back later: the work carries on without you. Press Cancel to stop it.</p>
 <form method="post" action="/drafts/{{$d.ID}}/cancel">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <button type="submit">Cancel</button>
 </form>
 {{else}}
-<p class="problem">{{.Data.Err}}</p>
-<p><a href="{{.Data.Back}}">Back</a></p>
+<p class="problem" role="alert"><strong>This did not finish.</strong> {{.Data.Err}}</p>
+<p><a href="{{.Data.Back}}">Go back and try again</a></p>
 {{end}}
 {{end}}
