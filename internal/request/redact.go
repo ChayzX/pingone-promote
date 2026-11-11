@@ -21,6 +21,9 @@ var (
 	pemBlock = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)`)
 	// jwtToken is secretscan.JWT plus the signature segment.
 	jwtToken = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*`)
+	// authHeader is a bearer or basic credential of any shape (opaque
+	// tokens are not JWT-shaped), with an Authorization prefix if present.
+	authHeader = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)?\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`)
 	// quotedAttr is one `name = "value"` (HCL) or `"name": "value"` (JSON)
 	// pair, optionally preceded by a diff marker and indentation.
 	quotedAttr = regexp.MustCompile(`("?)([A-Za-z_][A-Za-z0-9_.-]*)("?\s*[=:]\s*)"((?:[^"\\\n]|\\.)*)"`)
@@ -34,6 +37,7 @@ func redactText(s string) string {
 	}
 	s = pemBlock.ReplaceAllString(s, redacted+" private key")
 	s = jwtToken.ReplaceAllString(s, redacted+" token")
+	s = authHeader.ReplaceAllString(s, "${1}${2} "+redacted)
 	return quotedAttr.ReplaceAllStringFunc(s, func(m string) string {
 		g := quotedAttr.FindStringSubmatch(m)
 		value := strings.ReplaceAll(g[4], `\"`, `"`)

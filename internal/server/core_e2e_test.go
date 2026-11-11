@@ -106,16 +106,26 @@ func TestCoreNotificationTemplateAloneAsMergeRequest(t *testing.T) {
 	e := newCoreEnv(t)
 	b, draft := coreDraft(t, e, "recovery_code_template", addr)
 	p := previewDraft(t, b, draft, mainForm("Core Tester", noUpstream))
-	mustContain(t, p.body, "notification template", addr, "Submit to GitLab")
+	mustContain(t, p.body, "notification template", addr)
+	// The sender address is a per-environment value: every rollout
+	// environment needs its own before the request can be submitted.
+	const from = "notification_template_content_recovery_code_template_en_Email_email_from_address"
+	form := url.Values{}
+	for _, env := range e.cfg.Rollout {
+		mustContain(t, p.body, `name="v:`+env+`:`+from+`"`)
+		form.Set("v:"+env+":"+from, "noreply@"+env+".example.com")
+	}
+	p = b.wait(b.post(draft+"/values", form))
+	mustContain(t, p.body, "Submit to GitLab")
 	if strings.Contains(p.body, ">blocked<") {
-		t.Fatal("a notification template alone must not be blocked")
+		t.Fatalf("still blocked after the values:\n%s", p.body)
 	}
 	id := requestID(t, p.body)
 	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"mr"}}))
 	mustContain(t, p.body, "Submitted. A merge request is open for review.")
 	branch := "pingone-promote/" + id
 	got := changedFiles(e.gl, branch)
-	want := []string{"definitions/pingone_notification_template_content.tf", "dev.tfvars", "imports.tf"}
+	want := []string{"definitions/pingone_notification_template_content.tf", "definitions/variables.tf", "dev.tfvars", "imports.tf", "main.tf", "prod.tfvars", "qa.tfvars", "stage.tfvars", "variables.tf"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("changed files %v, want %v", got, want)
 	}
@@ -131,6 +141,9 @@ func TestCoreNotificationTemplateAloneAsMergeRequest(t *testing.T) {
 	if !strings.Contains(files["dev.tfvars"], `"module.davinci.`+addr+`"`) || strings.Contains(files["qa.tfvars"], addr) {
 		t.Fatal("only the source overlay's import_ids gain the ID")
 	}
+	if !strings.Contains(files["qa.tfvars"], "noreply@qa.example.com") || !strings.Contains(files["dev.tfvars"], "noreply@dev.example.com") {
+		t.Fatal("each environment's sender address belongs in its own overlay")
+	}
 	if len(e.gl.MRs) != 1 {
 		t.Fatalf("MRs: %d", len(e.gl.MRs))
 	}
@@ -141,8 +154,10 @@ func TestCoreDefaultSignOnPolicyNeedsImportIDs(t *testing.T) {
 	e := newCoreEnv(t)
 	b, draft := coreDraft(t, e, "Single_Factor", addr)
 	p := previewDraft(t, b, draft, mainForm("Core Tester", noUpstream))
+	// The policy and its built-in action are adopted in every environment.
+	const action = "pingone_sign_on_policy_action.pingcli__Single_Factor_1"
 	for _, env := range e.cfg.Rollout {
-		mustContain(t, p.body, `name="i:`+env+`:`+addr+`"`)
+		mustContain(t, p.body, `name="i:`+env+`:`+addr+`"`, `name="i:`+env+`:`+action+`"`)
 	}
 	if strings.Count(p.body, ">blocked<") != len(e.cfg.Rollout) || strings.Contains(p.body, "Submit to GitLab") {
 		t.Fatalf("every rollout environment must be blocked until adopted:\n%s", p.body)
@@ -151,6 +166,7 @@ func TestCoreDefaultSignOnPolicyNeedsImportIDs(t *testing.T) {
 	form := url.Values{}
 	for env, id := range ids {
 		form.Set("i:"+env+":"+addr, id)
+		form.Set("i:"+env+":"+action, id+"/52000000-0000-4000-8000-000000000001")
 	}
 	p = b.wait(b.post(draft+"/values", form))
 	mustContain(t, p.body, "Submit to GitLab")

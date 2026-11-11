@@ -84,3 +84,16 @@ func TestFailedRunRedactsEchoedInput(t *testing.T) {
 	}
 	assertNoLeak(t, res)
 }
+
+func TestRedactOpaqueBearerTokens(t *testing.T) {
+	for _, in := range []string{
+		"Authorization: Bearer abcdefghijklmnop0123456789ACCESS",
+		"authorization=Basic dXNlcjpwYXNzd29yZA==",
+		"curl -H 'authorization: bearer zz-opaque.token~value_1234'",
+	} {
+		out := redactText(in)
+		if !strings.Contains(out, "[redacted]") || strings.Contains(out, "0123456789ACCESS") || strings.Contains(out, "dXNlcjpwYXNzd29yZA") || strings.Contains(out, "opaque.token") {
+			t.Errorf("redactText(%q) = %q", in, out)
+		}
+	}
+}
