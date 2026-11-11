@@ -52,6 +52,18 @@ The server never runs `terraform plan` or `apply` and holds no PingOne write cre
 | `internal/gitlab` | GitLab client with path allow-list, snapshots, `HostedCommitter`, status; `gitlabtest` is the fake. |
 | `terraform/root`, `davinci-app/`, `examples/gitlab-ci/` | Reference root; legacy DaVinci app and CI example. |
 
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `pingone-promote serve --config FILE [--check-config]` | The hosted server (ADR 0018). `--check-config` validates the configuration, the secrets file and the pinned tools, then exits. |
+| `pingone-promote check --root DIR` | Validates a config repository offline: overlays, conditional imports, no `*.auto.tfvars`, declared secrets, optional `terraform fmt`/`validate`. Exit 0 valid, 1 problems, 2 usage. |
+| `pingone-promote export --source ENV --flow "NAME or ID"` | Local export, neutralize and merge against a checkout (`--dry-run` to preview). Legacy, DaVinci flows. |
+| `pingone-promote request` | The legacy CI request job (`docs/gitlab-ci-integration.md`). Not needed by the hosted server. |
+
+Every command takes `--help`; `--version` prints the version.
+`scripts/build.sh` cross-builds CGO-free binaries and `SHA256SUMS` under `dist/`.
+
 ## Running the checks
 
 ```sh
