@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Fetch the pinned tools (checksums verified)
+        run: |
+          bash scripts/fetch-tools.sh --dest "$RUNNER_TEMP/tools" --with-go
+          echo "$RUNNER_TEMP/tools/go/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+
+      - name: Versions
+        run: |
+          go version
+          terraform version
+          "$RUNNER_TEMP/tools/pingcli-terraformer" --version
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+
+      - name: go build and vet
+        env:
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: go test
+        env:
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
+        # Engine tests run terraform fmt, validate and test (the provider is
+        # downloaded by terraform init) and the release terraformer binary's
+        # version contract, so none of them skip here.
+        run: |
+          export PINGONE_PROMOTE_TERRAFORM="$RUNNER_TEMP/tools/terraform"
+          export PINGONE_PROMOTE_REAL_TERRAFORMER="$RUNNER_TEMP/tools/pingcli-terraformer"
+          go test -count=1 -v ./... > "$RUNNER_TEMP/test.log" 2>&1 || { grep -E -B30 -- '^(--- FAIL|FAIL)' "$RUNNER_TEMP/test.log"; exit 1; }
+          grep -E '^(ok|FAIL|\?)' "$RUNNER_TEMP/test.log"
+          if grep -E -A1 -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E 'Windows|REGEN_FIXTURE|--- SKIP|^--$'; then
+            echo "unexpected skipped tests (see above)"; exit 1
+          fi
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Kept checks (DaVinci app, release scripts)
+        if: runner.os == 'Linux'
+        run: |
+          python3 -I davinci-app/check_app.py
+          node davinci-app/test_app.js
+          python3 -m unittest discover -s scripts -p test_release.py

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -163,7 +164,7 @@ func TestChildArgvAndEnvAreScrubbed(t *testing.T) {
 		var home string
 		for _, kv := range inv.Env {
 			name, val, _ := strings.Cut(kv, "=")
-			if !allowed[name] {
+			if !allowed[name] && !(runtime.GOOS == "windows" && name == "SYSTEMROOT") { // Windows: development only
 				t.Fatalf("child received %s", name)
 			}
 			if strings.Contains(val, "leak-") {
@@ -199,6 +200,9 @@ func TestChildArgvAndEnvAreScrubbed(t *testing.T) {
 }
 
 func TestPrivateDirsAre0700(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes; Windows is not a supported platform")
+	}
 	w, err := newWorkspace()
 	if err != nil {
 		t.Fatal(err)
