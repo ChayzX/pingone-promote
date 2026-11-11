@@ -58,9 +58,22 @@ jobs:
         run: |
           export PINGONE_PROMOTE_TERRAFORM="$RUNNER_TEMP/tools/terraform"
           export PINGONE_PROMOTE_REAL_TERRAFORMER="$RUNNER_TEMP/tools/pingcli-terraformer"
-          go test -count=1 -v ./... > "$RUNNER_TEMP/test.log" 2>&1 || { grep -E -B30 -- '^(--- FAIL|FAIL)' "$RUNNER_TEMP/test.log"; exit 1; }
+          # Failures are also written as annotations, readable without
+          # signing in to GitHub (job logs are not).
+          annotate() {
+            body="$(cat | head -c 3500 | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+            echo "::error title=$1::$body"
+          }
+          if ! go test -count=1 -v ./... > "$RUNNER_TEMP/test.log" 2>&1; then
+            grep -E -B2 -A12 -- '--- FAIL' "$RUNNER_TEMP/test.log" | grep -v -E '^\s+--- PASS' | annotate "go test failures"
+            grep -E '^(FAIL|panic|.*\[build failed\])' "$RUNNER_TEMP/test.log" | annotate "failing packages"
+            grep -E -A20 -- '^panic' "$RUNNER_TEMP/test.log" | annotate "panic" || true
+            exit 1
+          fi
           grep -E '^(ok|FAIL|\?)' "$RUNNER_TEMP/test.log"
-          if grep -E -A1 -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E 'Windows|REGEN_FIXTURE|--- SKIP|^--$'; then
+          if grep -E -A1 -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E 'Windows|REGEN_FIXTURE|--- SKIP|^--$' > "$RUNNER_TEMP/skips.txt"; then
+            grep -E -- '--- SKIP' "$RUNNER_TEMP/test.log" | annotate "unexpected skips"
+            cat "$RUNNER_TEMP/skips.txt" | annotate "skip reasons"
             echo "unexpected skipped tests (see above)"; exit 1
           fi
 
