@@ -86,3 +86,46 @@ jobs:
           python3 -I davinci-app/check_app.py
           node davinci-app/test_app.js
           python3 -m unittest discover -s scripts -p test_release.py
+
+  container:
+    name: Container image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build -f deploy/container/Containerfile -t pingone-promote:ci .
+
+      # The entrypoint is `serve --config ...`; override it to run the binary
+      # directly. Switch to --check-config against deploy/config.example.json
+      # once the server ships that flag (the example's terraform digest is a
+      # placeholder, so the check would fail until then).
+      - name: Run the image (version, user, tools)
+        run: |
+          docker run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:ci --version
+          test "$(docker run --rm --entrypoint id pingone-promote:ci -u)" = 10001
+          docker run --rm --read-only --tmpfs /tmp --entrypoint /opt/pingone-promote/tools/terraform pingone-promote:ci version
+          docker run --rm --entrypoint /opt/pingone-promote/tools/pingcli-terraformer pingone-promote:ci --version
+
+  rhel9-systemd:
+    name: systemd unit (UBI 9)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: systemd-analyze verify
+        run: |
+          docker run --rm -v "$PWD/deploy/systemd:/u:ro" registry.access.redhat.com/ubi9/ubi-init sh -ec '
+            useradd --system --shell /sbin/nologin pingone-promote
+            mkdir -p /opt/pingone-promote /etc/pingone-promote
+            printf "#!/bin/sh\nexit 0\n" > /opt/pingone-promote/pingone-promote
+            chmod 0755 /opt/pingone-promote/pingone-promote
+            cp /u/pingone-promote.service /etc/systemd/system/
+            systemd-analyze verify /etc/systemd/system/pingone-promote.service
+          '
