@@ -191,28 +191,66 @@ const (
 	SecretGitLabToken        = "PINGONE_PROMOTE_GITLAB_TOKEN"
 )
 
+// secretsMax bounds the secrets file.
+const secretsMax = 64 << 10
+
 // LoadSecrets reads NAME=value lines (blank lines and # comments allowed).
-// The file must be a regular file that other users cannot read and that
-// the group cannot access: mode 0600 or 0400. Values are never logged.
+//
+// The file must be a regular file (not a symbolic link) owned by the user
+// the server runs as, with mode 0600 or 0400 exactly: no group or other
+// permission bit. In a pod, mount the secret with defaultMode 0400 and set
+// runAsUser/fsGroup so the file's owner is the server's user. Errors name
+// line numbers and the expected names, never a value or an unknown name.
 func LoadSecrets(path string) (Secrets, error) {
 	var s Secrets
+	li, err := os.Lstat(path)
+	if err != nil {
+		return s, errors.New("cannot open the secrets file")
+	}
+	if li.Mode()&os.ModeSymlink != 0 {
+		return s, errors.New("the secrets file must not be a symbolic link; point secretsFile at the file itself")
+	}
+	if !li.Mode().IsRegular() {
+		return s, errors.New("the secrets file must be a regular file")
+	}
+	if err := checkSecretsFileInfo(li); err != nil {
+		return s, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return s, errors.New("cannot open the secrets file")
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
-		return s, errors.New("the secrets file must be a regular file")
+	// The file opened must be the one checked: refuse a swap between the
+	// two calls.
+	if err != nil || !os.SameFile(li, fi) || !fi.Mode().IsRegular() {
+		return s, errors.New("the secrets file changed while it was opened; try again")
 	}
-	if mode := fi.Mode().Perm(); mode != 0600 && mode != 0400 {
-		return s, errors.New("the secrets file must have mode 0600 or 0400; run chmod 600 on it")
+	if err := checkSecretsFileInfo(fi); err != nil {
+		return s, err
 	}
-	if fi.Size() > 64<<10 {
+	if fi.Size() > secretsMax {
 		return s, errors.New("the secrets file exceeds 64 KiB")
 	}
+	return parseSecrets(io.LimitReader(f, secretsMax+1))
+}
+
+// checkSecretsMode accepts exactly 0600 or 0400.
+func checkSecretsMode(mode os.FileMode) error {
+	if perm := mode.Perm(); perm != 0o600 && perm != 0o400 {
+		return errors.New("the secrets file must be readable by its owner only (mode 0600 or 0400, no group or other access); run chmod 600 on it")
+	}
+	return nil
+}
+
+// parseSecrets parses the NAME=value content. A value may contain '='; only
+// the first one separates the name.
+func parseSecrets(r io.Reader) (Secrets, error) {
+	var s Secrets
 	seen := map[string]bool{}
-	sc := bufio.NewScanner(io.LimitReader(f, (64<<10)+1))
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 4096), secretsMax+1)
 	for n := 1; sc.Scan(); n++ {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -223,11 +261,11 @@ func LoadSecrets(path string) (Secrets, error) {
 		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
 			v = v[1 : len(v)-1]
 		}
-		if !ok || v == "" {
-			return s, fmt.Errorf("secrets file line %d: expected NAME=value", n)
+		if !ok || k == "" || v == "" {
+			return Secrets{}, fmt.Errorf("secrets file line %d: expected NAME=value", n)
 		}
 		if seen[k] {
-			return Secrets{}, fmt.Errorf("secrets file line %d: duplicate name", n)
+			return Secrets{}, fmt.Errorf("secrets file line %d: a name is set twice", n)
 		}
 		seen[k] = true
 		switch k {
@@ -238,14 +276,14 @@ func LoadSecrets(path string) (Secrets, error) {
 		case SecretGitLabToken:
 			s.GitLabToken = v
 		default:
-			return Secrets{}, fmt.Errorf("secrets file line %d: unknown name", n)
+			return Secrets{}, fmt.Errorf("secrets file line %d: unknown name; expected %s, %s or %s", n, SecretWorkerClientID, SecretWorkerClientSecret, SecretGitLabToken)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return s, errors.New("cannot read the secrets file")
+		return Secrets{}, errors.New("cannot read the secrets file")
 	}
 	if s.WorkerClientID == "" || s.WorkerClientSecret == "" || s.GitLabToken == "" {
-		return s, fmt.Errorf("the secrets file must set %s, %s and %s", SecretWorkerClientID, SecretWorkerClientSecret, SecretGitLabToken)
+		return Secrets{}, fmt.Errorf("the secrets file must set %s, %s and %s", SecretWorkerClientID, SecretWorkerClientSecret, SecretGitLabToken)
 	}
 	return s, nil
 }
