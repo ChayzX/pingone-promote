@@ -104,6 +104,7 @@ Replace the `tags:` list with the project's runner tags
 | `PINGONE_PROMOTE_ROLLOUT` | file | - | - | the rollout chain in order, e.g. `testing,production` |
 | `PINGONE_PROMOTE_OVERLAY_PATTERN` | file | - | - | default `{env}.tfvars` (root overlays) |
 | `PINGONE_PROMOTE_MR_LABELS` | file | - | - | default `pingone-promote` |
+| `PINGONE_PROMOTE_BRANCH_PREFIX` | file | - | - | request branch prefix, default `pingone-promote/`, for example `CIAM-`. Must end with `/` or `-`, must equal DaVinci's `ppBranchPrefix`, and the request job's rule regex must match it |
 | `PINGONE_PROMOTE_SOURCE_ENVIRONMENT_ID` | optional | - | - | overrides `pingone_environment_id` from `<source>.tfvars` |
 | `PINGONE_PROMOTE_LAYOUT` | optional | - | - | `default` or `terraformer` file names |
 
@@ -113,7 +114,8 @@ Values are never printed.
 **Protected variables on request branches.** Protected variables are only
 available on protected branches. Two options:
 
-- *Recommended:* protect the wildcard `pingone-promote/*` with "Allowed to
+- *Recommended:* protect the wildcard `pingone-promote/*` (or `<prefix>*` when
+  `PINGONE_PROMOTE_BRANCH_PREFIX` is set) with "Allowed to
   push and merge: Developers + Maintainers". Protected variables (worker
   secret, GitLab token) are then available to the job, and only project
   members can create request branches. The job's own refusal of protected
@@ -190,7 +192,7 @@ Unknown fields fail. Maximum 256 KiB.
 | Field | Required | Rules |
 | --- | --- | --- |
 | `requestVersion` | yes | `1`; anything else is `unsupported_version` |
-| `requestId` | yes | `^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$` (DaVinci uses `YYYYMMDD-HHMMSS-xxxxxx`); the branch must be `pingone-promote/<requestId>` |
+| `requestId` | yes | `^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$` (DaVinci uses `YYYYMMDD-HHMMSS-xxxxxx`); the branch must be `<prefix><requestId>` (prefix `PINGONE_PROMOTE_BRANCH_PREFIX`, default `pingone-promote/`) |
 | `requestedBy` | no | a username, at most 128 characters, one line; written as `Requested-by:` |
 | `source` | yes | environment name; must be in `PINGONE_PROMOTE_SOURCES` (when set) and not in `PINGONE_PROMOTE_ROLLOUT` |
 | `scope` | no | `selected` (default) or `all`. `all` exports every supported resource of the source environment (no `--include-resources`; the flow deploy and enable resources are part of the full list) and requires `confirmAll: true`; without it validation fails (`invalid_field`, field `confirmAll`). `confirmAll` is refused with `selected`. The merge rules do not change: additive only, nothing is ever deleted, new resources are added, and because a whole-environment request has no selected item, every resource that differs from Git **keeps its Git version** unless `dependencyChoices` says `update` (role `environment` in `changes`) |
@@ -205,7 +207,7 @@ Unknown fields fail. Maximum 256 KiB.
 | `inlineValues` | no | DaVinci variable value variables that are the same in every environment |
 | `baseCommit` | no | commit SHA for three-way status (the commit last rolled out to the source) |
 | `mode` | no | `mr` (default) or `branch` |
-| `branchName` | no | if set, must be `pingone-promote/<requestId>` |
+| `branchName` | no | if set, must be `<prefix><requestId>` with the job's prefix |
 | `commitMessage` | no | at most 2000 characters; default `PingOne: <flow names> from <source>`; trailers are appended |
 | `title` | no | MR title, one line, at most 255 characters |
 | `description` | no | MR description prefix, at most 64 KiB; the change table and `Requested-by:`/`Request-id:` lines follow |

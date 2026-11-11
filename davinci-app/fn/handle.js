@@ -37,7 +37,7 @@ const envValue = (v) => {
 };
 
 // The request as the options say it (Preview sets dryRun). Whole-environment requests carry scope all and confirmAll, and no flow.
-const buildReq = (dryRun) => contract.buildRequest({ requestId: s.req.requestId, requestedBy: s.user.username, source: s.req.source, scope: s.req.scope,
+const buildReq = (dryRun) => contract.buildRequest({ requestId: s.req.requestId, branchPrefix: cfg.branchPrefix, requestedBy: s.user.username, source: s.req.source, scope: s.req.scope,
   confirmAll: s.req.confirmAll, flow: s.req.flow, options: s.req.options, dryRun: dryRun });
 // The addresses of the selected item in the last preview: the job refuses to exclude them.
 const knownOf = () => ({ selected: ((s.preview && s.preview.result && s.preview.result.changes) || []).filter((c) => c.role === 'selected').map((c) => c.address) });
@@ -163,7 +163,7 @@ switch (s.screen) {
       if (form.confirmAll !== true) { s.errors = { confirmAll: 'Tick the box to confirm: this brings the whole ' + source + ' environment into Git.' }; return render(); }
       const id = contract.newRequestId(now, Math.random().toString(36).slice(2, 8));
       const title = 'PingOne Promote: whole ' + source + ' environment';
-      s.req = { requestId: id, branch: contract.branchFor(id), source: source, scope: 'all', confirmAll: true, flow: null, lastCommit: '',
+      s.req = { requestId: id, branch: contract.branchFor(id, cfg.branchPrefix), source: source, scope: 'all', confirmAll: true, flow: null, lastCommit: '',
         options: { mode: 'mr', title: title, commitMessage: title, description: '', deps: {}, env: {}, secrets: {}, inline: [], applications: [], flowPolicies: [], exclude: [], confirmed: {} } };
       s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null; s.exc = null;
       return render('options');
@@ -190,7 +190,7 @@ switch (s.screen) {
       const rnd = Math.random().toString(36).slice(2, 8);
       const id = contract.newRequestId(now, rnd);
       const title = 'PingOne Promote: ' + f.name + ' from ' + s.search.source;
-      s.req = { requestId: id, branch: contract.branchFor(id), source: s.search.source, scope: 'selected', flow: { id: f.id, name: f.name }, lastCommit: '',
+      s.req = { requestId: id, branch: contract.branchFor(id, cfg.branchPrefix), source: s.search.source, scope: 'selected', flow: { id: f.id, name: f.name }, lastCommit: '',
         options: { mode: 'mr', title: title.slice(0, contract.LIMITS.title), commitMessage: title.slice(0, contract.LIMITS.title), description: '', deps: {}, env: {}, secrets: {},
           inline: [], applications: [], flowPolicies: [], exclude: [], confirmed: {} } };
       s.preview = null; s.run = null; s.sub = { state: 'idle' }; s.errors = {}; s.extras = null; s.exc = null;

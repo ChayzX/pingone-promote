@@ -21,11 +21,13 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
+	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/secretscan"
 )
 
-// BranchPrefix is the request branch namespace.
-const BranchPrefix = "pingone-promote/"
+// BranchPrefix is the default request branch namespace (Env.BranchPrefix
+// overrides it, for example "CIAM-").
+const BranchPrefix = gitlab.RequestBranchPrefix
 
 // Version is the only supported requestVersion.
 const Version = 1
@@ -119,7 +121,8 @@ type Request struct {
 	// the source environment).
 	BaseCommit string `json:"baseCommit,omitempty"`
 	Mode       string `json:"mode"` // "mr" (default) or "branch"
-	// BranchName must be pingone-promote/<requestId> when set.
+	// BranchName must be <branch prefix><requestId> when set; the engine
+	// checks the prefix against its configuration.
 	BranchName    string `json:"branchName,omitempty"`
 	CommitMessage string `json:"commitMessage,omitempty"`
 	Title         string `json:"title,omitempty"`
@@ -319,8 +322,8 @@ func (r *Request) Validate() error {
 	if r.BaseCommit != "" && !shaRE.MatchString(r.BaseCommit) {
 		return invalid("baseCommit", "must be a commit SHA")
 	}
-	if r.BranchName != "" && r.BranchName != BranchPrefix+r.RequestID {
-		return invalid("branchName", "must be "+BranchPrefix+r.RequestID)
+	if r.BranchName != "" && (!strings.HasSuffix(r.BranchName, r.RequestID) || !gitlab.ValidRequestBranchPrefix(strings.TrimSuffix(r.BranchName, r.RequestID))) {
+		return invalid("branchName", "must be <branch prefix>"+r.RequestID)
 	}
 	switch r.Mode {
 	case "":

@@ -126,7 +126,7 @@ H['cancel:branch'] = () => {
   if (status === 404) { lib.note(s, 'info', 'The branch ' + c.branch + ' is already gone.'); action = 'none'; s.cancel = null; return; }
   if (!ok) { gone(); s.cancel = null; return; }
   const head = lib.obj(o.commit);
-  const idPart = c.branch.slice(contract.BRANCH_PREFIX.length);
+  const idPart = c.branch.slice(cfg.branchPrefix.length);
   const isRequestCommit = new RegExp('^pingone-promote: (preview|submit) request ' + idPart + '$').test(lib.str(head.title));
   if (isRequestCommit && (!c.sha || head.id === c.sha)) {
     s.url = lib.gl(cfg, 'deleteBranch', { branch: c.branch }).url;
@@ -237,7 +237,7 @@ H['requests:mrList'] = () => {
 H['requests:requestBranches'] = () => {
   if (!ok) { gone(); return; }
   const withMr = s.requests.list.map((m) => m.sourceBranch);
-  s.requests.branches = list.filter((b) => b && contract.isRequestBranch(b.name) && withMr.indexOf(b.name) < 0).slice(0, 20).map((b) => {
+  s.requests.branches = list.filter((b) => b && contract.isRequestBranch(b.name, cfg.branchPrefix) && withMr.indexOf(b.name) < 0).slice(0, 20).map((b) => {
     const head = lib.obj(b.commit);
     const t = lib.str(head.title);
     const kind = /^pingone-promote: preview request /.test(t) ? 'preview' : (/^pingone-promote: submit request /.test(t) ? 'submit' : 'written');

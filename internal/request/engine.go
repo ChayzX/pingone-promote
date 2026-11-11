@@ -68,6 +68,10 @@ type Env struct {
 	// CI facts: the request branch, the commit the job checked out, the
 	// default branch and the project URL.
 	Branch, Head, DefaultBranch, ProjectURL string
+	// BranchPrefix is the request branch namespace (default
+	// pingone-promote/, PINGONE_PROMOTE_BRANCH_PREFIX). The job runs only on
+	// <BranchPrefix><requestId>.
+	BranchPrefix string
 	// MRLabels are added to merge requests (default pingone-promote).
 	MRLabels []string
 	// PriorCommit finds an earlier commit of this request on the branch
@@ -257,11 +261,25 @@ func set(list []string) map[string]bool {
 	return out
 }
 
+func (r *runner) branchPrefix() string {
+	if r.env.BranchPrefix != "" {
+		return r.env.BranchPrefix
+	}
+	return BranchPrefix
+}
+
 // checkContext enforces the branch and environment rules.
 func (r *runner) checkContext() error {
 	req, env := r.req, r.env
 	if err := r.layout.Validate(); err != nil {
 		return err
+	}
+	prefix := r.branchPrefix()
+	if !gitlab.ValidRequestBranchPrefix(prefix) {
+		return fmt.Errorf("the request branch prefix %q is invalid: it must start with a letter or digit, end with / or -, and be at most 60 characters", prefix)
+	}
+	if req.BranchName != "" && req.BranchName != prefix+req.RequestID {
+		return invalid("branchName", fmt.Sprintf("must be %s%s (the job's branch prefix is %s)", prefix, req.RequestID, prefix))
 	}
 	if env.Committer != nil {
 		switch {
@@ -269,8 +287,8 @@ func (r *runner) checkContext() error {
 			return errors.New("the request branch and commit are unknown (CI_COMMIT_BRANCH, CI_COMMIT_SHA)")
 		case env.Branch == env.DefaultBranch:
 			return errors.New("requests never run on the default branch")
-		case env.Branch != BranchPrefix+req.RequestID:
-			return fmt.Errorf("request %s must run on branch %s%s, not %s", req.RequestID, BranchPrefix, req.RequestID, env.Branch)
+		case env.Branch != prefix+req.RequestID:
+			return fmt.Errorf("request %s must run on branch %s%s, not %s", req.RequestID, prefix, req.RequestID, env.Branch)
 		}
 	}
 	rollout := map[string]bool{}
@@ -735,7 +753,7 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 		RootFiles: []string{r.layout.ModuleFile, r.layout.VariablesFile, r.layout.SecretsFile, r.layout.ImportsFile, "versions.tf"}}
 	out, err := r.env.Committer.CommitToBranch(ctx, gitlab.BranchCommit{RequestID: req.RequestID, Branch: r.env.Branch, ExpectedHead: r.env.Head,
 		Mode: mode, CommitMessage: r.commitMessage(), Title: title, Description: r.description(), Files: files, DeleteRequestFile: true,
-		Policy: policy, Labels: labels})
+		Policy: policy, Labels: labels, BranchPrefix: r.branchPrefix()})
 	var done *gitlab.AlreadyCommittedError
 	var conflict *gitlab.ConflictError
 	var pre *gitlab.PreflightError

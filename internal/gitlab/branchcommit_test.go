@@ -101,3 +101,40 @@ func TestCommitToBranchRefusals(t *testing.T) {
 		t.Fatal("no MR on refusal")
 	}
 }
+
+func TestRequestBranchPrefix(t *testing.T) {
+	for _, p := range []string{"pingone-promote/", "CIAM-", "CIAM-promote-", "team/pingone-promote/", "ciam_ops-"} {
+		if !ValidRequestBranchPrefix(p) {
+			t.Errorf("%q should be a valid prefix", p)
+		}
+	}
+	for _, p := range []string{"", "CIAM", "-CIAM-", "/x/", "a//b/", "a..b-", "a b-", "main", "x~-", strings.Repeat("a", 60) + "-", "a/.b/"} {
+		if ValidRequestBranchPrefix(p) {
+			t.Errorf("%q should be refused", p)
+		}
+	}
+}
+
+func TestCommitToBranchCustomPrefix(t *testing.T) {
+	f := gitlabtest.New(t, map[string]string{"main.tf": "module \"davinci\" {\n  source = \"./definitions\"\n}\n"})
+	head := f.CreateBranch("CIAM-req-1", "main", map[string]string{RequestFile: "{}"})
+	s := branchSubmitter(t, f)
+	bc := requestCommit(head)
+	bc.Branch = "CIAM-req-1"
+	// The default prefix refuses a CIAM- branch: the prefix is the job's configuration.
+	if _, err := s.CommitToBranch(context.Background(), bc); err == nil || !strings.Contains(err.Error(), "pingone-promote/<request>") {
+		t.Fatalf("want a branch refusal with the default prefix, got %v", err)
+	}
+	bc.BranchPrefix = "CIAM-"
+	if _, err := s.CommitToBranch(context.Background(), bc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.Files("CIAM-req-1")[RequestFile]; ok {
+		t.Fatal("request file must be deleted in the commit")
+	}
+	bc = requestCommit(head)
+	bc.BranchPrefix = "CIAM"
+	if _, err := s.CommitToBranch(context.Background(), bc); err == nil || !strings.Contains(err.Error(), "prefix is invalid") {
+		t.Fatalf("want an invalid prefix error, got %v", err)
+	}
+}

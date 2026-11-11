@@ -28,6 +28,8 @@ contract.EXCLUDE_KINDS = {
 // ---- validation rules, as request.go applies them ---------------------------------------
 contract.RE = {
   requestId: /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/,
+  appRequestId: /^[0-9]{8}-[0-9]{6}-[a-z0-9]{6}$/,
+  branchPrefix: /^[A-Za-z0-9](?:[A-Za-z0-9._-]|\/[A-Za-z0-9])*[\/-]$/,
   env: /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/,
   ident: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
   secretName: /^[A-Za-z][A-Za-z0-9_]{0,127}$/,
@@ -44,10 +46,16 @@ contract.newRequestId = (t, rnd) => {
   const d = new Date(t).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   return d + '-' + String(rnd).replace(/[^a-z0-9]/g, '').slice(0, 6).padEnd(6, '0');
 };
-contract.branchFor = (requestId) => contract.BRANCH_PREFIX + requestId;
-contract.isRequestBranch = (b) => {
+// The request branch is <prefix><requestId>. The prefix is a setting (ppBranchPrefix, the job's
+// PINGONE_PROMOTE_BRANCH_PREFIX); it defaults to BRANCH_PREFIX and must end with / or -.
+contract.validBranchPrefix = (p) => typeof p === 'string' && p.length <= 60 && contract.RE.branchPrefix.test(p) && p.indexOf('..') < 0 && !/\/\./.test(p) && !/\.lock[\/-]$/i.test(p);
+contract.branchFor = (requestId, prefix) => (prefix || contract.BRANCH_PREFIX) + requestId;
+// Only branches the app itself names: the prefix and a request ID in the app's own format (newRequestId). A person's
+// branch that happens to share the prefix (CIAM-1234-fix) is never listed, read or deleted by the app.
+contract.isRequestBranch = (b, prefix) => {
   const s = String(b || '');
-  return s.indexOf(contract.BRANCH_PREFIX) === 0 && contract.RE.requestId.test(s.slice(contract.BRANCH_PREFIX.length));
+  const p = prefix || contract.BRANCH_PREFIX;
+  return s.indexOf(p) === 0 && contract.RE.appRequestId.test(s.slice(p.length));
 };
 
 // ---- request.json -------------------------------------------------------------------
@@ -72,7 +80,7 @@ contract.buildRequest = (d) => {
   put('exclude', (o.exclude || []).map(contract.excludeEntry));
   put('inlineValues', (o.inline || []).slice().sort());
   r.mode = o.mode;
-  r.branchName = contract.branchFor(d.requestId);
+  r.branchName = contract.branchFor(d.requestId, d.branchPrefix);
   if (o.commitMessage) { r.commitMessage = o.commitMessage; }
   if (o.title) { r.title = o.title; }
   if (o.description) { r.description = o.description; }
@@ -107,7 +115,7 @@ contract.validateRequest = (r, cfg, known) => {
   const bad = (field, message) => out.push({ field: field, message: message });
   const printable = (s, max) => typeof s === 'string' && lib.utf8(s).length <= max && !/[\u0000-\u0008\u000b-\u001f]/.test(s);
   if (!contract.RE.requestId.test(r.requestId)) { bad('requestId', 'must match ' + contract.RE.requestId.source); }
-  if (r.branchName !== contract.branchFor(r.requestId)) { bad('branchName', 'must be ' + contract.branchFor(r.requestId)); }
+  if (r.branchName !== contract.branchFor(r.requestId, cfg && cfg.branchPrefix)) { bad('branchName', 'must be ' + contract.branchFor(r.requestId, cfg && cfg.branchPrefix)); }
   if (!printable(r.requestedBy, contract.LIMITS.requestedBy) || /[\n\t]/.test(r.requestedBy)) { bad('requestedBy', 'must be one line of at most 128 characters'); }
   if (!contract.RE.env.test(r.source)) { bad('source', 'must be an environment name'); }
   if (cfg.rollout.indexOf(r.source) >= 0) { bad('source', 'must not be a rollout environment'); }
@@ -192,7 +200,7 @@ contract.commitBody = (req, defaultBranch, lastCommitId) => {
   const action = { action: lastCommitId ? 'update' : 'create', file_path: contract.REQUEST_FILE, encoding: 'base64',
     content: lib.b64(JSON.stringify(req, null, 2) + '\n') };
   if (lastCommitId) { action.last_commit_id = lastCommitId; }
-  const body = { branch: contract.branchFor(req.requestId), commit_message: contract.commitMessage(req), actions: [action] };
+  const body = { branch: req.branchName, commit_message: contract.commitMessage(req), actions: [action] };
   if (!lastCommitId) { body.start_branch = defaultBranch; }
   return body;
 };
