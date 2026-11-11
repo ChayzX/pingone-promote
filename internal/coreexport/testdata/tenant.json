@@ -27,7 +27,7 @@
     ]},
     "signOnPolicies": {"embedded": "signOnPolicies", "items": [
       {"id": "24000000-0000-4000-8000-000000000001", "name": "Single_Factor", "default": true},
-      {"id": "24000000-0000-4000-8000-000000000002", "name": "Customer Login", "description": "Login then MFA"}
+      {"id": "24000000-0000-4000-8000-000000000002", "name": "Customer_Login", "description": "Login then MFA"}
     ]},
     "signOnPolicies/24000000-0000-4000-8000-000000000001/actions": {"embedded": "actions", "items": [
       {"id": "24100000-0000-4000-8000-000000000001", "type": "LOGIN", "priority": 1, "recoveryEnabled": true}
@@ -37,14 +37,14 @@
       {"id": "24100000-0000-4000-8000-000000000003", "type": "MULTI_FACTOR_AUTHENTICATION", "priority": 2, "deviceAuthenticationPolicy": {"id": "25000000-0000-4000-8000-000000000002"}, "noDeviceMode": "BYPASS"}
     ]},
     "deviceAuthenticationPolicies": {"embedded": "deviceAuthenticationPolicies", "items": [
-      {"id": "25000000-0000-4000-8000-000000000001", "name": "Default MFA Policy", "default": true, "policyType": "PINGONE_MFA", "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}},
+      {"id": "25000000-0000-4000-8000-000000000001", "name": "Default MFA Policy", "default": true, "policyType": "PING_ONE_MFA", "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}},
       {"id": "25000000-0000-4000-8000-000000000002", "name": "Strong MFA", "default": false, "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}}
     ]},
     "fido2Policies": {"embedded": "fido2Policies", "items": [
       {"id": "25100000-0000-4000-8000-000000000001", "name": "Passkeys", "relyingPartyId": "dev.example.com", "userVerification": {"enforceDuringAuthentication": true, "option": "REQUIRED"},
         "attestationRequirements": "NONE", "authenticatorAttachment": "BOTH", "backupEligibility": {"allow": true, "enforceDuringAuthentication": true},
         "deviceDisplayName": "fidoDeviceName", "discoverableCredentials": "REQUIRED", "mdsAuthenticatorsRequirements": {"enforceDuringAuthentication": false, "option": "NONE"},
-        "userDisplayNameAttributes": {"attributes": [{"name": "email"}]}}
+        "userDisplayNameAttributes": {"attributes": [{"name": "username"}, {"name": "email"}]}}
     ]},
     "applications": {"embedded": "applications", "items": [
       {"id": "26000000-0000-4000-8000-000000000001", "name": "Web Portal", "protocol": "OPENID_CONNECT", "type": "WEB_APP", "enabled": true,
@@ -113,7 +113,7 @@
       {"id": "32000000-0000-4000-8000-000000000001", "name": "Default quotas", "quotas": [{"type": "ENVIRONMENT", "deliveryMethods": ["SMS"], "total": 100}]}
     ]},
     "forms": {"embedded": "forms", "items": [
-      {"id": "33000000-0000-4000-8000-000000000001", "name": "Customer signup", "category": "CUSTOM", "cols": 4, "markRequired": true, "markOptional": false, "components": {"fields": [{"type": "TEXT", "key": "user.email", "label": "Email", "position": {"row": 0, "col": 0}, "required": true}]}}
+      {"id": "33000000-0000-4000-8000-000000000001", "name": "Customer signup", "category": "CUSTOM", "cols": 4, "markRequired": true, "markOptional": false, "components": {"fields": [{"type": "TEXT", "key": "user.email", "label": "Email", "position": {"row": 0, "col": 0}, "required": true, "validation": {"type": "NONE"}}]}}
     ]},
     "agreements": {"embedded": "agreements", "items": [
       {"id": "34000000-0000-4000-8000-000000000001", "name": "Terms of Service", "enabled": true, "reconsentPeriodDays": 365}
@@ -126,7 +126,7 @@
     ]},
     "languages": {"embedded": "languages", "items": [
       {"id": "35000000-0000-4000-8000-000000000001", "locale": "en", "enabled": true, "default": true, "customerAdded": false},
-      {"id": "35000000-0000-4000-8000-000000000002", "locale": "fr-CA", "enabled": true, "default": false, "customerAdded": true}
+      {"id": "35000000-0000-4000-8000-000000000002", "locale": "fr-BE", "enabled": true, "default": false, "customerAdded": true}
     ]},
     "languages/35000000-0000-4000-8000-000000000001/localizationStrings": {"embedded": "localizationStrings", "items": []},
     "languages/35000000-0000-4000-8000-000000000002/localizationStrings": {"embedded": "localizationStrings", "items": []},
@@ -134,8 +134,8 @@
       {"id": "36000000-0000-4000-8000-000000000001", "name": "Default Risk Policy", "default": true}
     ]},
     "riskPredictors": {"embedded": "riskPredictors", "items": [
-      {"id": "36100000-0000-4000-8000-000000000001", "name": "Anonymous Network", "compactName": "anonymousNetwork", "default": true},
-      {"id": "36100000-0000-4000-8000-000000000002", "name": "VIP list", "compactName": "vipList", "default": false, "description": "Custom predictor"}
+      {"id": "36100000-0000-4000-8000-000000000001", "name": "Anonymous Network", "compactName": "anonymousNetwork", "type": "ANONYMOUS_NETWORK", "default": true, "allowedCidrList": ["10.0.0.0/8"]},
+      {"id": "36100000-0000-4000-8000-000000000002", "name": "VIP list", "compactName": "vipList", "type": "MAP", "default": false, "description": "Custom predictor", "contains": "${event.user.groups}", "betweenRanges": {"high": {"minValue": 75, "maxValue": 100}}}
     ]},
     "apiServers": {"embedded": "apiServers", "items": [
       {"id": "37000000-0000-4000-8000-000000000001", "name": "Orders gateway", "baseUrls": ["https://api.dev.example.com/orders"], "authorizationServer": {"type": "PINGONE_SSO", "resourceId": "27000000-0000-4000-8000-000000000002"}}
@@ -147,10 +147,10 @@
     "applicationResources": {"embedded": "applicationResources", "items": []},
     "decisionEndpoints": {"embedded": "decisionEndpoints", "items": []},
     "verifyPolicies": {"embedded": "verifyPolicies", "items": [
-      {"id": "37500000-0000-4000-8000-000000000001", "name": "Standard ID check", "description": "Government ID and liveness", "default": false}
+      {"id": "37500000-0000-4000-8000-000000000001", "name": "Standard ID check", "description": "Government ID and liveness", "default": false, "governmentId": {"verify": "REQUIRED"}, "facialComparison": {"verify": "REQUIRED", "threshold": "MEDIUM"}, "liveness": {"verify": "REQUIRED", "threshold": "MEDIUM"}}
     ]},
     "credentialTypes": {"embedded": "credentialTypes", "items": [
-      {"id": "38000000-0000-4000-8000-000000000001", "title": "Employee badge", "description": "Badge", "cardDesignTemplate": "<svg></svg>", "metadata": {"name": "Badge", "fields": []}}
+      {"id": "38000000-0000-4000-8000-000000000001", "title": "Employee badge", "description": "Badge", "cardDesignTemplate": "<svg><text>${cardTitle}</text><text>${cardSubtitle}</text></svg>", "metadata": {"name": "Badge", "columns": 1, "fields": [{"id": "field-1", "type": "Directory Attribute", "title": "Name", "attribute": "name.formatted", "isVisible": true}]}}
     ]},
     "credentialTypes/38000000-0000-4000-8000-000000000001/issuanceRules": {"embedded": "issuanceRules", "items": []},
     "alertChannels": {"embedded": "alertChannels", "items": [

@@ -51,8 +51,8 @@ func TestInventoryReadsEveryFamilyReadOnly(t *testing.T) {
 		"pingone_password_policy.pingcli__Strict",
 		"pingone_group.pingcli__Support-0020-Agents",
 		"pingone_schema_attribute.pingcli__loyaltyTier",
-		"pingone_sign_on_policy.pingcli__Customer-0020-Login",
-		"pingone_sign_on_policy_action.pingcli__Customer-0020-Login_2",
+		"pingone_sign_on_policy.pingcli__Customer_Login",
+		"pingone_sign_on_policy_action.pingcli__Customer_Login_2",
 		"pingone_mfa_device_policy.pingcli__Strong-0020-MFA",
 		"pingone_mfa_device_policy_default.pingcli__Default-0020-MFA-0020-Policy",
 		"pingone_mfa_settings.pingcli__environment",
@@ -67,7 +67,7 @@ func TestInventoryReadsEveryFamilyReadOnly(t *testing.T) {
 		"pingone_notification_template_content.pingcli__recovery_code_template_en_Email",
 		"pingone_form.pingcli__Customer-0020-signup",
 		"pingone_agreement_localization_revision.pingcli__Terms-0020-of-0020-Service_en_2026-01-01T00-003A-00-003A-00Z",
-		"pingone_language.pingcli__fr-CA",
+		"pingone_language.pingcli__fr-BE",
 		"pingone_risk_predictor.pingcli__vipList",
 		"pingone_authorize_api_service_operation.pingcli__Orders-0020-gateway_List-0020-orders",
 		"pingone_credential_type.pingcli__Employee-0020-badge",
@@ -86,7 +86,7 @@ func TestInventoryReadsEveryFamilyReadOnly(t *testing.T) {
 		}
 	}
 	// Built-in objects are marked for adoption.
-	for _, a := range []string{"pingone_sign_on_policy.pingcli__Single_Factor", "pingone_population_default.pingcli__Default", "pingone_language.pingcli__en"} {
+	for _, a := range []string{"pingone_sign_on_policy.pingcli__Single_Factor", "pingone_population_default.pingcli__Default"} {
 		if o := inv.Object(a); o == nil || !o.Builtin {
 			t.Errorf("%s should be a built-in object", a)
 		}
@@ -157,7 +157,7 @@ func TestRenderEverythingParsesAndNeutralizes(t *testing.T) {
 		"pingone_password_policy.pingcli__Strict.id",            // population -> password policy
 		"pingone_population.pingcli__Customers.id",              // sign-on action -> population
 		"pingone_mfa_device_policy.pingcli__Strong-0020-MFA.id", // MFA action -> device policy
-		"pingone_sign_on_policy.pingcli__Customer-0020-Login.id",
+		"pingone_sign_on_policy.pingcli__Customer_Login.id",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("definitions lack the reference %s", want)
@@ -198,7 +198,7 @@ func TestRenderedBlocksHaveRequiredAttributes(t *testing.T) {
 	want := map[string]string{
 		"pingone_agreement_localization_enable.pingcli__Terms-0020-of-0020-Service_en":                                  "34000000-0000-4000-8000-000000000001/34100000-0000-4000-8000-000000000001",
 		"pingone_agreement_localization_revision.pingcli__Terms-0020-of-0020-Service_en_2026-01-01T00-003A-00-003A-00Z": "34000000-0000-4000-8000-000000000001/34100000-0000-4000-8000-000000000001/34200000-0000-4000-8000-000000000001",
-		"pingone_language_update.pingcli__fr-CA":                                                                        "35000000-0000-4000-8000-000000000002",
+		"pingone_language_update.pingcli__fr-BE":                                                                        "35000000-0000-4000-8000-000000000002",
 		"pingone_group_nesting.pingcli__Support-0020-Agents_Staff":                                                      "22000000-0000-4000-8000-000000000002/22000000-0000-4000-8000-000000000001",
 	}
 	for a, id := range want {

@@ -4,7 +4,7 @@ Generated from `internal/catalog` by `PINGONE_PROMOTE_WRITE_COVERAGE=1 go test .
 
 Every resource of the pinned `pingidentity/pingone` provider 1.24.0 is listed. **Exporter**: `pingcli-terraformer` (pinned v0.6.0, DaVinci) or `pingone-api` (the native read-only PingOne exporter, ADR 0019). **Environment-specific values** become per-environment variables in `<env>.tfvars`; the environment ID, certificate and key IDs, and IDs of resources that are not exported are always per-environment. **Built-in** objects exist in every environment and are adopted with `import_ids`, never created. **Live** is `no` until the live acceptance case in `docs/acceptance/core-export.md` has passed on a real tenant: API paths and field names are assumptions until then.
 
-Totals: 54 covered, 32 covered with documented limits, 15 not possible (101 resources).
+Totals: 52 covered, 33 covered with documented limits, 16 not possible (101 resources).
 
 
 ## davinci
@@ -131,16 +131,16 @@ Totals: 54 covered, 32 covered with documented limits, 15 not possible (101 reso
 
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pingone_language` | covered with documented limits | pingone-api | built-in adopted when `customerAdded=false` | - | no | the predefined languages exist in every environment and are adopted; only custom locales are created |
+| `pingone_language` | covered with documented limits | pingone-api | - | - | no | only languages the customer added are created; predefined languages are enabled or made default with pingone_language_update |
 | `pingone_language_translation` | covered with documented limits | pingone-api | - | - | no | translations are exported as the full key/value set of the locale; partial edits are not merged |
-| `pingone_language_update` | covered | pingone-api | exported with its language | - | no | derived from the language's enabled and default flags |
+| `pingone_language_update` | covered with documented limits | pingone-api | per environment: `language_id` | - | no | the language ID of a predefined language is a per-environment value |
 
 ## protect
 
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pingone_risk_policy` | covered | pingone-api | - | - | no | - |
-| `pingone_risk_predictor` | covered with documented limits | pingone-api | built-in adopted when `default=true` | - | no | predefined predictors exist in every environment and are adopted by import |
+| `pingone_risk_policy` | not possible | - | - | - | no | not yet: the API stores a risk policy as a set of condition-based policies, and the provider's policy_weights or policy_scores form cannot be derived from it without a recorded live sample; terraform validate rejects the generic rendering. Export it after the live acceptance case records the API shape |
+| `pingone_risk_predictor` | covered with documented limits | pingone-api | built-in adopted when `default=true` | - | no | predefined predictors exist in every environment and are adopted by import; the type names that select each predictor block are assumptions to confirm live |
 
 ## authorize
 

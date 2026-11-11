@@ -326,22 +326,32 @@ var defs = []Def{
 		d.Ancestors, d.Import = map[string]string{"agreement_id": "pingone_agreement"}, ImportGrandparentParentID
 	}),
 	with(api("pingone_language", "languages", "languages", "languages", "locale"), func(d *Def) {
-		d.Status, d.Reason, d.Builtin = Limited, "the predefined languages exist in every environment and are adopted; only custom locales are created", "customerAdded=false"
+		// The provider only creates locales that are not predefined;
+		// predefined ones are managed with pingone_language_update alone.
+		d.Status, d.Reason, d.Match = Limited, "only languages the customer added are created; predefined languages are enabled or made default with pingone_language_update", "customerAdded=true"
 	}),
-	with(child("pingone_language_update", "languages", "pingone_language", "language_id", "", "", true), func(d *Def) {
-		d.Reason = "derived from the language's enabled and default flags"
-		d.Import = ImportID
+	with(api("pingone_language_update", "languages", "languages", "languages", "locale"), func(d *Def) {
+		// One per language, predefined or added: enabled and default flags.
+		// A predefined language's ID differs per environment, so it is a
+		// per-environment value; an added language is a reference.
+		d.Status, d.Reason = Limited, "the language ID of a predefined language is a per-environment value"
+		d.Rename, d.EnvLocal = map[string]string{"language_id": "id"}, []string{"language_id"}
 	}),
 	with(api("pingone_language_translation", "languages", "languages/{parent}/localizationStrings", "localizationStrings", "locale"), func(d *Def) {
-		d.Parent = "pingone_language"
+		d.Parent = "pingone_language_update"
 		d.Status, d.Reason = Limited, "translations are exported as the full key/value set of the locale; partial edits are not merged"
 	}),
 	none("pingone_image", "branding", "image bytes are uploaded, not readable as configuration; manage images by hand and reference their IDs per environment"),
 
 	// --- Protect, Authorize, Verify, Credentials ---
-	api("pingone_risk_policy", "protect", "riskPolicySets", "riskPolicySets", "name"),
+	none("pingone_risk_policy", "protect", "not yet: the API stores a risk policy as a set of condition-based policies, and the provider's policy_weights or policy_scores form cannot be derived from it without a recorded live sample; terraform validate rejects the generic rendering. Export it after the live acceptance case records the API shape"),
 	with(api("pingone_risk_predictor", "protect", "riskPredictors", "riskPredictors", "compactName"), func(d *Def) {
-		d.Status, d.Reason, d.Builtin = Limited, "predefined predictors exist in every environment and are adopted by import", "default=true"
+		d.Status, d.Reason, d.Builtin = Limited, "predefined predictors exist in every environment and are adopted by import; the type names that select each predictor block are assumptions to confirm live", "default=true"
+		d.Hoist = map[string]string{"predictor_adversary_in_the_middle": "type=ADVERSARY_IN_THE_MIDDLE", "predictor_anonymous_network": "type=ANONYMOUS_NETWORK",
+			"predictor_bot_detection": "type=BOT", "predictor_composite": "type=COMPOSITE", "predictor_custom_map": "type=MAP", "predictor_device": "type=DEVICE",
+			"predictor_email_reputation": "type=EMAIL_REPUTATION", "predictor_geovelocity": "type=GEO_VELOCITY", "predictor_ip_reputation": "type=IP_REPUTATION",
+			"predictor_traffic_anomaly": "type=TRAFFIC_ANOMALY", "predictor_user_location_anomaly": "type=USER_LOCATION_ANOMALY",
+			"predictor_user_risk_behavior": "type=USER_RISK_BEHAVIOR", "predictor_velocity": "type=VELOCITY"}
 	}),
 	with(api("pingone_authorize_api_service", "authorize", "apiServers", "apiServers", "name"), func(d *Def) {
 		d.EnvLocal = []string{"base_urls"}

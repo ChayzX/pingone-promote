@@ -333,6 +333,11 @@ func (r *renderer) value(a catalog.Attr, v any, path string, root map[string]any
 				sort.Strings(parts) // sets come back in no stable order
 			}
 			if len(parts) == 0 {
+				// An explicitly empty list is configuration (and may be
+				// required); a list of non-objects is not this attribute.
+				if len(items) == 0 {
+					return "[]", nil
+				}
 				return "", nil
 			}
 			return "[\n" + strings.Join(parts, ",\n") + "\n]", nil

@@ -101,9 +101,9 @@ var families = []struct {
 	{"applications", "pingone_application.pingcli__Web-0020-Portal", []string{"pingone_application_attribute_mapping.pingcli__Web-0020-Portal_email",
 		"pingone_application_sign_on_policy_assignment.pingcli__Web-0020-Portal_1", "pingone_application_flow_policy_assignment.pingcli__Web-0020-Portal_1",
 		"pingone_application_resource_grant.pingcli__Web-0020-Portal_Orders-0020-API"},
-		[]string{"pingone_sign_on_policy.pingcli__Customer-0020-Login", "pingone_resource.pingcli__Orders-0020-API", "pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy"}},
+		[]string{"pingone_sign_on_policy.pingcli__Customer_Login", "pingone_resource.pingcli__Orders-0020-API", "pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy"}},
 	{"resources_scopes_grants", "pingone_resource.pingcli__Orders-0020-API", []string{"pingone_resource_scope.pingcli__Orders-0020-API_orders-003A-read"}, nil},
-	{"sign_on", "pingone_sign_on_policy.pingcli__Customer-0020-Login", []string{"pingone_sign_on_policy_action.pingcli__Customer-0020-Login_1", "pingone_sign_on_policy_action.pingcli__Customer-0020-Login_2"},
+	{"sign_on", "pingone_sign_on_policy.pingcli__Customer_Login", []string{"pingone_sign_on_policy_action.pingcli__Customer_Login_1", "pingone_sign_on_policy_action.pingcli__Customer_Login_2"},
 		[]string{"pingone_population.pingcli__Customers", "pingone_password_policy.pingcli__Strict", "pingone_mfa_device_policy.pingcli__Strong-0020-MFA"}},
 	{"directory", "pingone_population.pingcli__Customers", nil, []string{"pingone_password_policy.pingcli__Strict"}},
 	{"directory", "pingone_group.pingcli__Support-0020-Agents", []string{"pingone_group_nesting.pingcli__Support-0020-Agents_Staff"},
@@ -120,8 +120,9 @@ var families = []struct {
 	{"forms", "pingone_form.pingcli__Customer-0020-signup", nil, nil},
 	{"agreements", "pingone_agreement.pingcli__Terms-0020-of-0020-Service", []string{"pingone_agreement_enable.pingcli__Terms-0020-of-0020-Service",
 		"pingone_agreement_localization.pingcli__Terms-0020-of-0020-Service_en", "pingone_agreement_localization_enable.pingcli__Terms-0020-of-0020-Service_en",
-		"pingone_agreement_localization_revision.pingcli__Terms-0020-of-0020-Service_en_2026-01-01T00-003A-00-003A-00Z"}, []string{"pingone_language.pingcli__en"}},
-	{"languages", "pingone_language.pingcli__fr-CA", []string{"pingone_language_update.pingcli__fr-CA"}, nil},
+		"pingone_agreement_localization_revision.pingcli__Terms-0020-of-0020-Service_en_2026-01-01T00-003A-00-003A-00Z"}, []string{"pingone_language_update.pingcli__en"}},
+	{"languages", "pingone_language.pingcli__fr-BE", nil, nil},
+	{"languages", "pingone_language_update.pingcli__en", nil, nil},
 	{"protect", "pingone_risk_predictor.pingcli__vipList", nil, nil},
 	{"authorize", "pingone_authorize_api_service.pingcli__Orders-0020-gateway", []string{"pingone_authorize_api_service_operation.pingcli__Orders-0020-gateway_List-0020-orders"},
 		[]string{"pingone_resource.pingcli__Orders-0020-API"}},
@@ -291,7 +292,7 @@ func TestWholeEnvironmentWithExclusions(t *testing.T) {
 		}
 	}
 	for _, w := range []string{"pingone_population.pingcli__Customers", "pingone_notification_template_content.pingcli__recovery_code_template_en_Email",
-		"pingone_davinci_flow.pingcli__Flow-0020-B", "pingone_sign_on_policy.pingcli__Customer-0020-Login", "pingone_mfa_settings.pingcli__environment"} {
+		"pingone_davinci_flow.pingcli__Flow-0020-B", "pingone_sign_on_policy.pingcli__Customer_Login", "pingone_mfa_settings.pingcli__environment"} {
 		if !has(got, w) {
 			t.Errorf("%s missing from the whole export", w)
 		}

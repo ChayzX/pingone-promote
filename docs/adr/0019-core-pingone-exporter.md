@@ -97,6 +97,15 @@ the request engine's exporter interface.
 
 ## Consequences
 
+- `internal/promote` TestWholeEnvironmentCoreAndDaVinciValidates exports the
+  whole fixture environment (every core family plus DaVinci), merges it and
+  runs `terraform validate` against the pinned provider 1.24.0 in CI. It
+  caught real rendering defects (polymorphic risk predictors, predefined
+  languages, required empty lists) that are fixed; `pingone_risk_policy` is
+  not exported until a live sample shows its API shape. Validation proves
+  the HCL matches the provider schema, not that the API field mapping is
+  right; that is the live plan check (C-04).
+
 - Coverage is broad but **unverified against a live tenant**: API paths,
   field names and import ID formats were written from the provider and API
   documentation. Every type is `Live: no` in the coverage matrix until
