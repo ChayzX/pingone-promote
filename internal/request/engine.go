@@ -104,6 +104,8 @@ func Run(ctx context.Context, env Env, req *Request) *Result {
 	res.Branch = env.Branch
 	r := &runner{env: env, req: req, res: res, layout: env.Layout.WithDefaults()}
 	r.run(ctx)
+	// Every status, including blocked and failed, is redacted.
+	res.redact()
 	return res
 }
 

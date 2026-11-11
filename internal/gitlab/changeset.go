@@ -166,6 +166,12 @@ type PartialError struct {
 }
 
 func (e *PartialError) Error() string {
+	switch e.Stage {
+	case "commit_uncertain":
+		return "GitLab did not confirm whether the commit to branch " + e.Branch + " was written (timeout or server error); the branch was kept for reconciliation: check it, then resume"
+	case "branch_unconfirmed":
+		return "GitLab did not confirm whether branch " + e.Branch + " was created; nothing was committed: check the branch, then resume"
+	}
 	msg := "a previous submission attempt left branch " + e.Branch + " (" + e.Stage + ")"
 	if e.Resumable {
 		return msg + "; resume to continue it"
