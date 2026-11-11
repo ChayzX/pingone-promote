@@ -440,6 +440,9 @@ type ExportOptions struct {
 // Export is a completed export held in memory. The directory it came from
 // has already been deleted.
 type Export struct {
+	// AdoptOnly identifies built-in objects that must be imported in every environment.
+	AdoptOnly map[string]bool
+
 	EnvironmentID string
 	ModuleDir     string
 	ModuleName    string

@@ -138,8 +138,16 @@ type Summary struct {
 	ByType map[string]TypeCounts `json:"byType"`
 }
 
+// GraphNode describes references without exporting source values.
+type GraphNode struct {
+	Address string   `json:"address"`
+	Refs    []string `json:"refs,omitempty"`
+}
+
 // Result is result.json, version 1.
 type Result struct {
+	Graph           []GraphNode             `json:"graph,omitempty"`
+	ValueTypes      map[string]string       `json:"valueTypes,omitempty"`
 	ResultVersion   int                     `json:"resultVersion"`
 	RequestID       string                  `json:"requestId"`
 	RequestedBy     string                  `json:"requestedBy"`

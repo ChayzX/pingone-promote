@@ -16,6 +16,8 @@ import (
 	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
 	"pingone-promote/internal/promote"
+	"pingone-promote/internal/resourcecatalog"
+	"pingone-promote/internal/secretscan"
 	"pingone-promote/internal/tffmt"
 )
 
@@ -181,6 +183,18 @@ func (r *runner) run(ctx context.Context) {
 		res.fail(code, "export", err.Error(), !errors.As(err, &lc))
 		return
 	}
+	addresses, err := exporter.Addresses(exp)
+	if err != nil {
+		res.fail(ErrPreflight, "export", "cannot read exported configuration", false)
+		return
+	}
+	for _, a := range addresses {
+		typ, _, _ := strings.Cut(a, ".")
+		if !resourcecatalog.Allowed(typ) {
+			res.fail(ErrBlocked, "export", "export contains a resource outside the configuration allow-list", false)
+			return
+		}
+	}
 	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName}, neutralize.Options{
 		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings,
 		Excluded: sel.neutralizeExcluded()})
@@ -188,6 +202,16 @@ func (r *runner) run(ctx context.Context) {
 		res.fail(ErrBlocked, "merge", err.Error(), false)
 		return
 	}
+	res.ValueTypes = map[string]string{}
+	for name, v := range neu.Variables {
+		if v.Kind != neutralize.KindSecret {
+			res.ValueTypes[name] = v.Type
+		}
+	}
+	for _, b := range neu.Blocks {
+		res.Graph = append(res.Graph, GraphNode{Address: b.Address, Refs: append([]string(nil), b.Refs...)})
+	}
+	sort.Slice(res.Graph, func(i, j int) bool { return res.Graph[i].Address < res.Graph[j].Address })
 	sel.reportedOnly(neu)
 	for _, f := range exp.Findings {
 		res.Blockers[RequestBlockers] = append(res.Blockers[RequestBlockers], BlockerOut{Code: promote.BlockSecretFinding,
@@ -238,16 +262,29 @@ func (r *runner) run(ctx context.Context) {
 		}
 		m.Files[p] = out
 	}
-	diff, err := m.Diff(head)
-	if err != nil {
-		res.fail(ErrPreflight, "internal", err.Error(), true)
-		return
+	// Secret-bearing exports never become a preview diff. Scan final files
+	// as well: existing Git content and newly generated metadata are untrusted.
+	sensitive := len(exp.Findings) > 0 || len(neu.Findings) > 0
+	for _, f := range secretscan.ScanFiles(m.Files) {
+		sensitive = true
+		res.Blockers[RequestBlockers] = append(res.Blockers[RequestBlockers], BlockerOut{Code: promote.BlockSecretFinding, Message: "suspected secret in generated file " + f.File})
 	}
-	limit := MaxDiff
-	if req.Whole() {
-		limit = MaxDiffAll
+	if !sensitive {
+		diff, err := m.Diff(head)
+		if err != nil {
+			res.fail(ErrPreflight, "internal", err.Error(), true)
+			return
+		}
+		if len(secretscan.ScanText("preview", []byte(diff))) > 0 {
+			res.Blockers[RequestBlockers] = append(res.Blockers[RequestBlockers], BlockerOut{Code: promote.BlockSecretFinding, Message: "The preview diff was withheld because existing Git content looks sensitive; review the repository privately."})
+		} else {
+			limit := MaxDiff
+			if req.Whole() {
+				limit = MaxDiffAll
+			}
+			res.Diff, res.DiffTruncated = truncateDiff(diff, limit)
+		}
 	}
-	res.Diff, res.DiffTruncated = truncateDiff(diff, limit)
 	for _, p := range m.ChangedPaths() {
 		action := "update"
 		if _, ok, _ := head.Read(p); !ok {
@@ -490,6 +527,9 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		if query == "" {
 			query = ref.Name
 		}
+		if _, already := includedBy[m.String()]; already {
+			return nil
+		}
 		includedBy[m.String()] = field
 		sel.seeds = append(sel.seeds, m.String())
 		if !req.Whole() {
@@ -559,7 +599,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		sel.excluded[addr] = &exclusion{id: ids[addr]}
 		if strings.HasPrefix(addr, neutralize.TypeFlow+".") {
 			for _, c := range exporter.Companions(addr) {
-				if _, ok := sel.excluded[c]; !ok {
+				if _, ok := sel.excluded[c]; !ok && includedBy[c] == "" {
 					sel.excluded[c] = &exclusion{derived: true}
 				}
 			}

@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"pingone-promote/internal/gitlab"
@@ -25,6 +27,8 @@ type Config struct {
 	// Listen is host:port. The default 127.0.0.1:8080 is reachable from
 	// this machine only.
 	Listen string `json:"listen"`
+	// PublicOrigin is an explicit HTTPS origin when TLS terminates at a trusted proxy.
+	PublicOrigin string `json:"publicOrigin,omitempty"`
 	// TLSCertFile and TLSKeyFile turn on HTTPS. Leave both empty behind a
 	// TLS-terminating reverse proxy, or on localhost.
 	TLSCertFile string `json:"tlsCertFile,omitempty"`
@@ -66,6 +70,9 @@ type Config struct {
 		Terraform          string `json:"terraform"`
 		TerraformVersion   string `json:"terraformVersion,omitempty"`
 		TerraformSHA256    string `json:"terraformSha256"`
+		ProviderZip        string `json:"providerZip,omitempty"`
+		ProviderVersion    string `json:"providerVersion,omitempty"`
+		ProviderSHA256     string `json:"providerSha256,omitempty"`
 		PingCLI            string `json:"pingcli,omitempty"`
 		PingCLIVersion     string `json:"pingcliVersion,omitempty"`
 		PingCLISHA256      string `json:"pingcliSha256,omitempty"`
@@ -130,6 +137,25 @@ func (c *Config) check() error {
 			return fmt.Errorf("allowedHosts: %q is not a hostname", h)
 		}
 	}
+	if c.PublicOrigin != "" {
+		u, err := url.Parse(c.PublicOrigin)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.ForceQuery || strings.Contains(c.PublicOrigin, "#") {
+			return errors.New("publicOrigin must be an HTTPS origin without credentials, path, query or fragment")
+		}
+		if port := u.Port(); port != "" {
+			n, e := strconv.Atoi(port)
+			if e != nil || n < 1 || n > 65535 {
+				return errors.New("publicOrigin has an invalid port")
+			}
+		}
+		allowed := u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"
+		for _, h := range c.AllowedHosts {
+			allowed = allowed || strings.EqualFold(h, u.Hostname())
+		}
+		if !allowed {
+			return errors.New("publicOrigin hostname must be listed in allowedHosts")
+		}
+	}
 	if c.SecretsFile == "" {
 		return errors.New("secretsFile is required")
 	}
@@ -173,6 +199,9 @@ func (c *Config) check() error {
 	}
 	if c.Tools.PingCLI != "" && (c.Tools.PingCLIVersion == "" || !digestRE.MatchString(c.Tools.PingCLISHA256)) {
 		return errors.New("pingcli requires a pinned version and SHA-256")
+	}
+	if c.Tools.ProviderZip != "" && (c.Tools.ProviderVersion != "1.24.0" || !digestRE.MatchString(c.Tools.ProviderSHA256)) {
+		return errors.New("providerZip requires providerVersion 1.24.0 and a pinned providerSha256")
 	}
 	return nil
 }

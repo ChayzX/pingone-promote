@@ -717,7 +717,7 @@ func (s *state) classifyVariables() error {
 					return fmt.Errorf("neutralize: secret name %q is not a valid customer_secrets.yml variable name", mapped)
 				}
 				s.rename[name] = mapped
-				if err := add(&Variable{Name: mapped, Type: "string", Description: "PingOne secret " + mapped + " (pipeline: TF_VAR_" + mapped + ").", Kind: KindSecret, Origin: name}); err != nil {
+				if err := add(&Variable{Name: mapped, Type: d.typ, Description: "PingOne secret " + mapped + " (pipeline: TF_VAR_" + mapped + ").", Kind: KindSecret, Origin: name}); err != nil {
 					return err
 				}
 			case s.opts.EnvLocalVariables[name] || envLocalConnector[name]:

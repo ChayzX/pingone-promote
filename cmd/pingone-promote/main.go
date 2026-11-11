@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"pingone-promote/internal/buildinfo"
 )
@@ -14,6 +16,7 @@ import (
 const usageText = `Usage: pingone-promote <command> [arguments]
 
 Commands:
+  serve --config FILE host the source-only promotion service
   check --root DIR   validate a config repository root offline
   export             export, neutralize and merge a source environment
   request            run the CI request job (see docs/gitlab-ci-integration.md)
@@ -32,6 +35,8 @@ func dispatch(ctx context.Context, args []string, getenv func(string) string, st
 		return exitUsage
 	}
 	switch args[0] {
+	case "serve":
+		return runServe(ctx, args[1:], stdout, stderr)
 	case "check":
 		return runCheck(ctx, args[1:], stdout, stderr)
 	case "request":
@@ -50,5 +55,7 @@ func dispatch(ctx context.Context, args []string, getenv func(string) string, st
 }
 
 func main() {
-	os.Exit(dispatch(context.Background(), os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	os.Exit(dispatch(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }

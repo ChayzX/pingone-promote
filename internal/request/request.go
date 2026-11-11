@@ -22,6 +22,7 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"pingone-promote/internal/gitlab"
+	"pingone-promote/internal/resourcecatalog"
 	"pingone-promote/internal/secretscan"
 )
 
@@ -407,15 +408,8 @@ func resourceType(kind string) (string, bool) {
 	if typ, ok := ExcludeTypes[kind]; ok {
 		return typ, true
 	}
-	if !regexp.MustCompile(`^pingone_[a-z0-9_]+$`).MatchString(kind) {
+	if !resourcecatalog.Allowed(kind) {
 		return "", false
-	}
-	for _, part := range []string{"user", "session", "audit"} {
-		for _, segment := range strings.Split(strings.TrimPrefix(kind, "pingone_"), "_") {
-			if segment == part || segment == part+"s" {
-				return "", false
-			}
-		}
 	}
 	return kind, true
 }

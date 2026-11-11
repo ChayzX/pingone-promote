@@ -45,13 +45,29 @@ type Commit struct {
 
 // MR is a recorded merge request.
 type MR struct {
-	ID, IID      int64
-	SourceBranch string
-	TargetBranch string
-	Title        string
-	Description  string
-	Labels       string
-	State        string
+	ID, IID         int64
+	SourceBranch    string
+	TargetBranch    string
+	Title           string
+	Description     string
+	Labels          string
+	State           string
+	SHA             string
+	MergeCommitSHA  string
+	SquashCommitSHA string
+}
+
+type Pipeline struct {
+	ID  int64  `json:"id"`
+	SHA string `json:"sha"`
+	Ref string `json:"ref"`
+}
+
+type Job struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	WebURL string `json:"web_url"`
 }
 
 // Fake is the server state.
@@ -63,9 +79,12 @@ type Fake struct {
 	Protected     map[string]bool
 	branches      map[string]map[string]fileState // branch -> path -> file
 	heads         map[string]string               // branch -> commit ID
+	snapshots     map[string]map[string]fileState // immutable commit -> files
 	Commits       map[string]*Commit
 	CommitOrder   []string
 	MRs           []*MR
+	Pipelines     []Pipeline
+	Jobs          map[int64][]Job
 	// Fail makes requests whose path ends with the key return the status.
 	Fail map[string]int
 	// Redirect makes requests whose path ends with the key redirect.
@@ -82,8 +101,8 @@ type Fake struct {
 func New(t testing.TB, files map[string]string) *Fake {
 	t.Helper()
 	f := &Fake{Visibility: "private", DefaultBranch: "main", Protected: map[string]bool{"main": true},
-		branches: map[string]map[string]fileState{"main": {}}, heads: map[string]string{}, Commits: map[string]*Commit{},
-		Fail: map[string]int{}, Redirect: map[string]string{}}
+		branches: map[string]map[string]fileState{"main": {}}, heads: map[string]string{}, snapshots: map[string]map[string]fileState{}, Commits: map[string]*Commit{},
+		Fail: map[string]int{}, Redirect: map[string]string{}, Jobs: map[int64][]Job{}}
 	if len(files) > 0 {
 		actions := []map[string]string{}
 		paths := make([]string, 0, len(files))
@@ -142,6 +161,7 @@ func (f *Fake) Merge(branch string) {
 	for _, mr := range f.MRs {
 		if mr.SourceBranch == branch {
 			mr.State = "merged"
+			mr.MergeCommitSHA = f.heads[branch]
 		}
 	}
 }
@@ -203,9 +223,19 @@ func (f *Fake) commit(branch, message string, actions []map[string]string) (stri
 	}
 	f.branches[branch] = next
 	f.heads[branch] = c.ID
+	f.snapshots[c.ID] = next
 	f.Commits[c.ID] = c
 	f.CommitOrder = append(f.CommitOrder, c.ID)
 	return c.ID, ""
+}
+
+// filesAt resolves branch names and immutable commit IDs while mu is held.
+func (f *Fake) filesAt(ref string) (map[string]fileState, bool) {
+	if files, ok := f.branches[ref]; ok {
+		return files, true
+	}
+	files, ok := f.snapshots[ref]
+	return files, ok
 }
 
 func (f *Fake) reply(w http.ResponseWriter, status int, v any) {
@@ -281,7 +311,7 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			f.reply(w, 400, map[string]string{"message": "Branch already exists"})
 			return
 		}
-		src, ok := f.branches[ref]
+		src, ok := f.filesAt(ref)
 		if !ok {
 			f.reply(w, 404, map[string]string{"message": "Invalid reference name"})
 			return
@@ -290,11 +320,34 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		for k, v := range src {
 			cp[k] = v
 		}
-		f.branches[name], f.heads[name] = cp, f.heads[ref]
+		head := f.heads[ref]
+		if _, ok := f.snapshots[ref]; ok {
+			head = ref
+		}
+		f.branches[name], f.heads[name] = cp, head
 		f.reply(w, 201, map[string]any{"name": name})
+	case rest == "/repository/branches" && r.Method == http.MethodGet:
+		var names []string
+		for name := range f.branches {
+			if search := r.URL.Query().Get("search"); search == "" || strings.Contains(name, search) {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		out := []map[string]any{}
+		start, end := pageBounds(r, len(names))
+		for _, name := range names[start:end] {
+			message := ""
+			if commit := f.Commits[f.heads[name]]; commit != nil {
+				message = commit.Message
+			}
+			out = append(out, map[string]any{"name": name, "protected": f.Protected[name], "commit": map[string]string{"id": f.heads[name], "message": message}})
+		}
+		f.reply(w, 200, out)
 	case strings.HasPrefix(rest, "/repository/files/") && r.Method == http.MethodGet:
 		p, _ := url.PathUnescape(strings.TrimPrefix(rest, "/repository/files/"))
-		st, ok := f.branches[r.URL.Query().Get("ref")][p]
+		files, _ := f.filesAt(r.URL.Query().Get("ref"))
+		st, ok := files[p]
 		if !ok {
 			f.reply(w, 404, map[string]string{"message": "404 File Not Found"})
 			return
@@ -306,7 +359,8 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		var entries []map[string]string
 		seen := map[string]bool{}
-		for p := range f.branches[r.URL.Query().Get("ref")] {
+		files, _ := f.filesAt(r.URL.Query().Get("ref"))
+		for p := range files {
 			rel, ok := strings.CutPrefix(p, dir+"/")
 			if dir == "" {
 				rel, ok = p, true
@@ -344,12 +398,15 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		f.RaceBeforeCommit = nil
 		branch, start := str("branch"), str("start_branch")
+		if sha := str("start_sha"); sha != "" {
+			start = sha
+		}
 		if start != "" {
 			if _, exists := f.branches[branch]; exists {
 				f.reply(w, 400, map[string]string{"message": "A branch called '" + branch + "' already exists"})
 				return
 			}
-			src, ok := f.branches[start]
+			src, ok := f.filesAt(start)
 			if !ok {
 				f.reply(w, 400, map[string]string{"message": "invalid start branch"})
 				return
@@ -358,7 +415,11 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			for k, v := range src {
 				cp[k] = v
 			}
-			f.branches[branch], f.heads[branch] = cp, f.heads[start]
+			head := f.heads[start]
+			if _, ok := f.snapshots[start]; ok {
+				head = start
+			}
+			f.branches[branch], f.heads[branch] = cp, head
 		} else if _, ok := f.branches[branch]; !ok {
 			f.reply(w, 400, map[string]string{"message": "You can only create or edit files when you are on a branch"})
 			return
@@ -406,13 +467,18 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		f.reply(w, 201, map[string]any{"id": id})
 	case rest == "/merge_requests" && r.Method == http.MethodGet:
-		var out []map[string]any
+		out := []map[string]any{}
 		for _, mr := range f.MRs {
-			if mr.SourceBranch == r.URL.Query().Get("source_branch") && mr.State == "opened" {
-				out = append(out, f.mrJSON(r, mr))
+			if source := r.URL.Query().Get("source_branch"); source != "" && mr.SourceBranch != source {
+				continue
 			}
+			if state := r.URL.Query().Get("state"); state != "" && state != "all" && mr.State != state {
+				continue
+			}
+			out = append(out, f.mrJSON(r, mr))
 		}
-		f.reply(w, 200, out)
+		start, end := pageBounds(r, len(out))
+		f.reply(w, 200, out[start:end])
 	case rest == "/merge_requests" && r.Method == http.MethodPost:
 		mr := &MR{ID: int64(100 + len(f.MRs)), IID: int64(1 + len(f.MRs)), SourceBranch: str("source_branch"), TargetBranch: str("target_branch"),
 			Title: str("title"), Description: str("description"), Labels: str("labels"), State: "opened"}
@@ -421,7 +487,30 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.MRs = append(f.MRs, mr)
+		mr.SHA = f.heads[mr.SourceBranch]
 		f.reply(w, 201, f.mrJSON(r, mr))
+	case rest == "/pipelines" && r.Method == http.MethodGet:
+		out := []Pipeline{}
+		for i := len(f.Pipelines) - 1; i >= 0; i-- {
+			p := f.Pipelines[i]
+			if sha := r.URL.Query().Get("sha"); sha != "" && p.SHA != sha {
+				continue
+			}
+			if ref := r.URL.Query().Get("ref"); ref != "" && p.Ref != ref {
+				continue
+			}
+			out = append(out, p)
+		}
+		start, end := pageBounds(r, len(out))
+		f.reply(w, 200, out[start:end])
+	case strings.HasPrefix(rest, "/pipelines/") && strings.HasSuffix(rest, "/jobs") && r.Method == http.MethodGet:
+		id, _ := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(rest, "/pipelines/"), "/jobs"), 10, 64)
+		out := f.Jobs[id]
+		if out == nil {
+			out = []Job{}
+		}
+		start, end := pageBounds(r, len(out))
+		f.reply(w, 200, out[start:end])
 	default:
 		f.reply(w, 404, map[string]string{"message": "404 Not Found"})
 	}
@@ -429,7 +518,28 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 
 func (f *Fake) mrJSON(r *http.Request, mr *MR) map[string]any {
 	return map[string]any{"id": mr.ID, "iid": mr.IID, "source_branch": mr.SourceBranch,
+		"title": mr.Title, "state": mr.State, "sha": mr.SHA, "merge_commit_sha": mr.MergeCommitSHA, "squash_commit_sha": mr.SquashCommitSHA,
 		"web_url": "https://" + r.Host + "/group/infra/-/merge_requests/" + strconv.FormatInt(mr.IID, 10)}
+}
+
+func pageBounds(r *http.Request, size int) (int, int) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	count, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if count < 1 || count > 100 {
+		count = 100
+	}
+	start := (page - 1) * count
+	if start > size {
+		start = size
+	}
+	end := start + count
+	if end > size {
+		end = size
+	}
+	return start, end
 }
 
 // CreateBranch creates branch from another branch's head, as DaVinci does

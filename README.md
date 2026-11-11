@@ -1,57 +1,28 @@
 # PingOne Promote
 
-PingOne Promote moves a DaVinci flow (and what it depends on) from a source PingOne environment into a Terraform config repository, as a reviewable merge request. It has three parts:
+PingOne Promote is a single Go service for reviewing PingOne configuration changes and publishing Terraform configuration to a GitLab request branch. The enterprise pipeline remains responsible for Terraform plan and apply. The hosted service never runs either command.
 
-- **DaVinci app** ([`davinci-app/`](davinci-app/README.md)): the front end people sign in to. They pick a source environment and a main flow, preview the change, submit it and watch the rollout. It writes one request file on a `pingone-promote/<requestId>` branch and holds no PingOne write credentials.
-- **CLI** (`cmd/pingone-promote`): one binary with three subcommands (below). It makes no local server and has no UI.
-- **CI job** (`pingone-promote request`): runs in the config repository's GitLab pipeline, triggered by the request branch. It exports the source with a pinned [pingcli-terraformer](docs/adr/0015-pingcli-terraformer-exporter.md), neutralizes it into shared definitions plus one overlay per environment, merges additively, and commits the result to the same branch (and opens a merge request). It never plans or applies; deployment stays in the enterprise Terraform pipeline.
+## Quick setup
 
-Details are in the documents below.
+1. Build the single binary with Go 1.27.3: `go build -o pingone-promote ./cmd/pingone-promote`.
+2. Install the pinned local tools for this machine with `python3 scripts/install-tools.py --bin-dir ./local-tools --cache-dir ./local-cache > tools-config.json`. The installer supports macOS and Linux on amd64 and arm64. Keep the generated config private to the host; it contains paths and checksums, not credentials.
+3. Create a JSON server config from the example in [deploy/README.md](deploy/README.md). Point it at the pinned tools and set `secretsFile` to a separate file.
+4. Put the PingOne worker client ID, worker client secret and GitLab token in the secrets file. Make the service owner its only reader and set mode `0600` or `0400`.
+5. Start with `./pingone-promote serve --config /path/to/config.json`. It listens on `127.0.0.1:8080` by default. Open that address on the host and complete a preview before submitting.
+6. For a persistent deployment, follow the [deployment guide](deploy/README.md) for systemd on RHEL 9 or a single-replica Kubernetes pod.
 
-## CLI
+## Trust and operation
 
-```sh
-go build -o pingone-promote ./cmd/pingone-promote
-```
+Phase 1 has no sign-in. A name typed into the UI is always shown as unverified and grants no authorization. Keep the service on loopback unless it is behind a deliberate TLS and access boundary. The Host header is checked against exact configured hostnames; forwarded headers are not trusted. POST actions require CSRF protection, and the pages use a strict Content Security Policy.
 
-Go 1.27.3 or newer is required to build. Running the binary with no subcommand prints usage and exits 2. `--version` prints the version.
+The server stores unfinished drafts in bounded memory. Restarting it loses those drafts. Published requests and durable history live in GitLab. Run one replica. Use only a source environment; the configured rollout supplies all later environments. Missing values for any rollout environment block submission.
 
-| Command | Purpose |
-| --- | --- |
-| `pingone-promote check --root DIR` | Validates a config repository root offline: every overlay sets the required variables and no secrets, imports are conditional, no `*.auto.tfvars`, declared pipeline secrets, no masked values or keys, and optionally `terraform fmt` / `terraform validate`. Exit 0 valid, 1 problems, 2 usage. |
-| `pingone-promote export --source ENV --flow "NAME or ID"` | Runs the export, neutralize and merge locally against a checkout, with `--dry-run` to preview. |
-| `pingone-promote request` | The CI request job: reads `.pingone-promote/request.json` from the checked-out branch and writes `result.json`. See the [CI contract](docs/gitlab-ci-integration.md). |
+Secrets are never stored in configuration, pages, logs, or Git. The secrets file must be a regular file owned by the service account with mode `0400` or `0600`; group-readable modes such as `0440` are rejected. The worker is used read-only. The service has no PingOne write credential and never runs Terraform plan or apply.
 
-Run a subcommand with `--help` for its flags and environment variables.
+The exporter coverage and live tenant behavior are still being established. See the [acceptance cases](docs/acceptance/hosted-live-cases.md) for required live proof and current limits. A fixture pass does not establish tenant or production pipeline compatibility.
 
-## Layout
+## Troubleshooting
 
-- `internal/exporter`: the pinned pingcli-terraformer runner and search.
-- `internal/neutralize`: export to shared definitions plus source values.
-- `internal/promote`, `internal/hclblocks`: the additive merge and `check --root`.
-- `internal/overlay`, `internal/tffmt`: per-environment overlays and the `terraform fmt` gate.
-- `internal/request`: the CI request job.
-- `internal/gitlab`: GitLab API client with a path allow-list and branch commits.
-- `terraform/root`, `terraform/spikes`: the reference root and the conditional-import spike.
-- `examples/gitlab-ci/pingone-promote.yml`: the job to include in the config repository.
+If startup reports a secrets-file mode error, set ownership to the service user and run `chmod 600 /path/to/secrets.env`. If startup rejects a tool, rerun the pinned installer and keep its executable path and checksum together. If the UI is unreachable, confirm the process is listening on `127.0.0.1:8080`; a remote browser cannot reach that loopback address directly. Put a TLS reverse proxy on the host and set the exact allowed hostname before making it reachable through a proxy. If a preview is blocked, resolve every reported missing rollout value in the source or target configuration before submitting. If GitLab's default branch moved after preview, create a fresh preview. Unfinished drafts disappear on restart.
 
-## Documentation
-
-- [DaVinci app guide](davinci-app/README.md): import, configure and operate the front end.
-- [GitLab CI integration](docs/gitlab-ci-integration.md): the request file, the job and its trust boundary.
-- [Architecture decisions](docs/adr/README.md): why it is built this way (start with 0014 to 0017).
-- [Live acceptance](docs/acceptance/live-acceptance.md): what has been verified against live tenants.
-- [`docs/archive/`](docs/archive/): superseded v1 documents, kept for history.
-
-## Build release bundles
-
-`scripts/build.sh` cross-builds CGO-free `pingone-promote` binaries for macOS arm64/amd64 and Linux amd64 and writes `.tar.gz` bundles and `SHA256SUMS` under `dist/`; it honors `GO` and `VERSION`. `scripts/release.py` exports the source archive from Git, generates and verifies the Homebrew formula, and `scripts/test_homebrew.py` exercises a real install, upgrade and uninstall in a temporary tap. The release workflow produces a draft prerelease only; review it before publishing the formula to the tap.
-
-## Checks
-
-```sh
-go build ./... && go vet ./... && go test ./...
-terraform fmt -check -recursive terraform/
-python3 -I davinci-app/check_app.py && node davinci-app/test_app.js
-python3 -m unittest discover -s scripts -p test_release.py
-```
+See [development.md](docs/development.md) for build and test commands and [deploy/README.md](deploy/README.md) for service operations.

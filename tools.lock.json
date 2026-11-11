@@ -1,0 +1,56 @@
+{
+  "lockVersion": 1,
+  "platforms": ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"],
+  "terraform": {
+    "version": "1.16.7",
+    "source": "https://releases.hashicorp.com/terraform/1.16.7/",
+    "archive": "terraform_1.16.7_{platform}.zip",
+    "sha256": {
+      "darwin_amd64": "d17d1053bcbde650a8a919b7218ef2886eac76c4743066e9ecd8bd64427408741",
+      "darwin_arm64": "81e98d9186e0cd1bc88caeb2403453fdd4bdeedd574ca4dbe8fb6a2880c9c51a",
+      "linux_amd64": "5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b",
+      "linux_arm64": "2d6a3f1098de94f1672aaa4e6873ef91ade9eac38851d3a403e2009193208de4"
+    },
+    "binary": "terraform"
+  },
+  "terraformer": {
+    "version": "0.6.0",
+    "commit": "9aa51edd1930b1b2724183f7c56911aad0c47556",
+    "source": "https://github.com/pingidentity/pingcli-plugin-terraformer/releases/download/v0.6.0/",
+    "archive": "pingcli-terraformer_0.6.0_{platform}",
+    "sha256": {
+      "darwin_amd64": "306c7064885012da5b9cc5579d59a3ba929d5ebd4c879f641254b36e2e0fab9f",
+      "darwin_arm64": "80a18625c03b42745a1154491d71b597e738478c8997f9c72ac81f94fe63942b",
+      "linux_amd64": "be0bea0f4f7ecb4e33a95f9894793ae9c70bb3480665d9d303c06021b8ae4a98",
+      "linux_arm64": "e934912a23b58418e673596c750281ba7dfe768ab0158e71eb4d63375aa156d7"
+    },
+    "binary": "pingcli-terraformer"
+  },
+  "pingcli": {
+    "version": "0.8.4",
+    "commit": "8b93d3c06e7c2674d83203f100b09111b600e784",
+    "source": "https://github.com/pingidentity/pingcli/releases/download/v0.8.4/",
+    "archive": "pingcli_0.8.4_{platform}",
+    "sha256": {
+      "darwin_amd64": "e5c68a13e92f964fd8187263e7104644a16f1bea226fba631d81a4631b84175f",
+      "darwin_arm64": "80d4d2c1706e129509075c26dcdbb242a3be5b2a06914b0bf1c683a216ecd38f",
+      "linux_amd64": "d8f83d8b0dcdb953dc8b431653f3c177396af6db1f2c89c49c72dd595a8aa42c",
+      "linux_arm64": "e29f4e46f076a14c8def5f58a4ee518ca6b91cba164b41c6ebdbef61f56e245e"
+    },
+    "binary": "pingcli"
+  },
+  "provider": {
+    "sourceAddress": "registry.terraform.io/pingidentity/pingone",
+    "version": "1.24.0",
+    "commit": "d5019dec50baddf344540249219023f839874f2b",
+    "source": "https://github.com/pingidentity/terraform-provider-pingone/releases/download/v1.24.0/",
+    "archive": "terraform-provider-pingone_1.24.0_{platform}.zip",
+    "sha256": {
+      "darwin_amd64": "3f78ffab44873376c789ca131b5c16dc7872311515b7b9ef17fbc0a959406648",
+      "darwin_arm64": "748861ed1ee62f9e61fd380cdf4bf1981ebf5a90baefe59ae2a29da4dc8ea498",
+      "linux_amd64": "5265874941d77401600642defe03ae105634a97c4144805441071d08742ed611",
+      "linux_arm64": "421c97f203be900442632e0fd1504830f6e54a3f50f933dcf7bfd3c142e6c2ee"
+    },
+    "binary": "terraform-provider-pingone_v1.24.0"
+  }
+}

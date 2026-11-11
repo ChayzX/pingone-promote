@@ -1,0 +1,40 @@
+[Unit]
+Description=PingOne Promote hosted source-only promotion service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pingone-promote
+Group=pingone-promote
+ExecStart=/usr/local/bin/pingone-promote serve --config /etc/pingone-promote/config.json
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=4096
+TasksMax=128
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target
