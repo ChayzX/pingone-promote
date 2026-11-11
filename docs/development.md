@@ -62,7 +62,9 @@ The server never runs `terraform plan` or `apply` and holds no PingOne write cre
 | `pingone-promote request` | The legacy CI request job (`docs/gitlab-ci-integration.md`). Not needed by the hosted server. |
 
 Every command takes `--help`; `--version` prints the version.
-`scripts/build.sh` cross-builds CGO-free binaries and `SHA256SUMS` under `dist/`.
+## Release bundles
+
+`scripts/build.sh` cross-builds CGO-free `pingone-promote` binaries for macOS arm64/amd64 and Linux amd64 and writes `.tar.gz` bundles and `SHA256SUMS` under `dist/`; it honors `GO` and `VERSION`. `scripts/release.py` exports the source archive from Git, generates and verifies the Homebrew formula, and `scripts/test_homebrew.py` exercises a real install, upgrade and uninstall in a temporary tap. The release workflow produces a draft prerelease only; review it before publishing the formula to the tap.
 
 ## Running the checks
 
