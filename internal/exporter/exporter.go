@@ -53,6 +53,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +93,10 @@ type Runner struct {
 	// MaxOutput bounds the total size of the export (default 256 MiB).
 	MaxOutput int64
 }
+
+// exeSuffix keeps the staged copy executable on a Windows development
+// machine. Windows is not a supported platform.
+var exeSuffix = map[bool]string{true: ".exe"}[runtime.GOOS == "windows"]
 
 // Errors.
 var (
@@ -213,7 +218,7 @@ func newWorkspace() (*workspace, error) {
 	if err != nil {
 		return nil, errors.New("exporter: could not create a private working directory")
 	}
-	w := &workspace{root: root, home: filepath.Join(root, "home"), out: filepath.Join(root, "out"), bin: filepath.Join(root, "bin", "pingcli-terraformer")}
+	w := &workspace{root: root, home: filepath.Join(root, "home"), out: filepath.Join(root, "out"), bin: filepath.Join(root, "bin", "pingcli-terraformer"+exeSuffix)}
 	for _, d := range []string{w.home, w.out, filepath.Dir(w.bin)} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			os.RemoveAll(root)
