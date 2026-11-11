@@ -1,7 +1,10 @@
 {{define "content"}}{{$d := .Data.D}}
 {{if .Data.Running}}
 <p class="notice" role="status">Now: {{.Data.Stage}}&hellip;</p>
-<p>This page reloads every few seconds. You can leave it and come back later: the work carries on without you. Press Cancel to stop it.</p>
+{{if .Data.AutoRefresh}}<p>This page reloads every few seconds. You can leave it and come back later: the work carries on without you. Press Cancel to stop it.</p>
+<p><a href="/drafts/{{$d.ID}}/job?refresh=0">Stop refreshing this page</a></p>
+{{else}}<p>This page no longer reloads by itself. The work carries on without you.</p>
+<p><a href="/drafts/{{$d.ID}}/job?refresh=0">Check progress now</a> &middot; <a href="/drafts/{{$d.ID}}/job">Reload automatically again</a></p>{{end}}
 <form method="post" action="/drafts/{{$d.ID}}/cancel">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <button type="submit">Cancel</button>

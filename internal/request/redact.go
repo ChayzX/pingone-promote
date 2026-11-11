@@ -69,3 +69,8 @@ func (r *Result) redact() {
 		}
 	}
 }
+
+// RedactText removes private keys, JWTs and literal values under
+// secret-looking names from free text, for callers that log or show text
+// outside a Result.
+func RedactText(s string) string { return redactText(s) }

@@ -24,12 +24,13 @@ data:
   config.json: |
     {
       "listen": "0.0.0.0:8080",
+      "exposure": "behind-proxy",
       "allowedHosts": ["promote.example.com"],
       "signIn": "none",
       "secretsFile": "/run/pingone-promote/secrets.env",
       "gitlab": {
         "baseUrl": "https://gitlab.example.com",
-        "projectId": "group/pingone-config",
+        "projectId": "1234",
         "mrLabels": ["pingone-promote"]
       },
       "pingone": {

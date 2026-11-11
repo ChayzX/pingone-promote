@@ -5,7 +5,7 @@
   "secretsFile": "/run/credentials/pingone-promote.service/secrets",
   "gitlab": {
     "baseUrl": "https://gitlab.example.com",
-    "projectId": "group/pingone-config",
+    "projectId": "1234",
     "mrLabels": ["pingone-promote"]
   },
   "pingone": {

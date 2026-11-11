@@ -55,6 +55,12 @@ func main() {
 	if len(os.Args) < 2 || os.Args[1] != "export" {
 		fail("subcommand required")
 	}
+	// A client secret starting "stderr-flood-" makes the fake print it
+	// right across the 64 KiB stderr limit and fail (redaction test).
+	if s := os.Getenv("PINGCLI_PINGONE_CLIENT_CREDENTIALS_CLIENT_SECRET"); strings.HasPrefix(s, "stderr-flood-") {
+		fmt.Fprint(os.Stderr, strings.Repeat("x", 64<<10-8)+s+"\n")
+		os.Exit(1)
+	}
 	if err := export(os.Args[2:]); err != nil {
 		fail(err.Error())
 	}

@@ -25,7 +25,7 @@ type pages struct {
 	t map[string]*template.Template
 }
 
-var pageNames = []string{"home", "draft", "job", "preview", "result", "requests", "status"}
+var pageNames = []string{"home", "draft", "job", "preview", "result", "requests", "status", "continue"}
 
 func loadPages() (*pages, error) {
 	funcs := template.FuncMap{
@@ -59,13 +59,15 @@ type view struct {
 	Title   string
 	CSRF    string
 	Refresh bool
-	Data    any
+	// RefreshNow reloads at once (the continue page).
+	RefreshNow bool
+	Data       any
 }
 
 // render executes a page into a buffer, removes any secret value and
 // writes it.
 func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name, title string, data any, refresh bool) {
-	v := view{Title: title, Refresh: refresh, Data: data}
+	v := view{Title: title, Refresh: refresh && name != "continue", RefreshNow: refresh && name == "continue", Data: data}
 	if sess := sessionFrom(r); sess != nil {
 		v.CSRF = sess.csrf
 	}

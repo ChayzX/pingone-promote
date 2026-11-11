@@ -117,6 +117,25 @@ type env struct {
 	ts     *httptest.Server
 	logs   *syncBuffer
 	cfg    Config
+	clock  *clock
+}
+
+// clock is the server's time: real time plus a test-controlled offset.
+type clock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *clock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.offset)
+}
+
+func (c *clock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.offset += d
+	c.mu.Unlock()
 }
 
 func testConfig(t *testing.T, gl *gitlabtest.Fake) Config {
@@ -140,21 +159,31 @@ func testConfig(t *testing.T, gl *gitlabtest.Fake) Config {
 // exp replaces the exporter when not nil.
 func newEnv(t *testing.T, exp request.Exporter) *env {
 	t.Helper()
+	return newEnvWith(t, exp, nil)
+}
+
+// newEnvWith is newEnv with a configuration change.
+func newEnvWith(t *testing.T, exp request.Exporter, mut func(*Config)) *env {
+	t.Helper()
 	gl := gitlabtest.New(t, repoFiles(t))
 	st := gitlabtest.NewStatus(gl)
 	cfg := testConfig(t, gl)
+	if mut != nil {
+		mut(&cfg)
+	}
 	if exp == nil {
 		f := fakeTerraformer(t)
 		exp = &exporter.Runner{Config: exporter.Config{Version: f.Version, SHA256: f.SHA256, Path: f.Path}}
 	}
 	logs := &syncBuffer{}
+	clk := &clock{}
 	s, err := New(Options{Config: cfg, Secrets: Secrets{WorkerClientID: sentinelClientID, WorkerClientSecret: sentinelClientSecret, GitLabToken: gitlabtest.Token},
-		Exporter: exp, Logger: slog.New(slog.NewTextHandler(logs, nil)), GitLabHTTP: st.Client()})
+		Exporter: exp, Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})), GitLabHTTP: st.Client(), Now: clk.now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(s.Handler())
-	e := &env{t: t, gl: gl, status: st, srv: s, ts: ts, logs: logs, cfg: cfg}
+	e := &env{t: t, gl: gl, status: st, srv: s, ts: ts, logs: logs, cfg: cfg, clock: clk}
 	t.Cleanup(func() {
 		ts.Close()
 		s.Close()
@@ -184,7 +213,7 @@ func (c checkingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	res.Body = io.NopCloser(bytes.NewReader(body))
 	h := res.Header
 	if h.Get("Content-Security-Policy") != ContentSecurityPolicy || h.Get("X-Content-Type-Options") != "nosniff" ||
-		h.Get("Referrer-Policy") != "no-referrer" || h.Get("Cache-Control") != "no-store" || h.Get("Cross-Origin-Opener-Policy") != "same-origin" {
+		h.Get("Referrer-Policy") != "same-origin" || h.Get("Cross-Origin-Resource-Policy") != "same-origin" || h.Get("Cache-Control") != "no-store" || h.Get("Cross-Origin-Opener-Policy") != "same-origin" {
 		c.t.Errorf("%s %s: security headers missing: %v", r.Method, r.URL.Path, h)
 	}
 	for _, v := range sentinels {

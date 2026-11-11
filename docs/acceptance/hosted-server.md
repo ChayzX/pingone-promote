@@ -16,7 +16,7 @@ The Requests page and submit depend on these. Each one has a case below.
 | A4 | `GET /projects/:id/pipelines/:pid/jobs` lists the latest attempt of each job by `name`, and the enterprise apply jobs are named by `applyJobPattern` (default `apply:{env}`). Jobs in child/downstream pipelines (bridges) are NOT read. | `gitlab.PipelineJobs` | R3 |
 | A5 | Job `status` values: `success`, `failed`, `canceled`, `manual`, `running`, `pending`, `preparing`, `waiting_for_resource`, `created`, `scheduled`, `skipped`. They map to passed / failed / manual / running / not started. | `server.rolloutState` | R3 |
 | A6 | The project access token (Developer, `api`) can create `PREFIX<id>` branches, commit, and open MRs, and cannot push to the protected default branch. | `gitlab.HostedCommitter` | S1, S4 |
-| A7 | A browser posting a same-origin form sends `Sec-Fetch-Site: same-origin` (or a matching Origin/Referer). Under `Referrer-Policy: no-referrer` the Origin is `null`, so a browser without Fetch Metadata (Safari before 16.4) is refused. | `server.sameOrigin` | H3 |
+| A7 | A browser posting a same-origin form sends `Sec-Fetch-Site: same-origin`, or (without Fetch Metadata) an `Origin` equal to the server's own origin under `Referrer-Policy: same-origin`. Behind a proxy the server expects `https://` + the Host the proxy forwards. A cross-site link to a page lands on a short "Continue" page that reloads from this site. | `server.sameOrigin` | H3 |
 
 ## 0. Setup
 
@@ -29,7 +29,7 @@ The Requests page and submit depend on these. Each one has a case below.
 ## 1. HTTP hardening
 
 - **H1.** `curl -sI -H 'Host: evil.example' http://127.0.0.1:8080/` returns 421. With a name from `allowedHosts` it returns 200.
-- **H2.** Every page (`/`, a draft, `/requests`, `/static/style.css`) has the CSP, `nosniff`, `no-referrer`, `no-store` and `same-origin` opener headers (browser devtools, Network tab).
+- **H2.** Every page (`/`, a draft, `/requests`, `/static/style.css`) has the CSP, `nosniff`, `Referrer-Policy: same-origin`, `no-store`, and `same-origin` opener and resource-policy headers (browser devtools, Network tab).
 - **H3.** In Chrome, Firefox and Safari (16.4+) the forms work. A form on another origin that posts to `/drafts` is refused (403).
 - **H4.** With TLS configured, the cookie is `__Host-pingone-promote`, `Secure`, `HttpOnly`, `SameSite=Strict`.
 

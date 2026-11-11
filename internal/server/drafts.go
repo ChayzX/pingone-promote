@@ -159,6 +159,18 @@ func (ds *drafts) get(sessionID, id string) *Draft {
 	return d
 }
 
+// owns reports whether a session has drafts.
+func (ds *drafts) owns(sessionID string) bool {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	for _, d := range ds.byID {
+		if d.SessionID == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
 func (ds *drafts) list(sessionID string) []*Draft {
 	var out []*Draft
 	for _, d := range ds.byID {

@@ -311,7 +311,9 @@ func (r *Runner) exec(ctx context.Context, w *workspace, args []string, creds *C
 	cmd.Dir = w.root
 	cmd.Env = r.childEnv(w.home, creds)
 	stdout := &capped{max: stdoutMax}
-	stderr := &capped{max: 64 << 10}
+	// stderr is read up to 1 MiB, the client secret removed, and only then
+	// cut to 64 KiB, so a cut cannot split the secret and leave a prefix.
+	stderr := &capped{max: 1 << 20}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
@@ -322,6 +324,9 @@ func (r *Runner) exec(ctx context.Context, w *workspace, args []string, creds *C
 		msg := stderr.String()
 		if creds != nil && creds.ClientSecret != "" {
 			msg = strings.ReplaceAll(msg, creds.ClientSecret, "[redacted]")
+		}
+		if len(msg) > stderrMax {
+			msg = strings.ToValidUTF8(msg[:stderrMax], "")
 		}
 		if strings.Contains(msg, "duplicate resource labels") {
 			return nil, &LabelCollisionError{Detail: lastLines(msg, 20)}
@@ -335,6 +340,9 @@ func (r *Runner) exec(ctx context.Context, w *workspace, args []string, creds *C
 	}
 	return stdout.Bytes(), nil
 }
+
+// stderrMax bounds the stderr kept for an error.
+const stderrMax = 64 << 10
 
 func lastLines(s string, n int) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")

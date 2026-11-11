@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"pingone-promote/internal/gitlab"
@@ -69,13 +70,39 @@ func (s *Server) requestsPage(w http.ResponseWriter, r *http.Request) {
 	if len(s.cfg.GitLab.MRLabels) > 0 {
 		v.Label = s.cfg.GitLab.MRLabels[0]
 	}
-	rows, err := s.requestRows(ctx, v.Label)
+	rows, err := s.cachedRows(ctx, v.Label)
 	if err != nil {
 		v.Problem = "GitLab could not be read: " + s.redact(err.Error())
 		s.log.Warn("requests page", "error", err.Error())
 	}
 	v.Rows = rows
 	s.render(w, r, http.StatusOK, "requests", "Requests", v, false)
+}
+
+// RequestsCacheFor is how long the Requests page reuses its GitLab reads,
+// so reloading it (or many people opening it) cannot flood GitLab.
+const RequestsCacheFor = 30 * time.Second
+
+type requestsCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	rows []requestRow
+	err  error
+}
+
+func (s *Server) cachedRows(ctx context.Context, label string) ([]requestRow, error) {
+	c := &s.reqCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && s.now().Sub(c.at) < RequestsCacheFor {
+		return c.rows, c.err
+	}
+	c.rows, c.err = s.requestRows(ctx, label)
+	c.at = s.now()
+	if c.err != nil && ctx.Err() != nil {
+		c.at = time.Time{} // a cancelled read is not cached
+	}
+	return c.rows, c.err
 }
 
 func (s *Server) requestRows(ctx context.Context, label string) ([]requestRow, error) {

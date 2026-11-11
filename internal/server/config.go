@@ -25,6 +25,12 @@ type Config struct {
 	// Listen is host:port. The default 127.0.0.1:8080 is reachable from
 	// this machine only.
 	Listen string `json:"listen"`
+	// Exposure must be set to listen on anything but a loopback address:
+	// "tls" (the server terminates TLS: tlsCertFile and tlsKeyFile) or
+	// "behind-proxy" (a TLS proxy in front; allowedHosts names it). Phase 1
+	// has no sign-in either way: anyone who reaches the port can file
+	// requests under any name.
+	Exposure string `json:"exposure,omitempty"`
 	// TLSCertFile and TLSKeyFile turn on HTTPS. Leave both empty behind a
 	// TLS-terminating reverse proxy, or on localhost.
 	TLSCertFile string `json:"tlsCertFile,omitempty"`
@@ -117,6 +123,9 @@ func (c *Config) check() error {
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return errors.New("set both tlsCertFile and tlsKeyFile, or neither")
 	}
+	if err := c.checkExposure(); err != nil {
+		return err
+	}
 	switch c.SignIn {
 	case "", "none":
 		c.SignIn = "none"
@@ -177,6 +186,47 @@ func (c *Config) check() error {
 	return nil
 }
 
+// Exposure values.
+const (
+	ExposureTLS         = "tls"
+	ExposureBehindProxy = "behind-proxy"
+)
+
+// LoopbackListen reports whether listen binds only a loopback address.
+func LoopbackListen(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// checkExposure refuses a non-loopback listen address without an explicit
+// opt-in that names how the traffic is protected.
+func (c *Config) checkExposure() error {
+	switch c.Exposure {
+	case "":
+		if !LoopbackListen(c.Listen) {
+			return errors.New(`listen is not a loopback address; there is no sign-in, so set "exposure": "tls" (with tlsCertFile and tlsKeyFile) or "behind-proxy" (with allowedHosts) to expose the server deliberately, or listen on 127.0.0.1`)
+		}
+	case ExposureTLS:
+		if c.TLSCertFile == "" {
+			return errors.New(`"exposure": "tls" requires tlsCertFile and tlsKeyFile`)
+		}
+	case ExposureBehindProxy:
+		if len(c.AllowedHosts) == 0 {
+			return errors.New(`"exposure": "behind-proxy" requires allowedHosts (the name the proxy serves)`)
+		}
+	default:
+		return errors.New(`exposure must be "tls" or "behind-proxy" (or empty for loopback only)`)
+	}
+	return nil
+}
+
 // Secrets are read from the sensitive file, never from the configuration.
 type Secrets struct {
 	WorkerClientID     string
@@ -216,9 +266,12 @@ func LoadSecrets(path string) (Secrets, error) {
 	if err := checkSecretsFileInfo(li); err != nil {
 		return s, err
 	}
-	f, err := os.Open(path)
+	// O_NOFOLLOW refuses a symbolic link swapped in after the Lstat, and
+	// O_NONBLOCK keeps a FIFO from blocking the open; SameFile below then
+	// proves the opened file is the one checked.
+	f, err := openSecretsFile(path)
 	if err != nil {
-		return s, errors.New("cannot open the secrets file")
+		return s, errors.New("cannot open the secrets file (it must be a regular file, not a symbolic link)")
 	}
 	defer f.Close()
 	fi, err := f.Stat()

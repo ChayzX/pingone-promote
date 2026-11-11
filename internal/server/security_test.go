@@ -186,8 +186,14 @@ func TestSecretsNeverInPagesOrLogs(t *testing.T) {
 	path := b.newDraft()
 	b.post(path+"/save", mainForm("Jane", nil))
 	p := b.wait(b.post(path+"/search", url.Values{"q": {"Flow"}}))
-	// The tool error is shown, with the secret values removed.
-	mustContain(t, p.body, "tool failed", "[redacted]")
+	// A fixed plain-language message is shown, never the tool's text.
+	mustContain(t, p.body, msgExportOther)
+	if strings.Contains(p.body, "tool failed") || strings.Contains(p.body, "client_secret") {
+		t.Fatal("the exporter's own error text reached the page")
+	}
+	// The detail is logged at debug level only, redacted.
+	if !strings.Contains(e.logs.String(), "level=DEBUG msg=\"export failed\"") {
+		t.Fatalf("no debug detail logged:\n%s", e.logs.String())
+	}
 	// checkingTransport and the env cleanup assert absence everywhere.
-	_ = e
 }
