@@ -290,6 +290,9 @@ func TestHostedCommitBranchNames(t *testing.T) {
 			h.BranchPrefix, b.BranchPrefix, b.Branch = "CIAM", "CIAM", "CIAMreq-1"
 		},
 		"head not a SHA": func(h *HostedCommitter, b *BranchCommit) { b.ExpectedHead = "main" },
+		// An abbreviated SHA never equals the full head GitLab reports, so
+		// it used to create a branch and then leave it behind.
+		"abbreviated head": func(h *HostedCommitter, b *BranchCommit) { b.ExpectedHead = b.ExpectedHead[:12] },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, h, bc := hostedSetup(t)

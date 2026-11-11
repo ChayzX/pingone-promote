@@ -204,8 +204,11 @@ func (h HostedCommitter) CommitToBranch(ctx context.Context, bc BranchCommit) (R
 		return Result{}, &PreflightError{Err: errors.New("request branches must be named " + prefix + "<request ID>")}
 	case !validBranchName(h.DefaultBranch) || bc.Branch == h.DefaultBranch:
 		return Result{}, &PreflightError{Err: errors.New("the default branch is never a request branch")}
-	case !commitIDRE.MatchString(bc.ExpectedHead):
-		return Result{}, &PreflightError{Err: errors.New("the previewed default-branch commit must be a SHA")}
+	case !commitIDRE.MatchString(bc.ExpectedHead) || (len(bc.ExpectedHead) != 40 && len(bc.ExpectedHead) != 64):
+		// A full SHA only: GitLab reports full IDs, so an abbreviated one
+		// would never match the new branch head and the branch this call
+		// created would be left behind.
+		return Result{}, &PreflightError{Err: errors.New("the previewed default-branch commit must be a full SHA")}
 	}
 	bc.BranchPrefix = prefix
 
