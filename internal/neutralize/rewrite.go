@@ -108,7 +108,7 @@ func (s *state) liftAttributes() error {
 			s.lifted[rb] = append(s.lifted[rb], lift{rng: r, name: name})
 		}
 	}
-	return nil
+	return s.liftCoreAttributes()
 }
 
 // blockStart is the block's offset in its file, for converting AST ranges.

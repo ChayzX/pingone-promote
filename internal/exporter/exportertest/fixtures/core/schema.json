@@ -1,0 +1,2116 @@
+{
+  "provider_schemas": {
+    "registry.terraform.io/pingidentity/pingone": {
+      "resource_schemas": {
+        "pingone_application": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The PingOne resource ID of the environment to create and manage the application in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the name of the application.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_resource": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create and manage the resource in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the resource name, which must be provided and must be unique within an environment.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_resource_scope": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage the resource scope in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the resource scope.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "resource_id": {
+                "type": "string",
+                "description": "The ID of the resource to assign the resource scope to.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_application_resource_grant": {
+          "block": {
+            "attributes": {
+              "application_id": {
+                "type": "string",
+                "description": "The ID of the application to create the resource grant for.  The value for `application_id` may come from the `id` attribute of the `pingone_application` or `pingone_system_application` resources or data sources.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "custom_resource_id": {
+                "type": "string",
+                "description": "A string that specifies the ID of the custom resource to be granted to the application.  Must be a valid PingOne resource ID.  Required if `resource_type` is set to `CUSTOM`, but cannot be set if `resource_type` is set to `OPENID_CONNECT` or `PINGONE_API`.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "optional": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create the application resource grant in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "resource_type": {
+                "type": "string",
+                "description": "The type of the resource to configure the grant for. When the value is set to `CUSTOM`, `custom_resource_id` must be specified.  Options are `CUSTOM`, `OPENID_CONNECT`, `PINGONE_API`.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "scopes": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "A list of IDs of the scopes associated with this grant.  Values must be valid PingOne resource IDs.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_sign_on_policy": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage the sign-on policy in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the sign on policy name, that is also used as the authentication context when initiating sign-on. The name must be unique within the environment, and can consist of either a string of alphanumeric letters, underscore, hyphen, period (regex `^[a-zA-Z0-9_.-]+$`) or an absolute URI if the string contains a `:` character.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_sign_on_policy_action": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create the sign on policy action in.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "priority": {
+                "type": "number",
+                "description": "An integer that specifies the order in which the policy referenced by this assignment is evaluated during an authentication flow relative to other policies. An assignment with a lower priority will be evaluated first.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "sign_on_policy_id": {
+                "type": "string",
+                "description": "The ID of the sign on policy to associate the sign on policy action to.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            },
+            "block_types": {}
+          }
+        },
+        "pingone_population": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create and manage the population in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the population name, which must be provided and must be unique within an environment.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_group": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage the group in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the group.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_schema_attribute": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create the schema attribute in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The system name of the schema attribute.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_password_policy": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage the password policy in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the name of the password policy.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_mfa_device_policy": {
+          "block": {
+            "attributes": {
+              "email": {
+                "nested_type": {
+                  "attributes": {
+                    "enabled": {
+                      "type": "bool",
+                      "description": "A boolean that specifies whether the email OTP method is enabled or disabled in the policy.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "otp": {
+                      "nested_type": {
+                        "attributes": {
+                          "failure": {
+                            "nested_type": {
+                              "attributes": {
+                                "cool_down": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the duration (number of time units) the user is blocked after reaching the maximum number of passcode failures.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that allows configuration of email OTP failure cool down settings.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "count": {
+                                  "type": "number",
+                                  "description": "An integer that defines the maximum number of times that the OTP entry can fail for a user, before they are blocked. Minimum is `1` and maximum is `7`.  Defaults to `3`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of email OTP failure settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "lifetime": {
+                            "nested_type": {
+                              "attributes": {
+                                "duration": {
+                                  "type": "number",
+                                  "description": "An integer that defines the duration (number of time units) that the passcode is valid before it expires.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "time_unit": {
+                                  "type": "string",
+                                  "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of email OTP lifetime settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "otp_length": {
+                            "type": "number",
+                            "description": "An integer that specifies the length of the OTP that is shown to users.  Minimum length is `6` digits and maximum is `10` digits.  Defaults to `6`.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          }
+                        },
+                        "nesting_mode": "single"
+                      },
+                      "description": "A single object that allows configuration of email OTP settings.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "pairing_disabled": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prevents users from pairing new devices with the email OTP method, though keeping it active in the policy for existing users. You can use this option if you want to phase out an existing authentication method but want to allow users to continue using the method for authentication for existing devices.  Defaults to `false`.",
+                      "description_kind": "markdown",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "prompt_for_nickname_on_pairing": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prompts users to provide nicknames for devices during pairing.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "A single object that allows configuration of email OTP device authentication policy settings.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment that contains the MFA device policy to manage.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "mobile": {
+                "nested_type": {
+                  "attributes": {
+                    "applications": {
+                      "nested_type": {
+                        "attributes": {
+                          "auto_enrollment": {
+                            "nested_type": {
+                              "attributes": {
+                                "enabled": {
+                                  "type": "bool",
+                                  "description": "A boolean that, when set to `true` if you want the application to allow Auto Enrollment. Auto Enrollment means that the user can authenticate for the first time from an unpaired device, and the successful authentication will result in the pairing of the device for MFA.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies auto enrollment settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "biometrics_enabled": {
+                            "type": "bool",
+                            "description": "A boolean that specifies whether biometric authentication methods (such as fingerprint or facial recognition) are enabled for MFA. Only applicable for PING_ONE_ID policies.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "device_authorization": {
+                            "nested_type": {
+                              "attributes": {
+                                "enabled": {
+                                  "type": "bool",
+                                  "description": "Specifies the enabled or disabled state of automatic MFA for native devices paired with the user, for the specified application.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "extra_verification": {
+                                  "type": "string",
+                                  "description": "Specifies the level of further verification when device authorization is enabled. The PingOne platform performs an extra verification check by sending a \"silent\" push notification to the customer native application, and receives a confirmation in return.  By default, the PingOne platform does not perform the extra verification check.  Options are `permissive` (the PingOne platform performs the extra verification check. Upon timeout or failure to get a response from the native app, the MFA step is treated as successfully completed), `restrictive` (the PingOne platform performs the extra verification check. Upon timeout or failure to get a response from the native app, the MFA step is treated as failed).",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies device authorization settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "integrity_detection": {
+                            "type": "string",
+                            "description": "Controls how authentication or registration attempts should proceed if a device integrity check does not receive a response.  Options are `permissive` (if you want to allow the process to continue if a device integrity check does not receive a response), `restrictive` (if you want to block the user if a device integrity check does not receive a response).",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "ip_pairing_configuration": {
+                            "nested_type": {
+                              "attributes": {
+                                "any_ip_address": {
+                                  "type": "bool",
+                                  "description": "A boolean that, when set to `false`, restricts device pairing to specific IP addresses defined in `only_these_ip_addresses`.  Defaults to `true`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "only_these_ip_addresses": {
+                                  "type": [
+                                    "set",
+                                    "string"
+                                  ],
+                                  "description": "A list of IP addresses or address ranges from which users can pair their devices. This parameter is required when `any_ip_address` is set to `false`. Each item in the array must be in CIDR notation, for example, `192.168.1.1/32` or `10.0.0.0/8`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows you to restrict device pairing to specific IP addresses. Only applicable for PING_ONE_ID policies.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "new_request_duration_configuration": {
+                            "nested_type": {
+                              "attributes": {
+                                "device_timeout": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that specifies the timeout duration in seconds.",
+                                        "description_kind": "markdown",
+                                        "optional": true,
+                                        "computed": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Defaults to `SECONDS`.  Options are `SECONDS`.",
+                                        "description_kind": "markdown",
+                                        "optional": true,
+                                        "computed": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that specifies the maximum time a notification can remain pending before it is displayed to the user. Value must be between `15` and `75` seconds.  Defaults to `25`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                },
+                                "total_timeout": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that specifies the timeout duration in seconds.",
+                                        "description_kind": "markdown",
+                                        "optional": true,
+                                        "computed": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Defaults to `SECONDS`.  Options are `SECONDS`.",
+                                        "description_kind": "markdown",
+                                        "optional": true,
+                                        "computed": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that specifies the total time an authentication request notification has to be handled by the user before timing out. The `total_timeout.duration` must exceed `device_timeout.duration` by at least 15 seconds.  Value must be between `30` and `90` seconds.  Defaults to `40`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that configures timeout settings for authentication request notifications. Only applicable for PING_ONE_ID policies.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "otp": {
+                            "nested_type": {
+                              "attributes": {
+                                "enabled": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether OTP authentication is enabled or disabled for the application in the policy.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies OTP settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "pairing_disabled": {
+                            "type": "bool",
+                            "description": "A boolean that, when set to `true`, prevents users from pairing new devices with the relevant application. You can use this option if you want to phase out an existing mobile application but want to allow users to continue using the application for authentication for existing devices.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "pairing_key_lifetime": {
+                            "nested_type": {
+                              "attributes": {
+                                "duration": {
+                                  "type": "number",
+                                  "description": "An integer that defines the amount of time an issued pairing key can be used until it expires. Minimum is 1 minute and maximum is 48 hours. If this parameter is not provided, the duration is set to 10 minutes.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "time_unit": {
+                                  "type": "string",
+                                  "description": "A string that specifies the type of time unit for `duration`.  Options are `HOURS`, `MINUTES`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies pairing key lifetime settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "push": {
+                            "nested_type": {
+                              "attributes": {
+                                "enabled": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether push notification is enabled or disabled for the application in the policy.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "number_matching": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "enabled": {
+                                        "type": "bool",
+                                        "description": "A boolean that, when set to `true`, requires the authenticating user to select a number that was displayed to them on the accessing device.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that configures number matching for push notifications.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies push settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "push_limit": {
+                            "nested_type": {
+                              "attributes": {
+                                "count": {
+                                  "type": "number",
+                                  "description": "An integer that specifies the number of consecutive push notifications that can be ignored or rejected by a user within a defined period before push notifications are blocked for the application. The minimum value is \"1\" and the maximum value is \"50\". If this parameter is not provided, the default value is \"5\".",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "lock_duration": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the length of time that push notifications should be blocked for the application if the defined limit has been reached. The minimum value is `1` minute and the maximum value is `120` minutes. If this parameter is not provided, the default value is `30` minutes.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.  Defaults to `MINUTES`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that specifies push limit lock duration settings for the application in the policy.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                },
+                                "time_period": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the length of time that push notifications should be blocked for the application if the defined limit has been reached. The minimum value is `1` minute and the maximum value is `120` minutes. If this parameter is not provided, the default value is `30` minutes.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.  Defaults to `MINUTES`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that specifies push limit time period settings for the application in the policy.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies push limit settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "push_timeout": {
+                            "nested_type": {
+                              "attributes": {
+                                "duration": {
+                                  "type": "number",
+                                  "description": "An integer that defines the length of time that push notifications should be blocked for the application if the defined limit has been reached. The minimum value is `1` minute and the maximum value is `120` minutes. If this parameter is not provided, the default value is `30` minutes.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                },
+                                "time_unit": {
+                                  "type": "string",
+                                  "description": "A string that specifies the type of time unit for `duration`.  Defaults to `SECONDS`.  Options are `SECONDS`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies push timeout settings for the application in the policy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "type": {
+                            "type": "string",
+                            "description": "A string that specifies the application type. Only applicable when `policy_type` is `PING_ONE_ID`. Must be set to `pingIdAppConfig`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          }
+                        },
+                        "nesting_mode": "map"
+                      },
+                      "description": "A map of objects that specifies settings for a configured Mobile Application.  The ID of the application should be configured as the map key.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "enabled": {
+                      "type": "bool",
+                      "description": "A boolean that specifies whether the mobile device method is enabled or disabled in the policy.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "otp": {
+                      "nested_type": {
+                        "attributes": {
+                          "failure": {
+                            "nested_type": {
+                              "attributes": {
+                                "cool_down": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the duration (number of time units) the user is blocked after reaching the maximum number of passcode failures. The minimum value is `2`, maximum is `30`, and the default is `2`. Note that when using the \"onetime authentication\" feature, the user is not blocked after the maximum number of failures even if you specified a block duration.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.  Defaults to `MINUTES`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that specifies OTP failure cool down settings for mobile applications in the policy.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "count": {
+                                  "type": "number",
+                                  "description": "An integer that defines the maximum number of times that the OTP entry can fail for a user, before they are blocked. The minimum value is `1`, maximum is `7`, and the default is `3`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies OTP failure settings for mobile applications in the policy.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "nesting_mode": "single"
+                      },
+                      "description": "A single object that specifies OTP settings for mobile applications in the policy.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "prompt_for_nickname_on_pairing": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prompts users to provide nicknames for devices during pairing.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "A single object that allows configuration of mobile push/OTP device authentication policy settings.  This factor requires embedding the PingOne MFA SDK into a customer facing mobile application, and configuring as a Native application using the `pingone_application` resource.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the MFA policy's unique name within the environment.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "sms": {
+                "nested_type": {
+                  "attributes": {
+                    "enabled": {
+                      "type": "bool",
+                      "description": "A boolean that specifies whether the SMS OTP method is enabled or disabled in the policy.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "otp": {
+                      "nested_type": {
+                        "attributes": {
+                          "failure": {
+                            "nested_type": {
+                              "attributes": {
+                                "cool_down": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the duration (number of time units) the user is blocked after reaching the maximum number of passcode failures.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that allows configuration of SMS OTP failure cool down settings.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "count": {
+                                  "type": "number",
+                                  "description": "An integer that defines the maximum number of times that the OTP entry can fail for a user, before they are blocked. Minimum is `1` and maximum is `7`.  Defaults to `3`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of SMS OTP failure settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "lifetime": {
+                            "nested_type": {
+                              "attributes": {
+                                "duration": {
+                                  "type": "number",
+                                  "description": "An integer that defines the duration (number of time units) that the passcode is valid before it expires.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "time_unit": {
+                                  "type": "string",
+                                  "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of SMS OTP lifetime settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "otp_length": {
+                            "type": "number",
+                            "description": "An integer that specifies the length of the OTP that is shown to users.  Minimum length is `6` digits and maximum is `10` digits.  Defaults to `6`.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          }
+                        },
+                        "nesting_mode": "single"
+                      },
+                      "description": "A single object that allows configuration of SMS OTP settings.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "pairing_disabled": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prevents users from pairing new devices with the SMS OTP method, though keeping it active in the policy for existing users. You can use this option if you want to phase out an existing authentication method but want to allow users to continue using the method for authentication for existing devices.  Defaults to `false`.",
+                      "description_kind": "markdown",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "prompt_for_nickname_on_pairing": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prompts users to provide nicknames for devices during pairing.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "A single object that allows configuration of SMS OTP device authentication policy settings.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "totp": {
+                "nested_type": {
+                  "attributes": {
+                    "enabled": {
+                      "type": "bool",
+                      "description": "A boolean that specifies whether the TOTP method is enabled or disabled in the policy.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "otp": {
+                      "nested_type": {
+                        "attributes": {
+                          "failure": {
+                            "nested_type": {
+                              "attributes": {
+                                "cool_down": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the duration (number of time units) the user is blocked after reaching the maximum number of passcode failures.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.  Defaults to `MINUTES`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that allows configuration of TOTP OTP failure cool down settings.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                },
+                                "count": {
+                                  "type": "number",
+                                  "description": "An integer that defines the maximum number of times that the OTP entry can fail for a user, before they are blocked.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of TOTP OTP failure settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "nesting_mode": "single"
+                      },
+                      "description": "A single object that allows configuration of TOTP OTP settings.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "pairing_disabled": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prevents users from pairing new devices with the TOTP method, though keeping it active in the policy for existing users. You can use this option if you want to phase out an existing authentication method but want to allow users to continue using the method for authentication for existing devices.  Defaults to `false`.",
+                      "description_kind": "markdown",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "passcode_grace_period": {
+                      "type": "number",
+                      "description": "An integer that specifies the TOTP passcode grace period in 30-second windows. The minimum value is `1` and the maximum value is `10`.  Defaults to `5`.",
+                      "description_kind": "markdown",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "prompt_for_nickname_on_pairing": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prompts users to provide nicknames for devices during pairing.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    },
+                    "uri_parameters": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "A map of string key:value pairs that specifies `otpauth` URI parameters. For example, if you provide a value for the `issuer` parameter, then authenticators that support that parameter will display the text you specify together with the OTP (in addition to the username). This can help users recognize which application the OTP is for. If you intend on using the same MFA policy for multiple applications, choose a name that reflects the group of applications.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description_kind": "plain",
+                "required": true
+              },
+              "voice": {
+                "nested_type": {
+                  "attributes": {
+                    "enabled": {
+                      "type": "bool",
+                      "description": "A boolean that specifies whether the voice OTP method is enabled or disabled in the policy.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "otp": {
+                      "nested_type": {
+                        "attributes": {
+                          "failure": {
+                            "nested_type": {
+                              "attributes": {
+                                "cool_down": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "duration": {
+                                        "type": "number",
+                                        "description": "An integer that defines the duration (number of time units) the user is blocked after reaching the maximum number of passcode failures.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "time_unit": {
+                                        "type": "string",
+                                        "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.",
+                                        "description_kind": "markdown",
+                                        "required": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that allows configuration of voice OTP failure cool down settings.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "count": {
+                                  "type": "number",
+                                  "description": "An integer that defines the maximum number of times that the OTP entry can fail for a user, before they are blocked. Minimum is `1` and maximum is `7`.  Defaults to `3`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of voice OTP failure settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "lifetime": {
+                            "nested_type": {
+                              "attributes": {
+                                "duration": {
+                                  "type": "number",
+                                  "description": "An integer that defines the duration (number of time units) that the passcode is valid before it expires.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "time_unit": {
+                                  "type": "string",
+                                  "description": "A string that specifies the type of time unit for `duration`.  Options are `MINUTES`, `SECONDS`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that allows configuration of voice OTP lifetime settings.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "otp_length": {
+                            "type": "number",
+                            "description": "An integer that specifies the length of the OTP that is shown to users.  Minimum length is `6` digits and maximum is `10` digits.  Defaults to `6`.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          }
+                        },
+                        "nesting_mode": "single"
+                      },
+                      "description": "A single object that allows configuration of voice OTP settings.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "pairing_disabled": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prevents users from pairing new devices with the voice OTP method, though keeping it active in the policy for existing users. You can use this option if you want to phase out an existing authentication method but want to allow users to continue using the method for authentication for existing devices.  Defaults to `false`.",
+                      "description_kind": "markdown",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "prompt_for_nickname_on_pairing": {
+                      "type": "bool",
+                      "description": "A boolean that, when set to `true`, prompts users to provide nicknames for devices during pairing.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "A single object that allows configuration of voice OTP device authentication policy settings.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_identity_provider": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create the identity provider in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the name of the identity provider.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_gateway": {
+          "block": {
+            "attributes": {
+              "enabled": {
+                "type": "bool",
+                "description": "A boolean that specifies whether the gateway is enabled in the environment.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage the gateway in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the name of the gateway resource.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "type": {
+                "type": "string",
+                "description": "A string that specifies the type of gateway.  Options are `API_GATEWAY_INTEGRATION`, `LDAP`, `PING_FEDERATE`, `PING_INTELLIGENCE`, `RADIUS`.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_branding_theme": {
+          "block": {
+            "attributes": {
+              "body_text_color": {
+                "type": "string",
+                "description": "The body text color for the theme. It must be a valid hexadecimal color code.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "button_color": {
+                "type": "string",
+                "description": "The button color for the theme. It must be a valid hexadecimal color code.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "button_text_color": {
+                "type": "string",
+                "description": "The button text color for the branding theme. It must be a valid hexadecimal color code.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "card_color": {
+                "type": "string",
+                "description": "The card color for the branding theme. It must be a valid hexadecimal color code.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to set branding settings for.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "heading_text_color": {
+                "type": "string",
+                "description": "The heading text color for the branding theme. It must be a valid hexadecimal color code.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "link_text_color": {
+                "type": "string",
+                "description": "The hyperlink text color for the branding theme. It must be a valid hexadecimal color code.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the unique name of the branding theme.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "template": {
+                "type": "string",
+                "description": "The template name of the branding theme associated with the environment.  Options are `default`, `focus`, `mural`, `slate`, `split`.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_notification_template_content": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage notification template contents in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "locale": {
+                "type": "string",
+                "description": "A string that specifies an ISO standard language code. For more information about standard language codes, see [ISO Language Code Table](http://www.lingoes.net/en/translator/langcode.htm).  Options are `aa`, `ab`, `ae`, `af`, `af-ZA`, `ak`, `am`, `an`, `ar`, `ar-AE`, `ar-BH`, `ar-DZ`, `ar-EG`, `ar-IQ`, `ar-JO`, `ar-KW`, `ar-LB`, `ar-LY`, `ar-MA`, `ar-OM`, `ar-QA`, `ar-SA`, `ar-SY`, `ar-TN`, `ar-YE`, `as`, `av`, `ay`, `az`, `az-AZ`, `ba`, `be`, `be-BY`, `bg`, `bg-BG`, `bi`, `bm`, `bn`, `bo`, `br`, `bs`, `bs-BA`, `ca`, `ca-ES`, `ce`, `ch`, `cmn-CN`, `cmn-TW`, `co`, `cr`, `cs`, `cs-CZ`, `cu`, `cv`, `cy`, `cy-GB`, `da`, `da-DK`, `de`, `de-AT`, `de-CH`, `de-DE`, `de-LI`, `de-LU`, `dv`, `dv-MV`, `dz`, `ee`, `el`, `el-GR`, `en`, `en-AU`, `en-BZ`, `en-CA`, `en-CB`, `en-GB`, `en-GB-WLS`, `en-IE`, `en-IN`, `en-JM`, `en-NZ`, `en-PH`, `en-TT`, `en-US`, `en-ZA`, `en-ZW`, `eo`, `es`, `es-AR`, `es-BO`, `es-CL`, `es-CO`, `es-CR`, `es-DO`, `es-EC`, `es-ES`, `es-GT`, `es-HN`, `es-MX`, `es-NI`, `es-PA`, `es-PE`, `es-PR`, `es-PY`, `es-SV`, `es-US`, `es-UY`, `es-VE`, `et`, `et-EE`, `eu`, `eu-ES`, `fa`, `fa-IR`, `ff`, `fi`, `fi-FI`, `fj`, `fo`, `fo-FO`, `fr`, `fr-BE`, `fr-CA`, `fr-CH`, `fr-FR`, `fr-LU`, `fr-MC`, `fy`, `ga`, `gd`, `gl`, `gl-ES`, `gn`, `gu`, `gu-IN`, `gv`, `ha`, `he`, `he-IL`, `hi`, `hi-IN`, `ho`, `hr`, `hr-BA`, `hr-HR`, `ht`, `hu`, `hu-HU`, `hy`, `hy-AM`, `hz`, `ia`, `id`, `id-ID`, `ie`, `ig`, `ii`, `ik`, `io`, `is`, `is-IS`, `it`, `it-CH`, `it-IT`, `iu`, `ja`, `ja-JP`, `jv`, `ka`, `ka-GE`, `kg`, `ki`, `kj`, `kk`, `kk-KZ`, `kl`, `km`, `kn`, `kn-IN`, `ko`, `ko-KR`, `kok`, `kok-IN`, `kr`, `ks`, `ku`, `kv`, `kw`, `ky`, `ky-KG`, `la`, `lb`, `lg`, `li`, `ln`, `lo`, `lt`, `lt-LT`, `lu`, `lv`, `lv-LV`, `mg`, `mh`, `mi`, `mi-NZ`, `mk`, `mk-MK`, `ml`, `mn`, `mn-MN`, `mr`, `mr-IN`, `ms`, `ms-BN`, `ms-MY`, `mt`, `mt-MT`, `my`, `na`, `nb`, `nb-NO`, `nd`, `ne`, `ng`, `nl`, `nl-BE`, `nl-NL`, `nn`, `nn-NO`, `no`, `nr`, `ns`, `ns-ZA`, `nv`, `ny`, `oc`, `oj`, `om`, `or`, `os`, `pa`, `pa-IN`, `pi`, `pl`, `pl-PL`, `ps`, `ps-AR`, `pt`, `pt-BR`, `pt-PT`, `qu`, `qu-BO`, `qu-EC`, `qu-PE`, `rm`, `rn`, `ro`, `ro-RO`, `ru`, `ru-RU`, `rw`, `sa`, `sa-IN`, `sc`, `sd`, `se`, `se-FI`, `se-NO`, `se-SE`, `sg`, `si`, `sk`, `sk-SK`, `sl`, `sl-SI`, `sm`, `sn`, `so`, `sq`, `sq-AL`, `sr`, `sr-BA`, `sr-SP`, `ss`, `st`, `su`, `sv`, `sv-FI`, `sv-SE`, `sw`, `sw-KE`, `syr`, `syr-SY`, `ta`, `ta-IN`, `te`, `te-IN`, `tg`, `th`, `th-TH`, `ti`, `tk`, `tl`, `tl-PH`, `tn`, `tn-ZA`, `to`, `tr`, `tr-TR`, `ts`, `tt`, `tt-RU`, `tw`, `ty`, `ug`, `uk`, `uk-UA`, `ur`, `ur-PK`, `uz`, `uz-UZ`, `ve`, `vi`, `vi-VN`, `vo`, `wa`, `wo`, `xh`, `xh-ZA`, `yi`, `yo`, `yue-CN`, `za`, `zh`, `zh-CN`, `zh-HK`, `zh-MO`, `zh-SG`, `zh-TW`, `zu`, `zu-ZA`.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "template_name": {
+                "type": "string",
+                "description": "A string that specifies the ID of the template to manage localised contents for.  Options are `account_created`, `account_updated`, `credential_issued`, `credential_revoked`, `credential_updated`, `credential_verification`, `device_pairing`, `digital_wallet_pairing`, `email_phone_verification`, `email_verification_admin`, `email_verification_user`, `general`, `id_verification`, `new_device_paired`, `password_change_admin`, `password_change_user`, `password_recovery_new`, `recovery_code_template`, `strong_authentication`, `transaction`, `verification_code_new`, `verification_code_template`.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_form": {
+          "block": {
+            "attributes": {
+              "cols": {
+                "type": "number",
+                "description": "An integer that specifies the number of columns in the form (min = `1`; max = `4`).",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "components": {
+                "nested_type": {
+                  "attributes": {
+                    "fields": {
+                      "nested_type": {
+                        "attributes": {
+                          "action": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `FIDO2`.  A string that specifies the FIDO2 action.  Options are `AUTHENTICATE`, `REGISTER`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "agreement": {
+                            "nested_type": {
+                              "attributes": {
+                                "id": {
+                                  "type": "string",
+                                  "description": "An identifier that specifies the ID of the agreement.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "use_dynamic_agreement": {
+                                  "type": "bool",
+                                  "description": "An agreement option that specifies whether to use the agreement identified in the DaVinci form node.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "**Required** when the `type` is one of `AGREEMENT`.  A single object that contains the agreement configuration",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "alignment": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `QR_CODE`, `RECAPTCHA_V2`.  A string that specifies the reCAPTCHA alignment.  Options are `CENTER`, `LEFT`, `RIGHT`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "appearance": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `SINGLE_CHECKBOX`.  A string that specifies the checkbox appearance.  Options are `CHECKBOX`, `SWITCH`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "attribute_disabled": {
+                            "type": "bool",
+                            "description": "Optional when the `type` is one of `CHECKBOX`, `COMBOBOX`, `DROPDOWN`, `PASSWORD`, `PASSWORD_VERIFY`, `PHONE_NUMBER`, `RADIO`, `SINGLE_CHECKBOX`, `TEXT`.  A boolean that specifies whether the linked directory attribute is disabled.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "content": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `SLATE_TEXTBLOB`.  A string that specifies the field's content (for example, escaped JSON string when the field type is `SLATE_TEXTBLOB` - use `jsonencode` to convert JSON to escaped JSON string.)",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "country_code_label": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `PHONE_NUMBER`.  Label for the country code field.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "default_country_code": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `PHONE_NUMBER`.  The country code to default the country code selection field to (two character country code).",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "error_message": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `SINGLE_CHECKBOX`.  A string that specifies the message to display if validation fails.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "extension_label": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `PHONE_NUMBER`.  Label for the extension field. This is required and must not be blank if `show_extension` is `true`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "fallback_text": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `QR_CODE`.  A string that specifies the text label for fallback under the QR code.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "icon": {
+                            "nested_type": {
+                              "attributes": {
+                                "size": {
+                                  "type": "string",
+                                  "description": "A string that specifies the icon size.  Options are `LARGE`, `MEDIUM`, `SMALL`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "description": "A string that specifies the icon type.  Options are `AGREEMENT`, `ALERT`, `CALL`, `FAILURE`, `FINGERPRINT`, `LINK`, `MAIL`, `MOBILE_PHONE`, `NONE`, `PASSKEY`, `QR_CODE`, `SUCCESS`, `TEXT_MESSAGE`, `USB_KEY`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "Optional when the `type` is one of `SLATE_TEXTBLOB`.  An object that specifies the icon.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "icon_src": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `SOCIAL_LOGIN_BUTTON`.  A string that specifies the icon image URL to be displayed on the button.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "idp_enabled": {
+                            "type": "bool",
+                            "description": "A boolean that specifies whether the external identity provider is enabled.",
+                            "description_kind": "markdown",
+                            "computed": true
+                          },
+                          "idp_id": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `SOCIAL_LOGIN_BUTTON`.  A string that specifies the external identity provider's ID.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "idp_name": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `SOCIAL_LOGIN_BUTTON`.  A string that specifies the external identity provider name.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "idp_type": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `SOCIAL_LOGIN_BUTTON`.  A string that specifies the external identity provider type.  Options are `AMAZON`, `APPLE`, `FACEBOOK`, `GITHUB`, `GOOGLE`, `LDAP`, `LINKEDIN`, `LINKEDIN_OIDC`, `MICROSOFT`, `OPENID_CONNECT`, `PAYPAL`, `SAML`, `TWITTER`, `YAHOO`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "input_type": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `AGREEMENT`, `SINGLE_CHECKBOX`.  A string that specifies the type of field.  Options are `BOOLEAN` (available when the field `type` is `SINGLE_CHECKBOX`), `READ_ONLY_TEXT` (available when the field `type` is `AGREEMENT`).",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "key": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `AGREEMENT`, `CHECKBOX`, `COMBOBOX`, `DEVICE_AUTHENTICATION`, `DEVICE_REGISTRATION`, `DROPDOWN`, `FIDO2`, `FLOW_BUTTON`, `FLOW_LINK`, `PASSWORD`, `PASSWORD_VERIFY`, `PHONE_NUMBER`, `POLLING`, `QR_CODE`, `RADIO`, `SINGLE_CHECKBOX`, `SOCIAL_LOGIN_BUTTON`, `TEXT`, optional when the `type` is one of `SLATE_TEXTBLOB`.  A string that specifies an identifier for the field component.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `CHECKBOX`, `COMBOBOX`, `DEVICE_AUTHENTICATION`, `DEVICE_REGISTRATION`, `DROPDOWN`, `FIDO2`, `FLOW_BUTTON`, `FLOW_LINK`, `PASSWORD`, `PASSWORD_VERIFY`, `PHONE_NUMBER`, `RADIO`, `SINGLE_CHECKBOX`, `SOCIAL_LOGIN_BUTTON`, `SUBMIT_BUTTON`, `TEXT`.  A string that specifies the field label.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "label_mode": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `CHECKBOX`, `COMBOBOX`, `DROPDOWN`, `PASSWORD`, `PASSWORD_VERIFY`, `PHONE_NUMBER`, `RADIO`, `SINGLE_CHECKBOX`, `TEXT`.  A string that specifies how the field is rendered.  Options are `DEFAULT`, `FLOAT`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "label_password_verify": {
+                            "type": "string",
+                            "description": "Optional when the `type` is one of `PASSWORD_VERIFY`.  A string that when a second field for verifies password is used, this property specifies the field label for that verify field.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "layout": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `CHECKBOX`, `RADIO`, optional when the `type` is one of `COMBOBOX`, `DROPDOWN`, `PASSWORD`, `PASSWORD_VERIFY`, `TEXT`.  A string that specifies layout attributes for radio button and checkbox fields.  Options are `HORIZONTAL`, `VERTICAL`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "options": {
+                            "nested_type": {
+                              "attributes": {
+                                "description": {
+                                  "type": "string",
+                                  "description": "Description for the device (Max 1000 characters). Supported when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "icon_src": {
+                                  "type": "string",
+                                  "description": "Icon image source to display for the device (Max 500 characters). Supported when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "description": "A string that specifies the option's label in the form field that is shown to the end user. Supported when the parent field `type` is one of `CHECKBOX`, `COMBOBOX`, `DROPDOWN`, `RADIO`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "title": {
+                                  "type": "string",
+                                  "description": "Title for the device. Supported when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "description": "Device type. Supported when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`.  Options are `EMAIL` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`), `FIDO2` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`), `MAGIC_LINK` (available when the parent field `type` is `DEVICE_AUTHENTICATION`), `MOBILE` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`), `SMS` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`), `TOTP` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`), `VOICE` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`), `WHATSAPP` (available when the parent field `type` is `DEVICE_AUTHENTICATION` or `DEVICE_REGISTRATION`).",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "description": "A string that specifies the option's value in the form field that is posted as form data. Supported when the parent field `type` is one of `CHECKBOX`, `COMBOBOX`, `DROPDOWN`, `RADIO`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "set"
+                            },
+                            "description": "**Required** when the `type` is one of `CHECKBOX`, `COMBOBOX`, `DEVICE_AUTHENTICATION`, `DEVICE_REGISTRATION`, `DROPDOWN`, `RADIO`.  An array of objects that specifies the unique list of options. For `DEVICE_AUTHENTICATION` and `DEVICE_REGISTRATION`, this is a list of available devices, which must not be empty, and each option object supports `type`, `title`, optional `description`, and optional `icon_src`. For `CHECKBOX`, `COMBOBOX`, `DROPDOWN`, and `RADIO`, each option object supports `label` and `value`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "other_option_attribute_disabled": {
+                            "type": "bool",
+                            "description": "A boolean that specifies whether the other option is disabled.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "other_option_enabled": {
+                            "type": "bool",
+                            "description": "A boolean that specifies whether the end user can type an entry that is not in a predefined list.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "other_option_input_label": {
+                            "type": "string",
+                            "description": "A string that specifies the label placeholder text for the other option in drop-down controls.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "other_option_key": {
+                            "type": "string",
+                            "description": "A string that specifies the key associated with the other option.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "other_option_label": {
+                            "type": "string",
+                            "description": "A string that specifies the label for a custom or \"other\" choice in a list.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "polling_appearance": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `POLLING`.  A string that specifies the polling activity indicator appearance.  Options are `DOTS`, `NONE`, `SPINNER`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "position": {
+                            "nested_type": {
+                              "attributes": {
+                                "col": {
+                                  "type": "number",
+                                  "description": "An integer that specifies the column position of the form field in the form  (min = `0`; max = `3`).",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                },
+                                "row": {
+                                  "type": "number",
+                                  "description": "An integer that specifies the row position of the form field in the form (maximum number is `50`).",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                },
+                                "width": {
+                                  "type": "number",
+                                  "description": "An integer that specifies the width of the form field in the form (in percentage).",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "A single object that specifies the position of the form field in the form.  The combination of `col` and `row` must be unique between form fields.",
+                            "description_kind": "markdown",
+                            "required": true
+                          },
+                          "required": {
+                            "type": "bool",
+                            "description": "Optional when the `type` is one of `CHECKBOX`, `COMBOBOX`, `DEVICE_AUTHENTICATION`, `DEVICE_REGISTRATION`, `DROPDOWN`, `PASSWORD`, `PASSWORD_VERIFY`, `PHONE_NUMBER`, `RADIO`, `SINGLE_CHECKBOX`, `TEXT`.  A boolean that specifies whether the field is required.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "show_extension": {
+                            "type": "bool",
+                            "description": "Optional when the `type` is one of `PHONE_NUMBER`.  Whether to show an extension field.  Defaults to `false`.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "show_password_requirements": {
+                            "type": "bool",
+                            "description": "Optional when the `type` is one of `PASSWORD`, `PASSWORD_VERIFY`.  A boolean that specifies whether to display password requirements to the user.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "size": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `POLLING`, `QR_CODE`, `RECAPTCHA_V2`.  A string that specifies the reCAPTCHA size or the QR code/polling size. For reCAPTCHA fields, options are `NORMAL`, `COMPACT`. For QR code and polling fields, options are `SMALL`, `MEDIUM`, `LARGE`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "styles": {
+                            "nested_type": {
+                              "attributes": {
+                                "alignment": {
+                                  "type": "string",
+                                  "description": "A string that specifies the button alignment.  Options are `CENTER`, `LEFT`, `RIGHT`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "background_color": {
+                                  "type": "string",
+                                  "description": "A string that specifies the button background color. The value must be a valid hexadecimal color.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "border_color": {
+                                  "type": "string",
+                                  "description": "A string that specifies the button border color. The value must be a valid hexadecimal color.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "display_default_theme_button_background_color": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether the button uses the default theme background color.  Defaults to `false`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "display_default_theme_button_border_color": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether the button uses the default theme border color.  Defaults to `false`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "display_default_theme_button_text_color": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether the button uses the default theme text color.  Defaults to `false`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "display_default_theme_link_color": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether the default theme link color is enabled.  Defaults to `false`.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "enabled": {
+                                  "type": "bool",
+                                  "description": "A boolean that specifies whether the button is enabled.",
+                                  "description_kind": "markdown",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "height": {
+                                  "type": "number",
+                                  "description": "An integer that specifies a custom height of the field (in pixels) when displayed in the form.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "padding": {
+                                  "nested_type": {
+                                    "attributes": {
+                                      "bottom": {
+                                        "type": "number",
+                                        "description": "An integer that specifies the bottom padding (in pixels) to apply to the field.",
+                                        "description_kind": "markdown",
+                                        "optional": true
+                                      },
+                                      "left": {
+                                        "type": "number",
+                                        "description": "An integer that specifies the left padding (in pixels) to apply to the field.",
+                                        "description_kind": "markdown",
+                                        "optional": true
+                                      },
+                                      "right": {
+                                        "type": "number",
+                                        "description": "An integer that specifies the right padding (in pixels) to apply to the field.",
+                                        "description_kind": "markdown",
+                                        "optional": true
+                                      },
+                                      "top": {
+                                        "type": "number",
+                                        "description": "An integer that specifies the top padding (in pixels) to apply to the field.",
+                                        "description_kind": "markdown",
+                                        "optional": true
+                                      }
+                                    },
+                                    "nesting_mode": "single"
+                                  },
+                                  "description": "A single object that specifies custom padding styles for the field.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "text_color": {
+                                  "type": "string",
+                                  "description": "A string that specifies the button text color. The value must be a valid hexadecimal color.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "width": {
+                                  "type": "number",
+                                  "description": "An integer that specifies the button width. Set as a percentage.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "width_unit": {
+                                  "type": "string",
+                                  "description": "A string that specifies the unit to apply to the `width` parameter.  Options are `PERCENT`, `PIXELS`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "Optional when the `type` is one of `FLOW_BUTTON`, `FLOW_LINK`, `SOCIAL_LOGIN_BUTTON`, `SUBMIT_BUTTON`.  A single object that describes style settings for the field.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "theme": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `RECAPTCHA_V2`.  A string that specifies the reCAPTCHA theme.  Options are `DARK`, `LIGHT`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "title_enabled": {
+                            "type": "bool",
+                            "description": "**Required** when the `type` is one of `AGREEMENT`.  Specifies whether the title is enabled.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "description": "**Required** when the `type` is one of `FIDO2`.  A string that specifies the FIDO2 UI trigger type.  Options are `AUTOMATIC`, `BUTTON`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "type": {
+                            "type": "string",
+                            "description": "A string that specifies the type of form field.  Options are `AGREEMENT`, `CHECKBOX`, `COMBOBOX`, `DEVICE_AUTHENTICATION`, `DEVICE_REGISTRATION`, `DIVIDER`, `DROPDOWN`, `EMPTY_FIELD`, `ERROR_DISPLAY`, `FIDO2`, `FLOW_BUTTON`, `FLOW_LINK`, `PASSWORD`, `PASSWORD_VERIFY`, `PHONE_NUMBER`, `POLLING`, `QR_CODE`, `RADIO`, `RECAPTCHA_V2`, `SINGLE_CHECKBOX`, `SLATE_TEXTBLOB`, `SOCIAL_LOGIN_BUTTON`, `SUBMIT_BUTTON`, `TEXT`.",
+                            "description_kind": "markdown",
+                            "required": true
+                          },
+                          "validate_phone_number": {
+                            "type": "bool",
+                            "description": "Optional when the `type` is one of `PHONE_NUMBER`.  Whether to validate the phone number input.  Defaults to `true`.",
+                            "description_kind": "markdown",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "validation": {
+                            "nested_type": {
+                              "attributes": {
+                                "error_message": {
+                                  "type": "string",
+                                  "description": "A string that specifies the error message to be displayed when the field validation fails.  When configuring this parameter, the `regex` parameter is required.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "regex": {
+                                  "type": "string",
+                                  "description": "A string that specifies a validation regular expression. The expression must be a valid regular expression string. This is a required property when the validation type is `CUSTOM`.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "description": "A string that specifies the validation type.  Options are `CUSTOM`, `NONE`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "**Required** when the `type` is one of `TEXT`, optional when the `type` is one of `PASSWORD`, `PASSWORD_VERIFY`.  An object containing validation data for the field.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "visibility": {
+                            "nested_type": {
+                              "attributes": {
+                                "key": {
+                                  "type": "string",
+                                  "description": "A non-unique string associated with the field when visibility is evaluated by DaVinci at runtime. If the `visibility.type` property is set to `SHOW_BY_DEFAULT` or `HIDE_BY_DEFAULT`, then this property is required.",
+                                  "description_kind": "markdown",
+                                  "optional": true
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "description": "A string that specifies the visibility behavior for the field.  Options are `ALWAYS_VISIBLE`, `HIDE_BY_DEFAULT`, `SHOW_BY_DEFAULT`.",
+                                  "description_kind": "markdown",
+                                  "required": true
+                                }
+                              },
+                              "nesting_mode": "single"
+                            },
+                            "description": "An object that specifies the visibility settings for a form field.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          }
+                        },
+                        "nesting_mode": "list"
+                      },
+                      "description": "An ordered list of objects that specifies the form fields that make up the form.",
+                      "description_kind": "markdown",
+                      "required": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "A single object that specifies the form configuration elements.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to manage the form in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the form name, which must be provided and must be unique within an environment.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_agreement": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to associate the agreement with.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the name of the agreement to configure.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_language": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create the language in.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "locale": {
+                "type": "string",
+                "description": "An ISO standard language code. For more information about standard language codes, see [ISO Language Code Table](http://www.lingoes.net/en/translator/langcode.htm).  The following language codes are reserved as they are created automatically in the environment: `cs`, `de`, `en`, `es`, `fr`, `fr-CA`, `hu`, `it`, `ja`, `ko`, `nl`, `pl`, `pt`, `ru`, `th`, `tr`, `zh`.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The language name.",
+                "description_kind": "markdown",
+                "computed": true
+              }
+            }
+          }
+        },
+        "pingone_risk_policy": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to configure the risk policy in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the unique, friendly name for this policy set. Valid characters consist of any Unicode letter, mark (such as, accent, umlaut), # (numeric), / (forward slash), . (period), ' (apostrophe), _ (underscore), space, or - (hyphen). Maximum size is 256 characters.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_authorize_api_service": {
+          "block": {
+            "attributes": {
+              "authorization_server": {
+                "nested_type": {
+                  "attributes": {
+                    "resource_id": {
+                      "type": "string",
+                      "description": "A string that specifies the UUID of the custom PingOne resource. The resource defines the characteristics of the OAuth 2.0 access tokens used to get access to the APIs on the API service such as the audience and scopes. This property must identify a PingOne resource with a `type` property value of `CUSTOM`.",
+                      "description_kind": "markdown",
+                      "optional": true
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "A string that specifies the type of authorization server that will issue access tokens. Must be the same value as the `directory.type` field. If `EXTERNAL`, the `resource` field must not be provided.  Options are `EXTERNAL`, `PINGONE_SSO`.  Defaults to `PINGONE_SSO`.  This field is immutable and will trigger a replace plan if changed.",
+                      "description_kind": "markdown",
+                      "required": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "A single object that specifies properties related to the authorization server that will issue access tokens used to access the APIs.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "base_urls": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "A set of strings that specifies the possible base URLs that an end-user will use to access the APIs hosted on the customer's API service. Multiple base URLs may be specified to support cases where the same API may be available from multiple URLs (for example, from a user-friendly domain URL and an internal domain URL). Base URLs must be valid absolute URLs with the `https` or `http` scheme. If the path component is non-empty, it must not end in a trailing slash. The path must not contain empty backslash, dot, or double-dot segments. It must not have a query or fragment present, and the host portion of the authority must be a DNS hostname or valid IP (IPv4 or IPv6). The length must be less than or equal to 256 characters.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "The ID of the environment to create and manage the API Service in.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "A string that specifies the API service resource name. The name value must be unique among all API services, and it must be a valid resource name.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_verify_policy": {
+          "block": {
+            "attributes": {
+              "environment_id": {
+                "type": "string",
+                "description": "PingOne environment identifier (UUID) in which the verify policy exists.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the verification policy displayed in PingOne Admin UI.",
+                "description_kind": "plain",
+                "required": true
+              }
+            }
+          }
+        },
+        "pingone_credential_type": {
+          "block": {
+            "attributes": {
+              "card_design_template": {
+                "type": "string",
+                "description": "An SVG formatted image containing placeholders for the credentials fields that need to be displayed in the image.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "environment_id": {
+                "type": "string",
+                "description": "PingOne environment identifier (UUID) in which the credential type exists.  Must be a valid PingOne resource ID.  This field is immutable and will trigger a replace plan if changed.",
+                "description_kind": "markdown",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "metadata": {
+                "nested_type": {
+                  "attributes": {
+                    "background_image": {
+                      "type": "string",
+                      "description": "The URL or fully qualified path to the image file used for the credential background.  This can be retrieved from the `uploaded_image.href` parameter of the `pingone_image` resource.  Image size must not exceed 50 KB.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "bg_opacity_percent": {
+                      "type": "number",
+                      "description": "A numnber indicating the percent opacity of the background image in the credential. High percentage opacity may make text on the credential difficult to read.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "card_color": {
+                      "type": "string",
+                      "description": "A string containing a 6-digit hexadecimal color code specifying the color of the credential.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "columns": {
+                      "type": "number",
+                      "description": "Indicates a number (between 1-3) of columns to display visible fields on the credential.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Description of the credential.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "fields": {
+                      "nested_type": {
+                        "attributes": {
+                          "attribute": {
+                            "type": "string",
+                            "description": "Name of the PingOne Directory attribute. Present if `field.type` is `Directory Attribute`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "file_support": {
+                            "type": "string",
+                            "description": "Specifies how an image is stored in the credential field.  Options are `BASE64_STRING`, `INCLUDE_FILE`, `REFERENCE_FILE`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          },
+                          "id": {
+                            "type": "string",
+                            "description": "Identifier of the field formatted as `<fields.type> -> <fields.title>`.",
+                            "description_kind": "markdown",
+                            "computed": true
+                          },
+                          "is_visible": {
+                            "type": "bool",
+                            "description": "Specifies whether the field should be visible to viewers of the credential.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "required": {
+                            "type": "bool",
+                            "description": "Specifies whether the field is required for the credential.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "title": {
+                            "type": "string",
+                            "description": "Descriptive text when showing the field.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "type": {
+                            "type": "string",
+                            "description": "Specifies the type of data in the credential field.  Options are `Alphanumeric Text`, `Directory Attribute`, `Issued Timestamp`.",
+                            "description_kind": "markdown",
+                            "required": true
+                          },
+                          "value": {
+                            "type": "string",
+                            "description": "The text to appear on the credential for a `field.type` of `Alphanumeric Text`.",
+                            "description_kind": "markdown",
+                            "optional": true
+                          }
+                        },
+                        "nesting_mode": "list"
+                      },
+                      "description": "In a credential, the information is stored as key-value pairs where `fields` defines those key-value pairs. Effectively, `fields.title` is the key and its value is `fields.value` or extracted from the PingOne Directory attribute named in `fields.attribute`.",
+                      "description_kind": "markdown",
+                      "required": true
+                    },
+                    "logo_image": {
+                      "type": "string",
+                      "description": "The URL or fully qualified path to the image file used for the credential logo.  This can be retrieved from the `uploaded_image.href` parameter of the `pingone_image` resource.  Image size must not exceed 25 KB.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Name of the credential.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "text_color": {
+                      "type": "string",
+                      "description": "A string containing a 6-digit hexadecimal color code specifying the color of the credential text.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "version": {
+                      "type": "number",
+                      "description": "Version of this credential metadata.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "description": "Contains the names, data types, and other metadata related to the credential.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "title": {
+                "type": "string",
+                "description": "Title of the credential. Verification sites are expected to be able to request the issued credential from the compatible wallet app using the title.  This value aligns to `${cardTitle}` in the `card_design_template`.",
+                "description_kind": "markdown",
+                "required": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

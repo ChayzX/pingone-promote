@@ -29,6 +29,12 @@ jobs:
           echo "$RUNNER_TEMP/tools/go/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
 
+      - name: Fetch hosted importer artifacts (checksums verified)
+        run: |
+          python3 scripts/install-tools.py --bin-dir "$RUNNER_TEMP/hosted-tools" --cache-dir "$RUNNER_TEMP/hosted-cache" --output "$RUNNER_TEMP/hosted-tools.json"
+          provider_zip="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tools"]["providerZip"])' "$RUNNER_TEMP/hosted-tools.json")"
+          echo "PINGONE_PROMOTE_PROVIDER_ZIP=$provider_zip" >> "$GITHUB_ENV"
+
       - name: Versions
         run: |
           go version

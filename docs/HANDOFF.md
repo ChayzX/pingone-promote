@@ -34,7 +34,7 @@ Verified against upstream sources and actual binaries:
 2. Complete exporter decision and implementation family by family, with cross DaVinci/core graph tests, one notification template, no-dependencies selection and whole-environment exclusions. Publish an honest full-provider coverage matrix.
 3. Add pinned tool installation, Containerfile/pod/systemd/RHEL notes, short operator README, developer details and live acceptance cases. macOS/RHEL/live service behavior cannot be inferred from fixture success.
 4. Rewrite issues #82–85 for this hosted design and open concrete new issues. Read all requested issue context (#58/#61/#62/#69/#73/#82–85/#92) and archived HANDOFF; do not carry forward their retired transport assumptions.
-5. Independent code/security/UX review. Fix findings with regression tests. Small PRs to main, merge only green CI. Keep this handoff current on frequent pushes.
+5. Independent code/security/UX review. Fix findings with regression tests. The user now requires this competition implementation to stay on `feat/server`, out of `main`; do not touch Claude’s `release/hosted-v1` branch. Keep this handoff current on frequent pushes. Prior instructions to merge are superseded.
 
 ## Required verification before push/merge
 
@@ -64,3 +64,25 @@ The worktree now includes server-rendered asynchronous search/preview/fill/submi
 Core coverage is still being implemented: the corrected provider state renderer has passing focused/exporter checks; safe REST inventory, the isolated provider import/read lifecycle, and cross-core/DaVinci closure are separate modules in progress. The provider inventory is now exact: the actual pinned stable provider schema registers101 types, including SDKv2 resources the initial framework-only research missed. The central inventory excludes5 user-data types. Do not assume the current default server exporter already wires the new core modules. Built-in adoption readiness and per-family neutralizer rules are also unfinished. No full-coverage or production-ready claim is made.
 
 The pinned installer passed offline fixture tests and a real Linux amd64 download/verification run. Container/pod/macOS/RHEL runtime and tenant/GitLab acceptance remain unverified. See `deploy/README.md` and `docs/acceptance/hosted-live-cases.md` for the intended steps.
+
+### Core integration checkpoint (2026-11-11)
+
+Latest published foundation: `b13ebf0` (hosted checkpoint plus separately published CI tooling). The default server factory now wires the shared composite exporter: safe REST inventory, pinned provider private import/read/render, DaVinci runner, and transitive graph. `pingone.services` can explicitly select licensed configuration families; empty uses bill of materials detection and fails closed on malformed responses.
+
+All 101 registered provider resources are accounted for in [coverage](coverage.md). This is an honest fixture/static-source matrix, not proof of live tenant round trips. Three action-only resources have no importer; unreferenced images have no list endpoint. Users and four user-assignment resources are excluded.
+
+Independent core review found concrete gaps in variable-valued DaVinci references, missing/ambiguous cross-type ID references, unknown ID map keys, excluded source-ID literals, malformed collections and BOM products, and scoped-role labels. Reproductions are retained in `core_review_regression_test.go`; fixes are under verification. The reader's symlink permission escape was reproduced, fixed and covered. Provider process-group cleanup handles timeout and early parent exit. Real Terraform/provider loopback fixture imported/read/rendered a population without management writes.
+
+Built-in objects carry adoption metadata through the existing neutralizer and merge. Missing rollout import IDs block readiness and can be supplied in preview; environment-only singleton imports use each environment's ID. Hosted mode now keeps every differing Git resource until Update is explicitly chosen, including selected resources. Legacy CI request behavior is retained for compatibility. Typed sensitive map/object values retain their types at root and module boundaries.
+
+Core environment lifts now cover explicit deployment paths (application/IdP URLs, domains, certificate inputs, gateways, MFA relying-party IDs, notification endpoints and other declared fields). Sensitive literals become required Vault variables with no source values. A complete test run against the current frozen checkpoint is still required. Do not treat earlier checkpoints' passing tests as evidence for these newer edits.
+
+HawkScan preflight is blocked: app-list API returned `402 Payment Required` on 2026-11-11. No DAST scan ran. Independent source/security review and regression tests continue; this external limitation must remain explicit. The installed skill also reports 2.7.4 vs 2.7.5 and recommends `codex plugin marketplace upgrade`.
+
+Remaining: finish independent review and full checks, fix exact-SHA CI including optional live-fixture skip policy, validate packaging/builds and rendered UI, add stronger hosted core end-to-end coverage, update issue/PR evidence. Keep all work on this branch and do not merge to main.
+
+### Verified core checkpoint
+
+The exact index snapshot passed Go build, vet and full tests on MinecraftMachine with verified Terraform 1.16.7, actual pinned terraformer, and the real provider ZIP enabled. The actual-provider TLS fake-API fixture passed (31.67 seconds, three local API/auth requests, no management writes); only the intentionally opt-in fixture-regeneration test skipped. Terraform fmt, locked-installer tests and the retained DaVinci app (11,273 checks) passed. Release-script tests passed seven cases. Gofmt reported no files in the frozen snapshot. Independent reviews approved the corrected core graph, adoption, credential lifts and process cleanup; no known finding remains in those reviewed scopes.
+
+This checkpoint deliberately excludes the separately progressing hosted notification workflow test, notification sender-address rules, runtime serve-command smoke test and UX refinements. Their newer work must receive its own verification. Packaging runtime validation and exact-SHA GitHub CI investigation are still active; GitHub job-log endpoints have repeatedly returned HTTP 502. Do not infer green remote CI from local checks.

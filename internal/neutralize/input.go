@@ -45,6 +45,9 @@ const (
 
 // Input is a terraformer output directory held in memory.
 type Input struct {
+	// AdoptOnly marks built-in objects that must already exist in each environment.
+	AdoptOnly         map[string]bool
+	EnvLocalVariables map[string]bool
 	// Files maps slash-separated paths relative to the output directory
 	// to their content.
 	Files      map[string][]byte

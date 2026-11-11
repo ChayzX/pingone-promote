@@ -1,0 +1,291 @@
+{
+  "values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "pingone_application.fixture",
+          "mode": "managed",
+          "type": "pingone_application",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-00"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_resource.fixture",
+          "mode": "managed",
+          "type": "pingone_resource",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-01"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_resource_scope.fixture",
+          "mode": "managed",
+          "type": "pingone_resource_scope",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "resource_id": "fixture",
+            "id": "source-02"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_application_resource_grant.fixture",
+          "mode": "managed",
+          "type": "pingone_application_resource_grant",
+          "values": {
+            "application_id": "fixture",
+            "environment_id": "environment-id",
+            "resource_type": "fixture",
+            "scopes": [],
+            "id": "source-03"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_sign_on_policy.fixture",
+          "mode": "managed",
+          "type": "pingone_sign_on_policy",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-04"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_sign_on_policy_action.fixture",
+          "mode": "managed",
+          "type": "pingone_sign_on_policy_action",
+          "values": {
+            "environment_id": "environment-id",
+            "priority": 1,
+            "sign_on_policy_id": "fixture",
+            "id": "source-05"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_population.fixture",
+          "mode": "managed",
+          "type": "pingone_population",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-06"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_group.fixture",
+          "mode": "managed",
+          "type": "pingone_group",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-07"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_schema_attribute.fixture",
+          "mode": "managed",
+          "type": "pingone_schema_attribute",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-08"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_password_policy.fixture",
+          "mode": "managed",
+          "type": "pingone_password_policy",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-09"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_mfa_device_policy.fixture",
+          "mode": "managed",
+          "type": "pingone_mfa_device_policy",
+          "values": {
+            "email": {
+              "enabled": false
+            },
+            "environment_id": "environment-id",
+            "mobile": {
+              "enabled": false
+            },
+            "name": "Configuration",
+            "sms": {
+              "enabled": false
+            },
+            "totp": {
+              "enabled": false
+            },
+            "voice": {
+              "enabled": false
+            },
+            "id": "source-10"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_identity_provider.fixture",
+          "mode": "managed",
+          "type": "pingone_identity_provider",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-11"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_gateway.fixture",
+          "mode": "managed",
+          "type": "pingone_gateway",
+          "values": {
+            "enabled": false,
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "type": "fixture",
+            "id": "source-12"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_branding_theme.fixture",
+          "mode": "managed",
+          "type": "pingone_branding_theme",
+          "values": {
+            "body_text_color": "fixture",
+            "button_color": "fixture",
+            "button_text_color": "fixture",
+            "card_color": "fixture",
+            "environment_id": "environment-id",
+            "heading_text_color": "fixture",
+            "link_text_color": "fixture",
+            "name": "Configuration",
+            "template": "fixture",
+            "id": "source-13"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_notification_template_content.fixture",
+          "mode": "managed",
+          "type": "pingone_notification_template_content",
+          "values": {
+            "environment_id": "environment-id",
+            "locale": "fixture",
+            "template_name": "fixture",
+            "id": "source-14"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_form.fixture",
+          "mode": "managed",
+          "type": "pingone_form",
+          "values": {
+            "cols": 1,
+            "components": {
+              "fields": []
+            },
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-15"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_agreement.fixture",
+          "mode": "managed",
+          "type": "pingone_agreement",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-16"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_language.fixture",
+          "mode": "managed",
+          "type": "pingone_language",
+          "values": {
+            "environment_id": "environment-id",
+            "locale": "fixture",
+            "id": "source-17"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_risk_policy.fixture",
+          "mode": "managed",
+          "type": "pingone_risk_policy",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-18"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_authorize_api_service.fixture",
+          "mode": "managed",
+          "type": "pingone_authorize_api_service",
+          "values": {
+            "authorization_server": {
+              "type": "fixture"
+            },
+            "base_urls": [],
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-19"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_verify_policy.fixture",
+          "mode": "managed",
+          "type": "pingone_verify_policy",
+          "values": {
+            "environment_id": "environment-id",
+            "name": "Configuration",
+            "id": "source-20"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "pingone_credential_type.fixture",
+          "mode": "managed",
+          "type": "pingone_credential_type",
+          "values": {
+            "card_design_template": "fixture",
+            "environment_id": "environment-id",
+            "metadata": {
+              "fields": []
+            },
+            "title": "fixture",
+            "id": "source-21"
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  }
+}

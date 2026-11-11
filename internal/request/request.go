@@ -115,6 +115,7 @@ type Request struct {
 	DependencyChoices map[string]string `json:"dependencyChoices,omitempty"`
 	// EnvValues: env -> root variable -> JSON value. Never secrets.
 	EnvValues map[string]map[string]json.RawMessage `json:"envValues,omitempty"`
+	ImportIDs map[string]map[string]string          `json:"importIds,omitempty"`
 	// SecretMappings: terraformer secret variable -> customer_secrets.yml name.
 	SecretMappings map[string]string `json:"secretMappings,omitempty"`
 	// ConnectorEnvLocal: connector label -> property names kept per env.
@@ -304,6 +305,20 @@ func (r *Request) Validate() error {
 			}
 			if kind := secretKind(k, v); kind != "" {
 				return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like a secret (" + kind + "); secrets come from customer_secrets.yml"}
+			}
+		}
+	}
+	for env, ids := range r.ImportIDs {
+		if !envRE.MatchString(env) {
+			return invalid("importIds", "invalid environment name")
+		}
+		for a, id := range ids {
+			parts := strings.SplitN(a, ".", 3)
+			if len(parts) != 3 || parts[0] != "module" || !identRE.MatchString(parts[1]) || !addressRE.MatchString(parts[2]) || (len(id) > 2048 || !importIDRE.MatchString(id)) {
+				return invalid("importIds", "must contain full module addresses and non-secret import ID suffixes")
+			}
+			if secretKind("import_id", cty.StringVal(id)) != "" {
+				return invalid("importIds", "secret values are not allowed")
 			}
 		}
 	}
@@ -526,3 +541,5 @@ func (r *Request) Values() map[string]map[string]cty.Value {
 	}
 	return out
 }
+
+var importIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+){0,3}$`)

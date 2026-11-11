@@ -15,6 +15,7 @@ import (
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
+	"pingone-promote/internal/resourcecatalog"
 )
 
 // Choice is the operator's per-address decision.
@@ -97,6 +98,7 @@ type Blocker struct {
 // Blocker codes.
 const (
 	BlockMissingValue    = "missing_value"
+	BlockMissingImport   = "missing_import"
 	BlockMissingOverlay  = "missing_overlay"
 	BlockUndeclaredKey   = "undeclared_key"
 	BlockSecretInOverlay = "secret_in_overlay"
@@ -123,6 +125,8 @@ type MergeRequest struct {
 	// every resource has the role "environment", and one that differs from
 	// Git is kept unless Choices says update.
 	WholeEnvironment bool
+	// ExplicitUpdatesOnly requires a choice before replacing any existing differing block. Hosted mode enables this; legacy callers retain their contract.
+	ExplicitUpdatesOnly bool
 	// Choices override the default per address.
 	Choices   map[string]Choice
 	SourceEnv string
@@ -131,6 +135,8 @@ type MergeRequest struct {
 	// EnvValues are operator-supplied environment values. They may set
 	// keys that already exist (an explicit operation).
 	EnvValues map[string]map[string]cty.Value
+	// ImportIDs are explicitly supplied existing object IDs, keyed by environment and full module address.
+	ImportIDs map[string]map[string]string
 	// SecretsConfig is the Vault path convention (default
 	// pipelinesecrets.DefaultConfig).
 	SecretsConfig *pipelinesecrets.Config
@@ -226,7 +232,7 @@ func Merge(req MergeRequest) (*MergeResult, error) {
 			}
 		}
 	}
-	steps := []func() error{m.renames, m.blocks, m.declarations, m.imports, m.overlays, m.customerSecrets, m.finish}
+	steps := []func() error{m.checkImportChoices, m.renames, m.blocks, m.declarations, m.imports, m.overlays, m.customerSecrets, m.finish}
 	for _, s := range steps {
 		if err := s(); err != nil {
 			return nil, err
@@ -299,11 +305,11 @@ func (m *merger) blocks() error {
 		case StatusMatches:
 			ch.Action = ActionUnchanged
 		case StatusChangedInSource:
-			update = role == RoleSelected || choice == ChoiceUpdate
+			update = (!m.req.ExplicitUpdatesOnly && role == RoleSelected) || choice == ChoiceUpdate
 			if role == RoleSelected && chosen && choice == ChoiceKeep {
 				update = false
 			}
-			if !update && role == RoleEnvironment {
+			if !update && (role == RoleEnvironment || role == RoleSelected) {
 				ch.Reason = "differs from Git; kept (choose update to use the source version)"
 			} else if !update {
 				ch.Reason = "differs from Git; kept because it is a shared dependency (choose update to use the source version)"
@@ -618,7 +624,7 @@ func (m *merger) declarations() error {
 			continue
 		}
 		if v.Kind == neutralize.KindSecret {
-			if err := m.appendBlock(m.l.SecretsFile, "variable."+v.Name, neutralize.SecretVariableBlock(v.Name)); err != nil {
+			if err := m.appendBlock(m.l.SecretsFile, "variable."+v.Name, neutralize.SecretVariableBlock(v.Name, v.Type)); err != nil {
 				return err
 			}
 		} else if err := m.appendBlock(m.l.VariablesFile, "variable."+v.Name, neutralize.RootVariableBlock(v)); err != nil {
@@ -771,8 +777,8 @@ func (m *merger) overlays() error {
 				}
 			}
 		}
-		if env == m.req.SourceEnv {
-			if ids, changed := m.sourceImportIDs(cur.Values["import_ids"]); changed {
+		{
+			if ids, changed := m.environmentImportIDs(env, cur.Values["import_ids"]); changed {
 				set["import_ids"] = ids
 			}
 		}
@@ -806,7 +812,7 @@ func (m *merger) overlays() error {
 // source overlay's import_ids, so the source environment's plan adopts the
 // resources that already exist there instead of creating them. Existing
 // keys are never changed.
-func (m *merger) sourceImportIDs(cur cty.Value) (cty.Value, bool) {
+func (m *merger) environmentImportIDs(env string, cur cty.Value) (cty.Value, bool) {
 	mp := map[string]cty.Value{}
 	if !cur.IsNull() && cur.CanIterateElements() {
 		for it := cur.ElementIterator(); it.Next(); {
@@ -817,8 +823,20 @@ func (m *merger) sourceImportIDs(cur cty.Value) (cty.Value, bool) {
 	changed := false
 	for a := range m.written {
 		id, ok := m.req.Export.SourceIDs[a]
+		if env != m.req.SourceEnv {
+			id, ok = "", false
+		}
+		if resourcecatalog.EnvironmentOnly(strings.SplitN(a, ".", 2)[0]) {
+			id, ok = "environment", true
+		}
 		key := m.l.ModuleAddress(a)
 		if _, exists := mp[key]; ok && importable(a) && !exists {
+			mp[key] = cty.StringVal(id)
+			changed = true
+		}
+	}
+	for key, id := range m.req.ImportIDs[env] {
+		if old, exists := mp[key]; !exists || old.Type() != cty.String || old.AsString() != id {
 			mp[key] = cty.StringVal(id)
 			changed = true
 		}
@@ -888,6 +906,9 @@ func (m *merger) finish() error {
 		return err
 	}
 	m.res.Blockers = append(m.res.Blockers, m.nameExcluded(blockers)...)
+	if err := m.validateAdoption(); err != nil {
+		return err
+	}
 	for _, f := range m.req.Export.Findings {
 		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretFinding, Address: f.Name,
 			Message: "suspected secret (" + f.Kind + ") in the export at " + f.File + lineSuffix(f.Line) + "; secrets must come from customer_secrets.yml"})

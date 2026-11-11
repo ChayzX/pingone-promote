@@ -64,3 +64,52 @@ func TestConfigRejectTrailingDataAndSecretInput(t *testing.T) {
 		}
 	}
 }
+
+func hostedConfigFixture() Config {
+	var c Config
+	c.SecretsFile = "fixture.env"
+	c.GitLab.BaseURL = "https://gitlab.example.test"
+	c.GitLab.ProjectID = "123"
+	c.PingOne.RegionCode = "NA"
+	c.PingOne.WorkerEnvironmentID = "11111111-1111-4111-8111-111111111111"
+	c.Sources = []string{"dev"}
+	c.Rollout = []string{"qa"}
+	c.Tools.Terraform = "fixture-terraform"
+	c.Tools.TerraformSHA256 = strings.Repeat("a", 64)
+	c.Tools.Terraformer = "fixture-terraformer"
+	c.Tools.TerraformerVersion = "0.6.0"
+	c.Tools.TerraformerSHA256 = strings.Repeat("b", 64)
+	c.Tools.ProviderZip = "fixture-provider.zip"
+	c.Tools.ProviderVersion = "1.24.0"
+	c.Tools.ProviderSHA256 = strings.Repeat("c", 64)
+	return c
+}
+func TestHostedConfigRequiresProviderAndKnownServices(t *testing.T) {
+	c := hostedConfigFixture()
+	if err := c.check(); err != nil {
+		t.Fatal(err)
+	}
+	c.Tools.ProviderZip = ""
+	if err := c.check(); err == nil {
+		t.Fatal("missing provider accepted")
+	}
+	c = hostedConfigFixture()
+	c.PingOne.Services = []string{"users"}
+	if err := c.check(); err == nil {
+		t.Fatal("unsafe service accepted")
+	}
+	c = hostedConfigFixture()
+	c.PingOne.Services = []string{"base", "sso", "mfa"}
+	if err := c.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestHostedConfigRejectsMalformedOriginAuthority(t *testing.T) {
+	for _, origin := range []string{"https://localhost:", "https://localhost.", "https://localhost:0", "https://localhost#"} {
+		c := hostedConfigFixture()
+		c.PublicOrigin = origin
+		if err := c.check(); err == nil {
+			t.Fatalf("origin accepted: %s", origin)
+		}
+	}
+}

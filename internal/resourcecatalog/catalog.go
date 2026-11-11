@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"sort"
+	"strings"
 )
 
 //go:embed resources.json
@@ -51,3 +52,9 @@ func All() []Resource {
 	return out
 }
 func ProviderVersion() string { return pinned.ProviderVersion }
+
+// EnvironmentOnly reports singleton settings imported by environment ID alone.
+func EnvironmentOnly(typ string) bool {
+	r, ok := Lookup(typ)
+	return ok && strings.HasSuffix(r.Import, " <environment_id>")
+}

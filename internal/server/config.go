@@ -50,8 +50,9 @@ type Config struct {
 		MRLabels  []string `json:"mrLabels,omitempty"`
 	} `json:"gitlab"`
 	PingOne struct {
-		RegionCode          string `json:"regionCode"`
-		WorkerEnvironmentID string `json:"workerEnvironmentId"`
+		RegionCode          string   `json:"regionCode"`
+		WorkerEnvironmentID string   `json:"workerEnvironmentId"`
+		Services            []string `json:"services,omitempty"`
 	} `json:"pingone"`
 	// Sources are the environments a request may export from; Rollout is
 	// the chain the pipeline applies after the source, in order. Names are
@@ -142,6 +143,9 @@ func (c *Config) check() error {
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.ForceQuery || strings.Contains(c.PublicOrigin, "#") {
 			return errors.New("publicOrigin must be an HTTPS origin without credentials, path, query or fragment")
 		}
+		if _, _, ok := parsedHost(u.Host); !ok {
+			return errors.New("publicOrigin has an invalid authority")
+		}
 		if port := u.Port(); port != "" {
 			n, e := strconv.Atoi(port)
 			if e != nil || n < 1 || n > 65535 {
@@ -164,6 +168,12 @@ func (c *Config) check() error {
 	}
 	if c.PingOne.RegionCode == "" || c.PingOne.WorkerEnvironmentID == "" {
 		return errors.New("pingone.regionCode and pingone.workerEnvironmentId are required")
+	}
+	families := map[string]bool{"base": true, "sso": true, "mfa": true, "risk": true, "authorize": true, "credentials": true, "verify": true, "davinci": true}
+	for _, family := range c.PingOne.Services {
+		if !families[family] {
+			return errors.New("pingone.services contains an unsupported configuration family")
+		}
 	}
 	if len(c.Sources) == 0 || len(c.Rollout) == 0 {
 		return errors.New("sources and rollout are required, for example [\"development\"] and [\"testing\", \"production\"]")
@@ -193,6 +203,9 @@ func (c *Config) check() error {
 	if c.Tools.Terraform == "" || c.Tools.Terraformer == "" || c.Tools.TerraformerVersion == "" {
 		return errors.New("tools.terraform, tools.terraformer and tools.terraformerVersion are required")
 	}
+	if strings.TrimPrefix(c.Tools.TerraformerVersion, "v") != "0.6.0" {
+		return errors.New("tools.terraformerVersion must be 0.6.0")
+	}
 	digestRE := regexp.MustCompile(`^[0-9a-f]{64}$`)
 	if !digestRE.MatchString(c.Tools.TerraformSHA256) || !digestRE.MatchString(c.Tools.TerraformerSHA256) {
 		return errors.New("tools.terraformSha256 and tools.terraformerSha256 must be pinned SHA-256 digests")
@@ -200,7 +213,7 @@ func (c *Config) check() error {
 	if c.Tools.PingCLI != "" && (c.Tools.PingCLIVersion == "" || !digestRE.MatchString(c.Tools.PingCLISHA256)) {
 		return errors.New("pingcli requires a pinned version and SHA-256")
 	}
-	if c.Tools.ProviderZip != "" && (c.Tools.ProviderVersion != "1.24.0" || !digestRE.MatchString(c.Tools.ProviderSHA256)) {
+	if c.Tools.ProviderZip == "" || (c.Tools.ProviderVersion != "1.24.0" || !digestRE.MatchString(c.Tools.ProviderSHA256)) {
 		return errors.New("providerZip requires providerVersion 1.24.0 and a pinned providerSha256")
 	}
 	return nil

@@ -195,7 +195,7 @@ func (r *runner) run(ctx context.Context) {
 			return
 		}
 	}
-	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName}, neutralize.Options{
+	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName, AdoptOnly: exp.AdoptOnly, EnvLocalVariables: exp.EnvLocalVariables}, neutralize.Options{
 		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings,
 		Excluded: sel.neutralizeExcluded()})
 	if err != nil {
@@ -229,8 +229,8 @@ func (r *runner) run(ctx context.Context) {
 	for a, c := range req.DependencyChoices {
 		choices[a] = promote.Choice(c)
 	}
-	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, WholeEnvironment: req.Whole(),
-		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig}
+	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, WholeEnvironment: req.Whole(), ExplicitUpdatesOnly: r.env.NoRequestFile,
+		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), ImportIDs: req.ImportIDs, SecretsConfig: r.env.SecretsConfig}
 	if req.BaseCommit != "" {
 		if r.env.BaseRepo == nil {
 			res.fail(ErrPreflight, "validation", "baseCommit was given but this run cannot read history", false)
@@ -358,7 +358,14 @@ func (r *runner) checkContext() error {
 	if len(env.AllowedSources) > 0 && !set(env.AllowedSources)[req.Source] {
 		return fmt.Errorf("source %s is not an allowed source environment", req.Source)
 	}
+	valueEnvs := map[string]bool{}
 	for e := range req.EnvValues {
+		valueEnvs[e] = true
+	}
+	for e := range req.ImportIDs {
+		valueEnvs[e] = true
+	}
+	for e := range valueEnvs {
 		if e != req.Source && !rollout[e] {
 			return fmt.Errorf("envValues.%s: %s is not the source or in the rollout", e, e)
 		}

@@ -30,7 +30,7 @@ import (
 // cookie without the protections required by the hosted UI.
 func TestHTTPBoundaryAndSessionCookie(t *testing.T) {
 	cfg := Config{AllowedHosts: []string{"promote.example.test"}}
-	s, err := New(cfg, Secrets{}, Dependencies{})
+	s, err := New(cfg, Secrets{GitLabToken: "fixture-token"}, Dependencies{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +505,7 @@ func (h *httpHarness) create(mode string) string {
 func (h *httpHarness) selection(id string, fill bool) url.Values {
 	h.t.Helper()
 	d := h.draft(id)
-	v := url.Values{"resource": {"pingone_davinci_flow.pingcli__Flow-0020-B"}, "exclude": {"pingone_davinci_connector_instance.pingcli__PingOne"}}
+	v := url.Values{"choice.pingone_davinci_flow.pingcli__Flow-0020-B": {"update"}, "resource": {"pingone_davinci_flow.pingcli__Flow-0020-B"}, "exclude": {"pingone_davinci_connector_instance.pingcli__PingOne"}}
 	if fill && d.Report != nil {
 		for env, bs := range d.Report.Blockers {
 			for _, b := range bs {
@@ -614,6 +614,21 @@ func TestHostedHTTPWorkflow(t *testing.T) {
 			html := h.call(http.MethodGet, "/drafts/"+id, nil).Body.String()
 			if !strings.Contains(html, `value="`+h.csrf+`"`) || !strings.Contains(html, "Flow B") {
 				t.Fatal("source catalog form not rendered")
+			}
+			h.action(id, "selection", h.selection(id, false))
+			h.action(id, "preview", nil)
+			d = h.wait(id)
+			if d.State != "ready" {
+				t.Fatalf("first preview should preserve Git: %s", d.State)
+			}
+			keptSelected := false
+			for _, c := range d.Report.Changes {
+				if c.Address == "pingone_davinci_flow.pingcli__Flow-0020-B" && c.Action == "kept_differs" {
+					keptSelected = true
+				}
+			}
+			if !keptSelected {
+				t.Fatal("selected Git difference was overwritten without update choice")
 			}
 			h.action(id, "selection", h.selection(id, false))
 			h.action(id, "preview", nil)
@@ -763,5 +778,58 @@ func TestDraftOwnershipRevisionAndSecurity(t *testing.T) {
 	_ = json.NewEncoder(&buf).Encode(map[string]string{"secret": "html<&secret"})
 	if strings.Contains(string(s.redact([]byte("html&lt;&amp;secret"))), "html&lt;&amp;secret") {
 		t.Fatal("HTML-escaped credential not redacted")
+	}
+}
+
+func TestDefaultExporterIncludesCoreAndDaVinci(t *testing.T) {
+	cfg := hostedConfigFixture()
+	cfg.PingOne.Services = []string{"base", "sso"}
+	s, err := New(cfg, Secrets{GitLabToken: "fixture-token"}, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	composite, ok := s.deps.Exporter.(*exporter.Composite)
+	if !ok || composite.Core == nil || composite.DaVinci == nil {
+		t.Fatal("default exporter omits core or DaVinci")
+	}
+	inv, ok := composite.Core.Inventory.(*exporter.APIInventory)
+	if !ok || strings.Join(inv.Services, ",") != "base,sso" {
+		t.Fatal("service configuration not wired")
+	}
+	reader, ok := composite.Core.Reader.(*exporter.ProviderStateReader)
+	if !ok || reader.Config.ProviderSHA256 != cfg.Tools.ProviderSHA256 {
+		t.Fatal("provider pin not wired")
+	}
+}
+
+func TestAdoptionReadinessFieldsAndRepeatedEdits(t *testing.T) {
+	s, err := New(Config{}, Secrets{}, Dependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	full := "module.davinci.pingone_population.default"
+	d := &draft{Request: request.Request{RequestVersion: 1, RequestID: "request-fixture-001", Source: "dev", Resources: []request.ExcludeRef{{Address: "pingone_population.default"}}}, Catalog: []exporter.Resource{{Address: exporter.Address{Type: "pingone_population", Label: "default"}}}, Report: &request.Result{Blockers: map[string][]request.BlockerOut{"qa": {{Code: promote.BlockMissingImport, Address: full}}}}}
+	w := httptest.NewRecorder()
+	s.render(w, "draft", page{Session: &session{}, Draft: d})
+	if !strings.Contains(w.Body.String(), "adopt.qa."+full) {
+		t.Fatal("adoption field missing")
+	}
+	r := httptest.NewRequest("POST", "http://localhost/", nil)
+	r.PostForm = url.Values{"resource": {"pingone_population.default"}, "adopt.qa." + full: {"qa-existing"}}
+	if err := s.updateSelection(d, r); err != nil {
+		t.Fatal(err)
+	}
+	if d.Request.ImportIDs["qa"][full] != "qa-existing" {
+		t.Fatal("adoption input lost")
+	}
+	d.Report = &request.Result{}
+	r.PostForm.Set("adopt.qa."+full, "qa-corrected")
+	if err := s.updateSelection(d, r); err != nil {
+		t.Fatal(err)
+	}
+	if d.Request.ImportIDs["qa"][full] != "qa-corrected" {
+		t.Fatal("adoption edit lost")
 	}
 }

@@ -19,10 +19,18 @@ The server stores unfinished drafts in bounded memory. Restarting it loses those
 
 Secrets are never stored in configuration, pages, logs, or Git. The secrets file must be a regular file owned by the service account with mode `0400` or `0600`; group-readable modes such as `0440` are rejected. The worker is used read-only. The service has no PingOne write credential and never runs Terraform plan or apply.
 
-The exporter coverage and live tenant behavior are still being established. See the [acceptance cases](docs/acceptance/hosted-live-cases.md) for required live proof and current limits. A fixture pass does not establish tenant or production pipeline compatibility.
+The exporter coverage and live tenant behavior are still being established. See the [resource coverage matrix](docs/coverage.md) and [acceptance cases](docs/acceptance/hosted-live-cases.md) for required live proof and current limits. A fixture pass does not establish tenant or production pipeline compatibility.
 
 ## Troubleshooting
 
-If startup reports a secrets-file mode error, set ownership to the service user and run `chmod 600 /path/to/secrets.env`. If startup rejects a tool, rerun the pinned installer and keep its executable path and checksum together. If the UI is unreachable, confirm the process is listening on `127.0.0.1:8080`; a remote browser cannot reach that loopback address directly. Put a TLS reverse proxy on the host and set the exact allowed hostname before making it reachable through a proxy. If a preview is blocked, resolve every reported missing rollout value in the source or target configuration before submitting. If GitLab's default branch moved after preview, create a fresh preview. Unfinished drafts disappear on restart.
+| Problem | What to do |
+|---|---|
+| Secrets-file mode rejected | Set ownership to the service user and run `chmod 600 /path/to/secrets.env`. |
+| Tool verification fails | Rerun the pinned installer; copy its paths and hashes together. |
+| Browser cannot connect | Open `http://127.0.0.1:8080` on the server, or use the documented controlled proxy/port-forward. |
+| Preview is blocked | Fill every reported environment value or existing built-in ID; supply secret names and create values in Vault. |
+| GitLab changed after preview | Create a fresh preview and review its changes. |
+| Draft disappeared | Drafts expire and are lost on restart; published requests remain in GitLab. |
+
 
 See [development.md](docs/development.md) for build and test commands and [deploy/README.md](deploy/README.md) for service operations.

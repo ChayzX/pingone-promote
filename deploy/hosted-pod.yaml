@@ -24,7 +24,7 @@ spec:
         claimName: pingone-promote-tools
     - name: tmp
       emptyDir:
-        sizeLimit: 256Mi
+        sizeLimit: 2Gi
   initContainers:
     - name: stage-secret
       image: busybox:1.37.0
@@ -65,7 +65,7 @@ spec:
           memory: 128Mi
         limits:
           cpu: "2"
-          memory: 1Gi
+          memory: 2Gi
       volumeMounts:
         - name: config
           mountPath: /etc/pingone-promote

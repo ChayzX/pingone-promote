@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"pingone-promote/internal/resourcecatalog"
 )
 
 func format(s string) []byte { return bytes.TrimSpace(hclwrite.Format([]byte(s))) }
@@ -50,10 +51,14 @@ func RootVariableBlock(v *Variable) []byte {
 
 // SecretVariableBlock declares a pipeline secret in secrets.tf. The
 // pipeline sets TF_VAR_<name> from customer_secrets.yml (ADR 0009).
-func SecretVariableBlock(name string) []byte {
+func SecretVariableBlock(name string, types ...string) []byte {
+	typ := "string"
+	if len(types) > 0 {
+		typ = types[0]
+	}
 	return format("variable " + strconv.Quote(name) + " {\n" +
 		"  description = " + strconv.Quote("PingOne secret "+name+" (pipeline: TF_VAR_"+name+").") + "\n" +
-		"  type        = string\n  sensitive   = true\n  nullable    = false\n}\n")
+		"  type        = " + typ + "\n  sensitive   = true\n  nullable    = false\n}\n")
 }
 
 // ImportIDsVariableBlock declares var.import_ids (ADR 0016).
@@ -71,10 +76,14 @@ func ImportIDsVariableBlock() []byte {
 // spike S1): it imports only when var.import_ids has an entry for it.
 func ImportBlock(moduleName, addr string) []byte {
 	full := "module." + moduleName + "." + addr
+	id := "\"${var." + EnvironmentIDVariable + "}/${each.value}\""
+	if resourcecatalog.EnvironmentOnly(strings.SplitN(addr, ".", 2)[0]) {
+		id = "var." + EnvironmentIDVariable
+	}
 	return format("import {\n" +
 		"  for_each = { for k, v in var.import_ids : k => v if k == " + strconv.Quote(full) + " }\n" +
 		"  to       = " + full + "\n" +
-		"  id       = \"${var." + EnvironmentIDVariable + "}/${each.value}\"\n}\n")
+		"  id       = " + id + "\n}\n")
 }
 
 // ModuleInput is one "<name> = var.<name>" line of the module block.

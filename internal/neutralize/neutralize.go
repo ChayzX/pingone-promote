@@ -15,6 +15,7 @@ import (
 
 	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/overlay"
+	"pingone-promote/internal/resourcecatalog"
 	"pingone-promote/internal/secretscan"
 )
 
@@ -156,6 +157,7 @@ type Rename struct {
 
 // Result is the neutralized export.
 type Result struct {
+	AdoptOnly map[string]bool      `json:"adoptOnly,omitempty"`
 	Blocks    []Block              `json:"blocks"`
 	Variables map[string]*Variable `json:"variables"`
 	// SourceValues are the source environment's values for environment-
@@ -296,6 +298,7 @@ func Neutralize(in *Input, opts Options) (*Result, error) {
 		Variables:          map[string]*Variable{},
 		SourceValues:       map[string]cty.Value{EnvironmentIDVariable: cty.StringVal(opts.SourceEnvironmentID)},
 		SourceIDs:          map[string]string{},
+		AdoptOnly:          map[string]bool{},
 		GlobalVariableRefs: map[string][]string{},
 	}, relabel: map[*rawBlock]string{}, varRenameBy: map[*rawBlock]map[string]string{},
 		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{},
@@ -313,6 +316,11 @@ func Neutralize(in *Input, opts Options) (*Result, error) {
 	for _, step := range steps {
 		if err := step(); err != nil {
 			return nil, err
+		}
+	}
+	for a, adopt := range in.AdoptOnly {
+		if adopt {
+			s.res.AdoptOnly[a] = true
 		}
 	}
 	return s.res, nil
@@ -407,6 +415,11 @@ func (s *state) readImports() error {
 			}
 			raw := v.AsString()
 			envPrefix := s.opts.SourceEnvironmentID + "/"
+			if resourcecatalog.EnvironmentOnly(strings.SplitN(addr, ".", 2)[0]) && raw == s.opts.SourceEnvironmentID {
+				s.res.SourceIDs[addr] = "environment"
+				s.res.AdoptOnly[addr] = true
+				continue
+			}
 			if !strings.HasPrefix(raw, envPrefix) {
 				s.res.Warnings = append(s.res.Warnings, "import ID for "+addr+" does not start with the source environment ID; skipped")
 				continue
@@ -720,14 +733,17 @@ func (s *state) classifyVariables() error {
 				if err := add(&Variable{Name: mapped, Type: d.typ, Description: "PingOne secret " + mapped + " (pipeline: TF_VAR_" + mapped + ").", Kind: KindSecret, Origin: name}); err != nil {
 					return err
 				}
-			case s.opts.EnvLocalVariables[name] || envLocalConnector[name]:
+			case s.opts.EnvLocalVariables[name] || s.in.EnvLocalVariables[name] || envLocalConnector[name]:
 				if err := add(s.keep(name, d)); err != nil {
 					return err
 				}
 			case usedBy[origin][TypeConnector] && len(usedBy[origin]) == 1, usedBy[origin][TypeVariable] && s.opts.InlineVariables[name]:
 				v, ok := s.values[name]
 				if !ok || s.noValue[name] {
-					return fmt.Errorf("neutralize: no exported value for %s; export with --include-values or keep it environment-local", name)
+					if err := add(s.keep(name, d)); err != nil {
+						return err
+					}
+					continue
 				}
 				if v.Type() == cty.String && secretscan.SuspectLiteral(name, v.AsString()) {
 					// Never inline a secret-looking literal into shared

@@ -383,10 +383,11 @@ func (s *Server) updateSelection(d *draft, r *http.Request) error {
 	}
 	req.DependencyChoices = map[string]string{}
 	req.EnvValues = map[string]map[string]json.RawMessage{}
+	req.ImportIDs = map[string]map[string]string{}
 	req.SecretMappings = map[string]string{}
 	if d.Report != nil {
 		for _, c := range d.Report.Changes {
-			if c.Role != "dependency" && c.Role != "environment" {
+			if c.Role != "dependency" && c.Role != "environment" && c.Role != "selected" {
 				continue
 			}
 			choice := r.PostForm.Get("choice." + c.Address)
@@ -421,6 +422,15 @@ func (s *Server) updateSelection(d *draft, r *http.Request) error {
 				continue
 			}
 			for _, b := range bs {
+				if b.Code == promote.BlockMissingImport && b.Address != "" {
+					if id := strings.TrimSpace(r.PostForm.Get("adopt." + env + "." + b.Address)); id != "" {
+						if req.ImportIDs[env] == nil {
+							req.ImportIDs[env] = map[string]string{}
+						}
+						req.ImportIDs[env][b.Address] = id
+					}
+					continue
+				}
 				if b.Code != promote.BlockMissingValue || b.Var == "" {
 					continue
 				}
@@ -441,6 +451,20 @@ func (s *Server) updateSelection(d *draft, r *http.Request) error {
 			name := strings.TrimSpace(r.PostForm.Get("secret." + secret.Key))
 			if name != "" {
 				req.SecretMappings[secret.Key] = name
+			}
+		}
+	}
+	// Preserve adoption IDs and accept edits only to previously offered fields.
+	for env, ids := range d.Request.ImportIDs {
+		if req.ImportIDs[env] == nil {
+			req.ImportIDs[env] = map[string]string{}
+		}
+		for a, id := range ids {
+			if edit := strings.TrimSpace(r.PostForm.Get("adopt." + env + "." + a)); edit != "" {
+				id = edit
+			}
+			if _, ok := req.ImportIDs[env][a]; !ok {
+				req.ImportIDs[env][a] = id
 			}
 		}
 	}

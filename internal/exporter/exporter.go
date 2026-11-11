@@ -447,6 +447,8 @@ type ExportOptions struct {
 type Export struct {
 	// AdoptOnly identifies built-in objects that must be imported in every environment.
 	AdoptOnly map[string]bool
+	// EnvLocalVariables identifies graph reference inputs that must never be inlined.
+	EnvLocalVariables map[string]bool
 
 	EnvironmentID string
 	ModuleDir     string

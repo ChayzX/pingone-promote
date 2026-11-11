@@ -41,7 +41,7 @@ Keep the ordinary JSON config and sensitive secrets file separate. The config co
 }
 ```
 
-The provider path and fields are reserved for the read-only importer. Their presence does not claim that importer is built or that every provider family is supported. See the handoff and acceptance cases for the actual implementation status.
+The hosted exporter uses the verified provider ZIP for private read-only imports. See [coverage](../docs/coverage.md) for resource-specific limits and fixture evidence. By default enabled services are detected from the source environment bill of materials; if its API is unavailable, set `pingone.services` explicitly to the licensed families, such as `["base", "sso", "mfa", "davinci"]`. Omitted families are deliberately excluded; do not omit a licensed family when requesting a whole environment.
 
 The secrets file has exactly the three required values, one per line:
 
@@ -91,6 +91,16 @@ sudo systemctl stop pingone-promote
 ## Container or Kubernetes pod
 
 Build the image from the repository root. The image contains the one server binary and CA certificates; keep credentials and downloaded tools outside the image. Supply the pinned executable tools and provider ZIP through a read-only volume, with config paths matching the mount. The app needs only a private writable `/tmp`; run with a read-only root filesystem and a non-root UID. Bound CPU and memory. The included [hosted-pod.yaml](hosted-pod.yaml) is a single-pod deployment template and assumes a config map named `pingone-promote-config`, Secret named `pingone-promote-secrets` containing key `secrets.env`, and a read-only tools PVC mounted at `/opt/pingone-promote`.
+
+Stage the tool volume before mounting it read-only. Run the installer on a machine with the pod's Linux architecture, copy its `bin/` and `cache/` onto the PVC, and set ownership to the pod UID. The installer's private default modes are intended for its own user; a root-owned installation is not readable by UID 10001. For example, with the PVC mounted at `/mnt/pingone-promote-tools` in a staging pod:
+
+```sh
+python3 scripts/install-tools.py --bin-dir /mnt/pingone-promote-tools/bin --cache-dir /mnt/pingone-promote-tools/cache --output /tmp/tools.json
+chown -R 10001:10001 /mnt/pingone-promote-tools/bin /mnt/pingone-promote-tools/cache
+chmod 0700 /mnt/pingone-promote-tools/bin /mnt/pingone-promote-tools/cache
+```
+
+Use paths beginning `/opt/pingone-promote/bin/` and `/opt/pingone-promote/cache/` in the server config, retain the generated hashes, then unmount the staging pod before starting the server. Only public tool artifacts belong on this PVC. The service account must not be able to alter the read-only volume.
 
 The Pod init container copies the projected Kubernetes Secret into memory-backed `emptyDir`, then sets ownership to UID 10001 and mode `0600`. The service mounts that copy read-only. Do not use `fsGroup` or group-readable `0440`: the server deliberately rejects group access. Keep the source Secret's RBAC narrow. The main process has no capabilities, runs as UID 10001, has a read-only root filesystem, and receives bounded resources. `automountServiceAccountToken` is disabled. Use `kubectl port-forward pod/pingone-promote 8080:8080` for local access, or put it behind a controlled TLS ingress and service policy. If reachable in-cluster, configure an exact allowed host and HTTPS public origin; never trust forwarded headers as a substitute for a trusted proxy.
 

@@ -135,7 +135,13 @@ func New(cfg Config, secrets Secrets, deps Dependencies) (*Server, error) {
 		deps.TerraformBin = cfg.Tools.Terraform
 	}
 	if deps.Exporter == nil && cfg.Tools.Terraformer != "" {
-		deps.Exporter = &exporter.Runner{Config: exporter.Config{Path: cfg.Tools.Terraformer, Version: cfg.Tools.TerraformerVersion, SHA256: cfg.Tools.TerraformerSHA256}}
+		deps.Exporter = &exporter.Composite{
+			Core: &exporter.CoreExporter{
+				Inventory: &exporter.APIInventory{Services: append([]string(nil), cfg.PingOne.Services...)},
+				Reader:    &exporter.ProviderStateReader{Config: exporter.ProviderConfig{Terraform: deps.TerraformBin, TerraformSHA256: cfg.Tools.TerraformSHA256, ProviderZip: cfg.Tools.ProviderZip, ProviderVersion: cfg.Tools.ProviderVersion, ProviderSHA256: cfg.Tools.ProviderSHA256}},
+			},
+			DaVinci: &exporter.Runner{Config: exporter.Config{Path: cfg.Tools.Terraformer, Version: cfg.Tools.TerraformerVersion, SHA256: cfg.Tools.TerraformerSHA256}},
+		}
 	}
 	if deps.Repository == nil {
 		c := deps.GitLab

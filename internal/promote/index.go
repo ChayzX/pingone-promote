@@ -9,6 +9,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/resourcecatalog"
 )
 
 type rootVar struct {
@@ -173,7 +174,8 @@ func overlayFiles(r Repo, l Layout) (map[string]string, error) {
 // (every type terraformer exports has an import_id_format).
 func importable(addr string) bool {
 	typ, _, _ := strings.Cut(addr, ".")
-	return strings.HasPrefix(typ, "pingone_davinci_")
+	r, ok := resourcecatalog.Lookup(typ)
+	return ok && r.Allowed && r.Import != ""
 }
 
 // ManagedAddresses lists the resource addresses the repository's shared
