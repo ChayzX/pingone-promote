@@ -72,6 +72,10 @@ type Env struct {
 	// pingone-promote/, PINGONE_PROMOTE_BRANCH_PREFIX). The job runs only on
 	// <BranchPrefix><requestId>.
 	BranchPrefix string
+	// NoRequestFile is set by the hosted server: there is no
+	// .pingone-promote/request.json on the branch, so the commit does not
+	// delete one, and a request that changes nothing commits nothing.
+	NoRequestFile bool
 	// MRLabels are added to merge requests (default pingone-promote).
 	MRLabels []string
 	// PriorCommit finds an earlier commit of this request on the branch
@@ -729,6 +733,10 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 		}
 		return
 	}
+	if len(files) == 0 && r.env.NoRequestFile {
+		res.Status = StatusNoChanges
+		return
+	}
 	mode := gitlab.Mode(req.Mode)
 	if len(files) == 0 {
 		// Only the request file goes; there is nothing to review.
@@ -752,7 +760,7 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 	policy := gitlab.LayoutPolicy{ModuleDir: r.layout.ModuleDir, OverlayPattern: r.layout.OverlayPattern, CustomerSecretsPath: r.layout.CustomerSecretsFile,
 		RootFiles: []string{r.layout.ModuleFile, r.layout.VariablesFile, r.layout.SecretsFile, r.layout.ImportsFile, "versions.tf"}}
 	out, err := r.env.Committer.CommitToBranch(ctx, gitlab.BranchCommit{RequestID: req.RequestID, Branch: r.env.Branch, ExpectedHead: r.env.Head,
-		Mode: mode, CommitMessage: r.commitMessage(), Title: title, Description: r.description(), Files: files, DeleteRequestFile: true,
+		Mode: mode, CommitMessage: r.commitMessage(), Title: title, Description: r.description(), Files: files, DeleteRequestFile: !r.env.NoRequestFile,
 		Policy: policy, Labels: labels, BranchPrefix: r.branchPrefix()})
 	var done *gitlab.AlreadyCommittedError
 	var conflict *gitlab.ConflictError

@@ -266,6 +266,15 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			msg = head.Message
 		}
 		f.reply(w, 200, map[string]any{"name": name, "protected": f.Protected[name], "commit": map[string]string{"id": f.heads[name], "message": msg}})
+	case strings.HasPrefix(rest, "/repository/branches/") && r.Method == http.MethodDelete:
+		name, _ := url.PathUnescape(strings.TrimPrefix(rest, "/repository/branches/"))
+		if _, ok := f.branches[name]; !ok {
+			f.reply(w, 404, map[string]string{"message": "404 Branch Not Found"})
+			return
+		}
+		delete(f.branches, name)
+		delete(f.heads, name)
+		w.WriteHeader(http.StatusNoContent)
 	case rest == "/repository/branches" && r.Method == http.MethodPost:
 		name, ref := str("branch"), str("ref")
 		if _, exists := f.branches[name]; exists {
