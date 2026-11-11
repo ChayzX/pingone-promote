@@ -71,10 +71,12 @@ jobs:
             exit 1
           fi
           grep -E '^(ok|FAIL|\?)' "$RUNNER_TEMP/test.log"
-          if grep -E -A1 -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E 'Windows|REGEN_FIXTURE|--- SKIP|^--$' > "$RUNNER_TEMP/skips.txt"; then
-            grep -E -- '--- SKIP' "$RUNNER_TEMP/test.log" | annotate "unexpected skips"
-            cat "$RUNNER_TEMP/skips.txt" | annotate "skip reasons"
-            echo "unexpected skipped tests (see above)"; exit 1
+          # Only these tests may skip here: fixture regeneration (manual) and
+          # tests that exist for Windows development machines.
+          allowed='TestRegenerateRepoFixture|TestSecretsWindowsRefusesUnverifiable'
+          if grep -E -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E "($allowed) " > "$RUNNER_TEMP/skips.txt"; then
+            cat "$RUNNER_TEMP/skips.txt" | annotate "unexpected skips"
+            echo "unexpected skipped tests:"; cat "$RUNNER_TEMP/skips.txt"; exit 1
           fi
 
       - name: terraform fmt
