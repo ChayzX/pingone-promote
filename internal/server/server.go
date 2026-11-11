@@ -37,9 +37,6 @@ type Options struct {
 	Logger *slog.Logger
 	// GitLabHTTP replaces the GitLab HTTP client (tests).
 	GitLabHTTP *http.Client
-	// TempDir is where the server's private work directory is made
-	// (default: the system temporary directory).
-	TempDir string
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// MaxJobs bounds concurrent background jobs (default 2).
@@ -59,7 +56,6 @@ type Server struct {
 	layout    promote.Layout
 	hosts     map[string]struct{}
 	tls       bool
-	work      string
 	now       func() time.Time
 	sessions  *sessions
 	drafts    *drafts
@@ -71,7 +67,7 @@ type Server struct {
 	closeOnce sync.Once
 }
 
-// New checks the options and prepares the server's private work directory.
+// New checks the options and builds the server.
 func New(o Options) (*Server, error) {
 	if o.Exporter == nil {
 		return nil, errors.New("server: an exporter is required")
@@ -136,14 +132,6 @@ func New(o Options) (*Server, error) {
 	if s.pages, err = loadPages(); err != nil {
 		return nil, err
 	}
-	s.work, err = os.MkdirTemp(o.TempDir, "pingone-promote-server-")
-	if err != nil {
-		return nil, errors.New("server: cannot create the private work directory")
-	}
-	if err := os.Chmod(s.work, 0o700); err != nil {
-		os.RemoveAll(s.work)
-		return nil, errors.New("server: cannot protect the private work directory")
-	}
 	s.sessions = &sessions{byID: map[string]*session{}, max: 1000, ttl: DraftIdleExpiry, now: s.now}
 	s.drafts = &drafts{byID: map[string]*Draft{}, now: s.now}
 	s.base, s.stop = context.WithCancel(context.Background())
@@ -166,14 +154,13 @@ func (s *Server) janitor() {
 	}
 }
 
-// Close cancels running jobs, waits for them and removes the work
-// directory with every snapshot.
+// Close cancels running jobs, waits for them and removes every draft's
+// snapshot (gitlab.Client.Snapshot makes each one a private 0700 directory).
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.stop()
 		s.drafts.closeAll()
 		s.wg.Wait()
-		os.RemoveAll(s.work)
 	})
 }
 
@@ -223,6 +210,10 @@ func (h redactingHandler) WithGroup(name string) slog.Handler {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte("ok\n"))
+	})
 	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("POST /drafts", s.newDraft)
 	mux.HandleFunc("GET /drafts/{id}", s.editDraft)

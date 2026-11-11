@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -88,7 +87,7 @@ func (s *Server) snapshotDirs() []string {
 func (s *Server) env(project gitlab.Project, workspace, head, requestID string, exp request.Exporter) request.Env {
 	return request.Env{Workspace: workspace, Layout: s.layout, Rollout: s.cfg.Rollout, AllowedSources: s.cfg.Sources,
 		Exporter: exp, Credentials: s.creds, TerraformBin: s.cfg.Tools.Terraform,
-		Committer: gitlab.HostedCommitter{S: &gitlab.Submitter{Client: s.gl, Formatter: s.cfg.Tools.Terraform}, DefaultBranch: project.DefaultBranch},
+		Committer: gitlab.HostedCommitter{S: &gitlab.Submitter{Client: s.gl, Formatter: s.cfg.Tools.Terraform}, DefaultBranch: project.DefaultBranch, BranchPrefix: s.cfg.BranchPrefix},
 		Branch:    s.cfg.BranchPrefix + requestID, Head: head, DefaultBranch: project.DefaultBranch, ProjectURL: project.WebURL,
 		BranchPrefix: s.cfg.BranchPrefix, NoRequestFile: true, MRLabels: s.cfg.GitLab.MRLabels}
 }
@@ -104,10 +103,8 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 			return err
 		}
 		stage("Reading the default branch from GitLab")
-		snap := filepath.Join(s.work, "snapshot-"+randomToken(12))
-		head, err := s.gl.Snapshot(ctx, project.DefaultBranch, snap, s.snapshotDirs())
+		snap, head, err := s.gl.Snapshot(ctx, project.DefaultBranch, s.snapshotDirs())
 		if err != nil {
-			os.RemoveAll(snap)
 			return err
 		}
 		stage("Exporting the source environment and merging")

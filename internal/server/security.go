@@ -217,7 +217,7 @@ func (s *Server) protect(next http.Handler) http.Handler {
 				s.forbidden(w, r, "The form is out of date. Reload the page and try again.")
 				return
 			}
-		} else if sess == nil && !strings.HasPrefix(r.URL.Path, "/static/") {
+		} else if sess == nil && !strings.HasPrefix(r.URL.Path, "/static/") && r.URL.Path != "/healthz" {
 			sess = s.sessions.create()
 			http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: sess.id, Path: "/", HttpOnly: true, Secure: s.tls,
 				SameSite: http.SameSiteStrictMode})

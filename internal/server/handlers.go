@@ -581,6 +581,8 @@ func (s *Server) resultPage(w http.ResponseWriter, r *http.Request) {
 			v.Message = "Submitted. A merge request is open for review."
 		case d.submitted.Status == request.StatusSubmitted:
 			v.Message = "Submitted to a branch. No merge request was opened."
+		case d.submitted.Error != nil && d.submitted.Error.Code == request.ErrPartial:
+			v.Message = "The result is uncertain; check GitLab. The request branch was kept so nothing is lost; do not submit again until you have checked it."
 		case d.submitted.Error != nil:
 			v.Message = "The submit did not complete."
 		}

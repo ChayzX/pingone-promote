@@ -25,6 +25,15 @@ Full selection must cover every feasible provider configuration type, with inclu
 - Go 1.27.3 and Terraform 1.16.7 were downloaded with verified SHA-256. Local first compilation encountered a full root disk; build caches moved to a separate work volume. No passing integrated suite yet.
 - Independent work is in progress on hosted GitLab safety, HTTP server/UI, and exporter research; checkpoint commits may contain tests before their implementation.
 
+## Hosted server HTTP/UI (feat/server-http, 2026-11-11)
+
+`pingone-promote serve --config FILE [--check-config]` and `internal/server`: net/http, embedded html/template pages and CSS, no JavaScript; strict CSP and headers on every response; Host allow-list (421); per-session CSRF token plus Sec-Fetch-Site/Origin/Referer same-origin evidence on every POST; 256 KiB form limit; `GET /healthz`. Identity is the `server.Identity` interface; phase 1 `TypedName` records `NAME (unverified)`. Drafts are in memory, bound to the browser session, bounded and expiring. Search, preview and submit run as background jobs (one per draft, cancellable, never on the HTTP request context) with a meta-refresh progress page. Preview snapshots the default branch and records the export; submit replays that frozen export with the snapshot head as `ExpectedHead`, and refuses when the inputs fingerprint changed. The Requests page reads branches, labelled MRs and the merge commit's `apply:{env}` jobs (`internal/gitlab/status.go`, fake in `gitlabtest/status.go`).
+
+- **TODO (import IDs):** `request.Request` has no per-environment import ID field yet. The preview renders a form for `missing_import` blockers (field `address`), and the server passes the values through `server.ImportIDRecorder`. The default recorder refuses non-empty IDs with a message. When the field lands, implement `SetImportIDs` (env -> address -> ID) and pass it in `server.Options.ImportIDs` (or make it the default).
+- `cmd/pingone-promote/serve.go` has the `newExporter` hook; the core PingOne exporter replaces the terraformer runner there.
+- Race tests could not run on the Windows dev box (no cgo); run `go test -race ./internal/server/...` on Linux/macOS CI.
+- Live cases and the unverified GitLab API assumptions: `docs/acceptance/hosted-server.md`.
+
 ## Exporter findings that change the implementation
 
 Verified against upstream sources and actual binaries:
