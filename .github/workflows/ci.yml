@@ -79,6 +79,16 @@ jobs:
             echo "unexpected skipped tests:"; cat "$RUNNER_TEMP/skips.txt"; exit 1
           fi
 
+      - name: go test -race (server, engine, exporters)
+        if: runner.os == 'Linux'
+        env:
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "1"
+        run: |
+          export PINGONE_PROMOTE_TERRAFORM="$RUNNER_TEMP/tools/terraform"
+          go test -race -count=1 ./internal/server/... ./internal/request/... ./internal/multiexport/... ./internal/coreexport/... ./internal/pingone/...
+
       - name: terraform fmt
         run: terraform fmt -check -recursive terraform/
 

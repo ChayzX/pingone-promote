@@ -8,7 +8,7 @@ The hosted, source-only server of [ADR 0018](adr/0018-hosted-source-only-server.
 - Secrets file checks (regular file, not a symlink, mode 0600/0400, owned by the server user), config refusals, pinned tool digests.
 - GitLab: private snapshot of one commit, `HostedCommitter` rooted at the previewed SHA, refuses when the default branch moved, keeps the branch on uncertain outcomes, Requests page with apply-job status.
 - `request.Run` redacts every status. Additive merge, overlays, secret declarations and the `terraform fmt` gate are shared with the legacy path.
-- DaVinci export through pinned pingcli-terraformer 0.6.0; core PingOne export through `internal/coreexport` (GET-only client). `internal/catalog` classifies all 101 provider resources (57 covered, 29 with limits, 15 not possible); see [coverage.md](coverage.md).
+- DaVinci export through pinned pingcli-terraformer 0.6.0; core PingOne export through `internal/coreexport` (GET-only client). `internal/catalog` classifies all 101 provider resources (54 covered, 32 with limits, 15 not possible); see [coverage.md](coverage.md).
 - Deploy files (`deploy/`) are drift-tested by `deploy/deploy_test.go`.
 
 ## Only fixture-tested
@@ -17,12 +17,12 @@ All core types are `Live: no`. The PingOne API paths and field names, worker rol
 
 ## Open items
 
-- Import IDs: `request.Request` has no per-environment import ID field; the preview form for `missing_import` blockers passes values to `server.ImportIDRecorder`, whose default refuses non-empty IDs. Implement `SetImportIDs`.
-- A non-loopback `listen` should require an explicit exposure opt-in in the config (security fixes, pending).
+- Done: built-in objects are adopted with per-environment import IDs entered on the preview page (`request.importIds`, `missing_import` blockers).
+- Done: a non-loopback `listen` requires `exposure` (`tls` or `behind-proxy` with `allowedHosts`); see docs/security/threat-model.md.
 - No real sign-in (OIDC reserved, unimplemented).
 - GitLab TOCTOU remains between the default-branch check and the commit, and between the head check and branch deletion (no conditional API). The legacy CI `GitLabCommitter` still reports a 5xx/timeout on commit as a generic preflight failure.
 - Redaction is heuristic (secretscan), defense in depth only.
-- Race tests could not run on the Windows dev box; run `go test -race ./internal/server/...` on Linux/macOS CI.
+- Race tests run in CI on Linux (`go test -race` for the server, request engine and exporters); the Windows dev box cannot run them.
 - Terraform binary digest is not printed by `fetch-tools.sh`; operators compute it.
 - Egress hostnames per region in operations.md are marked to verify.
 - Upstream: pingcli-terraformer is DaVinci-only; Ping CLI 1.x has no export (issue #175).
