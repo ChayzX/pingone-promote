@@ -1,46 +1,42 @@
 {{define "content"}}{{$csrf := .CSRF}}{{$d := .Data.D}}
 <p class="meta">Request {{$d.RequestID}}{{if .Data.HasPreview}} &middot; <a href="/drafts/{{$d.ID}}/preview">latest preview</a>{{end}}</p>
-{{with .Data.Notice}}<p class="notice">{{.}}</p>{{end}}
-{{with .Data.Problem}}<p class="problem">{{.}}</p>{{end}}
+{{with .Data.Notice}}<p class="notice" role="status">{{.}}</p>{{end}}
+{{with .Data.Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
 {{if .Data.Running}}<p class="notice">Something is running for this request. <a href="/drafts/{{$d.ID}}/job">See progress</a>.</p>{{end}}
 
 <section>
-<h2>1. Who and from where</h2>
+<h2>1. About this request</h2>
 <form method="post" action="/drafts/{{$d.ID}}/save" id="main">
   <input type="hidden" name="csrf" value="{{$csrf}}">
-  <label>Your name
-    <input type="text" name="name" value="{{$d.Name}}" maxlength="100" required autocomplete="name">
-  </label>
-  <p class="hint">Recorded on the request as "your name (unverified)". There is no sign-in yet.</p>
+  <label for="f-name">Your name (required)</label>
+  <input type="text" id="f-name" name="name" value="{{$d.Name}}" maxlength="100" required autocomplete="name" aria-describedby="h-name">
+  <p class="hint" id="h-name">Recorded on the request as your name (unverified). There is no sign-in yet.</p>
 
-  <label>Source environment
-    <select name="source">
+  <label for="f-source">Source environment</label>
+    <select id="f-source" name="source" aria-describedby="h-source">
       {{range .Data.Sources}}<option value="{{.}}"{{if eq . $d.Source}} selected{{end}}>{{.}}</option>{{end}}
     </select>
-  </label>
-  <p class="hint">Only the source is chosen here. After review and merge, the pipeline rolls the change out in this order: {{range $i, $e := .Data.Rollout}}{{if $i}}, then {{end}}{{$e}}{{end}}.</p>
+  <p class="hint" id="h-source">This is the environment you copy from. You do not choose where it goes: after review and merge the pipeline rolls the change out to the other environments in this order: {{range $i, $e := .Data.Rollout}}{{if $i}}, then {{end}}{{$e}}{{end}}.</p>
 
   <fieldset>
     <legend>What to copy</legend>
-    <label class="inline"><input type="radio" name="scope" value="selected"{{if not $d.Whole}} checked{{end}}> Only the items in the selected list below</label>
+    <label class="inline"><input type="radio" name="scope" value="selected"{{if not $d.Whole}} checked{{end}}> Only the items I pick in step 3 (Selected items)</label>
     <label class="inline"><input type="radio" name="scope" value="all"{{if $d.Whole}} checked{{end}}> The whole environment</label>
-    <label class="inline"><input type="checkbox" name="confirm_all" value="yes"{{if $d.ConfirmAll}} checked{{end}}> I confirm: copy every supported resource of the whole environment (except the excluded list)</label>
+    <label class="inline"><input type="checkbox" name="confirm_all" value="yes"{{if $d.ConfirmAll}} checked{{end}}> I confirm: copy everything in the whole environment, except the items I excluded (only needed for the whole environment)</label>
   </fieldset>
 
-  <label class="inline"><input type="checkbox" name="upstream" value="yes"{{if $d.Upstream}} checked{{end}}> Include upstream dependencies (what the selected items use)</label>
+  <label class="inline"><input type="checkbox" name="upstream" value="yes"{{if $d.Upstream}} checked{{end}}> Also include what my selected items depend on (for example a flow that uses a connector)</label>
 
   <fieldset>
-    <legend>How to submit</legend>
-    <label class="inline"><input type="radio" name="mode" value="mr"{{if eq $d.Mode "mr"}} checked{{end}}> Merge request</label>
-    <label class="inline"><input type="radio" name="mode" value="branch"{{if eq $d.Mode "branch"}} checked{{end}}> Branch only</label>
+    <legend>How to send it for review</legend>
+    <label class="inline"><input type="radio" name="mode" value="mr"{{if eq $d.Mode "mr"}} checked{{end}}> Open a merge request (reviewers are asked to approve)</label>
+    <label class="inline"><input type="radio" name="mode" value="branch"{{if eq $d.Mode "branch"}} checked{{end}}> Only save a Git branch (no merge request yet)</label>
   </fieldset>
 
-  <label>Title
-    <input type="text" name="title" value="{{$d.Title}}" maxlength="255">
-  </label>
-  <label>Description
-    <textarea name="description" rows="4">{{$d.Description}}</textarea>
-  </label>
+  <label for="f-title">Title (optional)</label>
+  <input type="text" id="f-title" name="title" value="{{$d.Title}}" maxlength="255">
+  <label for="f-desc">Description (optional)</label>
+  <textarea id="f-desc" name="description" rows="4">{{$d.Description}}</textarea>
   <div class="buttons">
     <button type="submit" name="action" value="save">Save</button>
     <button type="submit" name="action" value="preview" class="primary">Preview</button>
@@ -49,21 +45,20 @@
 </section>
 
 <section id="search">
-<h2>2. Find resources</h2>
+<h2>2. Find items to copy</h2>
 <form method="post" action="/drafts/{{$d.ID}}/search">
   <input type="hidden" name="csrf" value="{{$csrf}}">
-  <label>Name or ID
-    <input type="search" name="q" value="{{$d.Query}}" maxlength="200">
-  </label>
-  <label class="inline"><input type="checkbox" name="refresh" value="yes"> Reload the list from the source environment</label>
+  <label for="f-q">Name or ID</label>
+  <input type="search" id="f-q" name="q" value="{{$d.Query}}" maxlength="200">
+  <label class="inline"><input type="checkbox" name="refresh" value="yes"> Read the list from the source environment again</label>
   <button type="submit">Search</button>
-  <p class="hint">Save the form above first if you changed the source environment.{{if not .Data.ListLoaded}} The first search lists the source environment's resources, which can take a minute.{{end}}</p>
+  <p class="hint">If you changed the source environment, press Save in step 1 first.{{if not .Data.ListLoaded}} The first search reads the source environment, which can take a minute; a progress page is shown.{{end}}</p>
 </form>
 
 <div id="results">
 {{if .Data.Results}}
 <table>
-  <thead><tr><th>Type</th><th>Name</th><th>ID</th><th></th></tr></thead>
+  <thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">ID</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
   <tbody>
   {{range .Data.Results}}
   <tr>
@@ -71,41 +66,41 @@
     <td>{{.Name}}<br><code class="small">{{.Address}}</code></td>
     <td><code>{{.ID}}</code></td>
     <td class="actions">
-      {{if .Selected}}<span class="tag">selected</span>{{else}}
-      <form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="select"><button type="submit">Add</button></form>{{end}}
-      {{if .Excluded}}<span class="tag">excluded</span>{{else}}
-      <form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="exclude"><button type="submit">Exclude</button></form>{{end}}
+      {{if .Selected}}<span class="tag">Selected</span>{{else}}
+      <form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="select"><button type="submit">Add<span class="sr-only"> {{.Name}}</span></button></form>{{end}}
+      {{if .Excluded}}<span class="tag">Excluded</span>{{else}}
+      <form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="exclude"><button type="submit">Exclude<span class="sr-only"> {{.Name}}</span></button></form>{{end}}
     </td>
   </tr>
   {{end}}
   </tbody>
 </table>
-{{else if .Data.SearchedOnce}}{{if .Data.ListLoaded}}<p>Nothing matches.</p>{{end}}{{end}}
+{{else if .Data.SearchedOnce}}{{if .Data.ListLoaded}}<p>Nothing matches your search.</p>{{end}}{{end}}
 </div>
 </section>
 
 <section id="lists">
-<h2>3. Selected</h2>
+<h2>3. Selected items</h2>
 {{if $d.Whole}}<p class="hint">The whole environment is chosen, so this list is not used.</p>{{end}}
 {{with .Data.Selected}}
 <table>
-  <thead><tr><th>Type</th><th>Name</th><th>ID</th><th></th></tr></thead>
+  <thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">ID</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
   <tbody>{{range .}}
   <tr><td>{{.Kind}}</td><td>{{.Name}}<br><code class="small">{{.Address}}</code></td><td><code>{{.ID}}</code></td>
-  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unselect"><button type="submit">Remove</button></form></td></tr>
+  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unselect"><button type="submit">Remove<span class="sr-only"> {{.Name}}</span></button></form></td></tr>
   {{end}}</tbody>
 </table>
-{{else}}<p>Nothing selected yet. Search above and choose Add.</p>{{end}}
+{{else}}<p>Nothing selected yet. Search in step 2 and choose Add.</p>{{end}}
 
-<h2>Excluded</h2>
+<h2>Excluded items</h2>
 {{with .Data.Excluded}}
 <table>
-  <thead><tr><th>Type</th><th>Name</th><th>ID</th><th></th></tr></thead>
+  <thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">ID</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
   <tbody>{{range .}}
   <tr><td>{{.Kind}}</td><td>{{.Name}}<br><code class="small">{{.Address}}</code></td><td><code>{{.ID}}</code></td>
-  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unexclude"><button type="submit">Remove</button></form></td></tr>
+  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unexclude"><button type="submit">Remove<span class="sr-only"> {{.Name}}</span></button></form></td></tr>
   {{end}}</tbody>
 </table>
-{{else}}<p>Nothing excluded. Excluded resources are left out of the copy; references to them keep pointing at the existing resource in each environment.</p>{{end}}
+{{else}}<p>Nothing excluded. An excluded item is left out of the copy; anything that refers to it keeps pointing at the item that already exists in each environment.</p>{{end}}
 </section>
 {{end}}

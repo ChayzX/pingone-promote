@@ -8,14 +8,15 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+<a class="skip" href="#main-content">Skip to the main content</a>
 <header class="top">
   <a class="brand" href="/">PingOne Promote</a>
-  <nav><a href="/">Drafts</a><a href="/requests">Requests</a></nav>
+  <nav aria-label="Main"><a href="/">Drafts</a><a href="/requests">Requests</a></nav>
 </header>
-<main>
+<main id="main-content" tabindex="-1">
 <h1>{{.Title}}</h1>
 {{template "content" .}}
 </main>
-<footer>Names typed here are recorded as unverified. This server prepares changes in Git; the pipeline applies them after review.</footer>
+<footer>Names typed here are recorded as unverified, because there is no sign-in yet. This server only prepares changes in Git. Nothing changes in PingOne until the change is reviewed, merged and rolled out by the pipeline.</footer>
 </body>
 </html>{{end}}
