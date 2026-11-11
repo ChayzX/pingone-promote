@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"pingone-promote/internal/multiexport"
 	"syscall"
 
 	"pingone-promote/internal/exporter"
@@ -37,10 +38,12 @@ GitLab token. Neither is ever printed.
 // core PingOne exporter can replace the terraformer runner without
 // changing the server: anything implementing request.Exporter works.
 var newExporter = func(cfg server.Config) request.Exporter {
-	return &exporter.Runner{
+	// DaVinci through the pinned pingcli-terraformer, every other PingOne
+	// type through the native read-only exporter (ADR 0019).
+	return &multiexport.Exporter{DaVinci: &exporter.Runner{
 		Config:  exporter.Config{Version: cfg.Tools.TerraformerVersion, SHA256: cfg.Tools.TerraformerSHA256, Path: cfg.Tools.Terraformer},
 		Network: exporter.Network{HTTPSProxy: os.Getenv("HTTPS_PROXY"), NoProxy: os.Getenv("NO_PROXY"), CAFile: os.Getenv("SSL_CERT_FILE")},
-	}
+	}}
 }
 
 // verifier is implemented by exporters that can check their pinned tool.

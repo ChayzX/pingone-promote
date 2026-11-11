@@ -512,3 +512,11 @@ func mergeVariables(base, extra []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// Verify checks the pinned DaVinci exporter (serve --check-config).
+func (e *Exporter) Verify(ctx context.Context) error {
+	if v, ok := e.DaVinci.(interface{ Verify(context.Context) error }); ok {
+		return v.Verify(ctx)
+	}
+	return nil
+}

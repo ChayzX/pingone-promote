@@ -222,18 +222,28 @@ func encodeValue(text string) json.RawMessage {
 }
 
 // ImportIDRecorder puts per-environment import IDs (environment -> resource
-// address -> ID) on a request. request.Request has no field for them yet;
-// see docs/HANDOFF.md.
+// address -> ID) on a request.
 type ImportIDRecorder interface {
 	SetImportIDs(req *request.Request, ids map[string]map[string]string) error
 }
 
-type noImportIDs struct{}
+// requestImportIDs records them in request.ImportIDs, which the merge
+// writes to each environment's import_ids (adoption of built-in objects).
+type requestImportIDs struct{}
 
-func (noImportIDs) SetImportIDs(_ *request.Request, ids map[string]map[string]string) error {
-	for _, m := range ids {
-		if len(m) > 0 {
-			return errors.New("This version cannot record import IDs yet. Add them to the environment's tfvars file in Git, then preview again.")
+func (requestImportIDs) SetImportIDs(req *request.Request, ids map[string]map[string]string) error {
+	for env, m := range ids {
+		for a, id := range m {
+			if id == "" {
+				continue
+			}
+			if req.ImportIDs == nil {
+				req.ImportIDs = map[string]map[string]string{}
+			}
+			if req.ImportIDs[env] == nil {
+				req.ImportIDs[env] = map[string]string{}
+			}
+			req.ImportIDs[env][a] = id
 		}
 	}
 	return nil

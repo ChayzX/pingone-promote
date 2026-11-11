@@ -82,7 +82,7 @@ func New(o Options) (*Server, error) {
 		o.Identity = TypedName{}
 	}
 	if o.ImportIDs == nil {
-		o.ImportIDs = noImportIDs{}
+		o.ImportIDs = requestImportIDs{}
 	}
 	if o.MaxJobs <= 0 {
 		o.MaxJobs = 2
