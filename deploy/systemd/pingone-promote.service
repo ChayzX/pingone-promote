@@ -1,0 +1,50 @@
+[Unit]
+Description=pingone-promote hosted server
+Documentation=https://github.com/ChayzX/pingone-promote/blob/main/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pingone-promote
+Group=pingone-promote
+DynamicUser=no
+ExecStart=/opt/pingone-promote/pingone-promote serve --config /etc/pingone-promote/config.json
+Restart=on-failure
+RestartSec=5s
+Environment=TMPDIR=/tmp HOME=/tmp
+
+# Secrets: systemd copies the root-owned file into a private tmpfs
+# credentials directory and gives the service user an owner-only copy.
+# Set "secretsFile" to /run/credentials/pingone-promote.service/secrets.
+# (To skip this, delete the line and point secretsFile at a 0400 file owned
+# by pingone-promote.)
+LoadCredential=secrets:/etc/pingone-promote/secrets.env
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ReadOnlyPaths=/opt/pingone-promote /etc/pingone-promote
+
+[Install]
+WantedBy=multi-user.target
