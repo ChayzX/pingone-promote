@@ -27,7 +27,13 @@ type Exporter interface {
 	WholeExport(ctx context.Context, creds exporter.Credentials, exclude []string) (*exporter.Export, error)
 }
 
-// Committer writes the request commit (GitLab in CI).
+// SelectedExporter supports a scoped export without upstream dependencies.
+// Exporters that cannot provide this must fail rather than silently widen selection.
+type SelectedExporter interface {
+	SelectedExport(context.Context, exporter.Credentials, []string, []string) (*exporter.Export, error)
+}
+
+// Committer writes the request commit (GitLab in CI or the hosted server).
 type Committer interface {
 	CommitToBranch(ctx context.Context, bc gitlab.BranchCommit) (gitlab.Result, error)
 	OpenMergeRequest(ctx context.Context, branch string) (*gitlab.MergeRequest, error)
@@ -156,6 +162,13 @@ func (r *runner) run(ctx context.Context) {
 	var exp *exporter.Export
 	if req.Whole() {
 		exp, err = r.env.Exporter.WholeExport(ctx, creds, sel.patterns())
+	} else if !req.Upstream() {
+		selected, ok := r.env.Exporter.(SelectedExporter)
+		if !ok {
+			res.fail(ErrPreflight, "export", "this exporter cannot export without upstream dependencies", false)
+			return
+		}
+		exp, err = selected.SelectedExport(ctx, creds, sel.seeds, sel.patterns())
 	} else {
 		exp, err = r.env.Exporter.ScopedExport(ctx, creds, sel.seeds, sel.patterns())
 	}
@@ -242,7 +255,7 @@ func (r *runner) run(ctx context.Context) {
 		}
 		res.Files = append(res.Files, FileOut{Path: p, Action: action})
 	}
-	if r.env.Committer != nil {
+	if r.env.Committer != nil && !r.env.NoRequestFile {
 		res.Files = append(res.Files, FileOut{Path: gitlab.RequestFile, Action: "delete"})
 	}
 	switch {
@@ -402,10 +415,18 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		}
 	}
 	sort.Strings(depExcluded)
-	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies)
+	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies) + len(req.Resources)
 	var cat []exporter.Resource
 	if items+len(req.Exclude)+len(depExcluded) > 0 {
 		withIDs, allIDs := false, false
+		if !req.Whole() && !req.Upstream() {
+			withIDs, allIDs = true, true
+		}
+		for _, resource := range req.Resources {
+			if resource.ID != "" {
+				withIDs, allIDs = true, true
+			}
+		}
 		for _, f := range req.Flows {
 			withIDs = withIDs || f.ID != ""
 		}
@@ -495,6 +516,28 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			return nil, err
 		}
 	}
+	for i, ref := range req.Resources {
+		field := fmt.Sprintf("resources[%d]", i)
+		query := ref.ID
+		if query == "" {
+			query = ref.Name
+		}
+		var matches []exporter.Resource
+		if ref.Address != "" {
+			query = ref.Address
+			for _, candidate := range cat {
+				if candidate.String() == ref.Address {
+					matches = append(matches, candidate)
+				}
+			}
+		} else {
+			typ, _ := resourceType(ref.Type)
+			matches = exporter.SearchType(cat, typ, query)
+		}
+		if err := include(field, "resource", FlowRef{ID: ref.ID, Name: query}, matches); err != nil {
+			return nil, err
+		}
+	}
 	if req.Whole() {
 		// A whole-environment request has no selected item: the listed
 		// items were only resolved so that a conflicting exclude is caught.
@@ -539,7 +582,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			}
 			m = &found[0]
 		} else {
-			typ := ExcludeTypes[e.Type]
+			typ, _ := resourceType(e.Type)
 			ref := FlowRef{ID: e.ID, Name: e.Name}
 			query := e.ID
 			if query == "" {
@@ -574,6 +617,15 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			return nil, fail("dependencyChoices."+a, fmt.Sprintf("dependencyChoices.%s is exclude, but %s is the selected item (%s) itself; it cannot be excluded", a, a, includedBy[a]), nil, a)
 		}
 		exclude(a, "dependencyChoices."+a)
+	}
+	// Without upstream dependencies, every non-selected catalog item is an
+	// explicit omission. This repairs embedded references just like an exclude.
+	if !req.Whole() && !req.Upstream() {
+		for _, c := range cat {
+			if !selected[c.String()] {
+				exclude(c.String(), "includeUpstream")
+			}
+		}
 	}
 	// Which of them Git already manages: references to those keep pointing
 	// at the Git address.

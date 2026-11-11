@@ -303,3 +303,25 @@ func sortedSet(m map[string]bool) []string {
 	sort.Strings(out)
 	return out
 }
+
+// SelectedExport exports exactly the selected items and flow companions, without expanding dependencies.
+func (r *Runner) SelectedExport(ctx context.Context, creds Credentials, seeds, exclude []string) (*Export, error) {
+	if len(seeds) == 0 {
+		return nil, errors.New("exporter: nothing selected")
+	}
+	include := map[string]bool{}
+	for _, a := range seeds {
+		if !addressRE.MatchString(a) || matchesAny(exclude, a) {
+			return nil, errors.New("exporter: invalid or excluded selection")
+		}
+		include[a] = true
+		if strings.HasPrefix(a, neutralize.TypeFlow+".") {
+			for _, c := range Companions(a) {
+				if !matchesAny(exclude, c) {
+					include[c] = true
+				}
+			}
+		}
+	}
+	return r.Export(ctx, creds, ExportOptions{Include: sortedSet(include), Exclude: exclude, Imports: true})
+}

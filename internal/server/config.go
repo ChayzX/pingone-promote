@@ -11,10 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"regexp"
-	"runtime"
 	"strings"
 
 	"pingone-promote/internal/gitlab"
@@ -64,9 +64,14 @@ type Config struct {
 
 	Tools struct {
 		Terraform          string `json:"terraform"`
+		TerraformVersion   string `json:"terraformVersion,omitempty"`
+		TerraformSHA256    string `json:"terraformSha256"`
+		PingCLI            string `json:"pingcli,omitempty"`
+		PingCLIVersion     string `json:"pingcliVersion,omitempty"`
+		PingCLISHA256      string `json:"pingcliSha256,omitempty"`
 		Terraformer        string `json:"terraformer"`
 		TerraformerVersion string `json:"terraformerVersion"`
-		// TerraformerSHA256 is optional; empty skips the digest check.
+		// TerraformerSHA256 pins the executable used by the hosted server.
 		TerraformerSHA256 string `json:"terraformerSha256,omitempty"`
 	} `json:"tools"`
 }
@@ -87,12 +92,22 @@ func LoadConfig(path string) (Config, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
-		return c, fmt.Errorf("configuration file %s: %w", path, err)
+		return c, errors.New("configuration file is malformed or contains an unknown field")
+	}
+	var extra any
+	if dec.Decode(&extra) != io.EOF {
+		return c, errors.New("configuration file must contain one JSON object")
 	}
 	return c, c.check()
 }
 
 func (c *Config) check() error {
+	if c.Tools.TerraformVersion == "" {
+		c.Tools.TerraformVersion = "1.16.7"
+	}
+	if c.Tools.TerraformVersion != "1.16.7" {
+		return errors.New("tools.terraformVersion must be 1.16.7")
+	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8080"
 	}
@@ -152,6 +167,13 @@ func (c *Config) check() error {
 	if c.Tools.Terraform == "" || c.Tools.Terraformer == "" || c.Tools.TerraformerVersion == "" {
 		return errors.New("tools.terraform, tools.terraformer and tools.terraformerVersion are required")
 	}
+	digestRE := regexp.MustCompile(`^[0-9a-f]{64}$`)
+	if !digestRE.MatchString(c.Tools.TerraformSHA256) || !digestRE.MatchString(c.Tools.TerraformerSHA256) {
+		return errors.New("tools.terraformSha256 and tools.terraformerSha256 must be pinned SHA-256 digests")
+	}
+	if c.Tools.PingCLI != "" && (c.Tools.PingCLIVersion == "" || !digestRE.MatchString(c.Tools.PingCLISHA256)) {
+		return errors.New("pingcli requires a pinned version and SHA-256")
+	}
 	return nil
 }
 
@@ -171,26 +193,26 @@ const (
 
 // LoadSecrets reads NAME=value lines (blank lines and # comments allowed).
 // The file must be a regular file that other users cannot read and that
-// the group cannot write: mode 0600 or 0400 on a server, or 0440 where a
-// pod mounts it for the service's group. Values are never logged.
+// the group cannot access: mode 0600 or 0400. Values are never logged.
 func LoadSecrets(path string) (Secrets, error) {
 	var s Secrets
-	fi, err := os.Stat(path)
-	if err != nil {
-		return s, fmt.Errorf("cannot read the secrets file %s", path)
-	}
-	if !fi.Mode().IsRegular() {
-		return s, fmt.Errorf("the secrets file %s is not a regular file", path)
-	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o027 != 0 {
-		return s, fmt.Errorf("the secrets file %s is readable by other users or writable by its group (mode %04o); run: chmod 600 %s", path, fi.Mode().Perm(), path)
-	}
 	f, err := os.Open(path)
 	if err != nil {
-		return s, fmt.Errorf("cannot read the secrets file %s", path)
+		return s, errors.New("cannot open the secrets file")
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return s, errors.New("the secrets file must be a regular file")
+	}
+	if mode := fi.Mode().Perm(); mode != 0600 && mode != 0400 {
+		return s, errors.New("the secrets file must have mode 0600 or 0400; run chmod 600 on it")
+	}
+	if fi.Size() > 64<<10 {
+		return s, errors.New("the secrets file exceeds 64 KiB")
+	}
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(io.LimitReader(f, (64<<10)+1))
 	for n := 1; sc.Scan(); n++ {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -204,6 +226,10 @@ func LoadSecrets(path string) (Secrets, error) {
 		if !ok || v == "" {
 			return s, fmt.Errorf("secrets file line %d: expected NAME=value", n)
 		}
+		if seen[k] {
+			return Secrets{}, fmt.Errorf("secrets file line %d: duplicate name", n)
+		}
+		seen[k] = true
 		switch k {
 		case SecretWorkerClientID:
 			s.WorkerClientID = v
@@ -212,7 +238,7 @@ func LoadSecrets(path string) (Secrets, error) {
 		case SecretGitLabToken:
 			s.GitLabToken = v
 		default:
-			return s, fmt.Errorf("secrets file line %d: unknown name %s", n, k)
+			return Secrets{}, fmt.Errorf("secrets file line %d: unknown name", n)
 		}
 	}
 	if err := sc.Err(); err != nil {

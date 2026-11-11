@@ -100,6 +100,10 @@ type Request struct {
 	ConfirmAll bool   `json:"confirmAll,omitempty"`
 	// Flows may be empty when Scope is all.
 	Flows []FlowRef `json:"flows"`
+	// Resources selects any supported configuration resource by type/name/ID or exact address.
+	Resources []ExcludeRef `json:"resources,omitempty"`
+	// IncludeUpstream defaults true for compatibility; false exports selected items only.
+	IncludeUpstream *bool `json:"includeUpstream,omitempty"`
 	// Applications and FlowPolicies are included only when listed, by
 	// name (or terraformer label).
 	Applications []FlowRef `json:"applications,omitempty"`
@@ -250,8 +254,8 @@ func (r *Request) Validate() error {
 		return invalid("confirmAll", "a whole-environment request (scope all) requires confirmAll: true")
 	case !r.Whole() && r.ConfirmAll:
 		return invalid("confirmAll", "confirmAll only applies to scope all")
-	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies) == 0:
-		return invalid("flows", "select at least one flow, application or flow policy")
+	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies)+len(r.Resources) == 0:
+		return invalid("flows", "select at least one configuration resource")
 	case !r.Whole() && (len(r.Flows) > 20 || len(r.Applications) > 20 || len(r.FlowPolicies) > 20):
 		return invalid("flows", "at most 20 of each kind per request")
 	}
@@ -269,6 +273,9 @@ func (r *Request) Validate() error {
 		if err := checkRef(fmt.Sprintf("flowPolicies[%d]", i), f, false); err != nil {
 			return err
 		}
+	}
+	if err := r.checkResources(); err != nil {
+		return err
 	}
 	if err := r.checkExcludes(); err != nil {
 		return err
@@ -347,6 +354,9 @@ func (r *Request) Validate() error {
 // Whole reports a whole-environment request.
 func (r *Request) Whole() bool { return r.Scope == ScopeAll }
 
+// Upstream reports whether to include transitive dependencies.
+func (r *Request) Upstream() bool { return r.IncludeUpstream == nil || *r.IncludeUpstream }
+
 var excludeIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_\-]{0,63}(/[0-9A-Za-z][0-9A-Za-z_\-]{0,63})?$`)
 
 // checkExcludes validates the exclude list and refuses to exclude what the
@@ -370,8 +380,8 @@ func (r *Request) checkExcludes() error {
 			}
 			continue
 		}
-		if _, ok := ExcludeTypes[e.Type]; !ok {
-			return invalid(f+".type", "must be flow, application, flowPolicy, connection or variable (or set address)")
+		if _, ok := resourceType(e.Type); !ok {
+			return invalid(f+".type", "must be a supported PingOne configuration resource type (or set address)")
 		}
 		switch {
 		case e.ID == "" && e.Name == "":
@@ -386,6 +396,67 @@ func (r *Request) checkExcludes() error {
 				(e.Name != "" && strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(in.Name)))
 			if same {
 				return invalid(f, fmt.Sprintf("excludes %s, which %s[%d] includes; a resource cannot be both included and excluded", describe(e.ID, e.Name), field[e.Type], j))
+			}
+		}
+	}
+	return nil
+}
+
+// resourceType accepts legacy aliases and configuration types. Identity data is never selectable.
+func resourceType(kind string) (string, bool) {
+	if typ, ok := ExcludeTypes[kind]; ok {
+		return typ, true
+	}
+	if !regexp.MustCompile(`^pingone_[a-z0-9_]+$`).MatchString(kind) {
+		return "", false
+	}
+	for _, part := range []string{"user", "session", "audit"} {
+		for _, segment := range strings.Split(strings.TrimPrefix(kind, "pingone_"), "_") {
+			if segment == part || segment == part+"s" {
+				return "", false
+			}
+		}
+	}
+	return kind, true
+}
+
+func (r *Request) checkResources() error {
+	if len(r.Resources) > 200 {
+		return invalid("resources", "at most 200 resources per request")
+	}
+	for i, e := range r.Resources {
+		field := fmt.Sprintf("resources[%d]", i)
+		if e.Address != "" {
+			if e.Type != "" || e.ID != "" || e.Name != "" || !addressRE.MatchString(e.Address) {
+				return invalid(field, "set a valid address alone, or type with id/name")
+			}
+			typ, _, _ := strings.Cut(e.Address, ".")
+			if _, ok := resourceType(typ); !ok {
+				return invalid(field, "identity data cannot be exported")
+			}
+		} else {
+			if _, ok := resourceType(e.Type); !ok {
+				return invalid(field+".type", "must be a PingOne configuration resource type")
+			}
+			if e.ID == "" && strings.TrimSpace(e.Name) == "" {
+				return invalid(field, "set id or name")
+			}
+			if e.ID != "" && !excludeIDRE.MatchString(e.ID) {
+				return invalid(field+".id", "is not an ID")
+			}
+			if e.Name != "" && (!printable(e.Name, 200) || strings.TrimSpace(e.Name) == "") {
+				return invalid(field+".name", "must be at most 200 printable characters")
+			}
+		}
+		for j, x := range r.Exclude {
+			same := e.Address != "" && e.Address == x.Address
+			if e.Address == "" && x.Address == "" {
+				et, _ := resourceType(e.Type)
+				xt, _ := resourceType(x.Type)
+				same = et == xt && ((e.ID != "" && strings.EqualFold(e.ID, x.ID)) || (e.Name != "" && strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(x.Name))))
+			}
+			if same {
+				return invalid(field, fmt.Sprintf("also excluded by exclude[%d]", j))
 			}
 		}
 	}
