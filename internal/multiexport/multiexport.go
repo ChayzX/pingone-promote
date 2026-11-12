@@ -304,8 +304,17 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 		}
 		return false
 	}
+	// Built-in objects (default policies, system resources, keys, core
+	// mappings) exist in every environment. As with terraformer, an
+	// export brings along only what can be created elsewhere: a built-in
+	// object is copied when it is selected itself, and otherwise stays a
+	// placeholder ID variable for each environment.
+	builtin := func(a string) bool {
+		o := c.inv.Object(a)
+		return o != nil && o.Builtin && (o.Parent == nil || !o.Parent.Builtin || !core[o.Parent.Address()])
+	}
 	add := func(a string) bool {
-		if excluded(a) {
+		if excluded(a) || builtin(a) {
 			return false
 		}
 		set := core
@@ -331,11 +340,15 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 		if !IsDaVinci(s) && c.inv.Object(s) == nil {
 			return nil, fmt.Errorf("multiexport: %s is not in the source environment", s)
 		}
+		if !IsDaVinci(s) {
+			core[s] = true // selected: copied even when built in
+			continue
+		}
 		add(s)
 	}
 	if whole {
 		for _, o := range c.inv.Objects {
-			if !excludedObj(o) {
+			if !excludedObj(o) && !o.Builtin {
 				core[o.Address()] = true
 			}
 		}

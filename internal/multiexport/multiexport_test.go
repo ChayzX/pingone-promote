@@ -299,8 +299,19 @@ func TestWholeEnvironmentWithExclusions(t *testing.T) {
 			t.Errorf("%s missing from the whole export", w)
 		}
 	}
-	if len(exp.Adopt) == 0 || !has(exp.Adopt, "pingone_sign_on_policy.pingcli__Single_Factor") {
-		t.Errorf("built-in objects must be listed for adoption: %v", exp.Adopt)
+	// As with terraformer, only what can be created elsewhere is copied:
+	// built-in objects are left out (references become ID variables), so
+	// no environment needs IDs of existing items.
+	if len(exp.Adopt) != 0 || has(got, "pingone_sign_on_policy.pingcli__Single_Factor") {
+		t.Errorf("built-in objects were copied: adopt %v", exp.Adopt)
+	}
+	// A built-in object selected by itself is still copied and adopted.
+	sel, err := h.e.SelectedExport(context.Background(), creds, []string{"pingone_sign_on_policy.pingcli__Single_Factor"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(sel.Adopt, "pingone_sign_on_policy.pingcli__Single_Factor") || !has(blocks(t, sel), "pingone_sign_on_policy.pingcli__Single_Factor") {
+		t.Errorf("a selected built-in object is not adopted: %v", sel.Adopt)
 	}
 	out := text(neutralized(t, exp))
 	for _, secret := range []string{"Bearer hidden", creds.ClientSecret} {

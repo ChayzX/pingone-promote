@@ -19,7 +19,7 @@ func CoverageMarkdown() string {
 	fmt.Fprintf(&b, "Every resource of the pinned `pingidentity/pingone` provider %s is listed. ", ProviderVersion)
 	b.WriteString("**Exporter**: `pingcli-terraformer` (pinned v0.6.0, DaVinci) or `pingone-api` (the native read-only PingOne exporter, ADR 0019). ")
 	b.WriteString("**Environment-specific values** become per-environment variables in `<env>.tfvars`; the environment ID, certificate and key IDs, and IDs of resources that are not exported are always per-environment. ")
-	b.WriteString("**Built-in** objects exist in every environment and are adopted with `import_ids`, never created. ")
+	b.WriteString("**Built-in** objects exist in every environment. As with pingcli-terraformer, they are not copied by a whole-environment or include-upstream export: what refers to them gets a per-environment ID variable. A built-in object is copied only when it is selected itself, and is then adopted with `import_ids`. ")
 	b.WriteString("**Live** is `no` until the live acceptance case in `docs/acceptance/core-export.md` has passed on a real tenant: API paths and field names are assumptions until then.\n\n")
 	counts := map[string]int{}
 	for _, d := range All() {
@@ -42,7 +42,7 @@ func CoverageMarkdown() string {
 			rules = append(rules, "per environment: `"+strings.Join(d.EnvLocal, "`, `")+"`")
 		}
 		if d.Builtin != "" {
-			rules = append(rules, "built-in adopted when `"+d.Builtin+"`")
+			rules = append(rules, "built-in when `"+d.Builtin+"`")
 		}
 		if d.Singleton {
 			rules = append(rules, "one per environment, imported by environment ID")
