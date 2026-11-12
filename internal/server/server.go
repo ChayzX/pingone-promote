@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/pipelinesecrets"
 	"strings"
 	"sync"
@@ -137,11 +136,10 @@ func New(o Options) (*Server, error) {
 		}
 	}
 	s.layout.CIVariables = append([]string(nil), rc.CIVariables...)
-	if len(o.Config.SourceEnvironmentIDs) > 0 && !s.layout.FromCI(neutralize.EnvironmentIDVariable) {
-		// The source ID comes from the configuration because the tfvars do
-		// not set it: the pipeline supplies it.
-		s.layout.CIVariables = append(s.layout.CIVariables, neutralize.EnvironmentIDVariable)
-	}
+	// sourceEnvironmentIds only tells the server which environment to read;
+	// it does not mean the pipeline supplies pingone_environment_id. Each
+	// environment's tfvars still sets it unless repository.ciVariables
+	// lists it.
 	if rc.VaultPathPrefix != "" || rc.VaultMount != "" {
 		sc := pipelinesecrets.DefaultConfig
 		if rc.VaultPathPrefix != "" {

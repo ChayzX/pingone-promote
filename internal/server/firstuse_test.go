@@ -49,11 +49,15 @@ func fillValues(t *testing.T, b *browser, draft, body string, envs []string) pag
 
 var valueFieldRE = regexp.MustCompile(`name="(v:([a-z]+):[A-Za-z0-9_]+)"`)
 
-// The pipeline supplies pingone_environment_id (a CI variable): no tfvars
-// sets it, the form never asks for it, and nothing writes it. Another
+// The pipeline supplies pingone_environment_id (a CI variable, listed in
+// repository.ciVariables): no tfvars sets it, the form never asks for it,
+// and nothing writes it. Another
 // environment's tfvars (a DR copy) with problems of its own does not block.
 func TestEnvironmentIDFromThePipeline(t *testing.T) {
-	e := newCoreEnvWith(t, func(c *Config) { c.SourceEnvironmentIDs = map[string]string{"dev": firstUseSourceID} })
+	e := newCoreEnvWith(t, func(c *Config) {
+		c.SourceEnvironmentIDs = map[string]string{"dev": firstUseSourceID}
+		c.Repository.CIVariables = []string{"pingone_environment_id"}
+	})
 	for _, f := range []string{"dev.tfvars", "qa.tfvars", "stage.tfvars", "prod.tfvars"} {
 		dropLines(e, f, "pingone_environment_id")
 	}
@@ -186,4 +190,33 @@ func TestEmptyPingOneModuleIsNotDuplicated(t *testing.T) {
 	draft := b.newDraft()
 	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
 	mustContain(t, p.body, "repository.moduleName")
+}
+
+// sourceEnvironmentIds alone does not make pingone_environment_id a
+// pipeline variable: an environment whose tfvars lacks it is still asked.
+func TestSourceIDsDoNotHideTheTfvarsID(t *testing.T) {
+	e := newCoreEnvWith(t, func(c *Config) { c.SourceEnvironmentIDs = map[string]string{"dev": firstUseSourceID} })
+	dropLines(e, "qa.tfvars", "pingone_environment_id")
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	mustContain(t, p.body, `name="v:qa:pingone_environment_id"`)
+	if strings.Contains(p.body, `name="v:stage:pingone_environment_id"`) {
+		t.Fatal("stage, whose tfvars sets the ID, is asked for it")
+	}
+	fields := valueFieldRE.FindAllStringSubmatch(p.body, -1)
+	// Not an ID: refused.
+	p = fillValues(t, b, draft, p.body, e.cfg.Rollout)
+	mustContain(t, p.body, "a UUID")
+	if strings.Contains(p.body, "Submit to GitLab") {
+		t.Fatal("an email address was accepted as qa's environment ID")
+	}
+	// An ID: accepted and written to qa.tfvars.
+	form := url.Values{}
+	for _, m := range fields {
+		form.Set(m[1], "noreply@"+m[2]+".example.com")
+	}
+	form.Set("v:qa:pingone_environment_id", "22222222-2222-4222-8222-222222222222")
+	p = b.wait(b.post(draft+"/values", form))
+	mustContain(t, p.body, "Submit to GitLab", `pingone_environment_id`, "22222222-2222-4222-8222-222222222222")
 }

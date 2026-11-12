@@ -175,6 +175,7 @@ var (
 	addressRE    = regexp.MustCompile(`^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$`)
 	davinciIDRE  = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	shaRE        = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	envUUIDRE    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	labelRE      = regexp.MustCompile(`^[A-Za-z0-9_\-]{1,512}$`)
 )
 
@@ -318,6 +319,9 @@ func (r *Request) Validate() error {
 			v, err := jsonValue(raw)
 			if err != nil {
 				return invalid(field, err.Error())
+			}
+			if k == "pingone_environment_id" && (v.Type() != cty.String || !envUUIDRE.MatchString(v.AsString())) {
+				return invalid(field, "must be the environment's PingOne ID, a UUID such as 01234567-89ab-cdef-0123-456789abcdef")
 			}
 			if kind := secretKind(k, v); kind != "" {
 				return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like a secret (" + kind + "); secrets come from customer_secrets.yml"}

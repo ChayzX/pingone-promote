@@ -42,7 +42,6 @@ Settings added by recent builds:
 
 | Setting | What to put |
 | --- | --- |
-| `sourceEnvironmentIds` | `{ "<source name>": "<PingOne environment ID>" }`. Each name must be one of your `sources`, spelled the same: with `"sources": ["development"]`, write `"development"`, not `"dev"`. Needed when your `.tfvars` files do not set `pingone_environment_id` (your pipeline supplies it). |
 | `branchPattern`, `branchExample` | Your branch naming rule, for example `"CIAM-[0-9]+"` and `"CIAM-1234"`. The example must match the pattern. People type the branch name on the request page. |
 | `applyJobPattern` | Your apply job's name with `{env}`, for example `"terraform:apply-{env}"`. |
 | `repository` | Only if your repository differs from the default layout (module name or folder, Vault path). See podman-mac.md, step 5. |
@@ -100,6 +99,7 @@ recreate it: the configuration file is read at every start).
 | `configuration file contains the unknown setting "X"` | `X` is misspelled, no longer used, or in the wrong section. Compare with `deploy/container/config.podman.json`. |
 | `configuration file is not valid JSON near line N` | Usually a missing comma at the end of the line before N, or a comma after the last item of a list or section. |
 | `configuration setting "X" ... has the wrong kind of value` | For example a list written as text: `"sources": ["development"]`, not `"sources": "development"`. |
+| "does not know the PingOne environment ID of the source" (on preview) | The source's `.tfvars` must set `pingone_environment_id` on the default branch, be named after the source exactly as in `sources`, and sit where `overlayPattern` says (default: the repository root). |
 | `sourceEnvironmentIds: "X" is not one of the sources` | Use the exact names from `sources` as the keys. |
 | `sourceEnvironmentIds.X must be a PingOne environment ID` | Paste the environment's ID (a UUID) from the PingOne admin console. |
 | `branchExample does not match branchPattern` | Make the example a branch name your pattern accepts. |

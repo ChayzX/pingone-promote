@@ -119,7 +119,7 @@ func (s *Server) envFor(project gitlab.Project, workspace, head string, req *req
 }
 
 // noSourceIDText explains errNoSourceID to the person and the operator.
-const noSourceIDText = "This server does not know the PingOne environment ID of the source environment, so it cannot read it. The operator adds it to the server configuration under \"sourceEnvironmentIds\" (for example {\"development\": \"<environment ID>\"}) and restarts the server. (The alternative is a pingone_environment_id line in the source's .tfvars file on the default branch.)"
+const noSourceIDText = "This server does not know the PingOne environment ID of the source environment, so it cannot read it. It reads it from the pingone_environment_id line of the source's .tfvars file on the default branch: check that the file exists where overlayPattern says (default {env}.tfvars at the repository root, named after the source exactly as in \"sources\") and sets pingone_environment_id = \"<environment ID>\". Otherwise the operator adds it under \"sourceEnvironmentIds\" in the server configuration and restarts the server."
 
 // errBranchTaken is a typed branch name that already exists in GitLab.
 var errBranchTaken = errors.New("that Git branch already exists; type a branch name that is not used yet")

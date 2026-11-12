@@ -13,7 +13,6 @@
     "workerEnvironmentId": "00000000-0000-0000-0000-000000000000"
   },
   "sources": ["development"],
-  "sourceEnvironmentIds": { "development": "00000000-0000-0000-0000-000000000000" },
   "rollout": ["testing", "stage", "production"],
   "branchPattern": "CIAM-[0-9]+",
   "branchExample": "CIAM-1234",

@@ -35,7 +35,7 @@ rejected. Secrets never go in this file.
 | `pingone.regionCode` | One of `NA`, `EU`, `CA`, `AP`, `AU`, `SG`. |
 | `pingone.workerEnvironmentId` | Environment holding the **read-only** source worker app. |
 | `sources` | Environments a request may export from (`development` means `development.tfvars`). |
-| `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Needed when a source's `.tfvars` does not set `pingone_environment_id` (for example when it comes from a GitLab CI variable). |
+| `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Rarely needed: the source's ID is read from `pingone_environment_id` in its `.tfvars`. Use it only when that file cannot set it; if a GitLab CI variable supplies the ID, also list `pingone_environment_id` in `repository.ciVariables`. |
 | `rollout` | Environments the pipeline applies afterwards, in order. Must not overlap `sources`. |
 | `overlayPattern` | Where each environment's tfvars live, default `{env}.tfvars`. |
 | `repository` | Optional overrides: `moduleName`, `moduleDir`, `moduleFile`, `variablesFile`, `secretsFile`, `importsFile`, `customerSecretsFile`; `ciVariables` (root variables the pipeline supplies, never asked for or written to tfvars); `vaultPathPrefix`, `vaultMount` (Vault location of new secrets). |

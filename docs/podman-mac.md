@@ -22,9 +22,8 @@ and a **scratch GitLab project** for the first tests.
   with the Developer role and the `api` scope).
 - The config repository must already have one settings file per
   environment at its root (`development.tfvars`, `testing.tfvars`, ...).
-  The server needs the source environment's PingOne ID: from
-  `pingone_environment_id` in its `.tfvars`, or from `sourceEnvironmentIds`
-  in the configuration (step 5).
+  Each `.tfvars` sets that environment's `pingone_environment_id`; the
+  server reads the source's ID from it.
 
 ## 1. Install Podman and start its machine
 
@@ -148,9 +147,9 @@ Change these values and save:
 | `pingone.regionCode` | the region, for example `NA` |
 | `pingone.workerEnvironmentId` | the ID of the environment that holds the worker application |
 | `sources` | the environment(s) you copy from, named like their `.tfvars` file, for example `["development"]` |
-| `sourceEnvironmentIds` | the PingOne environment ID of each source, for example `{"development": "<ID>"}` (PingOne admin console, Environment, Settings). Needed when your `.tfvars` files do not set `pingone_environment_id` (it comes from a GitLab CI variable); otherwise remove the line |
+| `sourceEnvironmentIds` | the PingOne environment ID of each source, for example `{"development": "<ID>"}` (PingOne admin console, Environment, Settings). Not needed when each `.tfvars` sets `pingone_environment_id` (the usual case): leave it out |
 | `overlayPattern` | only if your environments' `.tfvars` are not at the repository root: for example `envs/{env}.tfvars` |
-| `repository` | only if your repository differs from the default: `moduleName`/`moduleDir` (the module that holds the PingOne resources, default `davinci` in `definitions/`), `customerSecretsFile`, `ciVariables` (variables your pipeline supplies, never written to `.tfvars`; `pingone_environment_id` is included automatically when `sourceEnvironmentIds` is set), `vaultPathPrefix`/`vaultMount` (where new secrets live in Vault, default `apps/pingone-davinci/${VAULT_PATH_ENV}/pingone` and `secret`) |
+| `repository` | only if your repository differs from the default: `moduleName`/`moduleDir` (the module that holds the PingOne resources, default `davinci` in `definitions/`), `customerSecretsFile`, `ciVariables` (variables your pipeline supplies, never asked for or written to `.tfvars`; add `pingone_environment_id` only if a GitLab CI variable supplies it instead of the `.tfvars`), `vaultPathPrefix`/`vaultMount` (where new secrets live in Vault, default `apps/pingone-davinci/${VAULT_PATH_ENV}/pingone` and `secret`) |
 | `rollout` | the environments the pipeline applies to, in order, for example `["testing", "stage", "production"]` |
 | `branchPattern`, `branchExample` | the rule for branch names, which people type when they submit (a Jira key): for example `CIAM-[0-9]+` and `CIAM-1234`. The whole name must match; nothing is added to it |
 | `applyJobPattern` | the name of your pipeline's apply job with `{env}` where the environment name goes: for jobs named `terraform:apply-development`, `terraform:apply-stage`, ... use `terraform:apply-{env}` |
@@ -258,6 +257,6 @@ drafts. Submitted requests are in GitLab.
 | search or preview fails with a PingOne error | wrong region, worker environment, client ID or secret, or missing read roles | check the values; the worker needs read access to every service you copy |
 | `HTTP 403` notes that some item types were not read | the worker cannot read them, or the service is not licensed | expected for unlicensed services; otherwise add the read role |
 | GitLab errors on preview | wrong address, project ID or token, or GitLab is only reachable on a VPN the Podman machine does not use | check the values; `podman machine ssh curl -sI https://your-gitlab` tests the route |
-| "does not know the PingOne environment ID of the source" | your `.tfvars` do not set `pingone_environment_id` | add the source's ID under `sourceEnvironmentIds` (step 5), then `podman rm -f pingone-promote` and the start command of step 7 |
+| "does not know the PingOne environment ID of the source" | the server did not find `pingone_environment_id` in the source's `.tfvars` on the default branch | check that the file is named after the source exactly as in `sources` and sits where `overlayPattern` says (default: the repository root), and that it sets `pingone_environment_id = "<ID>"` |
 | preview says a value or ID is needed | another environment needs its own value | fill it in on the preview page; it is saved in that environment's `.tfvars` |
 | "The default branch changed after the preview" | someone merged in between | press **Preview again**, then submit |
