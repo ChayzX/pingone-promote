@@ -351,7 +351,8 @@ func TestConfigRejectTrailingDataAndMalformed(t *testing.T) {
 // never be placeable in the configuration file. secretsFile is a path to
 // the separate secrets file, not a value.
 func TestConfigHasNoSecretField(t *testing.T) {
-	allowed := map[string]bool{"secretsFile": true}
+	// Paths to files, not values.
+	allowed := map[string]bool{"secretsFile": true, "customerSecretsFile": true}
 	var walk func(typ reflect.Type, prefix string)
 	walk = func(typ reflect.Type, prefix string) {
 		for i := 0; i < typ.NumField(); i++ {

@@ -103,8 +103,13 @@ type Draft struct {
 	Results    []Item
 
 	catalogs map[string]*catalogEntry
-	job      *Job
-	preview  *preview
+	// loads are background reads of a source's item list, apart from job
+	// (a preview or submit never waits for, or is refused by, a list read).
+	loads map[string]*listLoad
+	// WantSections: "whole sections" is chosen, even before one is ticked.
+	WantSections bool
+	job          *Job
+	preview      *preview
 	// submitted is the latest submit result; conflict marks a default
 	// branch that moved after the preview.
 	submitted *request.Result
@@ -307,6 +312,9 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 	if d.RequestedBy == "" {
 		return nil, errors.New("Type your name.")
 	}
+	if !d.Whole && d.WantSections && len(d.Families) == 0 {
+		return nil, errors.New("Tick at least one section in step 2, or choose another option.")
+	}
 	if s.branchRE() != nil && !s.branchRE().MatchString(d.Branch) {
 		if d.Branch == "" {
 			return nil, errors.New("Type the Git branch name in step 5" + s.branchExampleText() + ".")
@@ -350,7 +358,7 @@ func (d *Draft) Scope() string {
 	switch {
 	case d.Whole:
 		return request.ScopeAll
-	case len(d.Families) > 0:
+	case len(d.Families) > 0 || d.WantSections:
 		return "sections"
 	}
 	return request.ScopeSelected
@@ -370,4 +378,19 @@ func (s *Server) branchExampleText() string {
 		return ""
 	}
 	return ", for example " + s.cfg.BranchExample
+}
+
+// listLoad is one background read of a source's item list.
+type listLoad struct {
+	done chan struct{}
+	err  string // set before done is closed
+}
+
+func (l *listLoad) finished() bool {
+	select {
+	case <-l.done:
+		return true
+	default:
+		return false
+	}
 }

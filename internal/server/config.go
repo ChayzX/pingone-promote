@@ -75,6 +75,10 @@ type Config struct {
 	OverlayPattern string `json:"overlayPattern,omitempty"`
 	// Layout is "default" or "terraformer" (file names of the root).
 	Layout string `json:"layout,omitempty"`
+	// Repository adjusts the layout to the config repository: file and
+	// module names, the variables the pipeline supplies, and where new
+	// secrets live in Vault. Every field is optional.
+	Repository RepositoryConfig `json:"repository,omitempty"`
 	// ApplyJobPattern names each environment's apply job in the pipeline
 	// of the default branch, with {env}; the Requests page reads it.
 	ApplyJobPattern string `json:"applyJobPattern,omitempty"`
@@ -191,9 +195,9 @@ func (c *Config) check() error {
 		if len(c.BranchPattern) > 200 {
 			return errors.New("branchPattern is too long")
 		}
-		re, err := regexp.Compile(`^(?:` + c.BranchPattern + `)$`)
+		re, err := compileBranchPattern(c.BranchPattern)
 		if err != nil {
-			return fmt.Errorf("branchPattern is not a valid regular expression: %v", err)
+			return err
 		}
 		if c.BranchExample != "" && !re.MatchString(c.BranchExample) {
 			return errors.New("branchExample does not match branchPattern")
@@ -389,3 +393,37 @@ func parseSecrets(r io.Reader) (Secrets, error) {
 // branchRE is the compiled branch pattern (nil without one), compiled by
 // Load and New.
 func (s *Server) branchRE() *regexp.Regexp { return s.cfg.branchRE }
+
+// RepositoryConfig describes the config repository where it differs from
+// the default layout.
+type RepositoryConfig struct {
+	ModuleName          string `json:"moduleName,omitempty"`
+	ModuleDir           string `json:"moduleDir,omitempty"`
+	ModuleFile          string `json:"moduleFile,omitempty"`
+	VariablesFile       string `json:"variablesFile,omitempty"`
+	SecretsFile         string `json:"secretsFile,omitempty"`
+	ImportsFile         string `json:"importsFile,omitempty"`
+	CustomerSecretsFile string `json:"customerSecretsFile,omitempty"`
+	// CIVariables are root variables the pipeline supplies; they are never
+	// asked for or written to a tfvars file. pingone_environment_id is
+	// added when sourceEnvironmentIds is set.
+	CIVariables []string `json:"ciVariables,omitempty"`
+	// VaultPathPrefix and VaultMount place new secrets in Vault:
+	// <prefix>/<name>@<mount>.
+	VaultPathPrefix string `json:"vaultPathPrefix,omitempty"`
+	VaultMount      string `json:"vaultMount,omitempty"`
+}
+
+// compileBranchPattern accepts a pattern only if it is a valid regular
+// expression on its own, so it cannot escape the anchors around it (for
+// example "X)|(.*").
+func compileBranchPattern(p string) (*regexp.Regexp, error) {
+	if _, err := regexp.Compile(p); err != nil {
+		return nil, fmt.Errorf("branchPattern is not a valid regular expression: %v", err)
+	}
+	re, err := regexp.Compile(`^(?:` + p + `)$`)
+	if err != nil {
+		return nil, fmt.Errorf("branchPattern is not a valid regular expression: %v", err)
+	}
+	return re, nil
+}

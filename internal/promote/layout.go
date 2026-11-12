@@ -34,6 +34,21 @@ type Layout struct {
 	ImportsFile         string `json:"importsFile"`         // conditional import blocks (ADR 0016)
 	OverlayPattern      string `json:"overlayPattern"`      // "{env}.tfvars" relative to the root
 	CustomerSecretsFile string `json:"customerSecretsFile"` // GitLab CI secrets: declarations
+	// CIVariables are root variables the pipeline supplies (TF_VAR_...,
+	// for example pingone_environment_id from a GitLab CI variable): they
+	// are never required in, or written to, an environment's tfvars, since
+	// a tfvars value would override the pipeline's.
+	CIVariables []string `json:"ciVariables,omitempty"`
+}
+
+// FromCI reports whether the pipeline supplies the root variable name.
+func (l Layout) FromCI(name string) bool {
+	for _, v := range l.CIVariables {
+		if v == name {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultLayout is the reference root. Overlays are <env>.tfvars at the
@@ -83,6 +98,7 @@ func (l Layout) WithDefaults() Layout {
 	set(&d.ImportsFile, l.ImportsFile)
 	set(&d.OverlayPattern, l.OverlayPattern)
 	set(&d.CustomerSecretsFile, l.CustomerSecretsFile)
+	d.CIVariables = append([]string(nil), l.CIVariables...)
 	return d
 }
 

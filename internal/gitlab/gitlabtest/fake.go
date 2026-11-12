@@ -551,3 +551,11 @@ func (f *Fake) Branches() map[string]bool {
 	}
 	return out
 }
+
+// Delete removes path from branch in a new commit.
+func (f *Fake) Delete(branch, path string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, _ := f.commit(branch, "Manual delete", []map[string]string{{"action": "delete", "file_path": path}})
+	return id
+}

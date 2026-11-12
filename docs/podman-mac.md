@@ -149,11 +149,18 @@ Change these values and save:
 | `pingone.workerEnvironmentId` | the ID of the environment that holds the worker application |
 | `sources` | the environment(s) you copy from, named like their `.tfvars` file, for example `["development"]` |
 | `sourceEnvironmentIds` | the PingOne environment ID of each source, for example `{"development": "<ID>"}` (PingOne admin console, Environment, Settings). Needed when your `.tfvars` files do not set `pingone_environment_id` (it comes from a GitLab CI variable); otherwise remove the line |
+| `overlayPattern` | only if your environments' `.tfvars` are not at the repository root: for example `envs/{env}.tfvars` |
+| `repository` | only if your repository differs from the default: `moduleName`/`moduleDir` (the module that holds the PingOne resources, default `davinci` in `definitions/`), `customerSecretsFile`, `ciVariables` (variables your pipeline supplies, never written to `.tfvars`; `pingone_environment_id` is included automatically when `sourceEnvironmentIds` is set), `vaultPathPrefix`/`vaultMount` (where new secrets live in Vault, default `apps/pingone-davinci/${VAULT_PATH_ENV}/pingone` and `secret`) |
 | `rollout` | the environments the pipeline applies to, in order, for example `["testing", "stage", "production"]` |
 | `branchPattern`, `branchExample` | the rule for branch names, which people type when they submit (a Jira key): for example `CIAM-[0-9]+` and `CIAM-1234`. The whole name must match; nothing is added to it |
 | `applyJobPattern` | the name of your pipeline's apply job with `{env}` where the environment name goes: for jobs named `terraform:apply-development`, `terraform:apply-stage`, ... use `terraform:apply-{env}` |
 | `tools.terraformSha256` | the first value from step 4 |
 | `tools.terraformerSha256` | the second value from step 4 |
+
+Environments that are neither a source nor in the rollout (for example
+`development_dr`) are ignored: their `.tfvars` are never read or changed.
+`--check-config` does not contact PingOne or GitLab, so a placeholder ID that
+is still `00000000-...` passes it; check every value.
 
 Leave `listen`, `exposure` and `secretsFile` as they are: inside the container
 the server listens on all interfaces, and `"exposure": "container"` makes it

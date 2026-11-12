@@ -62,6 +62,8 @@ func (s *Server) startJob(d *Draft, kind string, fn func(ctx context.Context, st
 		job.Running, job.Finished = false, s.now()
 		switch {
 		case err == nil:
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errBranchTaken) || errors.Is(err, errNoSourceID):
+			job.Err = plainJobError(err)
 		case errors.Is(err, context.Canceled):
 			job.Err = "Cancelled."
 		case errors.Is(err, context.DeadlineExceeded):
@@ -128,7 +130,7 @@ func (s *Server) env(project gitlab.Project, workspace, head, requestID string, 
 		Exporter: exp, Credentials: s.creds, TerraformBin: s.cfg.Tools.Terraform,
 		Committer: gitlab.HostedCommitter{S: &gitlab.Submitter{Client: s.gl, Formatter: s.cfg.Tools.Terraform}, DefaultBranch: project.DefaultBranch, BranchPrefix: s.cfg.BranchPrefix, BranchPattern: s.branchRE()},
 		Branch:    s.cfg.BranchPrefix + requestID, Head: head, DefaultBranch: project.DefaultBranch, ProjectURL: project.WebURL,
-		BranchPrefix: s.cfg.BranchPrefix, NoRequestFile: true, MRLabels: s.cfg.GitLab.MRLabels}
+		BranchPrefix: s.cfg.BranchPrefix, NoRequestFile: true, MRLabels: s.cfg.GitLab.MRLabels, SecretsConfig: s.secretsCfg}
 }
 
 // runPreview exports, merges into a fresh snapshot of the default branch
@@ -143,9 +145,10 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		}
 		if s.branchRE() != nil {
 			stage("Checking that the branch name is free")
-			if _, exists, err := s.gl.GetBranch(ctx, req.BranchName); err != nil {
+			// This request's own branch (an earlier submit) is fine.
+			if b, exists, err := s.gl.GetBranch(ctx, req.BranchName); err != nil {
 				return err
-			} else if exists {
+			} else if exists && !strings.Contains(b.Commit.Message, gitlab.RequestTrailer+req.RequestID) {
 				return fmt.Errorf("%w: %s", errBranchTaken, req.BranchName)
 			}
 		}
@@ -205,7 +208,7 @@ func (s *Server) runSubmit(d *Draft, req *request.Request, p *preview) func(cont
 			// The request branch may exist already (an earlier submit of
 			// this request): then the committer reports it as already
 			// submitted rather than a conflict.
-			if rb, exists, err := s.gl.GetBranch(ctx, s.cfg.BranchPrefix+req.RequestID); err != nil || !exists || !strings.Contains(rb.Commit.Message, gitlab.RequestTrailer+req.RequestID) {
+			if rb, exists, err := s.gl.GetBranch(ctx, req.BranchName); err != nil || !exists || !strings.Contains(rb.Commit.Message, gitlab.RequestTrailer+req.RequestID) {
 				finish(nil, true)
 				return nil
 			}
@@ -373,4 +376,19 @@ func filterItems(items []Item, query, typ string) []Item {
 		return of
 	}
 	return searchItems(of, query)
+}
+
+// plainJobError is the page text for a failed background read or job.
+func plainJobError(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "Cancelled."
+	case errors.Is(err, context.DeadlineExceeded):
+		return "This took too long and was stopped."
+	case errors.Is(err, errBranchTaken):
+		return "The Git branch " + strings.TrimPrefix(err.Error(), errBranchTaken.Error()+": ") + " already exists. Go back, type a branch name that is not used yet, and preview again."
+	case errors.Is(err, errNoSourceID):
+		return noSourceIDText
+	}
+	return err.Error()
 }

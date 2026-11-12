@@ -773,6 +773,9 @@ func (m *merger) overlays() error {
 		}
 		set := map[string]cty.Value{}
 		for _, v := range needed {
+			if v == nil || m.l.FromCI(v.Name) {
+				continue
+			}
 			if _, ok := cur.Values[v.Name]; ok {
 				continue
 			}
@@ -796,6 +799,9 @@ func (m *merger) overlays() error {
 			set["import_ids"] = ids
 		}
 		for k, val := range m.req.EnvValues[env] {
+			if m.l.FromCI(k) {
+				return fmt.Errorf("promote: %s comes from the pipeline (ciVariables); it is never written to %s", k, p)
+			}
 			if m.req.Export.Variables[k] != nil && m.req.Export.Variables[k].Kind == neutralize.KindSecret {
 				return fmt.Errorf("promote: %s is a secret; secrets come from customer_secrets.yml, never from environment values", k)
 			}
@@ -859,12 +865,14 @@ func (m *merger) customerSecrets() error {
 		return err
 	}
 	if !ok {
-		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretsFile, Message: m.l.CustomerSecretsFile + " is missing; it must declare " + strings.Join(m.res.RequiredSecrets, ", ")})
-		return nil
+		// A repository without the file yet gets one with the documented
+		// shape; the merge request shows it for review.
+		src, ok = []byte("# GitLab CI secret declarations: each TF_VAR_ variable is read from Vault.\n.customer-secrets:\n  secrets:\n"), true
 	}
 	pf, err := pipelinesecrets.Parse(src)
 	if err != nil {
-		return err
+		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretsFile, Message: m.l.CustomerSecretsFile + " cannot be updated (" + err.Error() + "). This request needs the secrets " + strings.Join(m.res.RequiredSecrets, ", ") + " declared there. The expected shape is: .customer-secrets: / secrets: / TF_VAR_<name>: { vault: <path>/<name>@<mount>, file: false }. If your repository declares secrets elsewhere, set customerSecretsFile in the server configuration's repository settings"})
+		return nil
 	}
 	cfg := pipelinesecrets.DefaultConfig
 	if m.req.SecretsConfig != nil {
@@ -902,9 +910,19 @@ func (m *merger) finish() error {
 		}
 		m.res.Files[p] = b
 	}
-	blockers, err := ValidateOverlays(m.view, m.l, m.envs())
+	all, err := ValidateOverlays(m.view, m.l, m.envs())
 	if err != nil {
 		return err
+	}
+	// A value no variable declares only makes Terraform warn: it must not
+	// block a request.
+	var blockers []Blocker
+	for _, b := range all {
+		if b.Code == BlockUndeclaredKey && b.Variable != "" {
+			m.res.Warnings = append(m.res.Warnings, b.Env+": "+b.Message+"; Terraform ignores it with a warning")
+			continue
+		}
+		blockers = append(blockers, b)
 	}
 	m.res.Blockers = append(m.res.Blockers, m.nameExcluded(blockers)...)
 	adoptBlockers, err := m.adoption()

@@ -589,7 +589,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			d, ok := catalog.Get(c.Type)
 			// Owned children (a flow's deploy and enable, ...) travel with
 			// their parent, so an excluded parent takes them along.
-			if !ok || !want[d.Family] || d.Owned || requestExcluded[c.String()] || includedBy[c.String()] != "" {
+			if !ok || !want[d.Family] || d.Owned || requestExcluded[c.String()] || includedBy[c.String()] != "" || req.DependencyChoices[c.String()] == string(promote.ChoiceExclude) {
 				continue
 			}
 			found[d.Family]++

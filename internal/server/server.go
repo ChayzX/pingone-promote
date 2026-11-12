@@ -11,7 +11,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"regexp"
+	"pingone-promote/internal/neutralize"
+	"pingone-promote/internal/pipelinesecrets"
 	"strings"
 	"sync"
 	"time"
@@ -47,15 +48,19 @@ type Options struct {
 
 // Server is the hosted pingone-promote service.
 type Server struct {
-	cfg       Config
-	secrets   []string
-	exporter  request.Exporter
-	identity  Identity
-	importIDs ImportIDRecorder
-	log       *slog.Logger
-	gl        *gitlab.Client
-	creds     exporter.Credentials
-	layout    promote.Layout
+	cfg        Config
+	secrets    []string
+	exporter   request.Exporter
+	identity   Identity
+	importIDs  ImportIDRecorder
+	log        *slog.Logger
+	gl         *gitlab.Client
+	creds      exporter.Credentials
+	layout     promote.Layout
+	secretsCfg *pipelinesecrets.Config
+	// listSlots bounds concurrent reads of item lists, apart from the
+	// preview and submit workers.
+	listSlots chan struct{}
 	hosts     map[string]struct{}
 	tls       bool
 	now       func() time.Time
@@ -120,6 +125,33 @@ func New(o Options) (*Server, error) {
 	if o.Config.OverlayPattern != "" {
 		s.layout.OverlayPattern = o.Config.OverlayPattern
 	}
+	rc := o.Config.Repository
+	for _, f := range []struct {
+		dst *string
+		v   string
+	}{{&s.layout.ModuleName, rc.ModuleName}, {&s.layout.ModuleDir, rc.ModuleDir},
+		{&s.layout.ModuleFile, rc.ModuleFile}, {&s.layout.VariablesFile, rc.VariablesFile}, {&s.layout.SecretsFile, rc.SecretsFile},
+		{&s.layout.ImportsFile, rc.ImportsFile}, {&s.layout.CustomerSecretsFile, rc.CustomerSecretsFile}} {
+		if f.v != "" {
+			*f.dst = f.v
+		}
+	}
+	s.layout.CIVariables = append([]string(nil), rc.CIVariables...)
+	if len(o.Config.SourceEnvironmentIDs) > 0 && !s.layout.FromCI(neutralize.EnvironmentIDVariable) {
+		// The source ID comes from the configuration because the tfvars do
+		// not set it: the pipeline supplies it.
+		s.layout.CIVariables = append(s.layout.CIVariables, neutralize.EnvironmentIDVariable)
+	}
+	if rc.VaultPathPrefix != "" || rc.VaultMount != "" {
+		sc := pipelinesecrets.DefaultConfig
+		if rc.VaultPathPrefix != "" {
+			sc.PathPrefix = strings.TrimSuffix(rc.VaultPathPrefix, "/")
+		}
+		if rc.VaultMount != "" {
+			sc.Mount = rc.VaultMount
+		}
+		s.secretsCfg = &sc
+	}
 	if err := s.layout.Validate(); err != nil {
 		return nil, errors.New("server: layout: " + err.Error())
 	}
@@ -141,10 +173,11 @@ func New(o Options) (*Server, error) {
 	s.base, s.stop = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.janitor()
+	s.listSlots = make(chan struct{}, 2)
 	if s.cfg.BranchPattern != "" && s.cfg.branchRE == nil {
-		re, err := regexp.Compile(`^(?:` + s.cfg.BranchPattern + `)$`)
+		re, err := compileBranchPattern(s.cfg.BranchPattern)
 		if err != nil {
-			return nil, fmt.Errorf("server: branchPattern: %w", err)
+			return nil, fmt.Errorf("server: %w", err)
 		}
 		s.cfg.branchRE = re
 	}

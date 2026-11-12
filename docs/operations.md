@@ -37,6 +37,8 @@ rejected. Secrets never go in this file.
 | `sources` | Environments a request may export from (`development` means `development.tfvars`). |
 | `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Needed when a source's `.tfvars` does not set `pingone_environment_id` (for example when it comes from a GitLab CI variable). |
 | `rollout` | Environments the pipeline applies afterwards, in order. Must not overlap `sources`. |
+| `overlayPattern` | Where each environment's tfvars live, default `{env}.tfvars`. |
+| `repository` | Optional overrides: `moduleName`, `moduleDir`, `moduleFile`, `variablesFile`, `secretsFile`, `importsFile`, `customerSecretsFile`; `ciVariables` (root variables the pipeline supplies, never asked for or written to tfvars); `vaultPathPrefix`, `vaultMount` (Vault location of new secrets). |
 | `branchPrefix` | Request branch prefix, e.g. `CIAM-` (ends in `-` or `/`). |
 | `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+`; nothing is added to it, and an existing branch is refused. Without it, branches are `branchPrefix` + request ID. |
 | `applyJobPattern` | Apply job name in the default-branch pipeline; must contain `{env}`. |

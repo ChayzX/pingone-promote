@@ -33,7 +33,7 @@
     <label class="inline indent"><input type="checkbox" name="confirm_all" value="yes" form="main"{{if $d.ConfirmAll}} checked{{end}}> I confirm: copy everything in {{$d.Source}} except what I leave out</label>
   </fieldset>
   <label class="inline"><input type="checkbox" name="upstream" value="yes" form="main"{{if $d.Upstream}} checked{{end}}> Also copy what these items depend on (for example the connector a flow uses, or the population a sign-on policy registers users in)</label>
-  <div class="buttons"><button type="submit" form="main" name="action" value="save">Use this choice</button></div>
+  <div class="buttons"><button type="submit" form="main" name="action" value="save" formnovalidate>Use this choice</button></div>
   <p class="hint">After changing the choice, press <em>Use this choice</em> so the rest of the page follows it.</p>
 </section>
 
@@ -58,7 +58,7 @@
   </div>
   <p class="hint">{{if .Data.ListLoaded}}Leave the name empty and pick a type to list every item of that type.{{else}}The first search reads {{$d.Source}}, which can take a minute. Leave the name empty to list everything.{{end}}</p>
   <label class="inline"><input type="checkbox" name="refresh" value="yes" form="main"> Read {{$d.Source}} again (after changes in PingOne)</label>
-  <button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search">Search</button>
+  <button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate>Search</button>
 
 <div id="results">
 {{if .Data.Results}}
@@ -131,7 +131,7 @@
   <textarea id="f-desc" name="description" form="main" rows="3">{{$d.Description}}</textarea>
   <div class="buttons step-actions">
     <button type="submit" form="main" name="action" value="preview" class="primary">Preview the change</button>
-    <button type="submit" form="main" name="action" value="save">Save draft</button>
+    <button type="submit" form="main" name="action" value="save" formnovalidate>Save draft</button>
   </div>
   <p class="hint">The preview shows exactly what changes in Git and what each environment still needs. Nothing is sent until you submit from the preview.</p>
 </section>
