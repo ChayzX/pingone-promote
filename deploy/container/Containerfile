@@ -15,7 +15,12 @@ ARG RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 FROM ${GO_IMAGE} AS build
 ARG VERSION=dev
+# Company root certificates (HTTPS inspection), if any: see
+# deploy/container/extra-ca/README.md. Without them this changes nothing.
+COPY deploy/container/extra-ca/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates >/dev/null
 RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates curl \
+    && update-ca-certificates >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
@@ -27,6 +32,11 @@ RUN CGO_ENABLED=0 GOFLAGS=-mod=readonly GOTOOLCHAIN=local \
     -o /opt/pingone-promote/pingone-promote ./cmd/pingone-promote
 
 FROM ${RUN_IMAGE}
+# The same company root certificates, for the server's own calls to PingOne
+# and GitLab and for the exporter it runs. Only *.crt files are added.
+COPY deploy/container/extra-ca/ /tmp/extra-ca/
+RUN for f in /tmp/extra-ca/*.crt; do if [ -f "$f" ]; then cp "$f" /etc/pki/ca-trust/source/anchors/; fi; done \
+    && update-ca-trust extract && rm -rf /tmp/extra-ca
 # No account is created: a numeric uid needs no /etc/passwd entry.
 COPY --from=build --chown=root:root /opt/pingone-promote /opt/pingone-promote
 # Config and secrets are mounted at run time; nothing sensitive is baked in.
