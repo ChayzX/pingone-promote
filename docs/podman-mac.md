@@ -42,6 +42,47 @@ podman machine start
 containers in a small Linux machine; it keeps running until you stop it
 (`podman machine stop`).
 
+### If you see "certificate signed by unknown authority"
+
+Your network inspects HTTPS (a company proxy such as Zscaler or Netskope signs
+every site with the company's own root certificate). The Mac trusts it; the
+Podman machine and the image build do not yet. Do this once:
+
+1. Save the company root certificate as a file. Find its name in **Keychain
+   Access** (search the **System** keychain for your proxy vendor or company,
+   for example "Zscaler Root CA"), then:
+
+   ```bash
+   security find-certificate -a -c "Zscaler Root CA" -p /Library/Keychains/System.keychain > ~/company-root.crt
+   ```
+
+   Replace `Zscaler Root CA` with the name you found. The file must start
+   with `-----BEGIN CERTIFICATE-----`. (Root certificates are public; this
+   file is not a secret.)
+
+2. Make the Podman machine trust it, then restart the machine:
+
+   ```bash
+   podman machine ssh "sudo tee /etc/pki/ca-trust/source/anchors/company-root.crt >/dev/null" < ~/company-root.crt
+   ```
+
+   ```bash
+   podman machine ssh "sudo update-ca-trust" && podman machine stop && podman machine start
+   ```
+
+3. After step 2 below, copy it into the build so the image trusts it too
+   (for the build's downloads and for the server's calls to PingOne and
+   GitLab):
+
+   ```bash
+   cp ~/company-root.crt deploy/container/extra-ca/company-root.crt
+   ```
+
+If `podman machine init` itself fails with this error (before a machine
+exists), the company certificate is not trusted by macOS for that download:
+ask your IT team to install it as a trusted root in the System keychain, or
+run `podman machine init` once on a network without the proxy.
+
 ## 2. Get the code
 
 ```bash
@@ -54,7 +95,9 @@ git clone https://github.com/ChayzX/pingone-promote.git && cd pingone-promote &&
 podman build -f deploy/container/Containerfile -t pingone-promote:test --build-arg VERSION=$(git rev-parse --short HEAD) .
 ```
 
-This downloads Go, Terraform 1.16.7 and pingcli-terraformer 0.6.0 for your
+(If you use a company root certificate, copy it into
+`deploy/container/extra-ca/` first; see "certificate signed by unknown
+authority" above.) This downloads Go, Terraform 1.16.7 and pingcli-terraformer 0.6.0 for your
 Mac's processor, checks each download against the checksum recorded in the
 repository, and builds the server. It takes several minutes. Check it:
 
@@ -175,6 +218,7 @@ drafts. Submitted requests are in GitLab.
 | What you see | Why | Fix |
 | --- | --- | --- |
 | `Cannot connect to Podman` | the Podman machine is not running | `podman machine start` |
+| `certificate signed by unknown authority` (machine, build, or PingOne/GitLab calls) | a company proxy inspects HTTPS | see "If you see certificate signed by unknown authority" under step 1 |
 | `--check-config` says a checksum does not match | the values in `tools` are not the ones the image has | repeat step 4 and copy both values again |
 | `the secrets file must ...` | the secret was not passed as in step 7 | use exactly `--secret pingone-promote-secrets,target=secrets.env,uid=10001,gid=10001,mode=0400` |
 | `the secrets file must set ...` | a line is missing or misspelled | recreate the secret (step 6) with all three names |
