@@ -442,3 +442,20 @@ func TestCatalogAllIDs(t *testing.T) {
 		t.Fatalf("variable by name: %+v", got)
 	}
 }
+
+// terraformer can repeat an input in the module call; IDs and names are
+// still read.
+func TestExportIDsIgnoreTheModuleCall(t *testing.T) {
+	e := &Export{ModuleDir: ModuleDir, ModuleName: ModuleName, Files: map[string][]byte{
+		"ping-export-module.tf":                      []byte("module \"ping-export\" {\n  source = \"./ping-export-module\"\n  a = var.a\n  a = var.a\n}\n"),
+		"ping-export-imports.tf":                     []byte("import {\n  to = module.ping-export.pingone_davinci_flow.pingcli__Login\n  id = \"env/f1\"\n}\n"),
+		"ping-export-module/pingone_davinci_flow.tf": []byte("resource \"pingone_davinci_flow\" \"pingcli__Login\" {\n  name = \"Login\"\n}\n"),
+	}}
+	ids, names, err := ExportIDs(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids["pingone_davinci_flow.pingcli__Login"] != "f1" || names["pingone_davinci_flow.pingcli__Login"] != "Login" {
+		t.Fatalf("ids %v names %v", ids, names)
+	}
+}

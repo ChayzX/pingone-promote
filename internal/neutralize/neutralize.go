@@ -383,7 +383,9 @@ func (s *state) readValues() error {
 func (s *state) readImports() error {
 	prefix := "module." + s.in.moduleName() + "."
 	for p, src := range s.in.Files {
-		if path.Dir(p) != "." || !strings.HasSuffix(p, ".tf") {
+		if path.Dir(p) != "." || !strings.HasSuffix(p, ".tf") || p == s.in.moduleName()+"-module.tf" {
+			// The module call is not read: it only passes variables, and
+			// terraformer can repeat an input there.
 			continue
 		}
 		body, err := hclblocks.Parse(src, p)

@@ -83,7 +83,9 @@ func ExportIDs(e *Export) (ids, names map[string]string, err error) {
 	ids, names = map[string]string{}, map[string]string{}
 	prefix := "module." + e.ModuleName + "."
 	for p, src := range e.Files {
-		if !strings.HasSuffix(p, ".tf") {
+		if !strings.HasSuffix(p, ".tf") || p == e.ModuleName+"-module.tf" {
+			// The module call only passes variables (terraformer can
+			// repeat an input there); nothing here is read from it.
 			continue
 		}
 		body, err := hclblocks.Parse(src, p)
