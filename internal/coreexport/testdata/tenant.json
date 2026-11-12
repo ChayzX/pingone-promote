@@ -66,14 +66,12 @@
       {"id": "26400000-0000-4000-8000-000000000001", "resource": {"id": "27000000-0000-4000-8000-000000000002"}, "resourceType": "CUSTOM", "scopes": [{"id": "27100000-0000-4000-8000-000000000002"}]}
     ]},
     "applications/26000000-0000-4000-8000-000000000001/roleAssignments": {"embedded": "roleAssignments", "items": []},
-    "applications/26000000-0000-4000-8000-000000000001/metadata": {"embedded": "metadata", "items": []},
     "applications/26000000-0000-4000-8000-000000000001/pushCredentials": {"embedded": "pushCredentials", "items": []},
     "applications/26000000-0000-4000-8000-000000000002/attributes": {"embedded": "attributes", "items": []},
     "applications/26000000-0000-4000-8000-000000000002/signOnPolicyAssignments": {"embedded": "signOnPolicyAssignments", "items": []},
     "applications/26000000-0000-4000-8000-000000000002/flowPolicyAssignments": {"embedded": "flowPolicyAssignments", "items": []},
     "applications/26000000-0000-4000-8000-000000000002/grants": {"embedded": "grants", "items": []},
     "applications/26000000-0000-4000-8000-000000000002/roleAssignments": {"embedded": "roleAssignments", "items": []},
-    "applications/26000000-0000-4000-8000-000000000002/metadata": {"embedded": "metadata", "items": []},
     "applications/26000000-0000-4000-8000-000000000002/pushCredentials": {"embedded": "pushCredentials", "items": []},
     "digitalWalletApplications": {"embedded": "digitalWalletApplications", "items": []},
     "resources": {"embedded": "resources", "items": [
@@ -97,7 +95,7 @@
       {"id": "28100000-0000-4000-8000-000000000001", "name": "email", "value": "${providerAttributes.email}", "update": "EMPTY_ONLY"}
     ]},
     "gateways": {"embedded": "gateways", "items": [
-      {"id": "29000000-0000-4000-8000-000000000001", "name": "Corp LDAP", "type": "LDAP", "enabled": true, "bindDN": "cn=svc,dc=dev,dc=example,dc=com", "connectionSecurity": "TLS", "vendor": "Microsoft Active Directory", "servers": ["ldaps://ldap.dev.example.com:636"]}
+      {"id": "29000000-0000-4000-8000-000000000001", "name": "Corp LDAP", "type": "LDAP", "enabled": true, "bindDN": "cn=svc,dc=dev,dc=example,dc=com", "connectionSecurity": "TLS", "vendor": "Microsoft Active Directory", "serversHostAndPort": ["ldaps://ldap.dev.example.com:636"]}
     ]},
     "gateways/29000000-0000-4000-8000-000000000001/roleAssignments": {"embedded": "roleAssignments", "items": []},
     "themes": {"embedded": "themes", "items": [
@@ -149,7 +147,7 @@
     "verifyPolicies": {"embedded": "verifyPolicies", "items": [
       {"id": "37500000-0000-4000-8000-000000000001", "name": "Standard ID check", "description": "Government ID and liveness", "default": false, "governmentId": {"verify": "REQUIRED"}, "facialComparison": {"verify": "REQUIRED", "threshold": "MEDIUM"}, "liveness": {"verify": "REQUIRED", "threshold": "MEDIUM"}}
     ]},
-    "credentialTypes": {"embedded": "credentialTypes", "items": [
+    "credentialTypes": {"embedded": "items", "items": [
       {"id": "38000000-0000-4000-8000-000000000001", "title": "Employee badge", "description": "Badge", "cardDesignTemplate": "<svg><text>${cardTitle}</text><text>${cardSubtitle}</text></svg>", "metadata": {"name": "Badge", "columns": 1, "fields": [{"id": "field-1", "type": "Directory Attribute", "title": "Name", "attribute": "name.formatted", "isVisible": true}]}}
     ]},
     "credentialTypes/38000000-0000-4000-8000-000000000001/issuanceRules": {"embedded": "issuanceRules", "items": []},
@@ -174,8 +172,9 @@
   },
   "objects": {
     "mfaSettings": {"pairing": {"maxAllowedDevices": 5, "pairingKeyFormat": "ALPHANUMERIC"}, "lockout": {"failureCount": 5, "durationSeconds": 600}},
-    "branding": {"companyName": "Example Corp"},
-    "notificationsSettings": {"deliveryMode": "ALL", "from": {"name": "Example", "emailAddress": "noreply@dev.example.com"}},
+    "brandingSettings": {"companyName": "Example Corp"},
+    "applications/26000000-0000-4000-8000-000000000001/metadata": {"applicationId": "26000000-0000-4000-8000-000000000001", "metadata": {"costCenter": "42"}},
+    "notificationsSettings": {"deliveryMode": "ALL", "from": {"name": "Example", "address": "noreply@dev.example.com"}},
     "adminConfig": {"mfaStatus": "ENFORCE", "recovery": true, "authenticationMethod": "PINGONE"},
     "credentialIssuerProfile": {"name": "Example issuer"}
   }

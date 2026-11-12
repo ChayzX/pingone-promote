@@ -136,7 +136,11 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 			o.ID = parent.ID
 		}
 		if d.Singleton {
-			o.ID = env
+			// A singleton is the environment's own; some (the credential
+			// issuer profile) still have an ID of their own for import.
+			if id, _ := raw["id"].(string); id == "" || d.Import == catalog.ImportEnvironment {
+				o.ID = env
+			}
 		}
 		// A child of a built-in object is built-in too (the default sign-on
 		// policy's actions exist wherever the policy does).
@@ -172,7 +176,7 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 			if err != nil {
 				return nil, err
 			}
-			parent := &Object{Type: "template", ID: id}
+			parent := &Object{Type: "template", ID: id, Raw: map[string]any{"id": id}}
 			for _, it := range items {
 				add(it, parent)
 			}
@@ -348,7 +352,10 @@ func (inv *Inventory) assignLabels() error {
 		}
 	}
 	parts := func(o *Object) []string {
-		d, _ := catalog.Get(o.Type)
+		d, ok := catalog.Get(o.Type)
+		if !ok {
+			return []string{o.ID} // a synthetic parent (a notification template)
+		}
 		var keys []string
 		for _, f := range d.NameAttrs {
 			s := str(Lookup(o.Raw, f))
@@ -362,6 +369,9 @@ func (inv *Inventory) assignLabels() error {
 		if d.Singleton {
 			keys = []string{"environment"}
 		}
+		if len(keys) == 0 && o.Parent != nil && o.Parent.Raw != nil {
+			return nil // one per parent: the parent's name is the label
+		}
 		if len(keys) == 0 {
 			keys = []string{o.ID}
 		}
@@ -371,7 +381,7 @@ func (inv *Inventory) assignLabels() error {
 	name = func(o *Object) []string {
 		own := parts(o)
 		if o.Parent != nil && o.Parent.Raw != nil {
-			if d, _ := catalog.Get(o.Type); d.Path == "" {
+			if d, ok := catalog.Get(o.Type); ok && d.Path == "" {
 				return name(o.Parent) // derived: same label as its parent
 			}
 			return append(name(o.Parent), own...)

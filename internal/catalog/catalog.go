@@ -52,6 +52,8 @@ const (
 	ImportGrandparentParentID = "{grandparent}/{parent}/{id}"
 	// ImportIDParent is for a nesting whose own ID comes first.
 	ImportIDParent = "{id}/{parent}"
+	// ImportParent is a per-parent singleton imported by the parent's ID.
+	ImportParent = "{parent}"
 )
 
 // Def describes one resource type.
@@ -96,6 +98,11 @@ type Def struct {
 	// Rename maps a schema attribute path to its API field path when the
 	// default (camelCase of each segment) does not hold; "-" skips it.
 	Rename map[string]string `json:"rename,omitempty"`
+	// ParentValue names a schema attribute set to the parent's ID as a
+	// literal (a template content's template_name), ParentName one set to the
+	// parent's name (an application resource's resource_name).
+	ParentValue string `json:"parentValue,omitempty"`
+	ParentName  string `json:"parentName,omitempty"`
 	// Ancestors maps a schema attribute to an ancestor type whose ID it
 	// holds (a localization revision's agreement_id).
 	Ancestors map[string]string `json:"ancestors,omitempty"`
@@ -463,6 +470,7 @@ var (
 
 func load() {
 	loadOnce.Do(func() {
+		applySDKFixes()
 		if err := json.Unmarshal(schemaJSON, &schema); err != nil {
 			loadErr = fmt.Errorf("catalog: provider schema: %w", err)
 			return

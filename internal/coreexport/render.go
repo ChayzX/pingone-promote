@@ -89,7 +89,7 @@ func Render(in RenderInput) (*Rendered, error) {
 			return nil, err
 		}
 		byType[o.Type] = append(byType[o.Type], text)
-		if o.Builtin {
+		if o.Builtin && d.Import != catalog.ImportEnvironment { // imported by environment ID: nothing to enter
 			r.out.Adopt = append(r.out.Adopt, a)
 		}
 		if d.Import != catalog.ImportEnvironment && o.ImportID != "" {
@@ -136,6 +136,16 @@ func (r *renderer) block() (string, error) {
 	skip := map[string]bool{"id": true, "environment_id": true, d.ParentAttr: true}
 	if d.ParentAttr != "" && o.Parent != nil {
 		b.WriteString("  " + d.ParentAttr + " = " + r.idExpr(o.Parent.ID, d.ParentAttr) + "\n")
+	}
+	if d.ParentValue != "" && o.Parent != nil {
+		b.WriteString("  " + d.ParentValue + " = " + quote(o.Parent.ID) + "\n")
+		skip[d.ParentValue] = true
+	}
+	if d.ParentName != "" && o.Parent != nil {
+		if n, ok := o.Parent.Raw["name"].(string); ok {
+			b.WriteString("  " + d.ParentName + " = " + quote(n) + "\n")
+			skip[d.ParentName] = true
+		}
 	}
 	for _, attr := range sortedKeysS(d.Ancestors) {
 		for p := o.Parent; p != nil; p = p.Parent {

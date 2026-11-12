@@ -3,6 +3,7 @@ package multiexport
 import (
 	"context"
 	"errors"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -101,7 +102,7 @@ var families = []struct {
 		[]string{"pingone_davinci_connector_instance.pingcli__Http"}},
 	{"applications", "pingone_application.pingcli__Web-0020-Portal", []string{"pingone_application_attribute_mapping.pingcli__Web-0020-Portal_email",
 		"pingone_application_sign_on_policy_assignment.pingcli__Web-0020-Portal_1", "pingone_application_flow_policy_assignment.pingcli__Web-0020-Portal_1",
-		"pingone_application_resource_grant.pingcli__Web-0020-Portal_Orders-0020-API"},
+		"pingone_application_resource_grant.pingcli__Web-0020-Portal_Orders-0020-API", "pingone_application_metadata.pingcli__Web-0020-Portal"},
 		[]string{"pingone_sign_on_policy.pingcli__Customer_Login", "pingone_resource.pingcli__Orders-0020-API", "pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy"}},
 	{"resources_scopes_grants", "pingone_resource.pingcli__Orders-0020-API", []string{"pingone_resource_scope.pingcli__Orders-0020-API_orders-003A-read"}, nil},
 	{"sign_on", "pingone_sign_on_policy.pingcli__Customer_Login", []string{"pingone_sign_on_policy_action.pingcli__Customer_Login_1", "pingone_sign_on_policy_action.pingcli__Customer_Login_2"},
@@ -206,8 +207,8 @@ func TestOneNotificationTemplateExportsNothingElse(t *testing.T) {
 	if len(got) != 1 || got[0] != seed {
 		t.Fatalf("export = %v, want only %s", got, seed)
 	}
-	out := text(neutralized(t, exp))
-	for _, want := range []string{`template_name = "recovery_code_template"`, `locale        = "en"`, `subject = "Your recovery code"`, "$${code}"} {
+	out := regexp.MustCompile(` +`).ReplaceAllString(text(neutralized(t, exp)), " ")
+	for _, want := range []string{`template_name = "recovery_code_template"`, `locale = "en"`, `subject = "Your recovery code"`, "$${code}"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("template content lacks %q:\n%s", want, out)
 		}
