@@ -113,6 +113,28 @@ recreate it: the configuration file is read at every start).
 If none of these match, send the last lines of `podman logs pingone-promote`.
 They contain no secrets.
 
+## When a page says "the operator can find details in the service log"
+
+The log line `export failed` holds the cause. When it says
+`restart the server with --debug`, the detail can quote tenant content and is
+only logged on request: recreate the container with `--debug` after the image
+name, reproduce the failure, read the log, then recreate it without `--debug`.
+
+```bash
+podman rm -f pingone-promote
+```
+
+```bash
+podman run -d --name pingone-promote -p 127.0.0.1:8080:8080 --read-only --tmpfs /tmp:rw,exec,nosuid,nodev --secret pingone-promote-secrets,target=secrets.env,uid=10001,gid=10001,mode=0400 -v ~/pingone-promote-test/config.json:/etc/pingone-promote/config.json:ro pingone-promote:test --debug
+```
+
+```bash
+podman logs pingone-promote 2>&1 | grep "export failed"
+```
+
+Secret values are removed from the log, but the detail can name your
+flows, connections or applications: check it before sending it on.
+
 ## Other installations
 
 - **RHEL 9 (systemd):** install the new binary as in

@@ -19,7 +19,7 @@ import (
 	"pingone-promote/internal/server"
 )
 
-const serveUsage = `Usage: pingone-promote serve --config FILE [--check-config]
+const serveUsage = `Usage: pingone-promote serve --config FILE [--check-config] [--debug]
 
 Runs the hosted server (ADR 0018): server-rendered pages to search a source
 environment, preview a request and commit it to a GitLab request branch,
@@ -32,6 +32,8 @@ GitLab token. Neither is ever printed.
   --config FILE    the configuration file
   --check-config   check the configuration, the secrets file and the pinned
                    tools, then exit (0 when everything is usable)
+  --debug          also log the detail of failures whose text may quote
+                   tenant content (an export tool's output), redacted
 `
 
 // newExporter builds the exporter the server uses. It is a variable so the
@@ -86,6 +88,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.SetOutput(io.Discard)
 	cfgPath := fs.String("config", "", "")
 	check := fs.Bool("check-config", false, "")
+	debug := fs.Bool("debug", false, "")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, serveUsage)
@@ -118,7 +121,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stdout, "configuration, secrets file and tools are usable")
 		return 0
 	}
-	logger := slog.New(slog.NewTextHandler(stderr, nil))
+	level := slog.LevelInfo
+	if *debug {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
 	s, err := server.New(server.Options{Config: cfg, Secrets: secrets, Exporter: exp, Logger: logger})
 	if err != nil {
 		fmt.Fprintln(stderr, "pingone-promote serve:", err)

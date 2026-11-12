@@ -3,9 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"strings"
 
 	"pingone-promote/internal/exporter"
+	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/request"
 )
 
@@ -13,10 +17,10 @@ import (
 // an API response) never reaches a page: it can quote tenant content or a
 // credential. It is logged, redacted, at debug level only.
 const (
-	msgExportTool     = "The export tool failed while reading the source environment. Check that the worker application can read it, then try again. The operator can find details in the service log."
+	msgExportTool     = "The DaVinci export tool failed while reading the source environment. Check that the worker application can read it, then try again. The operator can find the tool's output in the service log (podman logs pingone-promote, or journalctl -u pingone-promote)."
 	msgExportPin      = "The export tool on the server does not match its pinned version or checksum. The operator must reinstall the pinned tools."
 	msgLabelCollision = "Two resources in the source environment would get the same Terraform name, so nothing was exported. Rename one of them in the source environment (for example a flow-scoped variable that shares a name with another), then try again."
-	msgExportOther    = "Reading the source environment failed. Try again; if it keeps failing, the operator can find details in the service log."
+	msgExportOther    = "Reading the source environment failed. Try again; if it keeps failing, the operator can find details in the service log (podman logs pingone-promote, or journalctl -u pingone-promote)."
 )
 
 // exportError carries a fixed message and keeps the original error for
@@ -50,9 +54,48 @@ func (p plainErrors) wrap(op string, err error) error {
 		msg = msgExportPin
 	case errors.As(err, &ex):
 		msg = msgExportTool
+	default:
+		if m, ok := pingoneMessage(err); ok {
+			msg = m
+		}
 	}
-	p.log.Debug("export failed", "op", op, "detail", p.redact(request.RedactText(err.Error())))
+	detail := p.redact(request.RedactText(err.Error()))
+	if msg != msgExportOther && msg != msgExportTool {
+		// This tool's own wording (PingOne client, pins, labels).
+		p.log.Warn("export failed", "op", op, "detail", detail)
+	} else {
+		// Other text (a tool's output, ...) can quote tenant content: its
+		// detail is logged at debug level only.
+		p.log.Warn("export failed", "op", op, "cause", "not shown at this log level; restart the server with --debug to log it")
+		p.log.Debug("export failed", "op", op, "detail", detail)
+	}
 	return &exportError{msg: msg, err: err}
+}
+
+// pingoneMessage explains a failure of the PingOne API client. Its error
+// texts are this tool's own (an API path, an HTTP status, a network
+// cause), never a response body, so they can be shown.
+func pingoneMessage(err error) (string, bool) {
+	var ae *pingone.APIError
+	if errors.As(err, &ae) {
+		var hint string
+		switch {
+		case ae.Status == http.StatusUnauthorized:
+			hint = " PingOne refused the worker's token for the source environment. Give the worker application a read role (for example Environment Admin or Identity Data Read Only) on the source environment itself, not only on the environment it lives in; a new role takes effect on the next token, so wait a minute and try again."
+		case ae.Status == http.StatusForbidden:
+			hint = " The worker application lacks a read role for this on the source environment."
+		case ae.Status == http.StatusTooManyRequests:
+			hint = " PingOne is throttling requests; try again in a few minutes."
+		case ae.Status >= 500:
+			hint = " PingOne had a server error; try again in a few minutes."
+		}
+		return fmt.Sprintf("PingOne answered HTTP %d to GET %s.%s", ae.Status, ae.Path, hint), true
+	}
+	s := err.Error()
+	if i := strings.Index(s, "pingone: "); i >= 0 && (i == 0 || strings.HasPrefix(s, "coreexport: ") || strings.HasPrefix(s, "multiexport: ")) {
+		return "PingOne: " + s[i+len("pingone: "):], true
+	}
+	return "", false
 }
 
 func (p plainErrors) Catalog(ctx context.Context, c exporter.Credentials, withIDs bool) ([]exporter.Resource, error) {

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"pingone-promote/internal/pingone"
 	"strings"
 	"testing"
 
@@ -215,10 +216,16 @@ func TestExportErrorsArePlain(t *testing.T) {
 		{lc, msgLabelCollision},
 		{fmt.Errorf("verify: %w", exporter.ErrChecksum), msgExportPin},
 		{errors.New("GET https://api.pingone.com/... returned body with secret"), msgExportOther},
+		{fmt.Errorf("coreexport: pingone_population: %w", &pingone.APIError{Status: 401, Path: "/environments/e/populations"}),
+			"PingOne answered HTTP 401 to GET /environments/e/populations. PingOne refused the worker's token"},
+		{errors.New("pingone: the worker token request returned HTTP 401; check the worker client ID, secret, environment and region"),
+			"PingOne: the worker token request returned HTTP 401"},
+		{errors.New("coreexport: pingone_group: pingone: GET /environments/e/groups failed: the connection was refused"),
+			"PingOne: GET /environments/e/groups failed: the connection was refused"},
 	}
 	for _, c := range cases {
 		got := p.wrap("export", c.err)
-		if got.Error() != c.want {
+		if !strings.HasPrefix(got.Error(), c.want) {
 			t.Errorf("%v: got %q", c.err, got.Error())
 		}
 	}
