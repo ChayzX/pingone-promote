@@ -72,7 +72,11 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 		ttl = 2 * time.Minute
 	}
 	e.mu.Lock()
-	if c := e.cache[env]; c != nil && time.Since(c.at) < ttl {
+	c := e.cache[env]
+	if c != nil && c.dvErr != nil && ttl > dvRetryAfter {
+		ttl = dvRetryAfter // a DaVinci failure may be transient: read again soon
+	}
+	if c != nil && time.Since(c.at) < ttl {
 		e.mu.Unlock()
 		return c, nil
 	}
@@ -89,7 +93,7 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 	if err != nil {
 		return nil, err
 	}
-	c := &cached{at: time.Now(), inv: inv}
+	c = &cached{at: time.Now(), inv: inv}
 	if e.DaVinci != nil {
 		if c.dv, err = e.DaVinci.CatalogAllIDs(ctx, creds); err != nil {
 			if ctx.Err() != nil {
@@ -221,6 +225,12 @@ func deps(o *coreexport.Object, ids map[string]string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// davinciID matches a DaVinci identifier (PingOne core IDs are UUIDs).
+var davinciID = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
+// dvRetryAfter is how long a failed DaVinci read is remembered.
+const dvRetryAfter = 15 * time.Second
 
 var quotedUUID = regexp.MustCompile(`"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"`)
 
@@ -403,6 +413,15 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 	if err != nil {
 		return nil, err
 	}
+	if c.dvErr != nil {
+		// A DaVinci ID that a core object refers to would be written as a
+		// literal source ID; refuse rather than commit it.
+		for _, k := range sortedKeysS(rendered.Unresolved) {
+			if davinciID.MatchString(rendered.Unresolved[k]) {
+				return nil, fmt.Errorf("multiexport: %s refers to a DaVinci item, and DaVinci could not be read: %w", k, c.dvErr)
+			}
+		}
+	}
 	out, err := combine(c, dvExp, rendered, ids, exported)
 	if err != nil {
 		return nil, err
@@ -440,7 +459,20 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 		Files: map[string][]byte{}, Referenced: map[string]string{}, Adopt: core.Adopt}
 	out.Warnings = append(out.Warnings, c.inv.Warnings...)
 	if c.dvErr != nil {
-		out.Warnings = append(out.Warnings, "DaVinci items were not read: the source environment may not have DaVinci, or the worker lacks a DaVinci role; core PingOne items are exported")
+		why := "the DaVinci export failed"
+		var ex *exporter.ExecError
+		if errors.As(c.dvErr, &ex) {
+			why = "the DaVinci export tool failed (the service log has the details)"
+		}
+		out.Warnings = append(out.Warnings, "DaVinci items were not read: "+why+". If the source environment has DaVinci, check the worker's DaVinci role and try again; only core PingOne items are in this export")
+	}
+	if len(c.inv.Skipped) > 0 && len(core.Unresolved) > 0 {
+		keys := sortedKeysS(core.Unresolved)
+		more := ""
+		if len(keys) > 5 {
+			keys, more = keys[:5], fmt.Sprintf(" and %d more", len(core.Unresolved)-5)
+		}
+		out.Warnings = append(out.Warnings, "Some item types were not read, and these values look like IDs of objects that were not found, so they keep the source environment's ID: "+strings.Join(keys, ", ")+more+". Check them before merging")
 	}
 	for _, t := range sortedKeysS(c.inv.Skipped) {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%s was not read: %s", t, c.inv.Skipped[t]))

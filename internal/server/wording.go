@@ -138,15 +138,16 @@ var notReadRE = regexp.MustCompile(`^(pingone_[a-z0-9_]+) was not read: (.*)$`)
 func splitWarnings(ws []string) (skipped, other []string) {
 	for _, w := range ws {
 		if m := notReadRE.FindStringSubmatch(w); m != nil {
-			why := m[2]
-			switch {
-			case strings.Contains(why, "403"):
-				why = "the worker may not read it, or the service is not licensed"
-			case strings.Contains(why, "404"):
-				why = "not available in this environment"
+			// Only "cannot read" and "does not exist" are expected; any
+			// other refusal stays a warning worth reading.
+			switch why := m[2]; {
+			case strings.Contains(why, "(HTTP 403"):
+				skipped = append(skipped, resourceLabel(m[1])+": the worker may not read it, or the service is not licensed")
+				continue
+			case strings.Contains(why, "(HTTP 404"):
+				skipped = append(skipped, resourceLabel(m[1])+": not available in this environment")
+				continue
 			}
-			skipped = append(skipped, resourceLabel(m[1])+": "+why)
-			continue
 		}
 		other = append(other, w)
 	}

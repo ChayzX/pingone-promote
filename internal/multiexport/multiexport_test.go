@@ -104,7 +104,7 @@ var families = []struct {
 		"pingone_application_sign_on_policy_assignment.pingcli__Web-0020-Portal_1", "pingone_application_flow_policy_assignment.pingcli__Web-0020-Portal_1",
 		"pingone_application_resource_grant.pingcli__Web-0020-Portal_Orders-0020-API", "pingone_application_metadata.pingcli__Web-0020-Portal"},
 		[]string{"pingone_sign_on_policy.pingcli__Customer_Login", "pingone_resource.pingcli__Orders-0020-API", "pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy"}},
-	{"resources_scopes_grants", "pingone_resource.pingcli__Orders-0020-API", []string{"pingone_resource_scope.pingcli__Orders-0020-API_orders-003A-read"}, nil},
+	{"resources_scopes_grants", "pingone_resource.pingcli__Orders-0020-API", []string{"pingone_resource_scope.pingcli__Orders-0020-API_orders-003A-read", "pingone_application_resource.pingcli__Orders-0020-API_Orders"}, nil},
 	{"sign_on", "pingone_sign_on_policy.pingcli__Customer_Login", []string{"pingone_sign_on_policy_action.pingcli__Customer_Login_1", "pingone_sign_on_policy_action.pingcli__Customer_Login_2"},
 		[]string{"pingone_population.pingcli__Customers", "pingone_password_policy.pingcli__Strict", "pingone_mfa_device_policy.pingcli__Strong-0020-MFA"}},
 	{"directory", "pingone_population.pingcli__Customers", nil, []string{"pingone_password_policy.pingcli__Strict"}},
@@ -357,7 +357,12 @@ func TestCoreWorksWhenDaVinciCannotBeRead(t *testing.T) {
 	if len(cat) == 0 {
 		t.Fatal("no core items")
 	}
-	exp, err := h.e.WholeExport(context.Background(), creds, nil)
+	// A core object that refers to a DaVinci item must not be written with
+	// the DaVinci ID as a literal.
+	if _, err := h.e.WholeExport(context.Background(), creds, nil); err == nil || !strings.Contains(err.Error(), "refers to a DaVinci item") {
+		t.Fatalf("a DaVinci reference was exported while DaVinci could not be read: %v", err)
+	}
+	exp, err := h.e.SelectedExport(context.Background(), creds, []string{"pingone_population.pingcli__Customers"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

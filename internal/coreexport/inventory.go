@@ -94,8 +94,12 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 					inv.Skipped[d.Type] = "the worker cannot read it (HTTP 403: service not licensed or no read role)"
 				case pingone.NotFound(err):
 					inv.Skipped[d.Type] = "not available in this environment (HTTP 404)"
-				case errors.As(err, &ae) && ae.Status != http.StatusUnauthorized:
-					inv.Skipped[d.Type] = fmt.Sprintf("the PingOne API answered HTTP %d for %s; report it so the read can be fixed", ae.Status, ae.Path)
+				case errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500 && ae.Status != http.StatusUnauthorized && ae.Status != http.StatusTooManyRequests:
+					// A request this tool builds wrongly for this tenant. A
+					// server error (5xx) or throttling that outlasted the
+					// retries stops the read instead: skipping would turn
+					// every reference to the type into a literal source ID.
+					inv.Skipped[d.Type] = fmt.Sprintf("the PingOne API refused the request (HTTP %d); references to these items keep their source IDs, so report it", ae.Status)
 				default:
 					return nil, fmt.Errorf("coreexport: %s: %w", d.Type, err)
 				}

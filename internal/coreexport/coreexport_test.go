@@ -3,6 +3,7 @@ package coreexport
 import (
 	"context"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -216,6 +217,17 @@ func TestRenderedBlocksHaveRequiredAttributes(t *testing.T) {
 	if o := inv.Object("pingone_sign_on_policy_action.pingcli__Single_Factor_1"); o == nil || !o.Builtin {
 		t.Error("the default sign-on policy's action must be adopted, not created")
 	}
+	// An application resource names its custom resource by reference, so
+	// Terraform creates the resource first.
+	ar := regexp.MustCompile(`\s+`).ReplaceAllString(string(r.Files["ping-export-module/pingone_application_resource.tf"]), " ")
+	if !strings.Contains(ar, "resource_name = pingone_resource.") || !strings.Contains(ar, ".name") {
+		t.Errorf("application resource does not reference its parent: %s", ar)
+	}
+	if o := inv.Object("pingone_application_resource.pingcli__Orders-0020-API_Orders"); o == nil {
+		t.Errorf("application resource label: %v", addrs(inv))
+	} else if o.ImportID != "27000000-0000-4000-8000-000000000002/27200000-0000-4000-8000-000000000001" {
+		t.Errorf("application resource import ID = %s", o.ImportID)
+	}
 	// A deprecated <x>_id is not written next to its object attribute <x>.
 	if strings.Contains(string(r.Files["ping-export-module/pingone_population.tf"]), "password_policy_id") {
 		t.Error("population sets both password_policy and password_policy_id")
@@ -225,7 +237,7 @@ func TestRenderedBlocksHaveRequiredAttributes(t *testing.T) {
 // An unexpected answer for one type skips that type and keeps the rest.
 func TestOneFailingTypeDoesNotStopTheRead(t *testing.T) {
 	tn := pingonetest.LoadTenant(t, "testdata/tenant.json")
-	tn.Failing = map[string]int{"forms": 400, "keys": 500}
+	tn.Failing = map[string]int{"forms": 400, "keys": 400}
 	f := pingonetest.Start(t, tn)
 	c, err := pingone.New(pingone.Credentials{ClientID: f.ClientID, ClientSecret: f.ClientSecret, WorkerEnvironmentID: f.WorkerEnvID, RegionCode: "NA"})
 	if err != nil {
@@ -243,6 +255,15 @@ func TestOneFailingTypeDoesNotStopTheRead(t *testing.T) {
 	}
 	if inv.Object("pingone_population.pingcli__Customers") == nil {
 		t.Error("the other types were not read")
+	}
+	// A server error stops the read: skipping the type would write every
+	// reference to it as a literal source ID.
+	tn.Failing = map[string]int{"keys": 500}
+	f5 := pingonetest.Start(t, tn)
+	c5, _ := pingone.New(pingone.Credentials{ClientID: f5.ClientID, ClientSecret: f5.ClientSecret, WorkerEnvironmentID: f5.WorkerEnvID, RegionCode: "NA"})
+	c5.AuthBase, c5.APIBase = f5.AuthBase(), f5.APIBase()
+	if _, err := Read(context.Background(), c5, env); err == nil || !strings.Contains(err.Error(), "500") {
+		t.Errorf("HTTP 500 did not stop the read: %v", err)
 	}
 	// A wrong worker secret still stops everything with a clear error.
 	bad, _ := pingone.New(pingone.Credentials{ClientID: f.ClientID, ClientSecret: "wrong", WorkerEnvironmentID: f.WorkerEnvID, RegionCode: "NA"})

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,6 +52,11 @@ type Rendered struct {
 	// adopt by import ID instead of creating.
 	Adopt    []string
 	Warnings []string
+	// Unresolved are ID-shaped values ("address attr.path" -> value) that
+	// match no object read from the source, so they stay literal. They are
+	// harmless when they name something outside the environment, and wrong
+	// when the object they name could not be read.
+	Unresolved map[string]string
 }
 
 type renderer struct {
@@ -71,7 +77,7 @@ func Render(in RenderInput) (*Rendered, error) {
 	if in.ModuleName == "" {
 		in.ModuleName = neutralize.DefaultExportModuleName
 	}
-	r := &renderer{in: in, out: &Rendered{Files: map[string][]byte{}, Referenced: map[string]string{}},
+	r := &renderer{in: in, out: &Rendered{Files: map[string][]byte{}, Referenced: map[string]string{}, Unresolved: map[string]string{}},
 		vars: map[string]string{}, values: map[string]string{}}
 	byType := map[string][]string{}
 	var imports strings.Builder
@@ -142,10 +148,18 @@ func (r *renderer) block() (string, error) {
 		skip[d.ParentValue] = true
 	}
 	if d.ParentName != "" && o.Parent != nil {
-		if n, ok := o.Parent.Raw["name"].(string); ok {
+		n, ok := o.Parent.Raw["name"].(string)
+		pa, known := r.in.IDs[o.Parent.ID]
+		switch {
+		case known && r.in.Exported[pa]:
+			// A reference also makes Terraform create the parent first.
+			b.WriteString("  " + d.ParentName + " = " + pa + ".name\n")
+		case ok:
 			b.WriteString("  " + d.ParentName + " = " + quote(n) + "\n")
-			skip[d.ParentName] = true
+		default:
+			return "", fmt.Errorf("coreexport: %s: its parent has no name", o.Address())
 		}
+		skip[d.ParentName] = true
 	}
 	for _, attr := range sortedKeysS(d.Ancestors) {
 		for p := o.Parent; p != nil; p = p.Parent {
@@ -544,8 +558,14 @@ func (r *renderer) stringExpr(s, path string) string {
 	if addr, ok := r.in.IDs[s]; ok && addr != r.obj.Address() {
 		return r.idExpr(s, path)
 	}
+	if idShaped.MatchString(s) && s != r.in.Inventory.EnvironmentID {
+		r.out.Unresolved[r.obj.Address()+" "+path] = s
+	}
 	return quote(s)
 }
+
+// idShaped matches PingOne (UUID) and DaVinci (32 hex) identifiers.
+var idShaped = regexp.MustCompile(`^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})$`)
 
 // idExpr references the object with ID id.
 func (r *renderer) idExpr(id, path string) string {

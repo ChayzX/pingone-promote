@@ -142,7 +142,9 @@
       {"id": "37100000-0000-4000-8000-000000000001", "name": "List orders", "methods": ["GET"], "paths": [{"type": "EXACT", "pattern": "/orders"}]}
     ]},
     "applicationRoles": {"embedded": "applicationRoles", "items": []},
-    "applicationResources": {"embedded": "applicationResources", "items": []},
+    "resources/27000000-0000-4000-8000-000000000002/applicationResources": {"embedded": "resources", "items": [
+      {"id": "27200000-0000-4000-8000-000000000001", "name": "Orders", "description": "Order records", "parent": {"type": "CUSTOM", "id": "27000000-0000-4000-8000-000000000002"}}
+    ]},
     "decisionEndpoints": {"embedded": "decisionEndpoints", "items": []},
     "verifyPolicies": {"embedded": "verifyPolicies", "items": [
       {"id": "37500000-0000-4000-8000-000000000001", "name": "Standard ID check", "description": "Government ID and liveness", "default": false, "governmentId": {"verify": "REQUIRED"}, "facialComparison": {"verify": "REQUIRED", "threshold": "MEDIUM"}, "liveness": {"verify": "REQUIRED", "threshold": "MEDIUM"}}
