@@ -32,7 +32,7 @@ plus CI job (ADR 0017) remains as the legacy path.
 | [0019](0019-core-pingone-exporter.md) | A native read-only exporter for core PingOne | Accepted |
 
 v1 packages, the local web UI and the native API path were deleted in
-issue #44 (see ADR 0012); old documents are in `../archive/`.
+issue #44 (see ADR 0012); old documents are in Git history.
 
 v2 code:
 
@@ -42,5 +42,5 @@ v2 code:
 - `internal/hclblocks`: byte-range block edits
 - `internal/promote`: additive merge, overlays, `check --root`
 - `internal/request`: the CI request job (`pingone-promote request`)
-- `terraform/root`: the reference root; `terraform/spikes/s1-conditional-import`
+- `terraform/root`: the reference root; `terraform/spikes/s1-conditional-import` (removed; in Git history)
 - `examples/gitlab-ci/pingone-promote.yml`, `docs/gitlab-ci-integration.md`

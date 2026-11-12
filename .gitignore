@@ -28,9 +28,6 @@ terraform/modules/**/.terraform.lock.hcl
 *.tfstate.*
 *.tfplan
 
-# DaVinci app: private copies and alternate builds (davinci-app/README.md "Rebuild and check").
-/davinci-app/out/
-/davinci-app/values.json
 
 # Company root certificates for image builds (deploy/container/extra-ca/README.md)
 /deploy/container/extra-ca/*.crt

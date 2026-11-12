@@ -92,13 +92,9 @@ jobs:
       - name: terraform fmt
         run: terraform fmt -check -recursive terraform/
 
-      - name: Kept checks (DaVinci app, release scripts)
+      - name: Release script checks
         if: runner.os == 'Linux'
-        run: |
-          python3 -I davinci-app/check_app.py
-          node davinci-app/test_app.js
-          (cd davinci-app && python3 gen_app.py --sign-in subflow --out out/sso.flow.json && python3 check_app.py out/sso.flow.json && node test_app.js out/sso.flow.json)
-          python3 -m unittest discover -s scripts -p test_release.py
+        run: python3 -m unittest discover -s scripts -p test_release.py
 
   container:
     name: Container image

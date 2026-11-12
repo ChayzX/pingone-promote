@@ -13,7 +13,7 @@ The hosted, source-only server of [ADR 0018](adr/0018-hosted-source-only-server.
 
 ## Only fixture-tested
 
-All core types are `Live: no`. The PingOne API paths and field names, worker role needs, the GitLab API assumptions, SELinux, systemd and Kubernetes behavior, and enterprise pipeline compatibility have not been verified on a real tenant, GitLab or host. Cases: [core-export.md](acceptance/core-export.md), [hosted-server.md](acceptance/hosted-server.md), [live-acceptance.md](acceptance/live-acceptance.md).
+All core types are `Live: no`. The PingOne API paths and field names, worker role needs, the GitLab API assumptions, SELinux, systemd and Kubernetes behavior, and enterprise pipeline compatibility have not been verified on a real tenant, GitLab or host. Cases: [core-export.md](acceptance/core-export.md), [hosted-server.md](acceptance/hosted-server.md).
 
 ## Open items
 
@@ -36,4 +36,4 @@ All core types are `Live: no`. The PingOne API paths and field names, worker rol
 
 ## How to verify
 
-With Go 1.27.3 and Terraform 1.16.7 on PATH (`scripts/fetch-tools.sh --with-go`): `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./...`, `terraform fmt -check -recursive terraform/`, plus the legacy `python3 -I davinci-app/check_app.py`, `node davinci-app/test_app.js` and `python3 -m unittest discover -s scripts -p test_release.py`. Fixture success is not live proof.
+With Go 1.27.3 and Terraform 1.16.7 on PATH (`scripts/fetch-tools.sh --with-go`): `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./...`, `terraform fmt -check -recursive terraform/`, plus `python3 -m unittest discover -s scripts -p test_release.py`. Fixture success is not live proof.

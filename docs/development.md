@@ -50,7 +50,7 @@ The server never runs `terraform plan` or `apply` and holds no PingOne write cre
 | `internal/overlay`, `internal/pipelinesecrets`, `internal/secretscan` | Overlays, secret declarations, secret detection. |
 | `internal/tffmt` | The `terraform fmt` gate. |
 | `internal/gitlab` | GitLab client with path allow-list, snapshots, `HostedCommitter`, status; `gitlabtest` is the fake. |
-| `terraform/root`, `davinci-app/`, `examples/gitlab-ci/` | Reference root; legacy DaVinci app and CI example. |
+| `terraform/root`, `examples/gitlab-ci/` | Reference root; legacy CI request job example. |
 
 ## Commands
 
@@ -79,8 +79,7 @@ go test ./...
 go test -race ./internal/server/... ./internal/gitlab/...   # Linux/macOS (needs cgo)
 terraform fmt -check -recursive terraform/
 
-# Legacy DaVinci app and release script checks
-python3 -I davinci-app/check_app.py && node davinci-app/test_app.js
+# Release script checks
 python3 -m unittest discover -s scripts -p test_release.py
 ```
 
