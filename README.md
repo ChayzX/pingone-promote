@@ -20,6 +20,8 @@ The hosted server needs no CI job, CI variable or special branch in the config r
 
 ## Checklist: macOS (local test)
 
+**Recommended: test with Podman** so the Mac runs the same container a server does. Follow [docs/podman-mac.md](docs/podman-mac.md) step by step (about 20 minutes). The steps below run the binary directly instead.
+
 Full detail: [docs/operations.md](docs/operations.md#macos-local-test).
 
 1. `bash scripts/fetch-tools.sh --dest ./tools`
