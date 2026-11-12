@@ -116,12 +116,21 @@ Secrets delivery. The shipped unit uses `LoadCredential=secrets:/etc/pingone-pro
 systemd reads the root-owned `0600` file as root and exposes a copy to the
 service in `/run/credentials/pingone-promote.service/secrets`, a private
 memory-backed directory; the example config's `secretsFile` already points
-there. Credential files are made readable only by the service user (mode 0400,
-owner the unit's `User=`), which is what the server's owner-only check needs.
-Verify on your host:
+there. systemd gives the service a root-owned copy with mode `0440` and an
+access-control entry for the service user, inside a directory only that
+service can reach. The server accepts a secrets file there (and only there)
+when `$CREDENTIALS_DIRECTORY` names that directory and neither the file nor
+the directory gives anything to other users; every other secrets file must be
+owner-only (0600 or 0400) and owned by the server's user. Verify on your host:
 
-    systemd-run --pty -p User=pingone-promote -p LoadCredential=s:/etc/pingone-promote/secrets.env \
-        sh -c 'ls -ln "$CREDENTIALS_DIRECTORY"'    # expect -r-------- owned by the pingone-promote uid
+    systemd-run --wait --pipe -p User=pingone-promote -p LoadCredential=s:/etc/pingone-promote/secrets.env         sh -c 'ls -ln "$CREDENTIALS_DIRECTORY"'    # expect -r--r-----+ owned by root
+
+Tested 2026-11-11 on Ubuntu 24.04 (systemd 255) with the shipped unit's
+hardening as a transient unit: the service starts, `/healthz` answers, a
+foreign Host gets 421, a POST without a CSRF token gets 403, the process has
+no capabilities, `NoNewPrivs` and a seccomp filter, no secret reaches the
+journal, and `systemd-analyze security` rates it 1.6 (OK). Not yet run on RHEL 9
+itself (SELinux is untested); see `docs/acceptance/hosted-server.md`.
 
 Alternative without credentials: delete the `LoadCredential=` line, set
 `secretsFile` to `/etc/pingone-promote/secrets.env` and make that file

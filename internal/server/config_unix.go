@@ -5,6 +5,7 @@ package server
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -15,8 +16,16 @@ func openSecretsFile(path string) (*os.File, error) {
 }
 
 // checkSecretsFileInfo enforces the owner-only mode and that the server's
-// user owns the file.
-func checkSecretsFileInfo(fi os.FileInfo) error {
+// user owns the file. A systemd credential (LoadCredential=) is the one
+// exception: systemd hands the service a root-owned copy (mode 0440 with an
+// ACL for the service user) inside $CREDENTIALS_DIRECTORY, a private,
+// memory-backed directory only this service can reach. That is accepted
+// when the file is directly in that directory, the directory and the file
+// give nothing to other users, and root owns both.
+func checkSecretsFileInfo(path string, fi os.FileInfo) error {
+	if ok, err := systemdCredential(path, fi); ok || err != nil {
+		return err
+	}
 	if err := checkSecretsMode(fi.Mode()); err != nil {
 		return err
 	}
@@ -28,4 +37,35 @@ func checkSecretsFileInfo(fi os.FileInfo) error {
 		return errors.New("the secrets file must be owned by the user the server runs as; run chown on it, or in a pod set runAsUser and fsGroup to match")
 	}
 	return nil
+}
+
+// systemdCredential reports whether path is a systemd credential of this
+// service; err explains a credential that is not private.
+func systemdCredential(path string, fi os.FileInfo) (bool, error) {
+	credDir := os.Getenv("CREDENTIALS_DIRECTORY")
+	if credDir == "" || !filepath.IsAbs(credDir) || !filepath.IsAbs(path) {
+		return false, nil
+	}
+	if filepath.Clean(filepath.Dir(path)) != filepath.Clean(credDir) {
+		return false, nil
+	}
+	di, err := os.Lstat(credDir)
+	if err != nil || !di.IsDir() {
+		return false, nil
+	}
+	fst, ok1 := fi.Sys().(*syscall.Stat_t)
+	dst, ok2 := di.Sys().(*syscall.Stat_t)
+	switch {
+	case !ok1 || !ok2:
+		return true, errors.New("cannot read the owner of the systemd credential")
+	case fi.Mode().Perm()&0o007 != 0 || di.Mode().Perm()&0o007 != 0:
+		return true, errors.New("the systemd credential is readable by other users")
+	case fi.Mode().Perm()&0o022 != 0:
+		return true, errors.New("the systemd credential is writable by more than its owner")
+	case fst.Uid != 0 && int64(fst.Uid) != int64(os.Getuid()):
+		return true, errors.New("the systemd credential has an unexpected owner")
+	case dst.Uid != 0 && int64(dst.Uid) != int64(os.Getuid()):
+		return true, errors.New("the systemd credentials directory has an unexpected owner")
+	}
+	return true, nil
 }

@@ -377,3 +377,44 @@ func TestConfigHasNoSecretField(t *testing.T) {
 		t.Fatal("secretsFile must be a path string")
 	}
 }
+
+// A systemd credential (LoadCredential=) is a 0440 copy inside the private
+// $CREDENTIALS_DIRECTORY; it is accepted there and only there, and only
+// while neither the file nor the directory gives anything to other users.
+// (On a host the copy is root-owned with an ACL for the service user; the
+// test, unprivileged, owns both.)
+func TestSecretsSystemdCredential(t *testing.T) {
+	skipOnWindows(t)
+	credDir := filepath.Join(t.TempDir(), "credentials")
+	if err := os.Mkdir(credDir, 0o500|0o200); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(credDir, "secrets")
+	if err := os.WriteFile(p, []byte(fixtureSecrets), 0o440); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o440); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSecrets(p); err == nil {
+		t.Fatal("a 0440 file outside a credentials directory must be refused")
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", credDir)
+	if _, err := LoadSecrets(p); err != nil {
+		t.Fatalf("systemd credential refused: %v", err)
+	}
+	// Readable by others: refused even inside the credentials directory.
+	if err := os.Chmod(p, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSecrets(p); err == nil {
+		t.Fatal("a world-readable credential was accepted")
+	} else {
+		noValueIn(t, err)
+	}
+	// A file next to, not inside, the credentials directory gains nothing.
+	other := writeSecrets(t, fixtureSecrets, 0o440)
+	if _, err := LoadSecrets(other); err == nil {
+		t.Fatal("a 0440 file outside the credentials directory was accepted")
+	}
+}

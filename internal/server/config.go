@@ -263,7 +263,7 @@ func LoadSecrets(path string) (Secrets, error) {
 	if !li.Mode().IsRegular() {
 		return s, errors.New("the secrets file must be a regular file")
 	}
-	if err := checkSecretsFileInfo(li); err != nil {
+	if err := checkSecretsFileInfo(path, li); err != nil {
 		return s, err
 	}
 	// O_NOFOLLOW refuses a symbolic link swapped in after the Lstat, and
@@ -280,7 +280,7 @@ func LoadSecrets(path string) (Secrets, error) {
 	if err != nil || !os.SameFile(li, fi) || !fi.Mode().IsRegular() {
 		return s, errors.New("the secrets file changed while it was opened; try again")
 	}
-	if err := checkSecretsFileInfo(fi); err != nil {
+	if err := checkSecretsFileInfo(path, fi); err != nil {
 		return s, err
 	}
 	if fi.Size() > secretsMax {
