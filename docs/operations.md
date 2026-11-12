@@ -38,6 +38,7 @@ rejected. Secrets never go in this file.
 | `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Needed when a source's `.tfvars` does not set `pingone_environment_id` (for example when it comes from a GitLab CI variable). |
 | `rollout` | Environments the pipeline applies afterwards, in order. Must not overlap `sources`. |
 | `branchPrefix` | Request branch prefix, e.g. `CIAM-` (ends in `-` or `/`). |
+| `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+`; nothing is added to it, and an existing branch is refused. Without it, branches are `branchPrefix` + request ID. |
 | `applyJobPattern` | Apply job name in the default-branch pipeline; must contain `{env}`. |
 | `layout` | `default` or `terraformer`. |
 | `tools.terraform`, `terraformVersion`, `terraformSha256` | Terraform path, version (must be `1.16.7`), and the SHA-256 of the **extracted binary**. |

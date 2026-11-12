@@ -83,10 +83,12 @@ type Draft struct {
 	Source      string
 	Whole       bool
 	// Families are whole sections chosen (scope "sections"); Whole wins.
-	Families    []string
-	ConfirmAll  bool
-	Upstream    bool
-	Mode        string
+	Families   []string
+	ConfirmAll bool
+	Upstream   bool
+	Mode       string
+	// Branch is the branch name typed by the person (branchPattern set).
+	Branch      string
 	Title       string
 	Description string
 	Selected    []Item
@@ -269,7 +271,7 @@ func (requestImportIDs) SetImportIDs(req *request.Request, ids map[string]map[st
 func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 	up := d.Upstream
 	req := &request.Request{RequestVersion: request.Version, RequestID: d.RequestID, RequestedBy: d.RequestedBy, Source: d.Source,
-		Scope: request.ScopeSelected, IncludeUpstream: &up, Mode: d.Mode, BranchName: s.cfg.BranchPrefix + d.RequestID,
+		Scope: request.ScopeSelected, IncludeUpstream: &up, Mode: d.Mode, BranchName: s.branchFor(d), NamedBranch: s.branchRE() != nil,
 		Title: d.Title, Description: d.Description, DryRun: dryRun}
 	if d.Whole {
 		req.Scope, req.ConfirmAll = request.ScopeAll, d.ConfirmAll
@@ -304,6 +306,12 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 	}
 	if d.RequestedBy == "" {
 		return nil, errors.New("Type your name.")
+	}
+	if s.branchRE() != nil && !s.branchRE().MatchString(d.Branch) {
+		if d.Branch == "" {
+			return nil, errors.New("Type the Git branch name in step 5" + s.branchExampleText() + ".")
+		}
+		return nil, errors.New("The Git branch name " + d.Branch + " is not allowed: it must match " + s.cfg.BranchPattern + s.branchExampleText() + ".")
 	}
 	if err := s.importIDs.SetImportIDs(req, d.ImportIDs); err != nil {
 		return nil, err
@@ -346,4 +354,20 @@ func (d *Draft) Scope() string {
 		return "sections"
 	}
 	return request.ScopeSelected
+}
+
+// branchFor is the branch a submit uses: the typed name when the
+// configuration has a branch pattern, else prefix + request ID.
+func (s *Server) branchFor(d *Draft) string {
+	if s.branchRE() != nil {
+		return d.Branch
+	}
+	return s.cfg.BranchPrefix + d.RequestID
+}
+
+func (s *Server) branchExampleText() string {
+	if s.cfg.BranchExample == "" {
+		return ""
+	}
+	return ", for example " + s.cfg.BranchExample
 }

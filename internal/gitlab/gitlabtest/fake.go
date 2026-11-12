@@ -540,3 +540,14 @@ func (f *Fake) Files(branch string) map[string]string {
 	}
 	return out
 }
+
+// Branches lists the branch names.
+func (f *Fake) Branches() map[string]bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]bool{}
+	for name := range f.branches {
+		out[name] = true
+	}
+	return out
+}

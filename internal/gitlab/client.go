@@ -271,6 +271,9 @@ func (c *Client) SubmitWithOptions(ctx context.Context, id string, files map[str
 
 // validBranchName enforces the unsafe-name rules from git check-ref-format for
 // a complete branch ref, without invoking Git or contacting GitLab.
+// ValidBranchName reports whether s is a branch name Git and GitLab accept.
+func ValidBranchName(s string) bool { return validBranchName(s) }
+
 func validBranchName(s string) bool {
 	if s == "" || len(s) > 255 || s == "@" || strings.HasPrefix(s, "-") || strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.HasSuffix(s, ".") || strings.Contains(s, "..") || strings.Contains(s, "@{") || strings.Contains(s, "//") {
 		return false

@@ -66,6 +66,8 @@ func (s *Server) startJob(d *Draft, kind string, fn func(ctx context.Context, st
 			job.Err = "Cancelled."
 		case errors.Is(err, context.DeadlineExceeded):
 			job.Err = "This took too long and was stopped."
+		case errors.Is(err, errBranchTaken):
+			job.Err = "The Git branch " + strings.TrimPrefix(err.Error(), errBranchTaken.Error()+": ") + " already exists. Go back, type a branch name that is not used yet, and preview again."
 		case errors.Is(err, errNoSourceID):
 			job.Err = noSourceIDText
 		default:
@@ -106,11 +108,17 @@ func (s *Server) snapshotDirs() []string {
 func (s *Server) envFor(project gitlab.Project, workspace, head string, req *request.Request, exp request.Exporter) request.Env {
 	e := s.env(project, workspace, head, req.RequestID, exp)
 	e.SourceEnvironmentID = s.cfg.SourceEnvironmentIDs[req.Source]
+	if s.branchRE() != nil {
+		e.Branch, e.BranchPattern = req.BranchName, s.branchRE()
+	}
 	return e
 }
 
 // noSourceIDText explains errNoSourceID to the person and the operator.
 const noSourceIDText = "This server does not know the PingOne environment ID of the source environment, so it cannot read it. The operator adds it to the server configuration under \"sourceEnvironmentIds\" (for example {\"development\": \"<environment ID>\"}) and restarts the server. (The alternative is a pingone_environment_id line in the source's .tfvars file on the default branch.)"
+
+// errBranchTaken is a typed branch name that already exists in GitLab.
+var errBranchTaken = errors.New("that Git branch already exists; type a branch name that is not used yet")
 
 // errNoSourceID is a source whose PingOne environment ID is not known.
 var errNoSourceID = errors.New("the PingOne environment ID of the source is not known")
@@ -118,7 +126,7 @@ var errNoSourceID = errors.New("the PingOne environment ID of the source is not 
 func (s *Server) env(project gitlab.Project, workspace, head, requestID string, exp request.Exporter) request.Env {
 	return request.Env{Workspace: workspace, Layout: s.layout, Rollout: s.cfg.Rollout, AllowedSources: s.cfg.Sources,
 		Exporter: exp, Credentials: s.creds, TerraformBin: s.cfg.Tools.Terraform,
-		Committer: gitlab.HostedCommitter{S: &gitlab.Submitter{Client: s.gl, Formatter: s.cfg.Tools.Terraform}, DefaultBranch: project.DefaultBranch, BranchPrefix: s.cfg.BranchPrefix},
+		Committer: gitlab.HostedCommitter{S: &gitlab.Submitter{Client: s.gl, Formatter: s.cfg.Tools.Terraform}, DefaultBranch: project.DefaultBranch, BranchPrefix: s.cfg.BranchPrefix, BranchPattern: s.branchRE()},
 		Branch:    s.cfg.BranchPrefix + requestID, Head: head, DefaultBranch: project.DefaultBranch, ProjectURL: project.WebURL,
 		BranchPrefix: s.cfg.BranchPrefix, NoRequestFile: true, MRLabels: s.cfg.GitLab.MRLabels}
 }
@@ -132,6 +140,14 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		project, err := s.gl.VerifyProject(ctx)
 		if err != nil {
 			return err
+		}
+		if s.branchRE() != nil {
+			stage("Checking that the branch name is free")
+			if _, exists, err := s.gl.GetBranch(ctx, req.BranchName); err != nil {
+				return err
+			} else if exists {
+				return fmt.Errorf("%w: %s", errBranchTaken, req.BranchName)
+			}
 		}
 		stage("Reading the default branch from GitLab")
 		snap, head, err := s.gl.Snapshot(ctx, project.DefaultBranch, s.snapshotDirs())

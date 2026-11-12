@@ -135,7 +135,10 @@ type Request struct {
 	Mode       string `json:"mode"` // "mr" (default) or "branch"
 	// BranchName must be <branch prefix><requestId> when set; the engine
 	// checks the prefix against its configuration.
-	BranchName    string `json:"branchName,omitempty"`
+	BranchName string `json:"branchName,omitempty"`
+	// NamedBranch is set only by the hosted server (never from JSON): the
+	// branch name was typed and the server's branch pattern checks it.
+	NamedBranch   bool   `json:"-"`
 	CommitMessage string `json:"commitMessage,omitempty"`
 	Title         string `json:"title,omitempty"`
 	Description   string `json:"description,omitempty"`
@@ -362,7 +365,14 @@ func (r *Request) Validate() error {
 	if r.BaseCommit != "" && !shaRE.MatchString(r.BaseCommit) {
 		return invalid("baseCommit", "must be a commit SHA")
 	}
-	if r.BranchName != "" && (!strings.HasSuffix(r.BranchName, r.RequestID) || !gitlab.ValidRequestBranchPrefix(strings.TrimSuffix(r.BranchName, r.RequestID))) {
+	switch {
+	case r.NamedBranch:
+		// Typed on the hosted server; the engine checks it against the
+		// configured pattern.
+		if !gitlab.ValidBranchName(r.BranchName) {
+			return invalid("branchName", "is not a valid branch name")
+		}
+	case r.BranchName != "" && (!strings.HasSuffix(r.BranchName, r.RequestID) || !gitlab.ValidRequestBranchPrefix(strings.TrimSuffix(r.BranchName, r.RequestID))):
 		return invalid("branchName", "must be <branch prefix>"+r.RequestID)
 	}
 	switch r.Mode {

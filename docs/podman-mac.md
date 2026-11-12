@@ -150,7 +150,7 @@ Change these values and save:
 | `sources` | the environment(s) you copy from, named like their `.tfvars` file, for example `["development"]` |
 | `sourceEnvironmentIds` | the PingOne environment ID of each source, for example `{"development": "<ID>"}` (PingOne admin console, Environment, Settings). Needed when your `.tfvars` files do not set `pingone_environment_id` (it comes from a GitLab CI variable); otherwise remove the line |
 | `rollout` | the environments the pipeline applies to, in order, for example `["testing", "stage", "production"]` |
-| `branchPrefix` | your branch prefix, for example `CIAM-` |
+| `branchPattern`, `branchExample` | the rule for branch names, which people type when they submit (a Jira key): for example `CIAM-[0-9]+` and `CIAM-1234`. The whole name must match; nothing is added to it |
 | `applyJobPattern` | the name of your pipeline's apply job with `{env}` where the environment name goes: for jobs named `terraform:apply-development`, `terraform:apply-stage`, ... use `terraform:apply-{env}` |
 | `tools.terraformSha256` | the first value from step 4 |
 | `tools.terraformerSha256` | the second value from step 4 |
@@ -209,12 +209,15 @@ Open <http://localhost:8080/>.
    DaVinci, or all applications), or the whole environment. Press
    **Use this choice**.
 3. **Find items**: search by name or ID, or leave the name empty to list
-   everything. **Add** copies an item; **Leave out** keeps one out.
+   everything; the results show on the same page. **Add** copies an item;
+   **Leave out** keeps one out. The list of items is read in the background
+   when the request starts, so the first search may take a moment.
 4. **Preview the change.** The first preview reads the whole source
    environment and can take a minute.
 5. **Fill in what each environment needs** (URLs, IDs) and preview again
    until it says **Ready to submit**.
-6. **Submit to GitLab** as a merge request or a branch only.
+6. **Submit to GitLab** as a merge request or a branch only. The branch is
+   the Jira key you typed in step 5 of the request page, exactly as typed.
 7. Follow the rollout on the **Requests** page after the merge.
 
 Good first tests: one notification template alone; one application with its

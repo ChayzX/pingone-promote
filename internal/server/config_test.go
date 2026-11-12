@@ -469,3 +469,27 @@ func TestSourceEnvironmentIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestBranchPattern(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pattern, example string
+		ok               bool
+	}{
+		"jira":             {"CIAM-[0-9]+", "CIAM-1234", true},
+		"no example":       {"CIAM-[0-9]+", "", true},
+		"bad regex":        {"CIAM-[0-9", "", false},
+		"example mismatch": {"CIAM-[0-9]+", "ciam-12", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := validConfig()
+			m["branchPattern"], m["branchExample"] = tc.pattern, tc.example
+			c, err := loadMap(t, m)
+			if (err == nil) != tc.ok {
+				t.Fatalf("err = %v, want ok=%v", err, tc.ok)
+			}
+			if tc.ok && (!c.branchRE.MatchString("CIAM-77") || c.branchRE.MatchString("feature/CIAM-77") || c.branchRE.MatchString("CIAM-77x")) {
+				t.Fatal("the pattern must match the whole name only")
+			}
+		})
+	}
+}

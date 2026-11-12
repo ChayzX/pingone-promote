@@ -2,6 +2,7 @@
 <p class="meta">Request {{$d.RequestID}}{{if .Data.HasPreview}} &middot; <a href="/drafts/{{$d.ID}}/preview">latest preview</a>{{end}}</p>
 {{with .Data.Notice}}<p class="notice" role="status">{{.}}</p>{{end}}
 {{with .Data.Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
+{{if .Data.Loading}}<p class="notice" role="status">Reading the items of {{$d.Source}} in the background. Search results appear here when you search.</p>{{end}}
 {{if .Data.Running}}<p class="notice">Something is running for this request. <a href="/drafts/{{$d.ID}}/job">See progress</a>.</p>{{end}}
 
 <form method="post" action="/drafts/{{$d.ID}}/save" id="main"><input type="hidden" name="csrf" value="{{$csrf}}"></form>
@@ -120,7 +121,10 @@
     <label class="inline"><input type="radio" name="mode" value="mr" form="main"{{if eq $d.Mode "mr"}} checked{{end}}> Open a merge request (reviewers are asked to approve)</label>
     <label class="inline"><input type="radio" name="mode" value="branch" form="main"{{if eq $d.Mode "branch"}} checked{{end}}> Only save a Git branch (no merge request yet)</label>
   </fieldset>
-  <p>Git branch: <code>{{.Data.Branch}}</code></p>
+  {{if .Data.TypedBranch}}<label for="f-branch">Git branch name (required)</label>
+  <input type="text" id="f-branch" name="branch" form="main" value="{{$d.Branch}}" maxlength="255" required autocomplete="off" spellcheck="false" aria-describedby="h-branch">
+  <p class="hint" id="h-branch">Exactly as typed{{with .Data.BranchExample}}, for example <code>{{.}}</code>{{end}}. It must match <code>{{.Data.BranchPattern}}</code> and not exist yet in GitLab; the preview checks both.</p>
+  {{else}}<p>Git branch: <code>{{.Data.Branch}}</code></p>{{end}}
   <label for="f-title">Merge request title (optional)</label>
   <input type="text" id="f-title" name="title" form="main" value="{{$d.Title}}" maxlength="255">
   <label for="f-desc">Note for reviewers (optional)</label>

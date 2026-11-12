@@ -66,7 +66,13 @@ type Config struct {
 	SourceEnvironmentIDs map[string]string `json:"sourceEnvironmentIds,omitempty"`
 	Rollout              []string          `json:"rollout"`
 	BranchPrefix         string            `json:"branchPrefix,omitempty"`
-	OverlayPattern       string            `json:"overlayPattern,omitempty"`
+	// BranchPattern, when set, makes the person type the branch name (for
+	// example a Jira key) and is the rule it must match whole, such as
+	// CIAM-[0-9]+. BranchExample is shown as the example.
+	BranchPattern  string `json:"branchPattern,omitempty"`
+	BranchExample  string `json:"branchExample,omitempty"`
+	branchRE       *regexp.Regexp
+	OverlayPattern string `json:"overlayPattern,omitempty"`
 	// Layout is "default" or "terraformer" (file names of the root).
 	Layout string `json:"layout,omitempty"`
 	// ApplyJobPattern names each environment's apply job in the pipeline
@@ -180,6 +186,19 @@ func (c *Config) check() error {
 	}
 	if !gitlab.ValidRequestBranchPrefix(c.BranchPrefix) {
 		return errors.New("branchPrefix must start with a letter or digit and end with / or -, such as CIAM-")
+	}
+	if c.BranchPattern != "" {
+		if len(c.BranchPattern) > 200 {
+			return errors.New("branchPattern is too long")
+		}
+		re, err := regexp.Compile(`^(?:` + c.BranchPattern + `)$`)
+		if err != nil {
+			return fmt.Errorf("branchPattern is not a valid regular expression: %v", err)
+		}
+		if c.BranchExample != "" && !re.MatchString(c.BranchExample) {
+			return errors.New("branchExample does not match branchPattern")
+		}
+		c.branchRE = re
 	}
 	if c.ApplyJobPattern == "" {
 		c.ApplyJobPattern = "apply:{env}"
@@ -366,3 +385,7 @@ func parseSecrets(r io.Reader) (Secrets, error) {
 	}
 	return s, nil
 }
+
+// branchRE is the compiled branch pattern (nil without one), compiled by
+// Load and New.
+func (s *Server) branchRE() *regexp.Regexp { return s.cfg.branchRE }

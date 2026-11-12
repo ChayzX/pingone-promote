@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"html"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -139,6 +141,13 @@ func New(o Options) (*Server, error) {
 	s.base, s.stop = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.janitor()
+	if s.cfg.BranchPattern != "" && s.cfg.branchRE == nil {
+		re, err := regexp.Compile(`^(?:` + s.cfg.BranchPattern + `)$`)
+		if err != nil {
+			return nil, fmt.Errorf("server: branchPattern: %w", err)
+		}
+		s.cfg.branchRE = re
+	}
 	return s, nil
 }
 

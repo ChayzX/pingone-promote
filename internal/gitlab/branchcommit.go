@@ -98,6 +98,9 @@ type BranchCommit struct {
 	// BranchPrefix is the request branch namespace; empty means
 	// RequestBranchPrefix. Branch must be BranchPrefix + RequestID.
 	BranchPrefix string
+	// BranchPattern, when set, replaces the prefix rule: the branch is the
+	// name the person typed (a Jira key, ...) and must match it whole.
+	BranchPattern *regexp.Regexp
 }
 
 // AlreadyCommittedError means the branch head already carries this
@@ -135,7 +138,11 @@ func (s *Submitter) prepareBranchCommit(ctx context.Context, bc *BranchCommit) e
 	if !ValidRequestBranchPrefix(prefix) {
 		return errors.New("the request branch prefix is invalid")
 	}
-	if !validBranchName(bc.Branch) || bc.Branch != prefix+bc.RequestID {
+	if bc.BranchPattern != nil {
+		if !validBranchName(bc.Branch) || !bc.BranchPattern.MatchString(bc.Branch) {
+			return errors.New("the branch name does not match the configured branch pattern")
+		}
+	} else if !validBranchName(bc.Branch) || bc.Branch != prefix+bc.RequestID {
 		return errors.New("request jobs only commit to branches named " + prefix + "<request>")
 	}
 	if !commitIDRE.MatchString(bc.ExpectedHead) {

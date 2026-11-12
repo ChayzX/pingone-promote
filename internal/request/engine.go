@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"pingone-promote/internal/catalog"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -82,6 +83,9 @@ type Env struct {
 	// pingone-promote/, PINGONE_PROMOTE_BRANCH_PREFIX). The job runs only on
 	// <BranchPrefix><requestId>.
 	BranchPrefix string
+	// BranchPattern, when set (hosted server), replaces the prefix rule:
+	// the request names its branch (BranchName), which must match it whole.
+	BranchPattern *regexp.Regexp
 	// NoRequestFile is set by the hosted server: there is no
 	// .pingone-promote/request.json on the branch, so the commit does not
 	// delete one, and a request that changes nothing commits nothing.
@@ -321,10 +325,17 @@ func (r *runner) checkContext() error {
 	if !gitlab.ValidRequestBranchPrefix(prefix) {
 		return fmt.Errorf("the request branch prefix %q is invalid: it must start with a letter or digit, end with / or -, and be at most 60 characters", prefix)
 	}
-	if req.BranchName != "" && req.BranchName != prefix+req.RequestID {
+	if env.BranchPattern != nil {
+		if !req.NamedBranch || !env.BranchPattern.MatchString(req.BranchName) {
+			return invalid("branchName", "does not match the branch pattern "+env.BranchPattern.String())
+		}
+		if env.Committer != nil && (env.Branch != req.BranchName || env.Branch == env.DefaultBranch || env.Head == "") {
+			return errors.New("the request branch does not match the branch the request names")
+		}
+	} else if req.BranchName != "" && req.BranchName != prefix+req.RequestID {
 		return invalid("branchName", fmt.Sprintf("must be %s%s (the job's branch prefix is %s)", prefix, req.RequestID, prefix))
 	}
-	if env.Committer != nil {
+	if env.Committer != nil && env.BranchPattern == nil {
 		switch {
 		case env.Branch == "" || env.Head == "":
 			return errors.New("the request branch and commit are unknown (CI_COMMIT_BRANCH, CI_COMMIT_SHA)")
@@ -894,7 +905,7 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 		RootFiles: []string{r.layout.ModuleFile, r.layout.VariablesFile, r.layout.SecretsFile, r.layout.ImportsFile, "versions.tf"}}
 	out, err := r.env.Committer.CommitToBranch(ctx, gitlab.BranchCommit{RequestID: req.RequestID, Branch: r.env.Branch, ExpectedHead: r.env.Head,
 		Mode: mode, CommitMessage: r.commitMessage(), Title: title, Description: r.description(), Files: files, DeleteRequestFile: !r.env.NoRequestFile,
-		Policy: policy, Labels: labels, BranchPrefix: r.branchPrefix()})
+		Policy: policy, Labels: labels, BranchPrefix: r.branchPrefix(), BranchPattern: r.env.BranchPattern})
 	var done *gitlab.AlreadyCommittedError
 	var conflict *gitlab.ConflictError
 	var pre *gitlab.PreflightError

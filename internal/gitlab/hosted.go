@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -182,6 +183,10 @@ type HostedCommitter struct {
 	// BranchPrefix is the configured request namespace (empty means
 	// RequestBranchPrefix). Branches are always BranchPrefix + request ID.
 	BranchPrefix string
+	// BranchPattern, when set, is the rule for the branch name the person
+	// types instead of BranchPrefix + request ID. Such a branch must not
+	// exist yet, unless it already carries this request's commit.
+	BranchPattern *regexp.Regexp
 }
 
 func (h HostedCommitter) prefix() string {
@@ -196,12 +201,18 @@ func (h HostedCommitter) CommitToBranch(ctx context.Context, bc BranchCommit) (R
 	c := h.S.Client
 	prefix := h.prefix()
 	switch {
+	case h.BranchPattern != nil:
+		if !validName(bc.RequestID) || !validBranchName(bc.Branch) || !h.BranchPattern.MatchString(bc.Branch) {
+			return Result{}, &PreflightError{Err: errors.New("the branch name does not match the configured branch pattern")}
+		}
 	case !ValidRequestBranchPrefix(prefix):
 		return Result{}, &PreflightError{Err: errors.New("the configured request branch prefix is invalid")}
 	case bc.BranchPrefix != "" && bc.BranchPrefix != prefix:
 		return Result{}, &PreflightError{Err: errors.New("the request uses a branch prefix other than the configured one")}
 	case !validName(bc.RequestID) || bc.Branch != prefix+bc.RequestID || !validBranchName(bc.Branch):
 		return Result{}, &PreflightError{Err: errors.New("request branches must be named " + prefix + "<request ID>")}
+	}
+	switch {
 	case !validBranchName(h.DefaultBranch) || bc.Branch == h.DefaultBranch:
 		return Result{}, &PreflightError{Err: errors.New("the default branch is never a request branch")}
 	case !commitIDRE.MatchString(bc.ExpectedHead) || (len(bc.ExpectedHead) != 40 && len(bc.ExpectedHead) != 64):
@@ -210,7 +221,7 @@ func (h HostedCommitter) CommitToBranch(ctx context.Context, bc BranchCommit) (R
 		// created would be left behind.
 		return Result{}, &PreflightError{Err: errors.New("the previewed default-branch commit must be a full SHA")}
 	}
-	bc.BranchPrefix = prefix
+	bc.BranchPrefix, bc.BranchPattern = prefix, h.BranchPattern
 
 	b, exists, err := c.GetBranch(ctx, bc.Branch)
 	if err != nil {
@@ -220,6 +231,10 @@ func (h HostedCommitter) CommitToBranch(ctx context.Context, bc BranchCommit) (R
 		// A protected branch under the request prefix is not one this
 		// server made: never commit to it.
 		return Result{}, &PreflightError{Err: errors.New("the request branch " + bc.Branch + " exists and is protected; it is not a request branch this server can write")}
+	}
+	if exists && h.BranchPattern != nil && !carriesRequest(b.Commit.Message, bc.RequestID) {
+		// A typed name must never write into someone else's branch.
+		return Result{}, &PreflightError{Err: errors.New("the branch " + bc.Branch + " already exists; type a branch name that is not used yet")}
 	}
 	created := false
 	if !exists {

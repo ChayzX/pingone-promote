@@ -255,3 +255,57 @@ func TestSourceIDFromConfigurationAndWholeSections(t *testing.T) {
 		t.Fatal("a section that was not chosen was copied")
 	}
 }
+
+// With a branch pattern, the person types the branch (a Jira key). Nothing
+// is added to the name, a name that does not match or already exists is
+// refused before submit, and the commit lands on exactly the typed branch.
+func TestTypedJiraBranch(t *testing.T) {
+	const addr = "pingone_notification_template_content.pingcli__recovery_code_template_en_Email"
+	e := newCoreEnvWith(t, func(c *Config) { c.BranchPattern, c.BranchExample = "CIAM-[0-9]+", "CIAM-1234" })
+	b, draft := coreDraft(t, e, "recovery_code_template", addr)
+	with := func(branch string) func(url.Values) {
+		return func(v url.Values) { v.Del("upstream"); v.Set("branch", branch) }
+	}
+	p := b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { v.Del("upstream"); v.Set("action", "preview") }))
+	mustContain(t, p.body, "Type the Git branch name", "CIAM-1234")
+	p = b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { with("feature/CIAM-12")(v); v.Set("action", "preview") }))
+	mustContain(t, p.body, "is not allowed")
+	e.gl.CreateBranch("CIAM-7", "main", nil)
+	p = b.wait(b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { with("CIAM-7")(v); v.Set("action", "preview") })))
+	mustContain(t, p.body, "already exists")
+
+	p = previewDraft(t, b, draft, mainForm("Core Tester", with("CIAM-42")))
+	mustContain(t, p.body, "<code>CIAM-42</code>")
+	form := url.Values{}
+	const from = "notification_template_content_recovery_code_template_en_Email_email_from_address"
+	for _, env := range e.cfg.Rollout {
+		form.Set("v:"+env+":"+from, "noreply@"+env+".example.com")
+	}
+	p = b.wait(b.post(draft+"/values", form))
+	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"mr"}}))
+	mustContain(t, p.body, "Submitted.")
+	if !e.gl.HasBranch("CIAM-42") || len(changedFiles(e.gl, "CIAM-42")) == 0 {
+		t.Fatal("the commit is not on the typed branch CIAM-42")
+	}
+	for name := range e.gl.Branches() {
+		if strings.Contains(name, "pingone-promote/") || (strings.HasPrefix(name, "CIAM-") && name != "CIAM-42" && name != "CIAM-7") {
+			t.Fatalf("an unexpected branch was created: %s", name)
+		}
+	}
+}
+
+// Search results appear on the request page itself, never on a separate
+// progress page.
+func TestSearchShowsResultsOnThePage(t *testing.T) {
+	e := newCoreEnv(t)
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", nil))
+	p := b.post(draft+"/search", url.Values{"q": {"Customers"}})
+	if p.path != draft {
+		t.Fatalf("search ended at %s, want the request page", p.path)
+	}
+	mustContain(t, p.body, "pingone_population.pingcli__Customers")
+	p = b.post(draft+"/search", url.Values{"q": {"no-such-item-anywhere"}})
+	mustContain(t, p.body, "Nothing matches")
+}

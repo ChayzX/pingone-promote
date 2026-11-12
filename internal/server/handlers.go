@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"pingone-promote/internal/request"
 )
@@ -83,17 +84,22 @@ func (s *Server) newDraft(w http.ResponseWriter, r *http.Request) {
 		s.renderStatus(w, r, http.StatusTooManyRequests, "Too many drafts", err.Error())
 		return
 	}
+	s.drafts.mu.Lock()
+	s.preloadCatalog(d)
+	s.drafts.mu.Unlock()
 	s.redirect(w, r, draftURL(d, ""))
 }
 
 type draftView struct {
-	Types        []typeOption
-	D            *Draft
-	Sources      []string
-	Rollout      []string
-	Notice       string
-	Problem      string
-	Running      bool
+	Types   []typeOption
+	D       *Draft
+	Sources []string
+	Rollout []string
+	Notice  string
+	Problem string
+	Running bool
+	// Loading: the source's item list is being read in the background.
+	Loading      bool
 	HasPreview   bool
 	Results      []itemView
 	Selected     []itemView
@@ -102,8 +108,12 @@ type draftView struct {
 	SearchedOnce bool
 	// Sections are the families that can be copied whole.
 	Sections []sectionOption
-	// Branch is the Git branch a submit creates.
-	Branch string
+	// Branch is the Git branch a submit creates; TypedBranch: the person
+	// types it (BranchPattern, BranchExample explain the rule).
+	Branch        string
+	TypedBranch   bool
+	BranchPattern string
+	BranchExample string
 }
 
 type sectionOption struct {
@@ -144,10 +154,12 @@ func viewItems(items []Item, d *Draft) []itemView {
 func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
 		v := draftView{D: d, Sources: s.cfg.Sources, Rollout: s.cfg.Rollout, Notice: d.notice, Problem: d.problem,
-			Running: d.job != nil && d.job.Running, HasPreview: d.preview != nil,
-			Results: viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
+			Running: d.job != nil && d.job.Running && d.job.Kind != "search", Loading: d.job != nil && d.job.Running && d.job.Kind == "search",
+			HasPreview: d.preview != nil,
+			Results:    viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
 			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != "" || d.TypeFilter != "", Types: typeOptions(d),
-			Sections: sectionOptions(d), Branch: s.cfg.BranchPrefix + d.RequestID}
+			Sections: sectionOptions(d), Branch: s.branchFor(d),
+			TypedBranch: s.branchRE() != nil, BranchPattern: s.cfg.BranchPattern, BranchExample: s.cfg.BranchExample}
 		d.notice, d.problem = "", ""
 		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
 	})
@@ -189,6 +201,7 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 				d.notice = "The source environment changed, so the selected and excluded lists were cleared."
 			}
 			d.Source, d.Selected, d.Excluded, d.Results, d.Choices = src, nil, nil, nil, map[string]string{}
+			s.preloadCatalog(d)
 		}
 		d.Whole = f.Get("scope") == request.ScopeAll
 		d.Families = nil
@@ -206,6 +219,11 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		d.Upstream = f.Get("upstream") == "yes"
 		if m := f.Get("mode"); m == "mr" || m == "branch" {
 			d.Mode = m
+		}
+		if s.branchRE() != nil && f.Has("branch") {
+			if b := strings.TrimSpace(f.Get("branch")); len(b) <= 255 {
+				d.Branch = b
+			}
 		}
 		d.Title = strings.TrimSpace(f.Get("title"))
 		d.Description = f.Get("description")
@@ -242,6 +260,7 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
 // preview validates the draft and starts a preview job; problems go back
 // to the page named by back.
 func (s *Server) preview(w http.ResponseWriter, r *http.Request, d *Draft, back string) {
+	s.awaitCatalog(r, d)
 	req, err := s.buildRequest(d, true)
 	if err == nil {
 		err = s.startJob(d, "preview", s.runPreview(d, req))
@@ -273,23 +292,39 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			d.TypeFilter = t
 		}
 		d.Updated = s.now()
-		c := d.catalogs[d.Source]
-		if c != nil && r.PostForm.Get("refresh") != "yes" && s.now().Sub(c.at) < catalogMaxAge {
-			d.Results = filterItems(c.items, q, d.TypeFilter)
-			s.redirect(w, r, draftURL(d, "#results"))
-			return
-		}
 		if d.Source == "" {
 			d.problem = "Choose a source environment first."
 			s.redirect(w, r, draftURL(d, ""))
 			return
 		}
-		if err := s.startJob(d, "search", s.runSearch(d, d.Source)); err != nil {
-			d.problem = err.Error()
-			s.redirect(w, r, draftURL(d, ""))
-			return
+		fresh := func() *catalogEntry {
+			if c := d.catalogs[d.Source]; c != nil && s.now().Sub(c.at) < catalogMaxAge {
+				return c
+			}
+			return nil
 		}
-		s.redirect(w, r, draftURL(d, "/job"))
+		if r.PostForm.Get("refresh") == "yes" {
+			delete(d.catalogs, d.Source)
+		}
+		// The results always appear on this page: the list is read now
+		// (or the background read started with the draft is awaited).
+		if fresh() == nil && !(d.job != nil && d.job.Running && d.job.Kind == "search") {
+			if err := s.startJob(d, "search", s.runSearch(d, d.Source)); err != nil {
+				d.problem = err.Error()
+				s.redirect(w, r, draftURL(d, ""))
+				return
+			}
+		}
+		s.awaitCatalog(r, d)
+		switch c := fresh(); {
+		case c != nil:
+			d.Results = filterItems(c.items, q, d.TypeFilter)
+		case d.job != nil && d.job.Running:
+			d.notice = "Still reading the items of " + d.Source + ". Search again in a moment."
+		case d.job != nil && d.job.Err != "":
+			d.problem = "The items of " + d.Source + " could not be read: " + d.job.Err
+		}
+		s.redirect(w, r, draftURL(d, "#results"))
 	})
 }
 
@@ -544,7 +579,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 		// A blocked preview also carries an error; only one that stopped
 		// before checking anything has no blockers and no changes.
 		v.Failed = res.Error != nil && len(res.Blockers) == 0 && len(res.Changes) == 0
-		v.Branch = s.cfg.BranchPrefix + d.RequestID
+		v.Branch = s.branchFor(d)
 		switch {
 		case v.CanSubmit:
 		case v.Running:
@@ -797,4 +832,27 @@ func countText(n int, one, many string) string {
 		return "1 " + one
 	}
 	return strconv.Itoa(n) + " " + many
+}
+
+// searchWait bounds how long a search request waits for the item list.
+const searchWait = 3 * time.Minute
+
+// preloadCatalog starts reading the source's item list in the background,
+// so the first search is fast. The caller holds s.drafts.mu.
+func (s *Server) preloadCatalog(d *Draft) {
+	if d.Source == "" || d.catalogs[d.Source] != nil || (d.job != nil && d.job.Running) {
+		return
+	}
+	_ = s.startJob(d, "search", s.runSearch(d, d.Source))
+}
+
+// awaitCatalog waits, without holding the lock, for a running list read
+// to finish. The caller holds s.drafts.mu, and holds it again on return.
+func (s *Server) awaitCatalog(r *http.Request, d *Draft) {
+	deadline := time.Now().Add(searchWait)
+	for d.job != nil && d.job.Running && d.job.Kind == "search" && time.Now().Before(deadline) && r.Context().Err() == nil {
+		s.drafts.mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		s.drafts.mu.Lock()
+	}
 }
