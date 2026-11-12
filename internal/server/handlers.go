@@ -339,7 +339,35 @@ func (s *Server) search(ctx context.Context, id string, rev uint64) {
 		s.jobFailure(id, rev, "The source overlay must define pingone_environment_id.")
 		return
 	}
+	s.mu.Lock()
+	d := s.drafts[id]
+	if d == nil || d.Revision != rev {
+		s.mu.Unlock()
+		return
+	}
+	query, typeFilter := d.Query, d.TypeFilter
+	s.mu.Unlock()
+	ids := req.LookupIDs()
+	ctx = exporter.WithResourceIDs(ctx, ids)
 	catalog, err := s.deps.Exporter.CatalogAllIDs(ctx, s.credentials(sourceID))
+	if err == nil && len(query) == 36 && exporter.LooksLikeID(query) && (typeFilter == "" || typeFilter == "pingone_image") {
+		found := false
+		for _, item := range catalog {
+			if strings.EqualFold(item.ID, query) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			lookupCtx := exporter.WithResourceIDs(ctx, append(ids, exporter.TypedResourceID{Type: "pingone_image", ID: query}))
+			supplemented, lookupErr := s.deps.Exporter.CatalogAllIDs(lookupCtx, s.credentials(sourceID))
+			if lookupErr == nil {
+				catalog = supplemented
+			} else if !errors.Is(lookupErr, exporter.ErrExplicitResourceNotFound) {
+				err = lookupErr
+			}
+		}
+	}
 	if err != nil || len(catalog) > 2000 {
 		s.jobFailure(id, rev, "Resource search failed or exceeded the 2,000-resource limit.")
 		return
@@ -365,21 +393,27 @@ func (s *Server) updateSelection(d *draft, r *http.Request) error {
 	req := cloneRequest(d.Request)
 	req.Resources = nil
 	req.Exclude = nil
-	allowed := map[string]bool{}
+	allowed := map[string]exporter.Resource{}
 	for _, v := range d.Catalog {
-		allowed[v.Address.String()] = true
+		allowed[v.Address.String()] = v
+	}
+	selector := func(a string) request.ExcludeRef {
+		if item := allowed[a]; item.Type == "pingone_image" {
+			return request.ExcludeRef{Type: item.Type, ID: item.ID}
+		}
+		return request.ExcludeRef{Address: a}
 	}
 	for _, a := range r.PostForm["resource"] {
-		if !allowed[a] {
+		if _, ok := allowed[a]; !ok {
 			return errors.New("Selection must come from the source catalog")
 		}
-		req.Resources = append(req.Resources, request.ExcludeRef{Address: a})
+		req.Resources = append(req.Resources, selector(a))
 	}
 	for _, a := range r.PostForm["exclude"] {
-		if !allowed[a] {
+		if _, ok := allowed[a]; !ok {
 			return errors.New("Exclusion must come from the source catalog")
 		}
-		req.Exclude = append(req.Exclude, request.ExcludeRef{Address: a})
+		req.Exclude = append(req.Exclude, selector(a))
 	}
 	req.DependencyChoices = map[string]string{}
 	req.EnvValues = map[string]map[string]json.RawMessage{}

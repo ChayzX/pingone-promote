@@ -13,6 +13,8 @@ import (
 	"unicode"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
@@ -87,7 +89,7 @@ func RenderProviderState(schemaJSON, stateJSON []byte, imports map[string]string
 	mod := moduleFile.Body().AppendNewBlock("module", []string{ModuleName})
 	mod.Body().SetAttributeValue("source", cty.StringVal("./"+ModuleDir))
 	mod.Body().SetAttributeTraversal("pingone_environment_id", hclTraversal("var", "pingone_environment_id"))
-	for _, name := range sortedKeys(renderer.vars) {
+	for _, name := range sortedKeys(renderer.inputVariables()) {
 		mod.Body().SetAttributeTraversal(name, hclTraversal("var", name))
 	}
 	files[ModuleName+"-module.tf"] = moduleFile.Bytes()
@@ -100,7 +102,11 @@ func RenderProviderState(schemaJSON, stateJSON []byte, imports map[string]string
 	}
 	files[ModuleName+"-imports.tf"] = importsFile.Bytes()
 	files[ModuleName+"-terraform.auto.tfvars"] = []byte("# Values are supplied by the promotion environment.\n")
-	return &Export{ModuleDir: ModuleDir, ModuleName: ModuleName, Files: files}, nil
+	envLocal := map[string]bool{}
+	for name := range renderer.envLocalVars {
+		envLocal[name] = true
+	}
+	return &Export{ModuleDir: ModuleDir, ModuleName: ModuleName, Files: files, EnvLocalVariables: envLocal}, nil
 }
 
 func decodeProviderJSON(src []byte, dst any) error {
@@ -192,31 +198,85 @@ type secretVariable struct {
 	path string
 }
 type stateRenderer struct {
-	vars  map[string]secretVariable
-	quiet bool
+	vars         map[string]secretVariable
+	envLocalVars map[string]secretVariable
+	quiet        bool
+}
+
+func (r *stateRenderer) inputVariables() map[string]secretVariable {
+	inputs := map[string]secretVariable{}
+	for name, variable := range r.envLocalVars {
+		inputs[name] = variable
+	}
+	for name, variable := range r.vars {
+		inputs[name] = variable
+	}
+	return inputs
+}
+
+func (r *stateRenderer) lookupInput(name string) (secretVariable, bool) {
+	if variable, ok := r.vars[name]; ok {
+		return variable, true
+	}
+	variable, ok := r.envLocalVars[name]
+	return variable, ok
 }
 
 func (r *stateRenderer) variables() []byte {
 	f := hclwrite.NewEmptyFile()
 	v := f.Body().AppendNewBlock("variable", []string{"pingone_environment_id"})
 	v.Body().SetAttributeRaw("type", typeTokens(cty.String))
-	for _, name := range sortedKeys(r.vars) {
+	inputs := r.inputVariables()
+	for _, name := range sortedKeys(inputs) {
 		v := f.Body().AppendNewBlock("variable", []string{name})
-		v.Body().SetAttributeRaw("type", typeTokens(r.vars[name].typ))
-		v.Body().SetAttributeValue("sensitive", cty.True)
+		v.Body().SetAttributeRaw("type", typeTokens(inputs[name].typ))
+		if _, sensitive := r.vars[name]; sensitive {
+			v.Body().SetAttributeValue("sensitive", cty.True)
+		}
 	}
 	return f.Bytes()
 }
 
-func (r *stateRenderer) secret(path string, typ cty.Type) hclwrite.Tokens {
+// input registers no source value or default. Both classes share a namespace
+// so a sanitized secret path cannot alias a missing public configuration input.
+func (r *stateRenderer) input(path string, typ cty.Type, sensitive bool) (hclwrite.Tokens, error) {
+	if r.quiet {
+		return hclwrite.TokensForValue(cty.NullVal(typ)), nil
+	}
+	// Parsing HCL alone does not validate type constructors. In particular,
+	// quoted object keys are values, not the attribute names typeexpr expects.
+	expr, diags := hclsyntax.ParseExpression([]byte(typeExpression(typ)), "type.tf", hcl.InitialPos)
+	if diags.HasErrors() {
+		return nil, errors.New("schema type cannot be represented as a Terraform input")
+	}
+	roundTrip, diags := typeexpr.TypeConstraint(expr)
+	if diags.HasErrors() || !roundTrip.Equals(typ) {
+		return nil, errors.New("schema type cannot be represented as a Terraform input")
+	}
+	if r.vars == nil {
+		r.vars = map[string]secretVariable{}
+	}
+	if r.envLocalVars == nil {
+		r.envLocalVars = map[string]secretVariable{}
+	}
 	base := safeVariableName(path)
 	name := base
-	if existing, ok := r.vars[name]; ok && existing.path != path {
+	if existing, ok := r.lookupInput(name); ok && existing.path != path {
 		sum := sha256.Sum256([]byte(path))
 		name = fmt.Sprintf("%s_%x", base, sum[:])
 	}
-	r.vars[name] = secretVariable{typ: typ, path: path}
-	return hclwrite.TokensForTraversal(hclTraversal("var", name))
+	if existing, ok := r.lookupInput(name); ok {
+		if existing.path != path || !existing.typ.Equals(typ) {
+			return nil, errors.New("input variable identity or type collision")
+		}
+	}
+	if _, alreadySensitive := r.vars[name]; sensitive || alreadySensitive {
+		r.vars[name] = secretVariable{typ: typ, path: path}
+		delete(r.envLocalVars, name)
+	} else {
+		r.envLocalVars[name] = secretVariable{typ: typ, path: path}
+	}
+	return hclwrite.TokensForTraversal(hclTraversal("var", name)), nil
 }
 
 func omittedAttribute(a schemaAttribute) bool {
@@ -297,14 +357,26 @@ func (r *stateRenderer) attribute(value, sensitive any, a schemaAttribute, path 
 	if err != nil {
 		return nil, false, err
 	}
-	if value == nil {
-		if a.Required {
-			return nil, false, errors.New("required field is missing or null")
-		}
-		return nil, false, nil
+	if strings.HasSuffix(path, ".environment_id") && !typ.Equals(cty.String) {
+		return nil, false, errors.New("environment_id must be a string")
 	}
 	// Validate even secrets before replacing their value with a reference.
 	secret := a.Sensitive || sensitive == true
+	if value == nil {
+		// A schema flag alone does not establish that absent optional secret
+		// configuration was ever set. An explicit state marker does.
+		if !a.Required && sensitive != true {
+			return nil, false, nil
+		}
+		if strings.HasSuffix(path, ".environment_id") {
+			return hclwrite.TokensForTraversal(hclTraversal("var", "pingone_environment_id")), true, nil
+		}
+		// A missing container is supplied as one input. Its configurable
+		// sensitive descendants must protect that entire input.
+		secret = secret || configurableSensitive(a)
+		tokens, err := r.input(path, typ, secret)
+		return tokens, err == nil, err
+	}
 	childRenderer := r
 	if secret {
 		copy := *r
@@ -321,15 +393,41 @@ func (r *stateRenderer) attribute(value, sensitive any, a schemaAttribute, path 
 		return nil, false, err
 	}
 	if strings.HasSuffix(path, ".environment_id") {
-		if !typ.Equals(cty.String) {
-			return nil, false, errors.New("environment_id must be a string")
-		}
 		return hclwrite.TokensForTraversal(hclTraversal("var", "pingone_environment_id")), true, nil
 	}
 	if secret && !r.quiet {
-		tokens = r.secret(path, typ)
+		tokens, err = r.input(path, typ, true)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	return tokens, true, nil
+}
+
+// configurableSensitive ignores generated outputs when protecting a whole
+// missing container, since those outputs are not part of its input type.
+func configurableSensitive(a schemaAttribute) bool {
+	if omittedAttribute(a) {
+		return false
+	}
+	if a.Sensitive {
+		return true
+	}
+	if a.Nested != nil {
+		for _, child := range a.Nested.Attributes {
+			if configurableSensitive(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func attributePath(parent, key string) string {
+	if hclsyntax.ValidIdentifier(key) {
+		return parent + "." + key
+	}
+	return fmt.Sprintf("%s[%q]", parent, key)
 }
 
 func (r *stateRenderer) nestedAttribute(value, sensitive any, n *nestedAttribute, path string) (hclwrite.Tokens, error) {
@@ -359,7 +457,7 @@ func (r *stateRenderer) nestedAttribute(value, sensitive any, n *nestedAttribute
 		}
 		var attrs []hclwrite.ObjectAttrTokens
 		for _, key := range sortedKeys(n.Attributes) {
-			tokens, emit, err := r.attribute(m[key], sensitiveChild(marker, key), n.Attributes[key], itemPath+"."+key)
+			tokens, emit, err := r.attribute(m[key], sensitiveChild(marker, key), n.Attributes[key], attributePath(itemPath, key))
 			if err != nil {
 				return nil, fmt.Errorf("nested attribute: %w", err)
 			}
@@ -385,7 +483,7 @@ func (r *stateRenderer) typedValue(value, sensitive any, typ cty.Type, path stri
 		return nil, errors.New("configured value does not match schema type")
 	}
 	if sensitive == true && !r.quiet {
-		return r.secret(path, typ), nil
+		return r.input(path, typ, true)
 	}
 	if value == nil {
 		return hclwrite.TokensForValue(v), nil
@@ -614,7 +712,7 @@ func sensitiveChild(marker, key any) any {
 }
 
 func typeTokens(t cty.Type) hclwrite.Tokens {
-	// These expressions contain only types and quoted schema field names.
+	// These expressions contain only types and validated schema field names.
 	f, diags := hclwrite.ParseConfig([]byte("type = "+typeExpression(t)+"\n"), "type.tf", hcl.InitialPos)
 	if diags.HasErrors() {
 		panic("invalid internal type expression")
@@ -649,7 +747,13 @@ func typeExpression(t cty.Type) string {
 			if t.AttributeOptional(key) {
 				expr = "optional(" + expr + ")"
 			}
-			parts = append(parts, string(hclwrite.TokensForValue(cty.StringVal(key)).Bytes())+"="+expr)
+			name := key
+			if !hclsyntax.ValidIdentifier(key) {
+				// Retain the name for validation by input; never sanitize object
+				// keys into a different type or emit an invalid constraint.
+				name = string(hclwrite.TokensForValue(cty.StringVal(key)).Bytes())
+			}
+			parts = append(parts, name+"="+expr)
 		}
 		return "object({" + strings.Join(parts, ",") + "})"
 	default:

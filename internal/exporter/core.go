@@ -31,6 +31,10 @@ func (c *CoreExporter) inventory(ctx context.Context, creds Credentials) ([]Sour
 	if err != nil {
 		return nil, err
 	}
+	rs, err = supplementResourceIDs(ctx, creds, c.Inventory, rs)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	for _, r := range rs {
 		if !resourcecatalog.Allowed(r.Type) || strings.HasPrefix(r.Type, "pingone_davinci_") {

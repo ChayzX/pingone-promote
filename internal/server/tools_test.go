@@ -73,3 +73,28 @@ func TestPrepareToolsRejectsChecksumAndVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareToolsPingCLIFirstRunBanner(t *testing.T) {
+	var c Config
+	c.Tools.Terraform, c.Tools.TerraformSHA256 = fixtureExecutable(t, "Terraform v1.16.7")
+	c.Tools.TerraformVersion = "1.16.7"
+	c.Tools.Terraformer, c.Tools.TerraformerSHA256 = fixtureExecutable(t, "pingcli-terraformer version 0.6.0 (commit: fixture)")
+	c.Tools.TerraformerVersion = "0.6.0"
+	c.Tools.PingCLI, c.Tools.PingCLISHA256 = fixtureExecutable(t, "Ping CLI configuration file does not exist.\nCreating new Ping CLI configuration file.\npingcli version 0.8.4 (commit: fixture)")
+	c.Tools.PingCLIVersion = "0.8.4"
+	_, cleanup, err := PrepareTools(c)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestToolVersionRequiresToolIdentity(t *testing.T) {
+	for _, output := range []string{"setup version 0.8.4", "pingcli version 0.8.40", "pingcli version 0.8.3\nwarning 0.8.4"} {
+		if toolVersionMatches(output, "pingcli version ", "0.8.4") {
+			t.Fatal("unrelated or wrong version accepted")
+		}
+	}
+}

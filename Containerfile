@@ -4,8 +4,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG TARGETOS=linux
-ARG TARGETARCH=amd64
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/pingone-promote ./cmd/pingone-promote
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOMAXPROCS=2 go build -p=2 -trimpath -ldflags='-s -w' -o /out/pingone-promote ./cmd/pingone-promote
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates && addgroup -S -g 10001 pingone && adduser -S -D -H -u 10001 -G pingone pingone

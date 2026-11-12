@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,9 @@ type ProviderStateReader struct {
 	Network   Network
 	Timeout   time.Duration
 	MaxOutput int64
+	// ImageHTTP fetches public original image assets without worker credentials.
+	// Its cookie jar and redirect policy are replaced on a request-local copy.
+	ImageHTTP *http.Client
 }
 
 // ProviderReadError deliberately excludes subprocess output and underlying
@@ -184,6 +188,17 @@ func (r *ProviderStateReader) Read(ctx context.Context, creds Credentials, resou
 		}
 	} else {
 		state = []byte(`{"values":{"root_module":{"resources":[]}}}`)
+	}
+	imageHTTP, err := r.imageHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	if imageHTTP != nil && r.ImageHTTP == nil {
+		defer imageHTTP.CloseIdleConnections()
+	}
+	state, err = hydrateImageAssets(ctx, imageHTTP, creds, state, imports)
+	if err != nil {
+		return nil, err
 	}
 	result, err := RenderProviderState(schema, state, imports)
 	if err != nil {

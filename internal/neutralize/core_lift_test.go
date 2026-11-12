@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"pingone-promote/internal/neutralize"
 )
 
@@ -176,8 +180,15 @@ func TestCoreLiftSecretCollectionHasConcreteTypeWithoutValues(t *testing.T) {
 	}
 	name := "webhook_audit_http_endpoint_headers"
 	v := r.Variables[name]
-	if v == nil || v.Kind != neutralize.KindSecret || v.Type != `object({"Authorization" = string})` {
+	if v == nil || v.Kind != neutralize.KindSecret || v.Type != `object({Authorization = string})` {
 		t.Fatalf("missing concrete sensitive collection: %#v", v)
+	}
+	expr, diags := hclsyntax.ParseExpression([]byte(v.Type), "type.tf", hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatal(diags)
+	}
+	if _, diags := typeexpr.TypeConstraint(expr); diags.HasErrors() {
+		t.Fatal(diags)
 	}
 	if _, exists := r.SourceValues[name]; exists {
 		t.Fatal("header credential entered source values")

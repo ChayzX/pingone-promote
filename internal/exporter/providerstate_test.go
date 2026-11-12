@@ -9,6 +9,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"strings"
 	"testing"
+
+	"pingone-promote/internal/neutralize"
 )
 
 // This fixture catches three realistic regressions: copying sensitive state
@@ -448,5 +450,380 @@ func TestRenderProviderStatePinnedApplicationSecretOutputsOmitted(t *testing.T) 
 	}
 	if strings.Contains(all, `"secret" =`) || strings.Contains(all, "last_used") {
 		t.Fatal("computed secret output emitted")
+	}
+}
+
+// The v1.24.0 image read returns processed image metadata, but cannot recover
+// the required upload body. It must become an input for every environment.
+func TestRenderProviderStateMissingImageBodyBecomesEnvironmentInput(t *testing.T) {
+	attrs := map[string]any{
+		"environment_id":    map[string]any{"type": "string", "required": true},
+		"id":                map[string]any{"type": "string", "computed": true},
+		"image_file_base64": map[string]any{"type": "string", "required": true},
+		"uploaded_image": map[string]any{"computed": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{
+			"height": map[string]any{"type": "number", "computed": true},
+			"href":   map[string]any{"type": "string", "computed": true},
+			"type":   map[string]any{"type": "string", "computed": true},
+			"width":  map[string]any{"type": "number", "computed": true},
+		}}},
+	}
+	for _, missing := range []bool{false, true} {
+		values := map[string]any{"environment_id": "source-env", "id": "image-id", "uploaded_image": map[string]any{"href": "https://images.example/source", "height": 1, "width": 1, "type": "png"}}
+		if !missing {
+			values["image_file_base64"] = nil
+		}
+		schema, state := renderResourceFixture(t, "pingone_image", attrs, nil, values, nil)
+		exp, err := RenderProviderState(schema, state, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := "pingone_image_demo_image_file_base64"
+		assertRequiredInput(t, exp, name, cty.String, false)
+		if !exp.EnvLocalVariables[name] || len(exp.EnvLocalVariables) != 1 {
+			t.Fatalf("missing upload must remain environment-local: %v", exp.EnvLocalVariables)
+		}
+		assertValidExport(t, exp)
+		if !strings.Contains(string(exp.Files[ModuleDir+"/pingone_image.tf"]), "var."+name) {
+			t.Fatal("missing image body was not connected to its input")
+		}
+		if strings.Contains(flattenFiles(exp.Files), "images.example") {
+			t.Fatal("computed upload metadata was used as a substitute image")
+		}
+	}
+}
+
+func TestRenderProviderStateMissingCredentialsRemainRequiredSecrets(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		attr   map[string]any
+		marker any
+	}{
+		{"schema required secret", map[string]any{"type": []any{"map", "string"}, "required": true, "sensitive": true}, nil},
+		{"state required secret", map[string]any{"type": []any{"map", "string"}, "required": true}, true},
+		{"state explicit optional secret", map[string]any{"type": []any{"map", "string"}, "optional": true}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			schema, state := renderFixture(t, map[string]any{"credential": tt.attr, "client_secret": map[string]any{"type": "string", "computed": true, "sensitive": true}}, nil, map[string]any{"credential": nil, "client_secret": "GENERATED-NOT-CONFIGURATION"}, map[string]any{"credential": tt.marker, "client_secret": true})
+			exp, err := RenderProviderState(schema, state, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRequiredInput(t, exp, "pingone_application_demo_credential", cty.Map(cty.String), true)
+			if len(exp.EnvLocalVariables) != 0 || strings.Contains(flattenFiles(exp.Files), "GENERATED-NOT-CONFIGURATION") || strings.Contains(flattenFiles(exp.Files), "demo_client_secret") {
+				t.Fatal("secret source values or generated outputs became configuration")
+			}
+		})
+	}
+}
+
+func TestRenderProviderStateMissingNestedInputsKeepSchemaTypes(t *testing.T) {
+	attrs := map[string]any{"settings": map[string]any{"required": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{
+		"enabled":     map[string]any{"required": true, "type": "bool"},
+		"credentials": map[string]any{"required": true, "sensitive": true, "type": []any{"list", "string"}},
+	}}}}
+	blocks := map[string]any{"endpoint": map[string]any{"nesting_mode": "list", "min_items": 1, "block": map[string]any{"attributes": map[string]any{"port": map[string]any{"type": "number", "required": true}}}}}
+	schema, state := renderFixture(t, attrs, blocks, map[string]any{"settings": map[string]any{}, "endpoint": []any{map[string]any{}}}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRequiredInput(t, exp, "pingone_application_demo_settings_enabled", cty.Bool, false)
+	assertRequiredInput(t, exp, "pingone_application_demo_settings_credentials", cty.List(cty.String), true)
+	assertRequiredInput(t, exp, "pingone_application_demo_endpoint_0_port", cty.Number, false)
+	if len(exp.EnvLocalVariables) != 2 || !exp.EnvLocalVariables["pingone_application_demo_settings_enabled"] || !exp.EnvLocalVariables["pingone_application_demo_endpoint_0_port"] {
+		t.Fatalf("nested missing configuration lost environment-local classification: %v", exp.EnvLocalVariables)
+	}
+	f, d := hclsyntax.ParseConfig(exp.Files[ModuleDir+"/pingone_application.tf"], "resource.tf", hcl.InitialPos)
+	if d.HasErrors() {
+		t.Fatal(d)
+	}
+	settings, d := f.Body.(*hclsyntax.Body).Blocks[0].Body.Attributes["settings"].Expr.Value(&hcl.EvalContext{Variables: map[string]cty.Value{"var": cty.ObjectVal(map[string]cty.Value{
+		"pingone_application_demo_settings_enabled":     cty.False,
+		"pingone_application_demo_settings_credentials": cty.ListVal([]cty.Value{cty.StringVal("environment-secret")}),
+	})}})
+	if d.HasErrors() || !settings.GetAttr("enabled").RawEquals(cty.False) || !settings.GetAttr("credentials").Type().Equals(cty.List(cty.String)) {
+		t.Fatalf("nested configuration does not accept typed environment inputs: %s", d)
+	}
+}
+
+func TestRenderProviderStateMissingWholeNestedInputAndOptionalOmission(t *testing.T) {
+	attrs := map[string]any{
+		"settings":        map[string]any{"required": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{"enabled": map[string]any{"type": "bool", "required": true}}}},
+		"optional_secret": map[string]any{"type": "string", "optional": true, "sensitive": true},
+		"optional_public": map[string]any{"type": "string", "optional": true},
+	}
+	schema, state := renderFixture(t, attrs, nil, map[string]any{"optional_secret": nil, "optional_public": nil}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRequiredInput(t, exp, "pingone_application_demo_settings", cty.Object(map[string]cty.Type{"enabled": cty.Bool}), false)
+	if strings.Contains(flattenFiles(exp.Files), "optional_secret") || strings.Contains(flattenFiles(exp.Files), "optional_public") {
+		t.Fatal("absent optional configuration was invented")
+	}
+}
+
+// Missing whole objects must retain their exact constraint, including optional
+// fields, and inherit sensitivity from configurable descendants.
+func TestRenderProviderStateMissingWholeObjectTypesAndSensitivity(t *testing.T) {
+	for _, secret := range []bool{false, true} {
+		t.Run(map[bool]string{false: "public", true: "secret descendant"}[secret], func(t *testing.T) {
+			attrs := map[string]any{"settings": map[string]any{"required": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{
+				"enabled":    map[string]any{"type": "bool", "required": true},
+				"credential": map[string]any{"type": "string", "optional": true, "sensitive": secret},
+				"generated":  map[string]any{"type": "string", "computed": true, "sensitive": true},
+			}}}}
+			schema, state := renderFixture(t, attrs, nil, map[string]any{"settings": nil}, nil)
+			exp, err := RenderProviderState(schema, state, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := "pingone_application_demo_settings"
+			assertRequiredInput(t, exp, name, cty.ObjectWithOptionalAttrs(map[string]cty.Type{"enabled": cty.Bool, "credential": cty.String}, []string{"credential"}), secret)
+			if exp.EnvLocalVariables[name] == secret {
+				t.Fatal("whole object input has incorrect environment classification")
+			}
+		})
+	}
+}
+
+// HCL type constructors accept identifier keys, including Unicode and keywords.
+// Configured object values must also preserve keys that require string literals.
+func TestRenderProviderStateObjectInputKeys(t *testing.T) {
+	objectTypes := map[string]any{"en-US": "bool", "café": "string", "true": "number", "null": "string"}
+	want := cty.Object(map[string]cty.Type{"en-US": cty.Bool, "café": cty.String, "true": cty.Number, "null": cty.String})
+	schema, state := renderFixture(t, map[string]any{"settings": map[string]any{"required": true, "type": []any{"object", objectTypes}}}, nil, map[string]any{}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRequiredInput(t, exp, "pingone_application_demo_settings", want, false)
+
+	for _, key := range []string{"space key", "a.b", "", "${unsafe}"} {
+		t.Run(key, func(t *testing.T) {
+			attrs := map[string]any{"settings": map[string]any{"required": true, "type": []any{"object", map[string]any{key: "string"}}}}
+			schema, state := renderFixture(t, attrs, nil, map[string]any{"settings": map[string]any{key: "preserved"}}, nil)
+			exp, err := RenderProviderState(schema, state, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, d := hclsyntax.ParseConfig(exp.Files[ModuleDir+"/pingone_application.tf"], "resource.tf", hcl.InitialPos)
+			if d.HasErrors() {
+				t.Fatal(d)
+			}
+			value, d := f.Body.(*hclsyntax.Body).Blocks[0].Body.Attributes["settings"].Expr.Value(nil)
+			if d.HasErrors() || !value.GetAttr(key).RawEquals(cty.StringVal("preserved")) {
+				t.Fatalf("object key lost: %s", d)
+			}
+			schema, state = renderFixture(t, attrs, nil, map[string]any{}, nil)
+			if exp, err := RenderProviderState(schema, state, nil); err == nil || exp != nil {
+				t.Fatal("unrepresentable typed input must fail closed")
+			}
+		})
+	}
+}
+
+// A literal schema key containing a period must not alias a nested key path.
+func TestRenderProviderStateNestedInputPathsDoNotAlias(t *testing.T) {
+	attrs := map[string]any{"settings": map[string]any{"required": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{
+		"a.b": map[string]any{"type": "string", "required": true},
+		"a":   map[string]any{"required": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{"b": map[string]any{"type": "string", "required": true, "sensitive": true}}}},
+	}}}}
+	schema, state := renderFixture(t, attrs, nil, map[string]any{"settings": map[string]any{"a": map[string]any{}}}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exp.EnvLocalVariables) != 1 {
+		t.Fatal("distinct public nested key was aliased to secret path")
+	}
+	f, d := hclsyntax.ParseConfig(exp.Files[ModuleDir+"/variables.tf"], "vars.tf", hcl.InitialPos)
+	if d.HasErrors() || len(f.Body.(*hclsyntax.Body).Blocks) != 3 {
+		t.Fatal("distinct typed paths were not preserved")
+	}
+}
+
+func TestRenderProviderStateMissingInputsKeepMalformedMetadataClosed(t *testing.T) {
+	for _, attr := range []map[string]any{
+		{"required": true},
+		{"required": true, "type": "dynamic"},
+		{"required": true, "type": "string", "nested_type": map[string]any{"nesting_mode": "single"}},
+	} {
+		schema, state := renderFixture(t, map[string]any{"credential": attr}, nil, map[string]any{"credential": nil}, nil)
+		if exp, err := RenderProviderState(schema, state, nil); err == nil || exp != nil {
+			t.Fatal("missing value bypassed schema validation")
+		}
+	}
+	schema, state := renderFixture(t, nil, map[string]any{"endpoint": map[string]any{"nesting_mode": "list", "min_items": 1, "block": map[string]any{}}}, map[string]any{}, nil)
+	if exp, err := RenderProviderState(schema, state, nil); err == nil || exp != nil {
+		t.Fatal("missing required block was fabricated")
+	}
+}
+
+func TestRenderProviderStateMissingInputNamesDoNotAliasSecrets(t *testing.T) {
+	attrs := map[string]any{
+		"a-b": map[string]any{"type": "string", "required": true},
+		"a_b": map[string]any{"type": "string", "required": true, "sensitive": true},
+	}
+	schema, state := renderFixture(t, attrs, nil, map[string]any{}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for filename, body := range exp.Files {
+		if string(body) != string(again.Files[filename]) {
+			t.Fatalf("nondeterministic %s", filename)
+		}
+	}
+	f, d := hclsyntax.ParseConfig(exp.Files[ModuleDir+"/pingone_application.tf"], "resource.tf", hcl.InitialPos)
+	if d.HasErrors() {
+		t.Fatal(d)
+	}
+	attributes := f.Body.(*hclsyntax.Body).Blocks[0].Body.Attributes
+	public := attributes["a-b"].Expr.Variables()[0][1].(hcl.TraverseAttr).Name
+	secret := attributes["a_b"].Expr.Variables()[0][1].(hcl.TraverseAttr).Name
+	if public == secret || !exp.EnvLocalVariables[public] || exp.EnvLocalVariables[secret] {
+		t.Fatal("public input and secret aliased")
+	}
+	assertRequiredInput(t, exp, public, cty.String, false)
+	assertRequiredInput(t, exp, secret, cty.String, true)
+}
+
+func TestStateRendererRepeatedInputSensitivityAndTypeCollisions(t *testing.T) {
+	for _, secretFirst := range []bool{false, true} {
+		r := stateRenderer{vars: map[string]secretVariable{}}
+		for _, secret := range []bool{secretFirst, !secretFirst} {
+			if _, _, err := r.attribute(nil, nil, schemaAttribute{Type: json.RawMessage(`"string"`), Required: true, Sensitive: secret}, "pingone_application.demo.credential"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f, d := hclsyntax.ParseConfig(r.variables(), "variables.tf", hcl.InitialPos)
+		if d.HasErrors() {
+			t.Fatal(d)
+		}
+		if len(f.Body.(*hclsyntax.Body).Blocks) != 2 {
+			t.Fatal("repeated path created multiple declarations")
+		}
+		b := f.Body.(*hclsyntax.Body).Blocks[1]
+		a, ok := b.Body.Attributes["sensitive"]
+		if !ok {
+			t.Fatal("secret path was downgraded to a public input")
+		}
+		v, d := a.Expr.Value(nil)
+		if d.HasErrors() || !v.RawEquals(cty.True) {
+			t.Fatal("secret path was downgraded")
+		}
+		if _, _, err := r.attribute(nil, nil, schemaAttribute{Type: json.RawMessage(`"number"`), Required: true}, "pingone_application.demo.credential"); err == nil {
+			t.Fatal("conflicting input types were silently replaced")
+		}
+	}
+}
+
+func TestRenderProviderStateSensitiveParentDoesNotCreateMissingChildInputs(t *testing.T) {
+	attrs := map[string]any{"settings": map[string]any{"required": true, "sensitive": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{"enabled": map[string]any{"type": "bool", "required": true}}}}}
+	schema, state := renderFixture(t, attrs, nil, map[string]any{"settings": map[string]any{}}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRequiredInput(t, exp, "pingone_application_demo_settings", cty.Object(map[string]cty.Type{"enabled": cty.Bool}), true)
+	if len(exp.EnvLocalVariables) != 0 || strings.Contains(flattenFiles(exp.Files), "demo_settings_enabled") {
+		t.Fatal("sensitive parent created an orphaned public child input")
+	}
+}
+
+// Required inputs must survive the renderer/neutralizer boundary without
+// acquiring a source value, since no API value was available to export.
+func TestRenderProviderStateMissingInputsRemainUnvaluedAfterNeutralize(t *testing.T) {
+	attrs := map[string]any{
+		"credential": map[string]any{"type": []any{"map", "string"}, "required": true, "sensitive": true},
+		"settings": map[string]any{"required": true, "nested_type": map[string]any{"nesting_mode": "single", "attributes": map[string]any{
+			"enabled":     map[string]any{"type": "bool", "required": true},
+			"description": map[string]any{"type": "string", "optional": true},
+		}}},
+	}
+	schema, state := renderFixture(t, attrs, nil, map[string]any{}, nil)
+	exp, err := RenderProviderState(schema, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName, EnvLocalVariables: exp.EnvLocalVariables}, neutralize.Options{SourceEnvironmentID: "11111111-1111-4111-8111-111111111111"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name string
+		kind neutralize.Kind
+		typ  cty.Type
+	}{
+		{"pingone_application_demo_credential", neutralize.KindSecret, cty.Map(cty.String)},
+		{"pingone_application_demo_settings", neutralize.KindEnvLocal, cty.ObjectWithOptionalAttrs(map[string]cty.Type{"enabled": cty.Bool, "description": cty.String}, []string{"description"})},
+	} {
+		variable := result.Variables[tt.name]
+		if variable == nil || variable.Kind != tt.kind {
+			t.Fatalf("missing input classification lost for %s", tt.name)
+		}
+		expr, d := hclsyntax.ParseExpression([]byte(variable.Type), "type.tf", hcl.InitialPos)
+		if d.HasErrors() {
+			t.Fatal(d)
+		}
+		got, d := typeexpr.TypeConstraint(expr)
+		if d.HasErrors() || !got.Equals(tt.typ) {
+			t.Fatalf("input type changed for %s: %s", tt.name, d)
+		}
+		if _, ok := result.SourceValues[tt.name]; ok {
+			t.Fatalf("unreadable input %s acquired a source value", tt.name)
+		}
+	}
+}
+
+func assertRequiredInput(t *testing.T, exp *Export, name string, typ cty.Type, sensitive bool) {
+	t.Helper()
+	for _, filename := range []string{ModuleDir + "/variables.tf", ModuleName + "-variables.tf"} {
+		f, d := hclsyntax.ParseConfig(exp.Files[filename], filename, hcl.InitialPos)
+		if d.HasErrors() {
+			t.Fatal(d)
+		}
+		found := false
+		for _, b := range f.Body.(*hclsyntax.Body).Blocks {
+			if b.Type != "variable" || b.Labels[0] != name {
+				continue
+			}
+			found = true
+			got, d := typeexpr.TypeConstraint(b.Body.Attributes["type"].Expr)
+			if d.HasErrors() || !got.Equals(typ) {
+				t.Errorf("%s has type %s, want %s: %s", name, got.GoString(), typ.GoString(), d)
+			}
+			if _, ok := b.Body.Attributes["default"]; ok {
+				t.Errorf("%s unexpectedly has a default", name)
+			}
+			if a, ok := b.Body.Attributes["sensitive"]; ok {
+				v, d := a.Expr.Value(nil)
+				if d.HasErrors() || !v.RawEquals(cty.BoolVal(sensitive)) {
+					t.Errorf("%s has wrong sensitivity", name)
+				}
+			} else if sensitive {
+				t.Errorf("%s must be sensitive", name)
+			}
+		}
+		if !found {
+			t.Errorf("%s missing in %s", name, filename)
+		}
+	}
+	f, d := hclsyntax.ParseConfig(exp.Files[ModuleName+"-module.tf"], "module.tf", hcl.InitialPos)
+	if d.HasErrors() {
+		t.Fatal(d)
+	}
+	a, ok := f.Body.(*hclsyntax.Body).Blocks[0].Body.Attributes[name]
+	if !ok {
+		t.Fatalf("%s missing from module inputs", name)
+	}
+	vars := a.Expr.Variables()
+	if len(vars) != 1 || len(vars[0]) != 2 || vars[0].RootName() != "var" || vars[0][1].(hcl.TraverseAttr).Name != name {
+		t.Errorf("%s is not passed from its root input", name)
 	}
 }

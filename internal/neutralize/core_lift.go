@@ -44,6 +44,7 @@ var coreEnvironmentPaths = map[string]string{
 	"pingone_key":                             "custom_crl issuer_dn subject_dn",
 	"pingone_mfa_fido2_policy":                "relying_party_id",
 	"pingone_mfa_application_push_credential": "apns.team_id",
+	"pingone_notification_template_content":   "email.from.address email.reply_to.address",
 	"pingone_notification_settings_email": `auth_url client_id host port username from.email_address
 		reply_to.email_address requests.url`,
 	"pingone_phone_delivery_settings": `provider_custom.authentication.auth_url provider_custom.authentication.client_id
@@ -292,7 +293,23 @@ func coreValueType(value cty.Value) string {
 	if typ.IsObjectType() {
 		var attrs []string
 		for name, childType := range typ.AttributeTypes() {
-			attrs = append(attrs, strconv.Quote(name)+" = "+coreValueType(cty.NullVal(childType)))
+			if !hclsyntax.ValidIdentifier(name) {
+				// HCL object type constraints require bare attribute names. Preserve
+				// arbitrary homogeneous map keys without inventing renamed attributes.
+				common := cty.NilType
+				for _, child := range typ.AttributeTypes() {
+					if common == cty.NilType {
+						common = child
+					} else if !common.Equals(child) {
+						return "any"
+					}
+				}
+				if common != cty.NilType {
+					return "map(" + coreValueType(cty.NullVal(common)) + ")"
+				}
+				return "any"
+			}
+			attrs = append(attrs, name+" = "+coreValueType(cty.NullVal(childType)))
 		}
 		sort.Strings(attrs)
 		return "object({" + strings.Join(attrs, ", ") + "})"

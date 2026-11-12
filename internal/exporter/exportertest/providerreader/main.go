@@ -95,6 +95,10 @@ func main() {
 		return
 	}
 	if args == "providers schema -json" {
+		if string(mode) == "image" {
+			fmt.Print(`{"provider_schemas":{"registry.terraform.io/pingidentity/pingone":{"resource_schemas":{"pingone_image":{"block":{"attributes":{"environment_id":{"type":"string","required":true},"id":{"type":"string","computed":true},"image_file_base64":{"type":"string","required":true},"uploaded_image":{"nested_type":{"attributes":{"href":{"type":"string","computed":true},"width":{"type":"number","computed":true},"height":{"type":"number","computed":true},"type":{"type":"string","computed":true}},"nesting_mode":"single"},"computed":true}}}}}}}}`)
+			return
+		}
 		fmt.Print(`{"provider_schemas":{"registry.terraform.io/pingidentity/pingone":{"resource_schemas":{"pingone_population":{"block":{"attributes":{"environment_id":{"type":"string","required":true},"name":{"type":"string","required":true},"id":{"type":"string","computed":true},"computed_secret":{"type":"string","computed":true,"sensitive":true}}}}}}}}`)
 		return
 	}
@@ -119,6 +123,11 @@ func main() {
 			}
 			typ, label, _ := strings.Cut(item["address"], ".")
 			_ = label
+			if string(mode) == "image" {
+				parts := strings.Split(item["id"], "/")
+				resources = append(resources, map[string]any{"address": item["address"], "mode": "managed", "type": typ, "values": map[string]any{"environment_id": parts[0], "id": parts[1], "image_file_base64": nil, "uploaded_image": map[string]any{"href": "https://uploads.pingone.com/environments/" + parts[0] + "/images/opaque_token_original.png", "type": "png", "width": 1, "height": 1}}})
+				continue
+			}
 			resources = append(resources, map[string]any{"address": item["address"], "mode": "managed", "type": typ, "values": map[string]any{"environment_id": strings.Split(item["id"], "/")[0], "name": "Population", "id": "resource-id", "computed_secret": "COMPUTED_SECRET_NEVER_EXPORT"}, "sensitive_values": map[string]any{"computed_secret": true}})
 		}
 		json.NewEncoder(os.Stdout).Encode(map[string]any{"values": map[string]any{"root_module": map[string]any{"resources": resources}}})

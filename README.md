@@ -9,7 +9,7 @@ PingOne Promote is a single Go service for reviewing PingOne configuration chang
 3. Create a JSON server config from the example in [deploy/README.md](deploy/README.md). Point it at the pinned tools and set `secretsFile` to a separate file.
 4. Put the PingOne worker client ID, worker client secret and GitLab token in the secrets file. Make the service owner its only reader and set mode `0600` or `0400`.
 5. Start with `./pingone-promote serve --config /path/to/config.json`. It listens on `127.0.0.1:8080` by default. Open that address on the host and complete a preview before submitting.
-6. For a persistent deployment, follow the [deployment guide](deploy/README.md) for systemd on RHEL 9 or a single-replica Kubernetes pod.
+6. For a persistent deployment, follow the [deployment guide](deploy/README.md) for systemd on RHEL 9 or a single-replica Kubernetes pod. For a local container on macOS, use the [Podman instructions](deploy/README.md#podman-on-macos).
 
 ## Trust and operation
 
@@ -20,6 +20,8 @@ The server stores unfinished drafts in bounded memory. Restarting it loses those
 Secrets are never stored in configuration, pages, logs, or Git. The secrets file must be a regular file owned by the service account with mode `0400` or `0600`; group-readable modes such as `0440` are rejected. The worker is used read-only. The service has no PingOne write credential and never runs Terraform plan or apply.
 
 The exporter coverage and live tenant behavior are still being established. See the [resource coverage matrix](docs/coverage.md) and [acceptance cases](docs/acceptance/hosted-live-cases.md) for required live proof and current limits. A fixture pass does not establish tenant or production pipeline compatibility.
+
+The Podman macOS guide uses a Linux VM to build the container and install Linux tools. A native macOS install uses Darwin tools instead; do not mount those executables into a Linux container.
 
 ## Troubleshooting
 

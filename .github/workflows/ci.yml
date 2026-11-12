@@ -66,9 +66,7 @@ jobs:
           export PINGONE_PROMOTE_REAL_TERRAFORMER="$RUNNER_TEMP/tools/pingcli-terraformer"
           go test -count=1 -v ./... > "$RUNNER_TEMP/test.log" 2>&1 || { grep -E -B30 -- '^(--- FAIL|FAIL)' "$RUNNER_TEMP/test.log"; exit 1; }
           grep -E '^(ok|FAIL|\?)' "$RUNNER_TEMP/test.log"
-          if grep -E -A1 -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E 'Windows|REGEN_FIXTURE|--- SKIP|^--$'; then
-            echo "unexpected skipped tests (see above)"; exit 1
-          fi
+          python3 scripts/check_test_skips.py "$RUNNER_TEMP/test.log"
 
       - name: terraform fmt
         run: terraform fmt -check -recursive terraform/
@@ -79,3 +77,4 @@ jobs:
           python3 -I davinci-app/check_app.py
           node davinci-app/test_app.js
           python3 -m unittest discover -s scripts -p test_release.py
+          python3 -m unittest discover -s scripts -p test_check_test_skips.py

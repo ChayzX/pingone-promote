@@ -39,7 +39,7 @@ func PrepareTools(c Config) (Config, func(), error) {
 		specs = append(specs, struct {
 			path                 *string
 			sum, version, prefix string
-		}{&c.Tools.PingCLI, c.Tools.PingCLISHA256, c.Tools.PingCLIVersion, ""})
+		}{&c.Tools.PingCLI, c.Tools.PingCLISHA256, c.Tools.PingCLIVersion, "pingcli version "})
 	}
 	for i, spec := range specs {
 		source, err := os.Open(*spec.path)
@@ -87,14 +87,17 @@ func toolVersionMatches(output, prefix, version string) bool {
 		return false
 	}
 	first := strings.SplitN(strings.TrimSpace(output), "\n", 2)[0]
-	if prefix == "" {
-		for _, field := range strings.Fields(first) {
-			if strings.TrimPrefix(field, "v") == strings.TrimPrefix(version, "v") {
-				return true
+	// Ping CLI creates its private first-run config before printing its version.
+	// Match its named version line, never an arbitrary banner containing a number.
+	if prefix == "pingcli version " {
+		for _, line := range strings.Split(output, "\n") {
+			if strings.HasPrefix(line, prefix) {
+				first = line
+				break
 			}
 		}
-		return false
 	}
+
 	rest, ok := strings.CutPrefix(first, prefix)
 	if !ok {
 		return false

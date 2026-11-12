@@ -130,6 +130,26 @@ func (r *runner) urls(commit string) {
 	}
 }
 
+// LookupIDs retains explicitly selected images across fresh inventory reads.
+// PingOne provides an image lookup endpoint, but no image list endpoint.
+func (r *Request) LookupIDs() []exporter.TypedResourceID {
+	var ids []exporter.TypedResourceID
+	seen := map[exporter.TypedResourceID]bool{}
+	for _, refs := range [][]ExcludeRef{r.Resources, r.Exclude} {
+		for _, ref := range refs {
+			if ref.Type != "pingone_image" || ref.ID == "" {
+				continue
+			}
+			id := exporter.TypedResourceID{Type: ref.Type, ID: strings.ToLower(ref.ID)}
+			if !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+			}
+		}
+	}
+	return ids
+}
+
 func (r *runner) run(ctx context.Context) {
 	res, req := r.res, r.req
 	if err := r.checkContext(); err != nil {
@@ -156,6 +176,7 @@ func (r *runner) run(ctx context.Context) {
 	}
 	creds := r.env.Credentials
 	creds.ExportEnvironmentID = sourceID
+	ctx = exporter.WithResourceIDs(ctx, req.LookupIDs())
 	head := promote.DirRepo(r.env.Workspace)
 	sel, err := r.resolve(ctx, creds, head)
 	if err != nil {

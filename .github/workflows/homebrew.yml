@@ -67,19 +67,30 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: '1.27.x'
-          cache: false
+      - name: Fetch the pinned tools (checksums verified)
+        run: |
+          bash scripts/fetch-tools.sh --dest "$RUNNER_TEMP/tools" --with-go
+          echo "$RUNNER_TEMP/tools/go/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      - name: Fetch hosted importer artifacts (checksums verified)
+        run: |
+          python3 scripts/install-tools.py --bin-dir "$RUNNER_TEMP/hosted-tools" --cache-dir "$RUNNER_TEMP/hosted-cache" --output "$RUNNER_TEMP/hosted-tools.json"
+          provider_zip="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tools"]["providerZip"])' "$RUNNER_TEMP/hosted-tools.json")"
+          echo "PINGONE_PROMOTE_PROVIDER_ZIP=$provider_zip" >> "$GITHUB_ENV"
       - name: Test source and build versioned release assets
         env:
           RELEASE_VERSION: ${{ inputs.version || 'v0.2.0-rc.2' }}
           RELEASE_REF: ${{ github.sha }}
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
         run: |
+          export PINGONE_PROMOTE_TERRAFORM="$RUNNER_TEMP/tools/terraform"
+          export PINGONE_PROMOTE_REAL_TERRAFORMER="$RUNNER_TEMP/tools/pingcli-terraformer"
           go test ./...
           go test -race ./...
           go vet ./...
           python3 -m unittest discover -s scripts -p test_release.py -v
+          python3 -m unittest discover -s scripts -p test_check_test_skips.py -v
           python3 scripts/release.py release --version "$RELEASE_VERSION" --ref "$RELEASE_REF" --output dist/release
           python3 scripts/release.py verify --directory dist/release
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
