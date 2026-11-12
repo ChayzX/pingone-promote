@@ -93,6 +93,7 @@
 <div class="buttons"><button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate name="refresh" value="yes">Try again</button></div>
 </div>
 {{else}}
+{{with .Data.DaVinciMissing}}<div class="problem" role="alert"><p><strong>DaVinci flows and other DaVinci items are missing from this list.</strong> {{.}}</p><p class="hint">Core PingOne items can still be chosen. When the cause is fixed, tick &ldquo;Read {{$d.Source}} again&rdquo; below and search.</p></div>{{end}}
 {{if eq $scope "selected"}}<h2>Find items to copy</h2>
 <p class="hint">Search, then choose <strong>Add</strong> for each item. <strong>Leave out</strong> keeps an item out even when something you copy depends on it.</p>
 {{else}}<h2>Leave items out (optional)</h2>

@@ -131,6 +131,17 @@ func (e *Exporter) Catalog(ctx context.Context, creds exporter.Credentials, _ bo
 	return out, nil
 }
 
+// DaVinciProblem is why the latest read of the source left out its DaVinci
+// items (nil when they were read). It never reads the source itself.
+func (e *Exporter) DaVinciProblem(creds exporter.Credentials) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if c := e.cache[creds.ExportEnvironment()]; c != nil {
+		return c.dvErr
+	}
+	return nil
+}
+
 // CatalogAllIDs is Catalog (IDs are always read).
 func (e *Exporter) CatalogAllIDs(ctx context.Context, creds exporter.Credentials) ([]exporter.Resource, error) {
 	return e.Catalog(ctx, creds, true)

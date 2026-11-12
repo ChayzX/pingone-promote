@@ -428,3 +428,24 @@ func TestItemsPageWaitsForTheList(t *testing.T) {
 		t.Fatal("the page keeps refreshing after the list is in")
 	}
 }
+
+// noDaVinci reads core items only: its DaVinci read failed.
+type noDaVinci struct{ slowList }
+
+func (noDaVinci) DaVinciProblem(exporter.Credentials) error {
+	return &exporter.ExecError{ExitCode: 1, Stderr: "secret-tenant-text"}
+}
+
+func TestMissingDaVinciItemsAreExplained(t *testing.T) {
+	release := make(chan struct{})
+	close(release)
+	e := newEnv(t, noDaVinci{slowList{release: release}})
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"save"}, "name": {"Dv"}, "source": {"dev"}, "scope": {"selected"}})
+	p := b.post(draft+"/search", url.Values{"q": {"Cust"}})
+	mustContain(t, p.body, "DaVinci flows and other DaVinci items are missing", "The DaVinci export tool failed", "pingone_population.pingcli__Customers")
+	if strings.Contains(p.body, "secret-tenant-text") {
+		t.Fatal("the tool's output reached the page")
+	}
+}

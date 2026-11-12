@@ -259,10 +259,18 @@ func (s *Server) runSearch(source string) func(context.Context, func(string)) er
 			}
 		}
 		sort.Slice(items, func(i, j int) bool { return items[i].Address < items[j].Address })
+		var dv string
+		if pe, ok := s.exporter.(plainErrors); ok {
+			dv = pe.davinciProblem(creds)
+		}
 		s.drafts.mu.Lock()
 		defer s.drafts.mu.Unlock()
-		s.drafts.catalogs[source] = &catalogEntry{at: s.now(), items: items}
-		s.log.Info("item list read", "source", source, "items", len(items))
+		s.drafts.catalogs[source] = &catalogEntry{at: s.now(), items: items, davinci: dv}
+		if dv != "" {
+			s.log.Warn("item list read without DaVinci items", "source", source, "items", len(items))
+		} else {
+			s.log.Info("item list read", "source", source, "items", len(items))
+		}
 		return nil
 	}
 }

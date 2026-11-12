@@ -98,6 +98,23 @@ func pingoneMessage(err error) (string, bool) {
 	return "", false
 }
 
+// davinciProblem explains why the latest catalog read left out DaVinci
+// items, in plain words ("" when nothing is missing or the exporter
+// cannot say).
+func (p plainErrors) davinciProblem(c exporter.Credentials) string {
+	dp, ok := p.inner.(interface {
+		DaVinciProblem(exporter.Credentials) error
+	})
+	if !ok {
+		return ""
+	}
+	err := dp.DaVinciProblem(c)
+	if err == nil {
+		return ""
+	}
+	return p.wrap("davinci catalog", err).Error()
+}
+
 func (p plainErrors) Catalog(ctx context.Context, c exporter.Credentials, withIDs bool) ([]exporter.Resource, error) {
 	out, err := p.inner.Catalog(ctx, c, withIDs)
 	return out, p.wrap("catalog", err)

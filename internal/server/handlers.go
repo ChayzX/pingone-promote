@@ -186,10 +186,12 @@ type draftView struct {
 	// ResultsTotal: matches in all (Results shows the first ones);
 	// ListSize: items in the source's list; SearchNotice and
 	// SearchProblem: the last search's outcome, shown with the results.
-	ResultsTotal  int
-	ListSize      int
-	SearchNotice  string
-	SearchProblem string
+	ResultsTotal int
+	ListSize     int
+	// DaVinciMissing: why the item list has no DaVinci items.
+	DaVinciMissing string
+	SearchNotice   string
+	SearchProblem  string
 	// Sections are the families that can be copied whole.
 	Sections []sectionOption
 	// Branch is the Git branch a submit creates; TypedBranch: the person
@@ -259,6 +261,7 @@ func (s *Server) showDraft(w http.ResponseWriter, r *http.Request, d *Draft) {
 			TypedBranch: s.branchRE() != nil, BranchPattern: s.cfg.BranchPattern, BranchExample: s.cfg.BranchExample}
 		if c := d.catalogs[d.Source]; c != nil {
 			v.ListSize = len(c.items)
+			v.DaVinciMissing = c.davinci
 			if age := s.now().Sub(c.at); age >= time.Minute {
 				v.ListAge = fmt.Sprintf("%d minutes", int(age.Minutes()))
 			}

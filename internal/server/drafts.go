@@ -59,6 +59,9 @@ type Job struct {
 type catalogEntry struct {
 	at    time.Time
 	items []Item
+	// davinci: why the DaVinci items are missing from items ("" when
+	// they were read).
+	davinci string
 }
 
 // preview is the latest preview of a draft: its result, the inputs it was
