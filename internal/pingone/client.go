@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"pingone-promote/internal/netcause"
 	"regexp"
 	"strconv"
 	"strings"
@@ -167,18 +168,40 @@ func (c *Client) bearer(ctx context.Context) (string, error) {
 		return c.token, nil
 	}
 	form := url.Values{"grant_type": {"client_credentials"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AuthBase+"/"+c.creds.WorkerEnvironmentID+"/as/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
+	sleep := c.Sleep
+	if sleep == nil {
+		sleep = sleepCtx
 	}
-	req.SetBasicAuth(c.creds.ClientID, c.creds.ClientSecret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return "", errors.New("pingone: the token request failed (network)")
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.AuthBase+"/"+c.creds.WorkerEnvironmentID+"/as/token", strings.NewReader(form.Encode()))
+		if err != nil {
+			return "", err
+		}
+		req.SetBasicAuth(c.creds.ClientID, c.creds.ClientSecret)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err = c.HTTP.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return "", errors.New("pingone: the worker token could not be requested: " + netcause.Describe(err, req.URL.Host))
+		}
+		if !retryable(resp.StatusCode) || attempt >= 3 {
+			break
+		}
+		// Busy or briefly unavailable: wait and ask again.
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		resp.Body.Close()
+		if err := sleep(ctx, time.Second<<attempt); err != nil {
+			return "", err
+		}
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	switch {
+	case retryable(resp.StatusCode):
+		return "", fmt.Errorf("pingone: PingOne is busy or unavailable (HTTP %d for the worker token); try again in a few minutes", resp.StatusCode)
+	case resp.StatusCode != http.StatusOK:
 		return "", fmt.Errorf("pingone: the worker token request returned HTTP %d; check the worker client ID, secret, environment and region", resp.StatusCode)
 	}
 	var tok struct {
@@ -211,7 +234,7 @@ func (c *Client) getOnce(ctx context.Context, u, display string) (map[string]any
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("pingone: GET %s failed (network)", display)
+		return nil, fmt.Errorf("pingone: GET %s failed: %s", display, netcause.Describe(err, req.URL.Host))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {

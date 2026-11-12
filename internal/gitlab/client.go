@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"pingone-promote/internal/netcause"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,7 +133,13 @@ func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Val
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("GitLab redirects are not allowed") }
 	res, err := clone.Do(req)
 	if err != nil {
-		return errors.New("GitLab request failed; verify the server URL and network")
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if strings.Contains(err.Error(), "GitLab redirects are not allowed") {
+			return errors.New("GitLab answered with a redirect; set gitlab.baseUrl to the exact https address of GitLab")
+		}
+		return errors.New("GitLab could not be reached: " + netcause.Describe(err, u.Host))
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
