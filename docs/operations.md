@@ -102,7 +102,7 @@ Run as root.
 
     # 4. Config and secrets (edit both; put the terraform sha256 into the config)
     install -m 0640 -o root -g pingone-promote deploy/config.example.json /etc/pingone-promote/config.json
-    install -m 0600 -o root -g root deploy/secrets.example.env /etc/pingone-promote/secrets.env
+    install -m 0400 -o pingone-promote -g pingone-promote deploy/secrets.example.env /etc/pingone-promote/secrets.env
     $EDITOR /etc/pingone-promote/config.json /etc/pingone-promote/secrets.env
 
     # 5. Service
@@ -112,40 +112,37 @@ Run as root.
     systemctl status pingone-promote
     journalctl -u pingone-promote -f
 
-Secrets delivery. The shipped unit uses `LoadCredential=secrets:/etc/pingone-promote/secrets.env`.
-systemd reads the root-owned `0600` file as root and exposes a copy to the
-service in `/run/credentials/pingone-promote.service/secrets`, a private
-memory-backed directory; the example config's `secretsFile` already points
-there. systemd gives the service a root-owned copy with mode `0440` and an
-access-control entry for the service user, inside a directory only that
-service can reach. The server accepts a secrets file there (and only there)
-when `$CREDENTIALS_DIRECTORY` names that directory and neither the file nor
-the directory gives anything to other users; every other secrets file must be
-owner-only (0600 or 0400) and owned by the server's user. Verify on your host:
+Secrets delivery. `secretsFile` is `/etc/pingone-promote/secrets.env`, mode
+`0400`, owned by `pingone-promote`; the server refuses any other mode or
+owner. `ProtectSystem=strict` keeps it read-only for the service. To edit it:
+`sudo chmod 0600 /etc/pingone-promote/secrets.env`, edit,
+`sudo chmod 0400 /etc/pingone-promote/secrets.env`, `sudo systemctl restart pingone-promote`.
 
-    systemd-run --wait --pipe -p User=pingone-promote -p LoadCredential=s:/etc/pingone-promote/secrets.env         sh -c 'ls -ln "$CREDENTIALS_DIRECTORY"'    # expect -r--r-----+ owned by root
+On systemd 254 or newer you may use systemd credentials instead: add
+`LoadCredential=secrets:/etc/pingone-promote/secrets.env` to the unit, keep that
+file `0600 root:root`, and set `secretsFile` to
+`/run/credentials/pingone-promote.service/secrets`. systemd then gives the service
+a root-owned `0440` copy with an access-control entry for the service user, which
+the server accepts only inside `/run/credentials/`. Verified on Ubuntu 24.04
+(systemd 255). On RHEL 9 (systemd 252) in a container the service user could not
+read the credential at all, so it is not the default there.
 
-Tested 2026-11-11 on Ubuntu 24.04 (systemd 255) with the shipped unit's
-hardening as a transient unit: the service starts, `/healthz` answers, a
-foreign Host gets 421, a POST without a CSRF token gets 403, the process has
-no capabilities, `NoNewPrivs` and a seccomp filter, no secret reaches the
-journal, and `systemd-analyze security` rates it 1.6 (OK). Not yet run on RHEL 9
-itself (SELinux is untested); see `docs/acceptance/hosted-server.md`.
-
-Alternative without credentials: delete the `LoadCredential=` line, set
-`secretsFile` to `/etc/pingone-promote/secrets.env` and make that file
-`chown pingone-promote:pingone-promote; chmod 0400`. (`ProtectSystem=strict`
-keeps it read-only; the file stays readable to the service user.) Do not use
-mode `0440`/`0640`: the server rejects it.
+Tested 2026-11-11: the shipped unit's hardening as a transient unit on Ubuntu 24.04
+(systemd 255), and the install steps above in a RHEL 9.9 (UBI 9, systemd 252)
+container with systemd as init. The service starts, `/healthz` answers, a foreign
+Host gets 421, a POST without a CSRF token gets 403, the process has no
+capabilities, `NoNewPrivs` and a seccomp filter, no secret reaches the journal,
+and `systemd-analyze security` rates it 1.6 (OK). SELinux on a real RHEL 9 host is
+still untested; see `docs/acceptance/hosted-server.md`.
 
 `MemoryDenyWriteExecute=yes` is safe for this binary: it is a static Go
 program (`CGO_ENABLED=0`) and terraform and pingcli-terraformer are Go too. If
 you add a tool that JITs, relax it.
 
-Check the configuration (when `--check-config` exists in your build; it
-needs to read the secrets file, so use the alternative layout above or run it
-via `systemd-run` with the same `LoadCredential`):
-`/opt/pingone-promote/pingone-promote serve --config /etc/pingone-promote/config.json --check-config`.
+Check the configuration, secrets file and tools before starting the service
+(run it as the service user, who owns the secrets file):
+
+    runuser -u pingone-promote -- /opt/pingone-promote/pingone-promote serve --config /etc/pingone-promote/config.json --check-config
 
 ### SELinux
 

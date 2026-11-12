@@ -2,7 +2,7 @@
   "listen": "127.0.0.1:8080",
   "allowedHosts": [],
   "signIn": "none",
-  "secretsFile": "/run/credentials/pingone-promote.service/secrets",
+  "secretsFile": "/etc/pingone-promote/secrets.env",
   "gitlab": {
     "baseUrl": "https://gitlab.example.com",
     "projectId": "1234",

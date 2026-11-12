@@ -14,12 +14,13 @@ Restart=on-failure
 RestartSec=5s
 Environment=TMPDIR=/tmp HOME=/tmp
 
-# Secrets: systemd copies the root-owned file into a private tmpfs
-# credentials directory and gives the service user an owner-only copy.
-# Set "secretsFile" to /run/credentials/pingone-promote.service/secrets.
-# (To skip this, delete the line and point secretsFile at a 0400 file owned
-# by pingone-promote.)
-LoadCredential=secrets:/etc/pingone-promote/secrets.env
+# Secrets: /etc/pingone-promote/secrets.env, mode 0400, owned by
+# pingone-promote (the config's secretsFile). ProtectSystem=strict keeps it
+# read-only for the service. On systemd 254 or newer you may instead use
+#   LoadCredential=secrets:/etc/pingone-promote/secrets.env
+# with secretsFile /run/credentials/pingone-promote.service/secrets (verified
+# on systemd 255); systemd 252 (RHEL 9) did not give the service user access
+# to the credential in testing, so it is not the default.
 
 # Hardening
 NoNewPrivileges=yes
