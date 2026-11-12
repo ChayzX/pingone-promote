@@ -1,0 +1,82 @@
+131:func child(t, fam, parent, parentAttr, path, emb string, owned bool, name ...string) Def {
+132:	d := api(t, fam, path, emb, name...)
+137:func single(t, fam, path string) Def {
+138:	return Def{Type: t, Family: fam, Exporter: ExporterAPI, Status: Covered, Path: path, Singleton: true, Import: ImportEnvironment}
+166:	with(api("pingone_application", "applications", "applications", "applications", "name"), func(d *Def) {
+180:	with(limit(child("pingone_application_attribute_mapping", "applications", "pingone_application", "application_id", "applications/{parent}/attributes", "attributes", true, "name"),
+182:	child("pingone_application_sign_on_policy_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/signOnPolicyAssignments", "signOnPolicyAssignments", true, "priority"),
+183:	child("pingone_application_flow_policy_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/flowPolicyAssignments", "flowPolicyAssignments", true, "priority"),
+184:	with(child("pingone_application_resource_grant", "applications", "pingone_application", "application_id", "applications/{parent}/grants", "grants", true, "resource.id"), func(d *Def) {
+187:	child("pingone_application_role_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"),
+188:	limit(child("pingone_application_metadata", "applications", "pingone_application", "application_id", "applications/{parent}/metadata", "metadata", true, "key"),
+191:	limit(child("pingone_mfa_application_push_credential", "mfa_devices", "pingone_application", "application_id", "applications/{parent}/pushCredentials", "pushCredentials", true, "type"),
+193:	with(api("pingone_system_application", "applications", "applications", "applications", "type"), func(d *Def) {
+197:	child("pingone_digital_wallet_application", "credentials", "pingone_application", "application_id", "digitalWalletApplications", "digitalWalletApplications", false, "name"),
+200:	with(api("pingone_resource", "resources_scopes_grants", "resources", "resources", "name"), func(d *Def) {
+204:	with(child("pingone_resource_scope", "resources_scopes_grants", "pingone_resource", "resource_id", "resources/{parent}/scopes", "scopes", true, "name"), func(d *Def) {
+207:	with(limit(child("pingone_resource_attribute", "resources_scopes_grants", "pingone_resource", "custom_resource_id", "resources/{parent}/attributes", "attributes", true, "name"),
+209:	with(child("pingone_resource_scope_openid", "resources_scopes_grants", "pingone_resource", "", "resources/{parent}/scopes", "scopes", false, "name"), func(d *Def) {
+214:	with(child("pingone_resource_scope_pingone_api", "resources_scopes_grants", "pingone_resource", "", "resources/{parent}/scopes", "scopes", false, "name"), func(d *Def) {
+222:	with(api("pingone_sign_on_policy", "sign_on", "signOnPolicies", "signOnPolicies", "name"), func(d *Def) { d.Builtin = "default=true" }),
+223:	with(child("pingone_sign_on_policy_action", "sign_on", "pingone_sign_on_policy", "sign_on_policy_id", "signOnPolicies/{parent}/actions", "actions", true, "priority"), func(d *Def) {
+233:	with(api("pingone_population", "directory", "populations", "populations", "name"), func(d *Def) {
+237:	with(single("pingone_population_default", "directory", "populations"), func(d *Def) {
+241:	child("pingone_population_default_identity_provider", "directory", "pingone_population", "population_id", "populations/{parent}/defaultIdentityProvider", "", true),
+242:	api("pingone_group", "directory", "groups", "groups", "name"),
+243:	with(child("pingone_group_nesting", "directory", "pingone_group", "nested_group_id", "groups/{parent}/memberOfGroups", "groupMemberships", true, "name"), func(d *Def) {
+249:	child("pingone_group_role_assignment", "directory", "pingone_group", "group_id", "groups/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"),
+250:	with(child("pingone_schema_attribute", "directory", "", "", "schemas/{schema}/attributes", "attributes", false, "name"), func(d *Def) {
+253:	with(api("pingone_password_policy", "directory", "passwordPolicies", "passwordPolicies", "name"), func(d *Def) { d.Builtin = "default=true" }),
+256:	with(api("pingone_mfa_device_policy", "mfa_devices", "deviceAuthenticationPolicies", "deviceAuthenticationPolicies", "name"), func(d *Def) { d.Match = "default!=true" }),
+257:	with(api("pingone_mfa_device_policy_default", "mfa_devices", "deviceAuthenticationPolicies", "deviceAuthenticationPolicies", "name"), func(d *Def) {
+261:	with(api("pingone_mfa_fido2_policy", "mfa_devices", "fido2Policies", "fido2Policies", "name"), func(d *Def) { d.EnvLocal = []string{"relying_party_id"} }),
+262:	single("pingone_mfa_settings", "mfa_devices", "mfaSettings"),
+265:	with(api("pingone_identity_provider", "identity_providers", "identityProviders", "identityProviders", "name"), func(d *Def) {
+273:	child("pingone_identity_provider_attribute", "identity_providers", "pingone_identity_provider", "identity_provider_id", "identityProviders/{parent}/attributes", "attributes", true, "name"),
+274:	with(api("pingone_gateway", "gateways", "gateways", "gateways", "name"), func(d *Def) {
+280:	child("pingone_gateway_role_assignment", "gateways", "pingone_gateway", "gateway_id", "gateways/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"),
+283:	single("pingone_branding_settings", "branding", "branding"),
+284:	with(api("pingone_branding_theme", "branding", "themes", "themes", "configuration.name"), func(d *Def) {
+289:	with(child("pingone_branding_theme_default", "branding", "pingone_branding_theme", "branding_theme_id", "", "", true), func(d *Def) {
+293:	with(single("pingone_notification_settings", "notifications", "notificationsSettings"), func(d *Def) { d.EnvLocal = []string{"from.email_address", "reply_to.email_address"} }),
+294:	with(single("pingone_notification_settings_email", "notifications", "notificationsSettings/emailDeliverySettings"), func(d *Def) {
+299:	with(api("pingone_notification_template_content", "notifications", "templates/{template}/contents", "contents", "template.id", "locale", "deliveryMethod", "variant"), func(d *Def) {
+305:	api("pingone_notification_policy", "notifications", "notificationsPolicies", "notificationsPolicies", "name"),
+306:	with(single("pingone_phone_delivery_settings", "notifications", "notificationsSettings/phoneDeliverySettings"), func(d *Def) {
+310:	api("pingone_form", "forms", "forms", "forms", "name"),
+311:	with(single("pingone_forms_recaptcha_v2", "forms", "forms/recaptchaV2"), func(d *Def) {
+315:	api("pingone_agreement", "agreements", "agreements", "agreements", "name"),
+316:	with(child("pingone_agreement_enable", "agreements", "pingone_agreement", "agreement_id", "agreements", "agreements", true), func(d *Def) {
+320:	child("pingone_agreement_localization", "agreements", "pingone_agreement", "agreement_id", "agreements/{parent}/languages", "languages", true, "locale"),
+321:	with(child("pingone_agreement_localization_enable", "agreements", "pingone_agreement_localization", "agreement_localization_id", "", "", true), func(d *Def) {
+325:	with(child("pingone_agreement_localization_revision", "agreements", "pingone_agreement_localization", "agreement_localization_id", "agreements/{grandparent}/languages/{parent}/revisions", "revisions", true, "effectiveAt"), func(d *Def) {
+328:	with(api("pingone_language", "languages", "languages", "languages", "locale"), func(d *Def) {
+333:	with(api("pingone_language_update", "languages", "languages", "languages", "locale"), func(d *Def) {
+340:	with(api("pingone_language_translation", "languages", "languages/{parent}/localizationStrings", "localizationStrings", "locale"), func(d *Def) {
+348:	with(api("pingone_risk_predictor", "protect", "riskPredictors", "riskPredictors", "compactName"), func(d *Def) {
+356:	with(api("pingone_authorize_api_service", "authorize", "apiServers", "apiServers", "name"), func(d *Def) {
+359:	with(child("pingone_authorize_api_service_deployment", "authorize", "pingone_authorize_api_service", "api_service_id", "apiServers/{parent}/deployment", "", true), func(d *Def) {
+362:	child("pingone_authorize_api_service_operation", "authorize", "pingone_authorize_api_service", "api_service_id", "apiServers/{parent}/operations", "operations", true, "name"),
+363:	api("pingone_authorize_application_role", "authorize", "applicationRoles", "applicationRoles", "name"),
+364:	limit(child("pingone_authorize_application_role_permission", "authorize", "pingone_authorize_application_role", "application_role_id", "applicationRoles/{parent}/permissions", "permissions", true, "id"), "labels end with the permission ID (the API object has no name), so they differ between source environments"),
+365:	api("pingone_application_resource", "authorize", "applicationResources", "applicationResources", "name"),
+366:	child("pingone_application_resource_permission", "authorize", "pingone_application_resource", "application_resource_id", "applicationResources/{parent}/permissions", "permissions", true, "action"),
+367:	with(api("pingone_authorize_decision_endpoint", "authorize", "decisionEndpoints", "decisionEndpoints", "name"), func(d *Def) {
+371:	api("pingone_verify_policy", "verify", "verifyPolicies", "verifyPolicies", "name"),
+372:	api("pingone_verify_voice_phrase", "verify", "voicePhrases", "voicePhrases", "displayName"),
+373:	child("pingone_verify_voice_phrase_content", "verify", "pingone_verify_voice_phrase", "voice_phrase_id", "voicePhrases/{parent}/contents", "contents", true, "locale"),
+374:	single("pingone_credential_issuer_profile", "credentials", "credentialIssuerProfile"),
+375:	api("pingone_credential_type", "credentials", "credentialTypes", "credentialTypes", "title"),
+376:	limit(child("pingone_credential_issuance_rule", "credentials", "pingone_credential_type", "credential_type_id", "credentialTypes/{parent}/issuanceRules", "issuanceRules", true, "id"), "labels end with the rule ID (the API object has no name)"),
+379:	single("pingone_administrator_security", "platform", "adminConfig"),
+380:	with(api("pingone_alert_channel", "platform", "alertChannels", "alertChannels", "alertName"), func(d *Def) { d.EnvLocal = []string{"addresses"} }),
+381:	with(api("pingone_certificate", "platform", "certificates", "certificates", "subjectDN"), func(d *Def) {
+386:	with(api("pingone_custom_domain", "platform", "customDomains", "customDomains", "domainName"), func(d *Def) {
+392:	with(api("pingone_custom_role", "platform", "roles", "roles", "name"), func(d *Def) {
+397:	with(api("pingone_identity_propagation_plan", "platform", "propagation/plans", "plans", "name"), func(d *Def) {
+400:	with(api("pingone_key", "platform", "keys", "keys", "name", "usageType"), func(d *Def) {
+404:	api("pingone_key_rotation_policy", "platform", "keyRotationPolicies", "keyRotationPolicies", "name"),
+405:	with(single("pingone_rate_limit_configuration", "platform", "rateLimitConfigurations"), func(d *Def) {
+409:	with(api("pingone_trusted_email_domain", "platform", "emailDomains", "emailDomains", "domainName"), func(d *Def) {
+413:	child("pingone_trusted_email_address", "platform", "pingone_trusted_email_domain", "email_domain_id", "emailDomains/{parent}/trustedEmails", "trustedEmails", true, "emailAddress"),
+414:	with(api("pingone_webhook", "platform", "subscriptions", "subscriptions", "name"), func(d *Def) {

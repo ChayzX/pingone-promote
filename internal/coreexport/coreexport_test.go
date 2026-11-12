@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/hclblocks"
@@ -218,5 +219,60 @@ func TestRenderedBlocksHaveRequiredAttributes(t *testing.T) {
 	// A deprecated <x>_id is not written next to its object attribute <x>.
 	if strings.Contains(string(r.Files["ping-export-module/pingone_population.tf"]), "password_policy_id") {
 		t.Error("population sets both password_policy and password_policy_id")
+	}
+}
+
+// An unexpected answer for one type skips that type and keeps the rest.
+func TestOneFailingTypeDoesNotStopTheRead(t *testing.T) {
+	tn := pingonetest.LoadTenant(t, "testdata/tenant.json")
+	tn.Failing = map[string]int{"forms": 400, "keys": 500}
+	f := pingonetest.Start(t, tn)
+	c, err := pingone.New(pingone.Credentials{ClientID: f.ClientID, ClientSecret: f.ClientSecret, WorkerEnvironmentID: f.WorkerEnvID, RegionCode: "NA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AuthBase, c.APIBase = f.AuthBase(), f.APIBase()
+	inv, err := Read(context.Background(), c, env)
+	if err != nil {
+		t.Fatalf("one failing type stopped the read: %v", err)
+	}
+	for _, typ := range []string{"pingone_form", "pingone_key"} {
+		if why := inv.Skipped[typ]; !strings.Contains(why, "HTTP") {
+			t.Errorf("%s not reported as skipped: %q", typ, why)
+		}
+	}
+	if inv.Object("pingone_population.pingcli__Customers") == nil {
+		t.Error("the other types were not read")
+	}
+	// A wrong worker secret still stops everything with a clear error.
+	bad, _ := pingone.New(pingone.Credentials{ClientID: f.ClientID, ClientSecret: "wrong", WorkerEnvironmentID: f.WorkerEnvID, RegionCode: "NA"})
+	bad.AuthBase, bad.APIBase = f.AuthBase(), f.APIBase()
+	if _, err := Read(context.Background(), bad, env); err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("a failed sign-in must stop the read: %v", err)
+	}
+}
+
+// Rate limiting (429 with Retry-After) is waited out, not reported.
+func TestRateLimitedReadsAreRetried(t *testing.T) {
+	tn := pingonetest.LoadTenant(t, "testdata/tenant.json")
+	tn.Throttle = 2
+	f := pingonetest.Start(t, tn)
+	c, err := pingone.New(pingone.Credentials{ClientID: f.ClientID, ClientSecret: f.ClientSecret, WorkerEnvironmentID: f.WorkerEnvID, RegionCode: "NA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AuthBase, c.APIBase = f.AuthBase(), f.APIBase()
+	waits := 0
+	c.Sleep = func(context.Context, time.Duration) error { waits++; return nil }
+	inv, err := Read(context.Background(), c, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, plain := tenant(t)
+	if len(inv.Skipped) != len(plain.Skipped) || len(inv.Objects) != len(plain.Objects) {
+		t.Fatalf("throttled reads were not retried: %d objects (want %d), skipped %v", len(inv.Objects), len(plain.Objects), inv.Skipped)
+	}
+	if waits == 0 {
+		t.Fatal("no retry waited")
 	}
 }

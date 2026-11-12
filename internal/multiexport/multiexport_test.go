@@ -2,6 +2,7 @@ package multiexport
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -335,5 +336,41 @@ func TestCatalogSearchesCoreAndDaVinciByNameAndID(t *testing.T) {
 		if catalog.IdentityData(r.Type) {
 			t.Errorf("identity data in the catalog: %s", r)
 		}
+	}
+}
+
+type failingDaVinci struct{ DaVinci }
+
+func (failingDaVinci) CatalogAllIDs(context.Context, exporter.Credentials) ([]exporter.Resource, error) {
+	return nil, errors.New("exporter: terraformer exited with status 1: 403 Forbidden")
+}
+
+// An environment whose DaVinci cannot be read still exports core items.
+func TestCoreWorksWhenDaVinciCannotBeRead(t *testing.T) {
+	h := newHarness(t)
+	h.e.DaVinci = failingDaVinci{}
+	cat, err := h.e.Catalog(context.Background(), creds, true)
+	if err != nil {
+		t.Fatalf("catalog failed because DaVinci could not be read: %v", err)
+	}
+	if len(cat) == 0 {
+		t.Fatal("no core items")
+	}
+	exp, err := h.e.WholeExport(context.Background(), creds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(blocks(t, exp), "pingone_population.pingcli__Customers") {
+		t.Fatal("core items missing")
+	}
+	found := false
+	for _, w := range exp.Warnings {
+		found = found || strings.Contains(w, "DaVinci items were not read")
+	}
+	if !found {
+		t.Fatalf("no warning: %v", exp.Warnings)
+	}
+	if _, err := h.e.SelectedExport(context.Background(), creds, []string{"pingone_davinci_flow.pingcli__Flow-0020-A"}, nil); err == nil {
+		t.Fatal("selecting a DaVinci item must explain that DaVinci cannot be read")
 	}
 }

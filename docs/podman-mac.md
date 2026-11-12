@@ -48,7 +48,22 @@ Your network inspects HTTPS (a company proxy such as Zscaler or Netskope signs
 every site with the company's own root certificate). The Mac trusts it; the
 Podman machine and the image build do not yet. Do this once:
 
-1. Save the company root certificate as a file. Find its name in **Keychain
+1. Save the company root certificate as a file.
+
+   **Netskope:** the Netskope client keeps its certificates in a file; copy it:
+
+   ```bash
+   cp "/Library/Application Support/Netskope/STAgent/data/nscacert.pem" ~/company-root.crt
+   ```
+
+   If that file is not there, export them from the System keychain (they are
+   named like `caadmin.netskope.com` and `ca.<tenant>.goskope.com`):
+
+   ```bash
+   security find-certificate -a -c "netskope" -p /Library/Keychains/System.keychain > ~/company-root.crt; security find-certificate -a -c "goskope" -p /Library/Keychains/System.keychain >> ~/company-root.crt
+   ```
+
+   **Other proxies:** find the root certificate's name in **Keychain
    Access** (search the **System** keychain for your proxy vendor or company,
    for example "Zscaler Root CA"), then:
 

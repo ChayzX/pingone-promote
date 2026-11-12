@@ -16,7 +16,9 @@ package coreexport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -83,13 +85,21 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 			}
 			objs, err := readType(ctx, r, env, d, byType)
 			if err != nil {
-				if pingone.Forbidden(err) {
+				// One type the tenant answers unexpectedly must not stop the
+				// whole read: it is skipped and reported. Only failures that
+				// would hit every type (sign-in, network, cancellation) stop.
+				var ae *pingone.APIError
+				switch {
+				case pingone.Forbidden(err):
 					inv.Skipped[d.Type] = "the worker cannot read it (HTTP 403: service not licensed or no read role)"
-				} else if pingone.NotFound(err) {
+				case pingone.NotFound(err):
 					inv.Skipped[d.Type] = "not available in this environment (HTTP 404)"
-				} else {
+				case errors.As(err, &ae) && ae.Status != http.StatusUnauthorized:
+					inv.Skipped[d.Type] = fmt.Sprintf("the PingOne API answered HTTP %d for %s; report it so the read can be fixed", ae.Status, ae.Path)
+				default:
 					return nil, fmt.Errorf("coreexport: %s: %w", d.Type, err)
 				}
+				objs = nil
 			}
 			byType[d.Type] = objs
 			done[d.Type] = true

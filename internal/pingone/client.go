@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,70 @@ type Client struct {
 	mu      sync.Mutex
 	token   string
 	expires time.Time
+	// Retries bounds the retries of a rate-limited or temporarily failing
+	// GET (default 6). Sleep waits between them (tests replace it).
+	Retries int
+	Sleep   func(context.Context, time.Duration) error
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// retryable reports answers worth waiting for: rate limiting (429) and
+// temporary gateway or service failures.
+func retryable(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
+
+// getURL is getOnce with retries: a rate-limited or temporarily failing GET
+// waits (the server's Retry-After, else 1, 2, 4, 8, 16 s) and tries again;
+// an expired token (401) is renewed once.
+func (c *Client) getURL(ctx context.Context, u, display string) (map[string]any, error) {
+	retries := c.Retries
+	if retries <= 0 {
+		retries = 6
+	}
+	sleep := c.Sleep
+	if sleep == nil {
+		sleep = sleepCtx
+	}
+	renewed := false
+	for attempt := 0; ; attempt++ {
+		doc, err := c.getOnce(ctx, u, display)
+		var ae *APIError
+		if err == nil || !errors.As(err, &ae) {
+			return doc, err
+		}
+		if ae.Status == http.StatusUnauthorized && !renewed {
+			renewed = true
+			c.mu.Lock()
+			c.token = ""
+			c.mu.Unlock()
+			continue
+		}
+		if !retryable(ae.Status) || attempt >= retries {
+			return nil, err
+		}
+		wait := ae.retryAfter
+		if wait <= 0 {
+			wait = time.Second << attempt
+		}
+		if wait > 30*time.Second {
+			wait = 30 * time.Second
+		}
+		if err := sleep(ctx, wait); err != nil {
+			return nil, err
+		}
+	}
 }
 
 // New returns a client for the region of the worker.
@@ -75,6 +140,8 @@ func New(c Credentials) (*Client, error) {
 type APIError struct {
 	Status int
 	Path   string
+	// retryAfter is the server's Retry-After, when it sent one.
+	retryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -128,7 +195,7 @@ func (c *Client) bearer(ctx context.Context) (string, error) {
 	return c.token, nil
 }
 
-func (c *Client) getURL(ctx context.Context, u, display string) (map[string]any, error) {
+func (c *Client) getOnce(ctx context.Context, u, display string) (map[string]any, error) {
 	tok, err := c.bearer(ctx)
 	if err != nil {
 		return nil, err
@@ -148,7 +215,12 @@ func (c *Client) getURL(ctx context.Context, u, display string) (map[string]any,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return nil, &APIError{Status: resp.StatusCode, Path: display}
+		ae := &APIError{Status: resp.StatusCode, Path: display}
+		if s, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && s >= 0 {
+			ae.retryAfter = time.Duration(s) * time.Second
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		return nil, ae
 	}
 	max := c.MaxBody
 	if max <= 0 {

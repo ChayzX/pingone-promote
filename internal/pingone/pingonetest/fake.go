@@ -32,6 +32,11 @@ type Tenant struct {
 	Objects map[string]map[string]any `json:"objects"`
 	// Forbidden paths answer 403 (an unlicensed service).
 	Forbidden []string `json:"forbidden,omitempty"`
+	// Failing paths answer the given HTTP status (an unexpected answer).
+	Failing map[string]int `json:"failing,omitempty"`
+	// Throttle answers this many requests to each API path with 429 (and
+	// Retry-After: 0) before answering normally.
+	Throttle int `json:"throttle,omitempty"`
 }
 
 // Fake is a running fake.
@@ -42,8 +47,9 @@ type Fake struct {
 	ClientSecret string
 	WorkerEnvID  string
 
-	mu       sync.Mutex
-	Requests []string // "METHOD path?query"
+	mu        sync.Mutex
+	Requests  []string // "METHOD path?query"
+	throttled map[string]int
 	// NonGET counts requests other than GET on the API (must stay 0).
 	NonGET int
 }
@@ -112,6 +118,24 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":"ACCESS_FAILED"}`, http.StatusForbidden)
 			return
 		}
+	}
+	if f.Tenant.Throttle > 0 {
+		f.mu.Lock()
+		if f.throttled == nil {
+			f.throttled = map[string]int{}
+		}
+		n := f.throttled[r.URL.RequestURI()]
+		f.throttled[r.URL.RequestURI()] = n + 1
+		f.mu.Unlock()
+		if n < f.Tenant.Throttle {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, `{"code":"REQUEST_LIMITED"}`, http.StatusTooManyRequests)
+			return
+		}
+	}
+	if status, ok := f.Tenant.Failing[p]; ok {
+		http.Error(w, `{"code":"INVALID_REQUEST"}`, status)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if c, ok := f.Tenant.Collections[p]; ok {

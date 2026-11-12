@@ -55,6 +55,9 @@ type cached struct {
 	at  time.Time
 	inv *coreexport.Inventory
 	dv  []exporter.Resource
+	// dvErr is why DaVinci could not be read (an environment without
+	// DaVinci, or a worker without the DaVinci role). Core items still work.
+	dvErr error
 }
 
 // DefaultReader reads the real PingOne API.
@@ -89,7 +92,10 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 	c := &cached{at: time.Now(), inv: inv}
 	if e.DaVinci != nil {
 		if c.dv, err = e.DaVinci.CatalogAllIDs(ctx, creds); err != nil {
-			return nil, err
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			c.dv, c.dvErr = nil, err
 		}
 	}
 	e.mu.Lock()
@@ -295,6 +301,9 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 		return true
 	}
 	for _, s := range seeds {
+		if IsDaVinci(s) && c.dvErr != nil {
+			return nil, fmt.Errorf("multiexport: DaVinci items cannot be read from this environment: %w", c.dvErr)
+		}
 		if excluded(s) {
 			return nil, fmt.Errorf("multiexport: %s is both selected and excluded", s)
 		}
@@ -336,7 +345,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 				}
 			}
 		}
-		if e.DaVinci != nil && (whole || len(dv) > 0) {
+		if e.DaVinci != nil && c.dvErr == nil && (whole || len(dv) > 0) {
 			key := strings.Join(sortedKeys(dv), ",")
 			if dvExp == nil || key != dvKey {
 				dvKey = key
@@ -430,6 +439,9 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 	out := &exporter.Export{EnvironmentID: c.inv.EnvironmentID, ModuleDir: exporter.ModuleDir, ModuleName: exporter.ModuleName,
 		Files: map[string][]byte{}, Referenced: map[string]string{}, Adopt: core.Adopt}
 	out.Warnings = append(out.Warnings, c.inv.Warnings...)
+	if c.dvErr != nil {
+		out.Warnings = append(out.Warnings, "DaVinci items were not read: the source environment may not have DaVinci, or the worker lacks a DaVinci role; core PingOne items are exported")
+	}
 	for _, t := range sortedKeysS(c.inv.Skipped) {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%s was not read: %s", t, c.inv.Skipped[t]))
 	}
