@@ -171,3 +171,19 @@ func TestOtherModuleIsNotDuplicated(t *testing.T) {
 		t.Fatal("a second module could be submitted")
 	}
 }
+
+// A module prepared for PingOne but still empty counts too.
+func TestEmptyPingOneModuleIsNotDuplicated(t *testing.T) {
+	e := newCoreEnv(t)
+	for p := range e.gl.Files("main") {
+		if strings.HasPrefix(p, "definitions/") || p == "main.tf" {
+			e.gl.Delete("main", p)
+		}
+	}
+	e.gl.Edit("main", "main.tf", "module \"pingone\" {\n  source                 = \"./modules/pingone\"\n  pingone_environment_id = var.pingone_environment_id\n}\n")
+	e.gl.Edit("main", "modules/pingone/variables.tf", "variable \"pingone_environment_id\" {\n  type = string\n}\n")
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	mustContain(t, p.body, "repository.moduleName")
+}

@@ -121,7 +121,11 @@ func loadIndex(r Repo, l Layout) (*index, error) {
 					// Only a module that holds PingOne resources is the
 					// repository's own home for them.
 					if v, d := a.Expr.Value(nil); !d.HasErrors() && v.Type() == cty.String && strings.HasPrefix(v.AsString(), "./") {
-						switch holdsPingOne(r, path.Clean(v.AsString())) {
+						kind := holdsPingOne(r, path.Clean(v.AsString()))
+						if _, takesEnv := b.Body.Attributes["pingone_environment_id"]; takesEnv {
+							kind = "yes" // prepared for PingOne, maybe still empty
+						}
+						switch kind {
 						case "yes":
 							ix.localModules = append(ix.localModules, b.Labels[0]+" ("+v.AsString()+")")
 						case "unknown":
@@ -229,7 +233,7 @@ func holdsPingOne(r Repo, dir string) string {
 		return "unknown"
 	}
 	for _, f := range files {
-		if src, ok, err := r.Read(f); err == nil && ok && bytes.Contains(src, []byte(`resource "pingone_`)) {
+		if src, ok, err := r.Read(f); err == nil && ok && (bytes.Contains(src, []byte(`resource "pingone_`)) || bytes.Contains(src, []byte(`pingidentity/pingone`))) {
 			return "yes"
 		}
 	}
