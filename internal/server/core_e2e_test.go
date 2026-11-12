@@ -308,4 +308,24 @@ func TestSearchShowsResultsOnThePage(t *testing.T) {
 	mustContain(t, p.body, "pingone_population.pingcli__Customers")
 	p = b.post(draft+"/search", url.Values{"q": {"no-such-item-anywhere"}})
 	mustContain(t, p.body, "Nothing matches")
+	// An empty name lists everything, with a count.
+	p = b.post(draft+"/search", url.Values{"q": {""}})
+	mustContain(t, p.body, "pingone_population.pingcli__Customers", " matches")
+	if strings.Contains(p.body, "Nothing matches") {
+		t.Fatal("an empty search showed nothing")
+	}
+}
+
+// A search's outcome is shown next to the results (where the page scrolls
+// to), not only at the top of the page.
+func TestSearchMessagesShowWithTheResults(t *testing.T) {
+	e := newCoreEnv(t)
+	dropLines(e, "dev.tfvars", "pingone_environment_id")
+	b := e.browser()
+	draft := b.newDraft()
+	p := b.post(draft+"/search", url.Values{"q": {"x"}})
+	i := strings.Index(p.body, `id="results"`)
+	if i < 0 || !strings.Contains(p.body[i:], "could not be read") {
+		t.Fatalf("the search problem is not with the results:\n%s", p.body)
+	}
 }

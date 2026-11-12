@@ -107,6 +107,13 @@ type draftView struct {
 	Excluded     []itemView
 	ListLoaded   bool
 	SearchedOnce bool
+	// ResultsTotal: matches in all (Results shows the first ones);
+	// ListSize: items in the source's list; SearchNotice and
+	// SearchProblem: the last search's outcome, shown with the results.
+	ResultsTotal  int
+	ListSize      int
+	SearchNotice  string
+	SearchProblem string
 	// Sections are the families that can be copied whole.
 	Sections []sectionOption
 	// Branch is the Git branch a submit creates; TypedBranch: the person
@@ -158,10 +165,14 @@ func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 			Running: d.job != nil && d.job.Running && d.job.Kind != "search", Loading: d.loads[d.Source] != nil && !d.loads[d.Source].finished(),
 			HasPreview: d.preview != nil,
 			Results:    viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
-			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != "" || d.TypeFilter != "", Types: typeOptions(d),
+			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.searched, Types: typeOptions(d),
+			ResultsTotal: d.ResultsTotal, SearchNotice: d.searchNotice, SearchProblem: d.searchProblem,
 			Sections: sectionOptions(d), Branch: s.branchFor(d),
 			TypedBranch: s.branchRE() != nil, BranchPattern: s.cfg.BranchPattern, BranchExample: s.cfg.BranchExample}
-		d.notice, d.problem = "", ""
+		if c := d.catalogs[d.Source]; c != nil {
+			v.ListSize = len(c.items)
+		}
+		d.notice, d.problem, d.searchNotice, d.searchProblem = "", "", "", ""
 		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
 	})
 }
@@ -202,6 +213,7 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 				d.notice = "The source environment changed, so the selected and excluded lists were cleared."
 			}
 			d.Source, d.Selected, d.Excluded, d.Results, d.Choices = src, nil, nil, nil, map[string]string{}
+			d.ResultsTotal, d.searched = 0, false
 			s.loadList(d, src)
 		}
 		d.Whole = f.Get("scope") == request.ScopeAll
@@ -298,9 +310,10 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			d.TypeFilter = t
 		}
 		d.Updated = s.now()
+		d.searched = true
 		if d.Source == "" {
-			d.problem = "Choose a source environment first."
-			s.redirect(w, r, draftURL(d, ""))
+			d.searchProblem = "Choose a source environment in step 1 first."
+			s.redirect(w, r, draftURL(d, "#results"))
 			return
 		}
 		if r.PostForm.Get("refresh") == "yes" {
@@ -316,12 +329,14 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		s.awaitList(r, l)
 		switch c := d.catalogs[source]; {
 		case c != nil:
-			d.Results = filterItems(c.items, q, d.TypeFilter)
+			d.Results, d.ResultsTotal = filterItems(c.items, q, d.TypeFilter)
 		case l != nil && l.finished() && l.err != "":
-			d.problem = "The items of " + source + " could not be read: " + l.err
+			d.Results, d.ResultsTotal = nil, 0
+			d.searchProblem = "The items of " + source + " could not be read: " + l.err
 			delete(d.loads, source) // the next search tries again
 		default:
-			d.notice = "Still reading the items of " + source + " (a large environment takes a few minutes). Search again in a moment; nothing you entered is lost."
+			d.Results, d.ResultsTotal = nil, 0
+			d.searchNotice = "Still reading the items of " + source + " (a large environment takes a few minutes). Press Search again in a moment; nothing you entered is lost."
 		}
 		s.redirect(w, r, draftURL(d, "#results"))
 	})

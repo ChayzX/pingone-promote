@@ -263,7 +263,7 @@ func (s *Server) runSearch(d *Draft, source string) func(context.Context, func(s
 		defer s.drafts.mu.Unlock()
 		d.catalogs[source] = &catalogEntry{at: s.now(), items: items}
 		if d.Source == source {
-			d.Results = filterItems(items, d.Query, d.TypeFilter)
+			d.Results, d.ResultsTotal = filterItems(items, d.Query, d.TypeFilter)
 		}
 		d.Updated = s.now()
 		return nil
@@ -305,10 +305,10 @@ func selectable(addr string) bool {
 	return r.Validate() == nil
 }
 
-func searchItems(items []Item, query string) []Item {
+func searchItems(items []Item, query string) ([]Item, int) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
-		return nil
+		return nil, 0
 	}
 	var exact, partial []Item
 	for _, it := range items {
@@ -320,10 +320,11 @@ func searchItems(items []Item, query string) []Item {
 		}
 	}
 	out := append(exact, partial...)
-	if len(out) > MaxSearchResults {
+	n := len(out)
+	if n > MaxSearchResults {
 		out = out[:MaxSearchResults]
 	}
-	return out
+	return out, n
 }
 
 // friendlyNames name common types the way people say them; every other
@@ -369,21 +370,29 @@ func resourceLabel(typ string) string {
 
 // filterItems searches by name or ID within one type, or lists every item
 // of the type when the query is empty.
-func filterItems(items []Item, query, typ string) []Item {
-	if typ == "" {
-		return searchItems(items, query)
-	}
+// filterItems returns the first matches of query within type typ ("" any
+// type) and how many there are. An empty query lists every item (of the
+// type), sorted by type and name.
+func filterItems(items []Item, query, typ string) ([]Item, int) {
 	var of []Item
 	for _, it := range items {
-		if it.Type == typ {
+		if typ == "" || it.Type == typ {
 			of = append(of, it)
 		}
 	}
 	if strings.TrimSpace(query) == "" {
-		if len(of) > 200 {
-			of = of[:200]
+		sort.SliceStable(of, func(i, j int) bool {
+			a, b := resourceLabel(of[i].Type), resourceLabel(of[j].Type)
+			if a != b {
+				return a < b
+			}
+			return strings.ToLower(of[i].Name) < strings.ToLower(of[j].Name)
+		})
+		n := len(of)
+		if n > MaxListResults {
+			of = of[:MaxListResults]
 		}
-		return of
+		return of, n
 	}
 	return searchItems(of, query)
 }

@@ -25,7 +25,9 @@ const (
 	DraftIdleExpiry     = 8 * time.Hour
 	MaxSelected         = 200
 	MaxSearchResults    = 50
-	catalogMaxAge       = 30 * time.Minute
+	// MaxListResults caps a listing with no name typed.
+	MaxListResults = 200
+	catalogMaxAge  = 30 * time.Minute
 )
 
 // Item is one resource of the source environment.
@@ -101,6 +103,13 @@ type Draft struct {
 	// TypeFilter limits search results to one resource type ("" all).
 	TypeFilter string
 	Results    []Item
+	// ResultsTotal counts every match; Results holds the first ones.
+	ResultsTotal int
+	// searched: a search ran; searchNotice and searchProblem explain its
+	// outcome next to the results, where the page scrolls to.
+	searched      bool
+	searchNotice  string
+	searchProblem string
 
 	catalogs map[string]*catalogEntry
 	// loads are background reads of a source's item list, apart from job

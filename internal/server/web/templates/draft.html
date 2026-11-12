@@ -56,12 +56,15 @@
       </select>
     </div>{{end}}
   </div>
-  <p class="hint">{{if .Data.ListLoaded}}Leave the name empty and pick a type to list every item of that type.{{else}}The first search reads {{$d.Source}}, which can take a minute. Leave the name empty to list everything.{{end}}</p>
+  <p class="hint">Leave the name empty to list every item{{with .Data.Types}} (of the chosen type){{end}}.{{if not .Data.ListLoaded}} The first search reads {{$d.Source}}, which can take a minute.{{end}}</p>
   <label class="inline"><input type="checkbox" name="refresh" value="yes" form="main"> Read {{$d.Source}} again (after changes in PingOne)</label>
   <button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate>Search</button>
 
 <div id="results">
+{{with .Data.SearchProblem}}<p class="problem" role="alert">{{.}}</p>{{end}}
+{{with .Data.SearchNotice}}<p class="notice" role="status">{{.}}</p>{{end}}
 {{if .Data.Results}}
+<p role="status">{{if gt .Data.ResultsTotal (len .Data.Results)}}Showing the first {{len .Data.Results}} of {{.Data.ResultsTotal}} matches; type part of a name or pick a type to narrow them.{{else}}{{len .Data.Results}} {{if eq (len .Data.Results) 1}}match{{else}}matches{{end}}.{{end}}</p>
 <table>
   <caption class="sr-only">Search results</caption>
   <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
@@ -79,7 +82,7 @@
   {{end}}
   </tbody>
 </table>
-{{else if .Data.SearchedOnce}}{{if .Data.ListLoaded}}<p>Nothing matches. Try part of the name, the ID, or another type.</p>{{end}}{{end}}
+{{else if and .Data.SearchedOnce .Data.ListLoaded}}{{if eq .Data.ListSize 0}}<p role="status">PingOne returned no items for {{$d.Source}}. Check that the worker application has read roles on that environment, then tick "Read {{$d.Source}} again" and search.</p>{{else}}<p role="status">Nothing matches among the {{.Data.ListSize}} items of {{$d.Source}}. Try part of the name, the ID, or another type.</p>{{end}}{{end}}
 </div>
 </section>
 
