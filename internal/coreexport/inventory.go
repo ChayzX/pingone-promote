@@ -94,6 +94,10 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 					inv.Skipped[d.Type] = "the worker cannot read it (HTTP 403: service not licensed or no read role)"
 				case pingone.NotFound(err):
 					inv.Skipped[d.Type] = "not available in this environment (HTTP 404)"
+				case pingone.BadResponse(err):
+					// One endpoint answering in another format (XML, ...)
+					// must not stop the whole read.
+					inv.Skipped[d.Type] = "PingOne's answer could not be read (it is not JSON); references to these items keep their source IDs, so report it"
 				case errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500 && ae.Status != http.StatusUnauthorized && ae.Status != http.StatusTooManyRequests:
 					// A request this tool builds wrongly for this tenant. A
 					// server error (5xx) or throttling that outlasted the

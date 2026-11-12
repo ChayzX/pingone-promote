@@ -149,6 +149,23 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("pingone: GET %s returned HTTP %d", e.Path, e.Status)
 }
 
+// ResponseError is a 2xx answer this client cannot use (not a JSON
+// object). Like APIError, it never includes the body.
+type ResponseError struct {
+	Path    string
+	Problem string
+}
+
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("pingone: GET %s: %s", e.Path, e.Problem)
+}
+
+// BadResponse reports a 2xx answer that is not a JSON object.
+func BadResponse(err error) bool {
+	var re *ResponseError
+	return errors.As(err, &re)
+}
+
 // NotFound reports a 404.
 func NotFound(err error) bool {
 	var ae *APIError
@@ -257,10 +274,15 @@ func (c *Client) getOnce(ctx context.Context, u, display string) (map[string]any
 		return nil, fmt.Errorf("pingone: GET %s: the response exceeds the size limit", display)
 	}
 	var out map[string]any
+	if strings.TrimSpace(string(body)) == "" {
+		// An empty answer (some sub-resources of an object that has none)
+		// holds nothing.
+		return map[string]any{}, nil
+	}
 	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.UseNumber()
-	if err := dec.Decode(&out); err != nil {
-		return nil, fmt.Errorf("pingone: GET %s: the response is not a JSON object", display)
+	if err := dec.Decode(&out); err != nil || out == nil {
+		return nil, &ResponseError{Path: display, Problem: "the response is not a JSON object"}
 	}
 	return out, nil
 }

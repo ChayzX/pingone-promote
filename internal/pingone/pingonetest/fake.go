@@ -34,6 +34,8 @@ type Tenant struct {
 	Forbidden []string `json:"forbidden,omitempty"`
 	// Failing paths answer the given HTTP status (an unexpected answer).
 	Failing map[string]int `json:"failing,omitempty"`
+	// Raw paths answer 200 with this body as XML (not JSON).
+	Raw map[string]string `json:"raw,omitempty"`
 	// Throttle answers this many requests to each API path with 429 (and
 	// Retry-After: 0) before answering normally.
 	Throttle int `json:"throttle,omitempty"`
@@ -135,6 +137,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if status, ok := f.Tenant.Failing[p]; ok {
 		http.Error(w, `{"code":"INVALID_REQUEST"}`, status)
+		return
+	}
+	if body, ok := f.Tenant.Raw[p]; ok {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(body))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

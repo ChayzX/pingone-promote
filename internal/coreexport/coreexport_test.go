@@ -256,6 +256,23 @@ func TestOneFailingTypeDoesNotStopTheRead(t *testing.T) {
 	if inv.Object("pingone_population.pingcli__Customers") == nil {
 		t.Error("the other types were not read")
 	}
+	// An endpoint answering in another format (XML) skips its type only.
+	tn.Failing = nil
+	tn.Raw = map[string]string{"keys": "<EntityDescriptor/>"}
+	fx := pingonetest.Start(t, tn)
+	cx, _ := pingone.New(pingone.Credentials{ClientID: fx.ClientID, ClientSecret: fx.ClientSecret, WorkerEnvironmentID: fx.WorkerEnvID, RegionCode: "NA"})
+	cx.AuthBase, cx.APIBase = fx.AuthBase(), fx.APIBase()
+	invx, err := Read(context.Background(), cx, env)
+	if err != nil {
+		t.Fatalf("a non-JSON answer stopped the read: %v", err)
+	}
+	if why := invx.Skipped["pingone_key"]; !strings.Contains(why, "not JSON") {
+		t.Errorf("pingone_key not reported as skipped: %q", why)
+	}
+	if invx.Object("pingone_population.pingcli__Customers") == nil {
+		t.Error("the other types were not read")
+	}
+	tn.Raw = nil
 	// A server error stops the read: skipping the type would write every
 	// reference to it as a literal source ID.
 	tn.Failing = map[string]int{"keys": 500}
