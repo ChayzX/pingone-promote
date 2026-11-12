@@ -105,7 +105,7 @@ var families = []struct {
 		"pingone_application_resource_grant.pingcli__Web-0020-Portal_Orders-0020-API", "pingone_application_metadata.pingcli__Web-0020-Portal"},
 		[]string{"pingone_sign_on_policy.pingcli__Customer_Login", "pingone_resource.pingcli__Orders-0020-API", "pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy"}},
 	{"resources_scopes_grants", "pingone_resource.pingcli__Orders-0020-API", []string{"pingone_resource_scope.pingcli__Orders-0020-API_orders-003A-read", "pingone_application_resource.pingcli__Orders-0020-API_Orders"}, nil},
-	{"sign_on", "pingone_sign_on_policy.pingcli__Customer_Login", []string{"pingone_sign_on_policy_action.pingcli__Customer_Login_1", "pingone_sign_on_policy_action.pingcli__Customer_Login_2"},
+	{"sign_on", "pingone_sign_on_policy.pingcli__Customer_Login", []string{"pingone_sign_on_policy_action.pingcli__Customer_Login_1", "pingone_sign_on_policy_action.pingcli__Customer_Login_2", "pingone_sign_on_policy_action.pingcli__Customer_Login_3"},
 		[]string{"pingone_population.pingcli__Customers", "pingone_password_policy.pingcli__Strict", "pingone_mfa_device_policy.pingcli__Strong-0020-MFA"}},
 	{"directory", "pingone_population.pingcli__Customers", nil, []string{"pingone_password_policy.pingcli__Strict"}},
 	{"directory", "pingone_group.pingcli__Support-0020-Agents", []string{"pingone_group_nesting.pingcli__Support-0020-Agents_Staff"},

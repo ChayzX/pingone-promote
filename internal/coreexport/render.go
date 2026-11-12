@@ -386,6 +386,33 @@ func (r *renderer) value(a catalog.Attr, v any, path string, root map[string]any
 			return "{\n" + strings.Join(parts, "\n") + "\n}", nil
 		}
 	}
+	if a.Nesting != "" && len(a.Type) == 0 {
+		// A nested object without attributes: its presence is the
+		// setting (a risk predictor's email_reputation, a sign-on
+		// policy's pingid action).
+		switch a.Nesting {
+		case "single", "map":
+			if _, ok := v.(map[string]any); ok {
+				return "{}", nil
+			}
+		case "list", "set":
+			if items, ok := v.([]any); ok {
+				parts := make([]string, 0, len(items))
+				for _, it := range items {
+					if _, ok := it.(map[string]any); ok {
+						parts = append(parts, "{}")
+					}
+				}
+				if len(parts) == 0 && len(items) == 0 {
+					return "[]", nil
+				}
+				if len(parts) > 0 {
+					return "[\n" + strings.Join(parts, ",\n") + "\n]", nil
+				}
+			}
+		}
+		return "", nil
+	}
 	return r.typed(a.Type, v, path)
 }
 

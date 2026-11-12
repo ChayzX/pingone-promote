@@ -156,6 +156,8 @@ func TestRenderEverythingParsesAndNeutralizes(t *testing.T) {
 		t.Fatal("the source environment ID reached the definitions")
 	}
 	for _, want := range []string{
+		"predictor_email_reputation = {}", // nested objects without attributes
+		"pingid {",
 		"pingone_password_policy.pingcli__Strict.id",            // population -> password policy
 		"pingone_population.pingcli__Customers.id",              // sign-on action -> population
 		"pingone_mfa_device_policy.pingcli__Strong-0020-MFA.id", // MFA action -> device policy
