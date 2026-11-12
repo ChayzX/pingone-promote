@@ -103,6 +103,7 @@ const (
 	BlockImportKey       = "invalid_import_key"
 	BlockConflict        = "changed_in_both"
 	BlockSecretsFile     = "customer_secrets"
+	BlockModuleLayout    = "module_layout"
 	BlockSecretFinding   = "secret_finding"
 	BlockMissingDep      = "missing_dependency"
 	BlockAutoTfvars      = "auto_tfvars"
@@ -646,7 +647,17 @@ func (m *merger) declarations() error {
 			m.res.RequiredSecrets = append(m.res.RequiredSecrets, v.Name)
 		}
 	}
-	// Module call.
+	// Module call. A repository that already keeps its resources in a
+	// module of another name must be configured, not given a second one.
+	if m.head.moduleFile == "" && len(m.head.localModules) > 0 {
+		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockModuleLayout, Message: "The repository already calls module " +
+			strings.Join(m.head.localModules, ", ") + " but no module \"" + m.l.ModuleName + "\". If the PingOne resources belong in that module, set repository.moduleName and repository.moduleDir in the server configuration (for example \"pingone\" and \"modules/pingone\"). Nothing is added until then"})
+		return nil
+	}
+	if m.head.moduleFile == "" && len(m.head.otherModules) > 0 {
+		m.res.Warnings = append(m.res.Warnings, "This adds module \""+m.l.ModuleName+"\" ("+m.l.ModuleDir+"/) next to the repository's module "+
+			strings.Join(m.head.otherModules, ", ")+". If the PingOne resources belong in that module instead, set repository.moduleName and repository.moduleDir in the server configuration and preview again")
+	}
 	if m.head.moduleFile == "" {
 		var inputs []string
 		for _, v := range vars {

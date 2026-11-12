@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -156,6 +158,14 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		snap, head, err := s.gl.Snapshot(ctx, project.DefaultBranch, s.snapshotDirs())
 		if err != nil {
 			return err
+		}
+		// The repository's own local modules are read too, so the merge can
+		// tell whether one of them already holds the PingOne resources.
+		if extra := localModuleDirs(snap, s.snapshotDirs()); len(extra) > 0 {
+			os.RemoveAll(snap)
+			if snap, head, err = s.gl.Snapshot(ctx, project.DefaultBranch, append(s.snapshotDirs(), extra...)); err != nil {
+				return err
+			}
 		}
 		stage("Exporting the source environment and merging")
 		rec, frozen := newRecorder(s.exporter)
@@ -391,4 +401,38 @@ func plainJobError(err error) string {
 		return noSourceIDText
 	}
 	return err.Error()
+}
+
+var localSourceRE = regexp.MustCompile(`(?m)^\s*source\s*=\s*"\./([A-Za-z0-9_./-]+)"`)
+
+// localModuleDirs lists the local module folders the root .tf files call
+// that are not among have (at most 5).
+func localModuleDirs(snap string, have []string) []string {
+	known := map[string]bool{}
+	for _, d := range have {
+		known[d] = true
+	}
+	entries, err := os.ReadDir(snap)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(snap, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, m := range localSourceRE.FindAllStringSubmatch(string(src), -1) {
+			d := path.Clean(m[1])
+			if d == "." || strings.HasPrefix(d, "..") || known[d] || len(out) >= 5 {
+				continue
+			}
+			known[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }

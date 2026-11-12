@@ -1,6 +1,7 @@
 package request
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -262,6 +263,19 @@ func (r *runner) run(ctx context.Context) {
 			continue
 		}
 		out, err := tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, m.Files[p])
+		var mismatch *tffmt.FormatMismatchError
+		if errors.As(err, &mismatch) {
+			// A file people edit (an environment's tfvars, ...) may not be
+			// fmt-clean already; the commit carries the formatted file,
+			// provided formatting it again changes nothing. Files this tool
+			// creates must be canonical as generated.
+			if _, existed, rerr := head.Read(p); rerr == nil && existed {
+				if again, ferr := tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, out); ferr == nil && bytes.Equal(again, out) {
+					res.Warnings = append(res.Warnings, p+" is also reformatted with terraform fmt (it was not fmt-clean before)")
+					err = nil
+				}
+			}
+		}
 		if err != nil {
 			res.fail(ErrPreflight, "merge", p+": "+err.Error(), false)
 			return

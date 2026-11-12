@@ -90,7 +90,8 @@ func valueLabel(d *Draft, res *request.Result, name string) (label, hint string)
 	v, ok := res.Variables[name]
 	switch {
 	case !ok:
-		return name, ""
+		// A root variable of the repository that this copy does not set.
+		return "Repository setting " + name, "Required by the repository, which has no value for it in this environment. If your pipeline supplies it (a GitLab CI variable), the operator adds it to repository.ciVariables in the server configuration instead."
 	case v.Kind == "excluded_ref" && v.Resource != "":
 		label = "ID of the " + describe(d, v.Resource) + " in this environment"
 		hint = "It is not part of this copy, so each environment refers to the one it already has."

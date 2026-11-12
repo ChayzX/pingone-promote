@@ -136,3 +136,38 @@ func TestSectionsWithoutAnyTicked(t *testing.T) {
 	p := b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { v.Set("scope", "sections") }))
 	mustContain(t, p.body, `value="sections" form="main" checked`, "Tick at least one section")
 }
+
+// A tfvars file that was not fmt-clean before does not block the request:
+// the commit carries it formatted.
+func TestUnformattedTfvarsDoNotBlock(t *testing.T) {
+	e := newCoreEnv(t)
+	src, _, _ := e.gl.File("main", "qa.tfvars")
+	e.gl.Edit("main", "qa.tfvars", src+"\nzz_extra=\"x\"\n")
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	p = fillValues(t, b, draft, p.body, e.cfg.Rollout)
+	mustContain(t, p.body, "Submit to GitLab")
+	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"mr"}}))
+	mustContain(t, p.body, "Submitted.")
+}
+
+// A repository whose PingOne resources live in another local module is not
+// given a second module: the preview says which settings to change.
+func TestOtherModuleIsNotDuplicated(t *testing.T) {
+	e := newCoreEnv(t)
+	for p := range e.gl.Files("main") {
+		if strings.HasPrefix(p, "definitions/") || p == "main.tf" {
+			e.gl.Delete("main", p)
+		}
+	}
+	e.gl.Edit("main", "main.tf", "module \"pingone\" {\n  source = \"./modules/pingone\"\n}\n")
+	e.gl.Edit("main", "modules/pingone/main.tf", "resource \"pingone_population\" \"x\" {\n  environment_id = \"e\"\n  name           = \"x\"\n}\n")
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	mustContain(t, p.body, "repository.moduleName")
+	if strings.Contains(p.body, "Submit to GitLab") {
+		t.Fatal("a second module could be submitted")
+	}
+}
