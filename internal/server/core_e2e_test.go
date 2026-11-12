@@ -244,8 +244,11 @@ func TestSourceIDFromConfigurationAndWholeSections(t *testing.T) {
 	dropID(e)
 	b = e.browser()
 	draft = b.newDraft()
-	p = b.post(draft+"/save", mainForm("Core Tester", sections))
-	mustContain(t, p.body, "Leave items out", "All Notifications and templates", "Git branch:")
+	b.post(draft+"/save", mainForm("Core Tester", sections))
+	p = b.get(draft + "?step=2")
+	mustContain(t, p.body, "Leave items out", "all Notifications and templates")
+	p = b.get(draft + "?step=3")
+	mustContain(t, p.body, "Git branch:")
 	p = previewDraft(t, b, draft, mainForm("Core Tester", sections))
 	mustContain(t, p.body, "pingone_notification_template_content.pingcli__recovery_code_template_en_Email", "Submitting creates the Git branch")
 	if strings.Contains(p.body, "is not known") {
@@ -356,5 +359,44 @@ func TestItemListIsReadAtStartAndShared(t *testing.T) {
 	e.srv.drafts.mu.Unlock()
 	if again != l {
 		t.Fatal("a search read the source again although the list was fresh")
+	}
+}
+
+// The request form is three pages: what to copy, choose items, send for
+// review. Each page posts only its own fields, so moving between them
+// keeps what was entered on the others.
+func TestThreeStepForm(t *testing.T) {
+	e := newCoreEnvWith(t, func(c *Config) { c.BranchPattern = "CIAM-[0-9]+" })
+	b := e.browser()
+	draft := b.newDraft()
+	p := b.get(draft)
+	mustContain(t, p.body, `aria-current="step"><strong>1. What to copy`, `name="step" value="1"`)
+	if strings.Contains(p.body, `id="f-q"`) || strings.Contains(p.body, `id="f-branch"`) {
+		t.Fatal("step 1 shows the search or the branch")
+	}
+	// Next without a name stays on step 1 and says why.
+	p = b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"next"}, "source": {"dev"}, "scope": {"selected"}})
+	mustContain(t, p.body, "Type your name.", `name="step" value="1"`)
+	p = b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"next"}, "name": {"Step Tester"}, "source": {"dev"}, "scope": {"selected"}, "upstream": {"yes"}})
+	mustContain(t, p.body, `name="step" value="2"`, `id="f-q"`, "the items you add below")
+	// Search and pick stay on step 2.
+	p = b.post(draft+"/search", url.Values{"step": {"2"}, "q": {"Customers"}})
+	mustContain(t, p.body, `name="step" value="2"`, "pingone_population.pingcli__Customers")
+	p = b.post(draft+"/pick", url.Values{"address": {"pingone_population.pingcli__Customers"}, "op": {"select"}})
+	mustContain(t, p.body, `name="step" value="2"`, `value="unselect"`)
+	p = b.post(draft+"/save", url.Values{"step": {"2"}, "action": {"next"}})
+	mustContain(t, p.body, `name="step" value="3"`, `id="f-branch"`, "1 item")
+	// Step 3 fields do not clear step 1's.
+	p = b.post(draft+"/save", url.Values{"step": {"3"}, "action": {"back"}, "branch": {"CIAM-7"}, "mode": {"mr"}})
+	mustContain(t, p.body, `name="step" value="2"`)
+	p = b.get(draft + "?step=1")
+	mustContain(t, p.body, `value="Step Tester"`, `name="upstream" value="yes" form="main" checked`)
+	p = b.get(draft + "?step=3")
+	mustContain(t, p.body, `value="CIAM-7"`)
+	// Preview from step 3.
+	p = b.wait(b.post(draft+"/save", url.Values{"step": {"3"}, "action": {"preview"}, "branch": {"CIAM-7"}, "mode": {"mr"}}))
+	mustContain(t, p.body, "CIAM-7")
+	if strings.Contains(p.body, "Type your name") {
+		t.Fatal("the name was lost between steps")
 	}
 }

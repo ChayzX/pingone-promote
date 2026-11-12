@@ -1,14 +1,19 @@
-{{define "content"}}{{$csrf := .CSRF}}{{$d := .Data.D}}{{$scope := $d.Scope}}
+{{define "content"}}{{$csrf := .CSRF}}{{$d := .Data.D}}{{$scope := $d.Scope}}{{$step := .Data.Step}}
 <p class="meta">Request {{$d.RequestID}}{{if .Data.HasPreview}} &middot; <a href="/drafts/{{$d.ID}}/preview">latest preview</a>{{end}}</p>
+<nav aria-label="Steps"><ol class="steps">
+  <li{{if eq $step 1}} aria-current="step"{{end}}>{{if eq $step 1}}<strong>1. What to copy</strong>{{else}}<a href="/drafts/{{$d.ID}}?step=1">1. What to copy</a>{{end}}</li>
+  <li{{if eq $step 2}} aria-current="step"{{end}}>{{if eq $step 2}}<strong>2. Choose items</strong>{{else}}<a href="/drafts/{{$d.ID}}?step=2">2. Choose items</a>{{end}}</li>
+  <li{{if eq $step 3}} aria-current="step"{{end}}>{{if eq $step 3}}<strong>3. Send for review</strong>{{else}}<a href="/drafts/{{$d.ID}}?step=3">3. Send for review</a>{{end}}</li>
+</ol></nav>
 {{with .Data.Notice}}<p class="notice" role="status">{{.}}</p>{{end}}
 {{with .Data.Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
-{{if .Data.Loading}}<p class="notice" role="status">Reading the items of {{$d.Source}} in the background. Search results appear here when you search.</p>{{end}}
 {{if .Data.Running}}<p class="notice">Something is running for this request. <a href="/drafts/{{$d.ID}}/job">See progress</a>.</p>{{end}}
 
-<form method="post" action="/drafts/{{$d.ID}}/save" id="main"><input type="hidden" name="csrf" value="{{$csrf}}"></form>
+<form method="post" action="/drafts/{{$d.ID}}/save" id="main"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="step" value="{{$step}}"></form>
 
+{{if eq $step 1}}
 <section>
-<h2>1. Who and where from</h2>
+<h2>Who and where from</h2>
   <label for="f-name">Your name (required)</label>
   <input type="text" id="f-name" name="name" form="main" value="{{$d.Name}}" maxlength="100" required autocomplete="name" aria-describedby="h-name">
   <p class="hint" id="h-name">Recorded on the request as your name (unverified). There is no sign-in yet.</p>
@@ -21,27 +26,67 @@
 </section>
 
 <section>
-<h2>2. What to copy</h2>
+<h2>What to copy</h2>
   <fieldset>
     <legend>Choose one</legend>
-    <label class="inline"><input type="radio" name="scope" value="selected" form="main"{{if eq $scope "selected"}} checked{{end}}> <strong>Items I pick</strong> &mdash; search for them in step 3 and choose Add</label>
+    <label class="inline"><input type="radio" name="scope" value="selected" form="main"{{if eq $scope "selected"}} checked{{end}}> <strong>Items I pick</strong> &mdash; you search for them in the next step</label>
     <label class="inline"><input type="radio" name="scope" value="sections" form="main"{{if eq $scope "sections"}} checked{{end}}> <strong>Whole sections</strong> &mdash; everything of the kinds ticked here:</label>
     <div class="indent sections">
       {{range .Data.Sections}}<label class="inline"><input type="checkbox" name="family" value="{{.Value}}" form="main"{{if .Checked}} checked{{end}}> {{.Label}}</label>{{end}}
     </div>
     <label class="inline"><input type="radio" name="scope" value="all" form="main"{{if eq $scope "all"}} checked{{end}}> <strong>The whole environment</strong> &mdash; DaVinci and all of PingOne</label>
-    <label class="inline indent"><input type="checkbox" name="confirm_all" value="yes" form="main"{{if $d.ConfirmAll}} checked{{end}}> I confirm: copy everything in {{$d.Source}} except what I leave out</label>
+    <label class="inline indent"><input type="checkbox" name="confirm_all" value="yes" form="main"{{if $d.ConfirmAll}} checked{{end}}> I confirm: copy everything in the source environment except what I leave out</label>
   </fieldset>
   <label class="inline"><input type="checkbox" name="upstream" value="yes" form="main"{{if $d.Upstream}} checked{{end}}> Also copy what these items depend on (for example the connector a flow uses, or the population a sign-on policy registers users in)</label>
-  <div class="buttons"><button type="submit" form="main" name="action" value="save" formnovalidate>Use this choice</button></div>
-  <p class="hint">After changing the choice, press <em>Use this choice</em> so the rest of the page follows it.</p>
 </section>
+<div class="buttons step-actions">
+  <button type="submit" form="main" name="action" value="next" class="primary">Next: choose items</button>
+</div>
+{{end}}
+
+{{if eq $step 2}}
+<p class="scope-line">Copying from <strong>{{$d.Source}}</strong>:
+{{if eq $scope "all"}}the whole environment{{if not $d.ConfirmAll}} <span class="bad">(not confirmed yet)</span>{{end}}{{else if eq $scope "sections"}}{{range $i, $s := .Data.CheckedSections}}{{if $i}}, {{end}}all {{$s}}{{else}}<span class="bad">no section ticked yet</span>{{end}}{{else}}the items you add below{{end}}{{if $d.Upstream}}, plus what they depend on{{end}}.
+<a href="/drafts/{{$d.ID}}?step=1">Change</a></p>
+{{if .Data.Loading}}<p class="notice" role="status">Reading the items of {{$d.Source}}. Search results appear as soon as the list is in.</p>{{end}}
+
+<section id="lists">
+<h2>Your choices</h2>
+{{if ne $scope "all"}}<h3>Added</h3>
+{{with .Data.Selected}}
+<table>
+  <caption class="sr-only">Items added</caption>
+  <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+  <tbody>{{range .}}
+  <tr><td><strong>{{.Name}}</strong>{{with .ID}}<br><code class="small">ID {{.}}</code>{{end}}</td><td>{{.Kind}}</td>
+  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unselect"><button type="submit">Remove<span class="sr-only"> {{.Name}}</span></button></form></td></tr>
+  {{end}}</tbody>
+</table>
+{{else}}<p class="hint">{{if eq $scope "selected"}}Nothing added yet. Search below and choose <strong>Add</strong>.{{else}}None besides the ticked sections.{{end}}</p>{{end}}{{end}}
+
+<h3>Left out</h3>
+{{with .Data.Excluded}}
+<table>
+  <caption class="sr-only">Items left out</caption>
+  <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+  <tbody>{{range .}}
+  <tr><td><strong>{{.Name}}</strong>{{with .ID}}<br><code class="small">ID {{.}}</code>{{end}}</td><td>{{.Kind}}</td>
+  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unexclude"><button type="submit">Put back<span class="sr-only"> {{.Name}}</span></button></form></td></tr>
+  {{end}}</tbody>
+</table>
+<p class="hint">These are not copied. Anything copied that uses one of them keeps using the one that already exists in each environment; the preview asks for its ID there if it is needed.</p>
+{{else}}<p class="hint">Nothing.</p>{{end}}
+</section>
+<div class="buttons step-actions">
+  <button type="submit" form="main" name="action" value="back" formnovalidate>Back</button>
+  <button type="submit" form="main" name="action" value="next" class="primary" formnovalidate>Next: send for review</button>
+</div>
 
 <section id="search">
-{{if eq $scope "selected"}}<h2>3. Find items to copy</h2>
-<p class="hint">Search, then choose <strong>Add</strong> for each item to copy. <strong>Leave out</strong> keeps an item out even when something you copy depends on it.</p>
-{{else}}<h2>3. Leave items out (optional)</h2>
-<p class="hint">{{if eq $scope "all"}}Everything in {{$d.Source}} is copied.{{else}}Everything in the ticked sections is copied.{{end}} To keep an item out, for example a test application, search for it and choose <strong>Leave out</strong>.{{if eq $scope "sections"}} <strong>Add</strong> copies a single item from another section too.{{end}}</p>
+{{if eq $scope "selected"}}<h2>Find items to copy</h2>
+<p class="hint">Search, then choose <strong>Add</strong> for each item. <strong>Leave out</strong> keeps an item out even when something you copy depends on it.</p>
+{{else}}<h2>Leave items out (optional)</h2>
+<p class="hint">To keep an item out, for example a test application, search for it and choose <strong>Leave out</strong>.{{if eq $scope "sections"}} <strong>Add</strong> copies a single item from another section too.{{end}} Nothing to leave out? Press <em>Next</em> above.</p>
 {{end}}
   <div class="search-row">
     <div>
@@ -56,9 +101,8 @@
       </select>
     </div>{{end}}
   </div>
-  <p class="hint">Leave the name empty to list every item{{with .Data.Types}} (of the chosen type){{end}}.{{if not .Data.ListLoaded}} The first search reads {{$d.Source}}, which can take a minute.{{end}}</p>
-  <label class="inline"><input type="checkbox" name="refresh" value="yes" form="main"> Read {{$d.Source}} again (after changes in PingOne)</label>
-  <button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate>Search</button>
+  <div class="buttons"><button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate>Search</button></div>
+  <p class="hint">Leave the name empty to list every item{{with .Data.Types}} (of the chosen type){{end}}.</p>
 
 <div id="results">
 {{with .Data.SearchProblem}}<p class="problem" role="alert">{{.}}</p>{{end}}
@@ -84,41 +128,18 @@
 </table>
 {{else if and .Data.SearchedOnce .Data.ListLoaded}}{{if eq .Data.ListSize 0}}<p role="status">PingOne returned no items for {{$d.Source}}. Check that the worker application has read roles on that environment, then tick "Read {{$d.Source}} again" and search.</p>{{else}}<p role="status">Nothing matches among the {{.Data.ListSize}} items of {{$d.Source}}. Try part of the name, the ID, or another type.</p>{{end}}{{end}}
 </div>
+<details class="small-print"><summary>Changed something in PingOne just now?</summary>
+  <label class="inline"><input type="checkbox" name="refresh" value="yes" form="main"> Read {{$d.Source}} again on the next search{{with .Data.ListAge}} (the list is {{.}} old){{end}}</label>
+</details>
 </section>
+{{end}}
 
-<section id="lists">
-<h2>4. Summary</h2>
-<h3>Copied</h3>
-{{if eq $scope "all"}}<p>Everything in <strong>{{$d.Source}}</strong>{{if not $d.ConfirmAll}} <span class="bad">&mdash; tick the confirmation in step 2</span>{{end}}.</p>
-{{else if eq $scope "sections"}}<ul>{{range .Data.Sections}}{{if .Checked}}<li>All {{.Label}}</li>{{end}}{{end}}</ul>{{end}}
-{{if ne $scope "all"}}{{with .Data.Selected}}
-<table>
-  <caption class="sr-only">Items added</caption>
-  <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-  <tbody>{{range .}}
-  <tr><td><strong>{{.Name}}</strong>{{with .ID}}<br><code class="small">ID {{.}}</code>{{end}}</td><td>{{.Kind}}</td>
-  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unselect"><button type="submit">Remove<span class="sr-only"> {{.Name}}</span></button></form></td></tr>
-  {{end}}</tbody>
-</table>
-{{else}}{{if eq $scope "selected"}}<p>Nothing added yet. Search in step 3 and choose <strong>Add</strong>.</p>{{end}}{{end}}{{end}}
-{{if $d.Upstream}}<p class="hint">Plus what these items depend on; the preview lists each one.</p>{{end}}
-
-<h3>Left out</h3>
-{{with .Data.Excluded}}
-<table>
-  <caption class="sr-only">Items left out</caption>
-  <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-  <tbody>{{range .}}
-  <tr><td><strong>{{.Name}}</strong>{{with .ID}}<br><code class="small">ID {{.}}</code>{{end}}</td><td>{{.Kind}}</td>
-  <td><form method="post" action="/drafts/{{$d.ID}}/pick"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="address" value="{{.Address}}"><input type="hidden" name="op" value="unexclude"><button type="submit">Put back<span class="sr-only"> {{.Name}}</span></button></form></td></tr>
-  {{end}}</tbody>
-</table>
-<p class="hint">These are not copied. Anything copied that uses one of them keeps using the one that already exists in each environment; the preview asks for its ID there if it is needed.</p>
-{{else}}<p class="hint">Nothing. Use <strong>Leave out</strong> in step 3 to keep an item out.</p>{{end}}
-</section>
-
+{{if eq $step 3}}
+<p class="scope-line">Copying from <strong>{{$d.Source}}</strong>:
+{{if eq $scope "all"}}the whole environment{{else if eq $scope "sections"}}{{range $i, $s := .Data.CheckedSections}}{{if $i}}, {{end}}all {{$s}}{{end}}{{if .Data.Selected}} and {{len .Data.Selected}} more {{if eq (len .Data.Selected) 1}}item{{else}}items{{end}}{{end}}{{else}}{{len .Data.Selected}} {{if eq (len .Data.Selected) 1}}item{{else}}items{{end}}{{end}}{{if $d.Upstream}}, plus what they depend on{{end}}{{with .Data.Excluded}}, leaving out {{len .}}{{end}}.
+<a href="/drafts/{{$d.ID}}?step=2">Change</a></p>
 <section>
-<h2>5. Send for review</h2>
+<h2>Send for review</h2>
   <fieldset>
     <legend>How to send it</legend>
     <label class="inline"><input type="radio" name="mode" value="mr" form="main"{{if eq $d.Mode "mr"}} checked{{end}}> Open a merge request (reviewers are asked to approve)</label>
@@ -132,10 +153,11 @@
   <input type="text" id="f-title" name="title" form="main" value="{{$d.Title}}" maxlength="255">
   <label for="f-desc">Note for reviewers (optional)</label>
   <textarea id="f-desc" name="description" form="main" rows="3">{{$d.Description}}</textarea>
-  <div class="buttons step-actions">
-    <button type="submit" form="main" name="action" value="preview" class="primary">Preview the change</button>
-    <button type="submit" form="main" name="action" value="save" formnovalidate>Save draft</button>
-  </div>
-  <p class="hint">The preview shows exactly what changes in Git and what each environment still needs. Nothing is sent until you submit from the preview.</p>
 </section>
+<div class="buttons step-actions">
+  <button type="submit" form="main" name="action" value="back" formnovalidate>Back</button>
+  <button type="submit" form="main" name="action" value="preview" class="primary">Preview the change</button>
+</div>
+<p class="hint">The preview shows exactly what changes in Git and what each environment still needs. Nothing is sent until you submit from the preview.</p>
+{{end}}
 {{end}}

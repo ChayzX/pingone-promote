@@ -210,21 +210,24 @@ Open <http://localhost:8080/>.
 
 ## 8. Use it
 
-1. **Start a new request**, type your name, choose the source environment.
-2. **What to copy**: items you pick, whole sections (for example all of
-   DaVinci, or all applications), or the whole environment. Press
-   **Use this choice**.
-3. **Find items**: search by name or ID, or leave the name empty to list
+The server reads each source environment's items when it starts and every
+20 minutes after, so searches answer at once. A request has three pages:
+
+1. **What to copy**: type your name, choose the source environment, then
+   items you pick, whole sections (for example all of DaVinci, or all
+   applications), or the whole environment. Press **Next**.
+2. **Choose items**: search by name or ID, or leave the name empty to list
    everything; the results show on the same page. **Add** copies an item;
-   **Leave out** keeps one out. The list of items is read in the background
-   when the request starts, so the first search may take a moment.
-4. **Preview the change.** The first preview reads the whole source
-   environment and can take a minute.
-5. **Fill in what each environment needs** (URLs, IDs) and preview again
-   until it says **Ready to submit**.
-6. **Submit to GitLab** as a merge request or a branch only. The branch is
-   the Jira key you typed in step 5 of the request page, exactly as typed.
-7. Follow the rollout on the **Requests** page after the merge.
+   **Leave out** keeps one out. Your choices are listed at the top. Press
+   **Next**.
+3. **Send for review**: type the branch name (your Jira key, used exactly
+   as typed), optionally a title and a note, and press **Preview the
+   change**. The first preview reads the whole source environment and can
+   take a minute.
+4. **Fill in what each environment needs** (URLs, IDs) on the preview and
+   preview again until it says **Ready to submit**.
+5. **Submit to GitLab** as a merge request or a branch only.
+6. Follow the rollout on the **Requests** page after the merge.
 
 Good first tests: one notification template alone; one application with its
 dependencies; then the cases in `docs/acceptance/core-export.md`.

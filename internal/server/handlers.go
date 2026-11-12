@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"pingone-promote/internal/catalog"
 	"sort"
@@ -107,6 +108,11 @@ type draftView struct {
 	Excluded     []itemView
 	ListLoaded   bool
 	SearchedOnce bool
+	// Step is the page shown (1-3); CheckedSections names the ticked
+	// sections; ListAge says how old the item list is.
+	Step            int
+	CheckedSections []string
+	ListAge         string
 	// ResultsTotal: matches in all (Results shows the first ones);
 	// ListSize: items in the source's list; SearchNotice and
 	// SearchProblem: the last search's outcome, shown with the results.
@@ -171,6 +177,21 @@ func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 			TypedBranch: s.branchRE() != nil, BranchPattern: s.cfg.BranchPattern, BranchExample: s.cfg.BranchExample}
 		if c := d.catalogs[d.Source]; c != nil {
 			v.ListSize = len(c.items)
+			if age := s.now().Sub(c.at); age >= time.Minute {
+				v.ListAge = fmt.Sprintf("%d minutes", int(age.Minutes()))
+			}
+		}
+		v.Step = d.Step
+		if n, err := strconv.Atoi(r.URL.Query().Get("step")); err == nil && n >= 1 && n <= 3 {
+			v.Step, d.Step = n, n
+		}
+		if v.Step < 1 || v.Step > 3 {
+			v.Step = 1
+		}
+		for _, o := range v.Sections {
+			if o.Checked {
+				v.CheckedSections = append(v.CheckedSections, o.Label)
+			}
 		}
 		d.notice, d.problem, d.searchNotice, d.searchProblem = "", "", "", ""
 		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
@@ -193,10 +214,11 @@ func contains(list []string, v string) bool {
 func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok bool) {
 	person, idErr := s.identity.Who(r)
 	f := r.PostForm
-	if !f.Has("source") {
+	step := f.Get("step") // "" applies every field (one-page form)
+	if step == "" && !f.Has("source") {
 		return true // an older form without step 1
 	}
-	{
+	if step == "" || step == "1" {
 		d.Name = strings.TrimSpace(f.Get("name"))
 		if idErr == nil {
 			d.RequestedBy = person.Recorded()
@@ -231,6 +253,8 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		}
 		d.ConfirmAll = d.Whole && f.Get("confirm_all") == "yes"
 		d.Upstream = f.Get("upstream") == "yes"
+	}
+	if step == "" || step == "3" {
 		if m := f.Get("mode"); m == "mr" || m == "branch" {
 			d.Mode = m
 		}
@@ -244,12 +268,13 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		}
 		d.Title = strings.TrimSpace(f.Get("title"))
 		d.Description = f.Get("description")
-		d.Updated = s.now()
-		if idErr != nil && f.Get("action") == "preview" {
-			d.problem = idErr.Error()
-			s.redirect(w, r, draftURL(d, ""))
-			return false
-		}
+	}
+	d.Updated = s.now()
+	// The name is typed on step 1; later steps use the saved one.
+	if idErr != nil && f.Get("action") == "preview" && (step == "" || step == "1") {
+		d.problem = idErr.Error()
+		s.redirect(w, r, draftURL(d, ""))
+		return false
 	}
 	return true
 }
@@ -260,20 +285,58 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
 		if !s.applyMain(w, r, d) {
 			return
 		}
-		if _, idErr := s.identity.Who(r); idErr != nil {
+		if st := f.Get("step"); st != "" && st != "1" {
+			// The name was typed and checked on step 1.
+		} else if _, idErr := s.identity.Who(r); idErr != nil {
 			d.problem = idErr.Error()
 			s.redirect(w, r, draftURL(d, ""))
 			return
 		}
-		if f.Get("action") != "preview" {
+		switch f.Get("action") {
+		case "next":
+			if why := s.stepProblem(d); why != "" {
+				d.problem = why
+			} else if d.Step < 3 {
+				d.Step = max(d.Step, 1) + 1
+				if d.Step == 2 {
+					s.loadList(d, d.Source)
+				}
+			}
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		case "back":
+			if d.Step > 1 {
+				d.Step--
+			}
+			s.redirect(w, r, draftURL(d, ""))
+			return
+		case "preview":
+		default:
 			if d.notice == "" && d.problem == "" {
 				d.notice = "Saved."
 			}
 			s.redirect(w, r, draftURL(d, ""))
 			return
 		}
+		d.Step = 3
 		s.preview(w, r, d, draftURL(d, ""))
 	})
+}
+
+// stepProblem says what keeps the current step from moving on.
+func (s *Server) stepProblem(d *Draft) string {
+	if max(d.Step, 1) != 1 {
+		return ""
+	}
+	switch {
+	case d.Name == "":
+		return "Type your name."
+	case d.WantSections && len(d.Families) == 0:
+		return "Tick at least one section to copy whole sections, or choose another option."
+	case d.Whole && !d.ConfirmAll:
+		return "Tick the confirmation to copy the whole environment, or choose another option."
+	}
+	return ""
 }
 
 // preview validates the draft and starts a preview job; problems go back
@@ -311,6 +374,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		}
 		d.Updated = s.now()
 		d.searched = true
+		d.Step = 2
 		if d.Source == "" {
 			d.searchProblem = "Choose a source environment in step 1 first."
 			s.redirect(w, r, draftURL(d, "#results"))
@@ -352,6 +416,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pick(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
 		addr, op := r.PostForm.Get("address"), r.PostForm.Get("op")
+		d.Step = 2
 		remove := func(list []Item) []Item {
 			out := list[:0:0]
 			for _, it := range list {

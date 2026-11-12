@@ -120,8 +120,11 @@ type Draft struct {
 	loads map[string]*listLoad
 	// WantSections: "whole sections" is chosen, even before one is ticked.
 	WantSections bool
-	job          *Job
-	preview      *preview
+	// Step is the page of the request form shown: 1 what to copy, 2
+	// choose items, 3 send for review.
+	Step    int
+	job     *Job
+	preview *preview
 	// submitted is the latest submit result; conflict marks a default
 	// branch that moved after the preview.
 	submitted *request.Result
@@ -330,11 +333,11 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 		return nil, errors.New("Type your name.")
 	}
 	if !d.Whole && d.WantSections && len(d.Families) == 0 {
-		return nil, errors.New("Tick at least one section in step 2, or choose another option.")
+		return nil, errors.New("Tick at least one section in step 1, or choose another option.")
 	}
 	if s.branchRE() != nil && !s.branchRE().MatchString(d.Branch) {
 		if d.Branch == "" {
-			return nil, errors.New("Type the Git branch name in step 5" + s.branchExampleText() + ".")
+			return nil, errors.New("Type the Git branch name in step 3" + s.branchExampleText() + ".")
 		}
 		return nil, errors.New("The Git branch name " + d.Branch + " is not allowed: it must match " + s.cfg.BranchPattern + s.branchExampleText() + ".")
 	}

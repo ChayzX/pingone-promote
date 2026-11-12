@@ -95,3 +95,11 @@ details[open] > summary { margin-bottom: 8px; }
 td .tag { white-space: nowrap; }
 .search-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
 .search-row > div { flex: 1 1 260px; max-width: 420px; }
+
+ol.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 8px 0 12px; margin: 0 0 8px; border-bottom: 1px solid var(--line); }
+ol.steps li { color: var(--muted); }
+ol.steps li[aria-current=step] { color: var(--fg); }
+.scope-line { padding: 8px 12px; background: var(--panel); border-radius: 4px; }
+.step-actions { margin-top: 24px; }
+details.small-print { margin-top: 12px; color: var(--muted); font-size: 14px; }
+details.small-print summary { cursor: pointer; }
