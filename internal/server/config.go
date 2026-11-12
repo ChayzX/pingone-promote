@@ -190,6 +190,11 @@ func (c *Config) check() error {
 const (
 	ExposureTLS         = "tls"
 	ExposureBehindProxy = "behind-proxy"
+	// ExposureContainer is for a container whose port is published only
+	// to its host's loopback (podman run -p 127.0.0.1:8080:8080): the
+	// server listens on every interface inside the container, speaks plain
+	// HTTP, and answers only the loopback names (localhost, 127.0.0.1, ::1).
+	ExposureContainer = "container"
 )
 
 // LoopbackListen reports whether listen binds only a loopback address.
@@ -211,7 +216,7 @@ func (c *Config) checkExposure() error {
 	switch c.Exposure {
 	case "":
 		if !LoopbackListen(c.Listen) {
-			return errors.New(`listen is not a loopback address; there is no sign-in, so set "exposure": "tls" (with tlsCertFile and tlsKeyFile) or "behind-proxy" (with allowedHosts) to expose the server deliberately, or listen on 127.0.0.1`)
+			return errors.New(`listen is not a loopback address; there is no sign-in, so set "exposure": "tls" (with tlsCertFile and tlsKeyFile), "behind-proxy" (with allowedHosts), or "container" (a container published only to its host's 127.0.0.1) to expose the server deliberately, or listen on 127.0.0.1`)
 		}
 	case ExposureTLS:
 		if c.TLSCertFile == "" {
@@ -221,8 +226,15 @@ func (c *Config) checkExposure() error {
 		if len(c.AllowedHosts) == 0 {
 			return errors.New(`"exposure": "behind-proxy" requires allowedHosts (the name the proxy serves)`)
 		}
+	case ExposureContainer:
+		if len(c.AllowedHosts) > 0 {
+			return errors.New(`"exposure": "container" answers only localhost; remove allowedHosts, or use "behind-proxy" to serve a host name`)
+		}
+		if c.TLSCertFile != "" {
+			return errors.New(`"exposure": "container" is plain HTTP on the host's loopback; use "tls" to terminate TLS`)
+		}
 	default:
-		return errors.New(`exposure must be "tls" or "behind-proxy" (or empty for loopback only)`)
+		return errors.New(`exposure must be "tls", "behind-proxy" or "container" (or empty for loopback only)`)
 	}
 	return nil
 }

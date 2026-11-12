@@ -253,6 +253,9 @@ func TestConfigExposure(t *testing.T) {
 		{"0.0.0.0:8080", "behind-proxy", false, true, true},
 		{"0.0.0.0:8080", "behind-proxy", false, false, false},
 		{"0.0.0.0:8080", "public", true, true, false},
+		{"0.0.0.0:8080", "container", false, false, true},
+		{"0.0.0.0:8080", "container", false, true, false},
+		{"0.0.0.0:8080", "container", true, false, false},
 	}
 	for _, tc := range cases {
 		m := validConfig()
@@ -385,8 +388,15 @@ func TestConfigHasNoSecretField(t *testing.T) {
 // test, unprivileged, owns both.)
 func TestSecretsSystemdCredential(t *testing.T) {
 	skipOnWindows(t)
-	credDir := filepath.Join(t.TempDir(), "credentials")
-	if err := os.Mkdir(credDir, 0o500|0o200); err != nil {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := credentialsRoot
+	credentialsRoot = root + string(filepath.Separator)
+	t.Cleanup(func() { credentialsRoot = old })
+	credDir := filepath.Join(root, "pingone-promote.service")
+	if err := os.Mkdir(credDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	p := filepath.Join(credDir, "secrets")
@@ -396,14 +406,30 @@ func TestSecretsSystemdCredential(t *testing.T) {
 	if err := os.Chmod(p, 0o440); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(credDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(credDir, 0o700) })
 	if _, err := LoadSecrets(p); err == nil {
-		t.Fatal("a 0440 file outside a credentials directory must be refused")
+		t.Fatal("a 0440 file must be refused when CREDENTIALS_DIRECTORY is not set")
+	}
+	// A directory outside the credentials root is not trusted.
+	t.Setenv("CREDENTIALS_DIRECTORY", t.TempDir())
+	if _, err := LoadSecrets(p); err == nil {
+		t.Fatal("a credentials directory outside /run/credentials/ was trusted")
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", credDir+"/../"+filepath.Base(credDir))
+	if _, err := LoadSecrets(p); err == nil {
+		t.Fatal("an unclean credentials directory path was trusted")
 	}
 	t.Setenv("CREDENTIALS_DIRECTORY", credDir)
 	if _, err := LoadSecrets(p); err != nil {
 		t.Fatalf("systemd credential refused: %v", err)
 	}
 	// Readable by others: refused even inside the credentials directory.
+	if err := os.Chmod(credDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(p, 0o444); err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -39,14 +40,25 @@ func checkSecretsFileInfo(path string, fi os.FileInfo) error {
 	return nil
 }
 
+// credentialsRoot is where systemd places per-service credential
+// directories; only root creates directories there. Tests change it.
+var credentialsRoot = "/run/credentials/"
+
 // systemdCredential reports whether path is a systemd credential of this
-// service; err explains a credential that is not private.
+// service; err explains a credential that is not private. The directory
+// must be $CREDENTIALS_DIRECTORY, under /run/credentials/, already resolved
+// (no symbolic links, no ".."); file and directory may grant nothing beyond
+// read (and directory search), and belong to root or the server's own user
+// and group.
 func systemdCredential(path string, fi os.FileInfo) (bool, error) {
 	credDir := os.Getenv("CREDENTIALS_DIRECTORY")
-	if credDir == "" || !filepath.IsAbs(credDir) || !filepath.IsAbs(path) {
+	if credDir == "" || credDir != filepath.Clean(credDir) || !strings.HasPrefix(credDir, credentialsRoot) {
 		return false, nil
 	}
-	if filepath.Clean(filepath.Dir(path)) != filepath.Clean(credDir) {
+	if filepath.Dir(path) != credDir {
+		return false, nil
+	}
+	if r, err := filepath.EvalSymlinks(credDir); err != nil || r != credDir {
 		return false, nil
 	}
 	di, err := os.Lstat(credDir)
@@ -58,12 +70,12 @@ func systemdCredential(path string, fi os.FileInfo) (bool, error) {
 	switch {
 	case !ok1 || !ok2:
 		return true, errors.New("cannot read the owner of the systemd credential")
-	case fi.Mode().Perm()&0o007 != 0 || di.Mode().Perm()&0o007 != 0:
-		return true, errors.New("the systemd credential is readable by other users")
-	case fi.Mode().Perm()&0o022 != 0:
-		return true, errors.New("the systemd credential is writable by more than its owner")
+	case fi.Mode().Perm()&^0o440 != 0 || di.Mode().Perm()&^0o550 != 0:
+		return true, errors.New("the systemd credential is accessible to other users")
 	case fst.Uid != 0 && int64(fst.Uid) != int64(os.Getuid()):
 		return true, errors.New("the systemd credential has an unexpected owner")
+	case fst.Gid != 0 && int64(fst.Gid) != int64(os.Getgid()):
+		return true, errors.New("the systemd credential has an unexpected group")
 	case dst.Uid != 0 && int64(dst.Uid) != int64(os.Getuid()):
 		return true, errors.New("the systemd credentials directory has an unexpected owner")
 	}

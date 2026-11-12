@@ -17,3 +17,6 @@ func openSecretsFile(path string) (*os.File, error) { return os.Open(path) }
 func checkSecretsFileInfo(string, os.FileInfo) error {
 	return errors.New("the secrets file permissions cannot be verified on Windows; run the server on macOS or Linux")
 }
+
+// credentialsRoot is unused on Windows (not a supported host).
+var credentialsRoot = "/run/credentials/"

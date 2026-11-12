@@ -1,0 +1,28 @@
+{
+  "listen": "0.0.0.0:8080",
+  "exposure": "container",
+  "signIn": "none",
+  "secretsFile": "/run/secrets/secrets.env",
+  "gitlab": {
+    "baseUrl": "https://gitlab.example.com",
+    "projectId": "1234",
+    "mrLabels": ["pingone-promote"]
+  },
+  "pingone": {
+    "regionCode": "NA",
+    "workerEnvironmentId": "00000000-0000-0000-0000-000000000000"
+  },
+  "sources": ["development"],
+  "rollout": ["testing", "stage", "production"],
+  "branchPrefix": "CIAM-",
+  "applyJobPattern": "apply:{env}",
+  "layout": "default",
+  "tools": {
+    "terraform": "/opt/pingone-promote/tools/terraform",
+    "terraformVersion": "1.16.7",
+    "terraformSha256": "REPLACE_WITH_THE_TERRAFORM_SHA256_FROM_STEP_4",
+    "terraformer": "/opt/pingone-promote/tools/pingcli-terraformer",
+    "terraformerVersion": "0.6.0",
+    "terraformerSha256": "REPLACE_WITH_THE_PINGCLI_TERRAFORMER_SHA256_FROM_STEP_4"
+  }
+}
