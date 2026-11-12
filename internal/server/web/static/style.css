@@ -103,3 +103,7 @@ ol.steps li[aria-current=step] { color: var(--fg); }
 .step-actions { margin-top: 24px; }
 details.small-print { margin-top: 12px; color: var(--muted); font-size: 14px; }
 details.small-print summary { cursor: pointer; }
+.loading { margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -305,8 +306,8 @@ func TestSearchShowsResultsOnThePage(t *testing.T) {
 	draft := b.newDraft()
 	b.post(draft+"/save", mainForm("Core Tester", nil))
 	p := b.post(draft+"/search", url.Values{"q": {"Customers"}})
-	if p.path != draft {
-		t.Fatalf("search ended at %s, want the request page", p.path)
+	if p.path != draft+"/items" {
+		t.Fatalf("search ended at %s, want the items page", p.path)
 	}
 	mustContain(t, p.body, "pingone_population.pingcli__Customers")
 	p = b.post(draft+"/search", url.Values{"q": {"no-such-item-anywhere"}})
@@ -398,5 +399,32 @@ func TestThreeStepForm(t *testing.T) {
 	mustContain(t, p.body, "CIAM-7")
 	if strings.Contains(p.body, "Type your name") {
 		t.Fatal("the name was lost between steps")
+	}
+}
+
+// While the item list is being read, the items page says so and refreshes
+// by itself; once the list is in, it shows the results of the search that
+// waited, without pressing Search again.
+func TestItemsPageWaitsForTheList(t *testing.T) {
+	release := make(chan struct{})
+	e := newEnv(t, slowList{release: release})
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"save"}, "name": {"Slow"}, "source": {"dev"}, "scope": {"selected"}})
+	// The settle loop of the test browser is bypassed to see the page.
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+draft+"/search", strings.NewReader(url.Values{"csrf": {b.csrf}, "q": {"Cust"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Origin", "null")
+	p := b.do(req)
+	if p.path != draft+"/items" {
+		t.Fatalf("search ended at %s", p.path)
+	}
+	mustContain(t, p.body, `http-equiv="refresh"`, "Reading the items of dev", "the results for &ldquo;Cust&rdquo;")
+	close(release)
+	p = b.get(draft + "/items")
+	mustContain(t, p.body, "pingone_population.pingcli__Customers", "1 match")
+	if strings.Contains(p.body, `http-equiv="refresh"`) {
+		t.Fatal("the page keeps refreshing after the list is in")
 	}
 }

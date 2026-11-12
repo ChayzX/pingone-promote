@@ -211,7 +211,9 @@ Open <http://localhost:8080/>.
 ## 8. Use it
 
 The server reads each source environment's items when it starts and every
-20 minutes after, so searches answer at once. A request has three pages:
+20 minutes after, so searches answer at once; if the list is still being
+read, the items page says so and updates by itself when it is in. A
+request has three pages (`/drafts/<id>/scope`, `/items`, `/send`):
 
 1. **What to copy**: type your name, choose the source environment, then
    items you pick, whole sections (for example all of DaVinci, or all

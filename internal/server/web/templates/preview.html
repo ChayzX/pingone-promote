@@ -1,5 +1,5 @@
 {{define "content"}}{{$csrf := .CSRF}}{{$d := .Data.D}}{{$r := .Data.R}}
-<p class="meta">Request {{$d.RequestID}} &middot; copying from <strong>{{$d.Source}}</strong> &middot; <a href="/drafts/{{$d.ID}}">change the request</a></p>
+<p class="meta">Request {{$d.RequestID}} &middot; copying from <strong>{{$d.Source}}</strong> &middot; <a href="/drafts/{{$d.ID}}/send">change the request</a></p>
 {{with .Data.Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
 {{if .Data.Running}}<p class="notice">Something is running for this request. <a href="/drafts/{{$d.ID}}/job">See progress</a>.</p>{{end}}
 {{if not .Data.Fresh}}<div class="problem" role="alert"><p>The request changed after this preview. Preview again before submitting.</p>

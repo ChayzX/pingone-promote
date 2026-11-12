@@ -1,9 +1,9 @@
 {{define "content"}}{{$csrf := .CSRF}}{{$d := .Data.D}}{{$scope := $d.Scope}}{{$step := .Data.Step}}
 <p class="meta">Request {{$d.RequestID}}{{if .Data.HasPreview}} &middot; <a href="/drafts/{{$d.ID}}/preview">latest preview</a>{{end}}</p>
 <nav aria-label="Steps"><ol class="steps">
-  <li{{if eq $step 1}} aria-current="step"{{end}}>{{if eq $step 1}}<strong>1. What to copy</strong>{{else}}<a href="/drafts/{{$d.ID}}?step=1">1. What to copy</a>{{end}}</li>
-  <li{{if eq $step 2}} aria-current="step"{{end}}>{{if eq $step 2}}<strong>2. Choose items</strong>{{else}}<a href="/drafts/{{$d.ID}}?step=2">2. Choose items</a>{{end}}</li>
-  <li{{if eq $step 3}} aria-current="step"{{end}}>{{if eq $step 3}}<strong>3. Send for review</strong>{{else}}<a href="/drafts/{{$d.ID}}?step=3">3. Send for review</a>{{end}}</li>
+  <li{{if eq $step 1}} aria-current="step"{{end}}>{{if eq $step 1}}<strong>1. What to copy</strong>{{else}}<a href="/drafts/{{$d.ID}}/scope">1. What to copy</a>{{end}}</li>
+  <li{{if eq $step 2}} aria-current="step"{{end}}>{{if eq $step 2}}<strong>2. Choose items</strong>{{else}}<a href="/drafts/{{$d.ID}}/items">2. Choose items</a>{{end}}</li>
+  <li{{if eq $step 3}} aria-current="step"{{end}}>{{if eq $step 3}}<strong>3. Send for review</strong>{{else}}<a href="/drafts/{{$d.ID}}/send">3. Send for review</a>{{end}}</li>
 </ol></nav>
 {{with .Data.Notice}}<p class="notice" role="status">{{.}}</p>{{end}}
 {{with .Data.Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
@@ -47,8 +47,7 @@
 {{if eq $step 2}}
 <p class="scope-line">Copying from <strong>{{$d.Source}}</strong>:
 {{if eq $scope "all"}}the whole environment{{if not $d.ConfirmAll}} <span class="bad">(not confirmed yet)</span>{{end}}{{else if eq $scope "sections"}}{{range $i, $s := .Data.CheckedSections}}{{if $i}}, {{end}}all {{$s}}{{else}}<span class="bad">no section ticked yet</span>{{end}}{{else}}the items you add below{{end}}{{if $d.Upstream}}, plus what they depend on{{end}}.
-<a href="/drafts/{{$d.ID}}?step=1">Change</a></p>
-{{if .Data.Loading}}<p class="notice" role="status">Reading the items of {{$d.Source}}. Search results appear as soon as the list is in.</p>{{end}}
+<a href="/drafts/{{$d.ID}}/scope">Change</a></p>
 
 <section id="lists">
 <h2>Your choices</h2>
@@ -83,6 +82,17 @@
 </div>
 
 <section id="search">
+{{if .Data.Loading}}
+<div class="loading" role="status" id="results">
+  <p><span class="spinner" aria-hidden="true"></span> <strong>Reading the items of {{$d.Source}}&hellip;</strong></p>
+  <p class="hint">This page updates by itself when they are in{{if .Data.PendingQuery}}, and then shows the results for &ldquo;{{$d.Query}}&rdquo;{{end}}. A large environment takes a few minutes.</p>
+</div>
+{{else if .Data.ListError}}
+<div id="results">
+<p class="problem" role="alert">The items of {{$d.Source}} could not be read: {{.Data.ListError}}</p>
+<div class="buttons"><button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate name="refresh" value="yes">Try again</button></div>
+</div>
+{{else}}
 {{if eq $scope "selected"}}<h2>Find items to copy</h2>
 <p class="hint">Search, then choose <strong>Add</strong> for each item. <strong>Leave out</strong> keeps an item out even when something you copy depends on it.</p>
 {{else}}<h2>Leave items out (optional)</h2>
@@ -131,13 +141,14 @@
 <details class="small-print"><summary>Changed something in PingOne just now?</summary>
   <label class="inline"><input type="checkbox" name="refresh" value="yes" form="main"> Read {{$d.Source}} again on the next search{{with .Data.ListAge}} (the list is {{.}} old){{end}}</label>
 </details>
+{{end}}
 </section>
 {{end}}
 
 {{if eq $step 3}}
 <p class="scope-line">Copying from <strong>{{$d.Source}}</strong>:
 {{if eq $scope "all"}}the whole environment{{else if eq $scope "sections"}}{{range $i, $s := .Data.CheckedSections}}{{if $i}}, {{end}}all {{$s}}{{end}}{{if .Data.Selected}} and {{len .Data.Selected}} more {{if eq (len .Data.Selected) 1}}item{{else}}items{{end}}{{end}}{{else}}{{len .Data.Selected}} {{if eq (len .Data.Selected) 1}}item{{else}}items{{end}}{{end}}{{if $d.Upstream}}, plus what they depend on{{end}}{{with .Data.Excluded}}, leaving out {{len .}}{{end}}.
-<a href="/drafts/{{$d.ID}}?step=2">Change</a></p>
+<a href="/drafts/{{$d.ID}}/items">Change</a></p>
 <section>
 <h2>Send for review</h2>
   <fieldset>

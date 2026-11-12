@@ -262,7 +262,7 @@ func (b *browser) do(req *http.Request) page {
 func (b *browser) get(path string) page {
 	b.e.t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, b.e.ts.URL+path, nil)
-	return b.do(req)
+	return b.settle(b.do(req))
 }
 
 // post submits a form as the browser would from this site's page.
@@ -281,7 +281,27 @@ func (b *browser) post(path string, form url.Values) page {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Origin", "null")
-	return b.do(req)
+	return b.settle(b.do(req))
+}
+
+// settle follows the items page's own refresh while it shows "Reading the
+// items", as a browser does.
+func (b *browser) settle(p page) page {
+	b.e.t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for strings.HasSuffix(p.path, "/items") && strings.Contains(p.body, `http-equiv="refresh"`) {
+		if time.Now().After(deadline) {
+			b.e.t.Fatal("the item list was not read")
+		}
+		time.Sleep(20 * time.Millisecond)
+		p = b.do(mustRequest(http.MethodGet, b.e.ts.URL+p.path))
+	}
+	return p
+}
+
+func mustRequest(method, u string) *http.Request {
+	req, _ := http.NewRequest(method, u, nil)
+	return req
 }
 
 // wait follows a job page until the job finishes.
@@ -305,7 +325,8 @@ func (b *browser) newDraft() string {
 	if p.status != 200 || !strings.HasPrefix(p.path, "/drafts/") {
 		b.e.t.Fatalf("new draft: %d %s", p.status, p.path)
 	}
-	return p.path
+	// The draft's address, without its step page.
+	return strings.TrimSuffix(p.path, "/scope")
 }
 
 func mainForm(name string, mut func(url.Values)) url.Values {
@@ -349,3 +370,18 @@ func (failErr) Error() string {
 }
 
 var errFailing = failErr{}
+
+// slowList answers the item list only once release is closed.
+type slowList struct {
+	failingExporter
+	release chan struct{}
+}
+
+func (s slowList) CatalogAllIDs(ctx context.Context, _ exporter.Credentials) ([]exporter.Resource, error) {
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return []exporter.Resource{{Address: exporter.Address{Type: "pingone_population", Label: "pingcli__Customers"}, Name: "Customers", ID: "p1"}}, nil
+}

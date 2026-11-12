@@ -21,7 +21,73 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, to string) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-func draftURL(d *Draft, suffix string) string { return "/drafts/" + d.ID + suffix }
+// draftURL is a draft's address: with suffix "" or "#...", the page of
+// its current step.
+func draftURL(d *Draft, suffix string) string {
+	if suffix == "" || strings.HasPrefix(suffix, "#") {
+		return "/drafts/" + d.ID + "/" + stepPath(d.Step) + suffix
+	}
+	return "/drafts/" + d.ID + suffix
+}
+
+func stepPath(step int) string {
+	switch step {
+	case 2:
+		return "items"
+	case 3:
+		return "send"
+	}
+	return "scope"
+}
+
+// draftHome sends a draft's address (and the older ?step=N form) to the
+// page of its current step.
+func (s *Server) draftHome(w http.ResponseWriter, r *http.Request) {
+	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+		if n, err := strconv.Atoi(r.URL.Query().Get("step")); err == nil && n >= 1 && n <= 3 {
+			d.Step = n
+		}
+		s.redirect(w, r, draftURL(d, ""))
+	})
+}
+
+// stepPage shows step n of a draft.
+func (s *Server) stepPage(n int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+			d.Step = n
+			s.showDraft(w, r, d)
+		})
+	}
+}
+
+// resolveSearch finishes a search that waited for the item list. It
+// reports whether the list is still being read.
+func (s *Server) resolveSearch(d *Draft) (waiting bool) {
+	if !d.pending {
+		return false
+	}
+	source, l := d.Source, d.pendingLoad
+	c := d.catalogs[source]
+	switch {
+	case l != nil && !l.finished():
+		return true
+	case l != nil && l.err != "" && (c == nil || d.pendingRefresh):
+		d.Results, d.ResultsTotal = nil, 0
+		d.searchProblem = "The items of " + source + " could not be read: " + l.err
+	case c == nil:
+		// The read finished without a list (a draft switched source):
+		// start one and keep waiting.
+		if d.pendingLoad = s.loadList(d, source); d.pendingLoad != nil {
+			return true
+		}
+		return false
+	default:
+		d.Results, d.ResultsTotal = filterItems(c.items, d.Query, d.TypeFilter)
+	}
+	d.pending, d.pendingLoad, d.pendingRefresh = false, nil, false
+	return false
+}
 
 // withDraft runs fn with this session's draft, holding the drafts lock.
 // fn writes to a buffer that is sent after the lock is released, so a slow
@@ -108,6 +174,10 @@ type draftView struct {
 	Excluded     []itemView
 	ListLoaded   bool
 	SearchedOnce bool
+	// ListError: the item list could not be read; PendingQuery: a search
+	// waits for the list (Loading) and shows when it is in.
+	ListError    string
+	PendingQuery bool
 	// Step is the page shown (1-3); CheckedSections names the ticked
 	// sections; ListAge says how old the item list is.
 	Step            int
@@ -165,10 +235,22 @@ func viewItems(items []Item, d *Draft) []itemView {
 	return out
 }
 
-func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
-	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
+func (s *Server) showDraft(w http.ResponseWriter, r *http.Request, d *Draft) {
+	{
+		var listErr string
+		waiting := s.resolveSearch(d)
+		if d.Step == 2 && d.catalogs[d.Source] == nil && !waiting {
+			// Reading the list starts when the items page is opened, unless
+			// the last read failed (the page offers to try again).
+			if l := d.loads[d.Source]; l != nil && l.finished() && l.err != "" {
+				listErr = l.err
+			} else {
+				s.loadList(d, d.Source)
+			}
+		}
+		loading := waiting || (d.catalogs[d.Source] == nil && d.loads[d.Source] != nil && !d.loads[d.Source].finished())
 		v := draftView{D: d, Sources: s.cfg.Sources, Rollout: s.cfg.Rollout, Notice: d.notice, Problem: d.problem,
-			Running: d.job != nil && d.job.Running && d.job.Kind != "search", Loading: d.loads[d.Source] != nil && !d.loads[d.Source].finished() && d.catalogs[d.Source] == nil,
+			Running: d.job != nil && d.job.Running && d.job.Kind != "search", Loading: loading, ListError: listErr, PendingQuery: d.pending && d.Query != "",
 			HasPreview: d.preview != nil,
 			Results:    viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
 			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.searched, Types: typeOptions(d),
@@ -182,9 +264,6 @@ func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		v.Step = d.Step
-		if n, err := strconv.Atoi(r.URL.Query().Get("step")); err == nil && n >= 1 && n <= 3 {
-			v.Step, d.Step = n, n
-		}
 		if v.Step < 1 || v.Step > 3 {
 			v.Step = 1
 		}
@@ -194,8 +273,9 @@ func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		d.notice, d.problem, d.searchNotice, d.searchProblem = "", "", "", ""
-		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
-	})
+		titles := map[int]string{1: "New request: what to copy", 2: "New request: choose items", 3: "New request: send for review"}
+		s.render(w, r, http.StatusOK, "draft", titles[v.Step], v, v.Step == 2 && v.Loading)
+	}
 }
 
 func contains(list []string, v string) bool {
@@ -380,34 +460,22 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, draftURL(d, "#results"))
 			return
 		}
-		// The results always appear on this page: the list is read (or the
-		// read already running is awaited) for a bounded time.
+		// The search is answered from the item list. When the list is not
+		// in yet, the items page shows a loading notice and refreshes by
+		// itself until it is, then shows the results.
 		source := d.Source
-		refresh := r.PostForm.Get("refresh") == "yes"
-		var l *listLoad
-		if refresh {
-			l = s.reloadList(source)
+		d.pendingRefresh = r.PostForm.Get("refresh") == "yes"
+		if d.pendingRefresh {
+			d.pendingLoad = s.reloadList(source)
 		} else {
-			l = s.loadList(d, source)
+			if l := d.loads[source]; l != nil && l.finished() && l.err != "" && d.catalogs[source] == nil {
+				delete(d.loads, source) // try a failed read again
+			}
+			d.pendingLoad = s.loadList(d, source)
 		}
-		s.awaitList(r, l)
-		switch c := d.catalogs[source]; {
-		case refresh && l != nil && !l.finished():
-			d.Results, d.ResultsTotal = nil, 0
-			d.searchNotice = "Reading " + source + " again (a large environment takes a few minutes). Press Search in a moment; nothing you entered is lost."
-		case refresh && l != nil && l.err != "":
-			d.Results, d.ResultsTotal = nil, 0
-			d.searchProblem = "The items of " + source + " could not be read again: " + l.err
-		case c != nil:
-			d.Results, d.ResultsTotal = filterItems(c.items, q, d.TypeFilter)
-		case l != nil && l.finished() && l.err != "":
-			d.Results, d.ResultsTotal = nil, 0
-			d.searchProblem = "The items of " + source + " could not be read: " + l.err
-			delete(d.loads, source) // the next search tries again
-		default:
-			d.Results, d.ResultsTotal = nil, 0
-			d.searchNotice = "Still reading the items of " + source + " (a large environment takes a few minutes). Press Search again in a moment; nothing you entered is lost."
-		}
+		d.pending = true
+		d.Results, d.ResultsTotal = nil, 0
+		s.resolveSearch(d)
 		s.redirect(w, r, draftURL(d, "#results"))
 	})
 }

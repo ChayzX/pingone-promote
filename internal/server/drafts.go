@@ -110,9 +110,15 @@ type Draft struct {
 	ResultsTotal int
 	// searched: a search ran; searchNotice and searchProblem explain its
 	// outcome next to the results, where the page scrolls to.
-	searched      bool
-	searchNotice  string
-	searchProblem string
+	searched bool
+	// pending: a search waits for the item list (pendingLoad, the read it
+	// waits for; pendingRefresh: it asked to read the list again). The
+	// items page shows a loading notice and refreshes until it is in.
+	pending        bool
+	pendingLoad    *listLoad
+	pendingRefresh bool
+	searchNotice   string
+	searchProblem  string
 
 	catalogs map[string]*catalogEntry
 	// loads are background reads of a source's item list, apart from job
