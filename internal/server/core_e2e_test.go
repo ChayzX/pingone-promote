@@ -42,7 +42,9 @@ func crossTerraformer(t *testing.T) exportertest.Fake {
 
 // newCoreEnv serves DaVinci through the fake terraformer and every other
 // PingOne type through the native exporter against a fake PingOne API.
-func newCoreEnv(t *testing.T) *env {
+func newCoreEnv(t *testing.T) *env { return newCoreEnvWith(t, nil) }
+
+func newCoreEnvWith(t *testing.T, mut func(*Config)) *env {
 	t.Helper()
 	f := crossTerraformer(t)
 	core := pingonetest.Start(t, pingonetest.LoadTenant(t, filepath.Join("..", "coreexport", "testdata", "tenant.json")))
@@ -58,7 +60,12 @@ func newCoreEnv(t *testing.T) *env {
 			return cl, nil
 		},
 	}
-	e := newEnvWith(t, exp, func(c *Config) { c.PingOne.WorkerEnvironmentID = core.WorkerEnvID })
+	e := newEnvWith(t, exp, func(c *Config) {
+		c.PingOne.WorkerEnvironmentID = core.WorkerEnvID
+		if mut != nil {
+			mut(c)
+		}
+	})
 	t.Cleanup(func() {
 		if core.Writes() != 0 {
 			t.Errorf("the server wrote to PingOne %d times", core.Writes())
@@ -199,5 +206,52 @@ func TestCoreApplicationWithUpstreamListsFlowPolicyAndMissingValues(t *testing.T
 	}
 	if strings.Contains(p.body, "Submit to GitLab") {
 		t.Fatal("missing redirect URIs must block submit")
+	}
+}
+
+// A repository whose tfvars do not set pingone_environment_id (it comes
+// from a CI variable) works when the configuration names the source's ID;
+// without it, the page says exactly what the operator must add. Whole
+// sections are copied without picking items.
+func TestSourceIDFromConfigurationAndWholeSections(t *testing.T) {
+	dropID := func(e *env) {
+		src, _, _ := e.gl.File("main", "dev.tfvars")
+		var kept []string
+		for _, l := range strings.Split(src, "\n") {
+			if !strings.HasPrefix(l, "pingone_environment_id") {
+				kept = append(kept, l)
+			}
+		}
+		e.gl.Edit("main", "dev.tfvars", strings.Join(kept, "\n"))
+	}
+	sections := func(v url.Values) {
+		v.Set("scope", "sections")
+		v["family"] = []string{"notifications"}
+		v.Del("upstream")
+	}
+
+	e := newCoreEnv(t)
+	dropID(e)
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", nil))
+	p := b.wait(b.post(draft+"/search", url.Values{"q": {"recovery"}}))
+	mustContain(t, p.body, "sourceEnvironmentIds")
+
+	e = newCoreEnvWith(t, func(c *Config) {
+		c.SourceEnvironmentIDs = map[string]string{"dev": "11111111-1111-4111-8111-111111111111"}
+	})
+	dropID(e)
+	b = e.browser()
+	draft = b.newDraft()
+	p = b.post(draft+"/save", mainForm("Core Tester", sections))
+	mustContain(t, p.body, "Leave items out", "All Notifications and templates", "Git branch:")
+	p = previewDraft(t, b, draft, mainForm("Core Tester", sections))
+	mustContain(t, p.body, "pingone_notification_template_content.pingcli__recovery_code_template_en_Email", "Submitting creates the Git branch")
+	if strings.Contains(p.body, "is not known") {
+		t.Fatalf("the configured source ID was not used:\n%s", p.body)
+	}
+	if strings.Contains(p.body, "pingone_population.") {
+		t.Fatal("a section that was not chosen was copied")
 	}
 }

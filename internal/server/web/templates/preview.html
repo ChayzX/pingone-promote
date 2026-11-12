@@ -30,6 +30,12 @@
 </section>
 {{end}}
 
+{{if .Data.Failed}}
+<section>
+<h2>Readiness by environment</h2>
+<p>Not checked: the preview stopped before reading the source environment.</p>
+</section>
+{{else}}
 <section>
 <h2>Readiness by environment</h2>
 <p class="hint">The change rolls out to these environments in this order after it is merged. An environment that is not ready blocks the request.</p>
@@ -42,6 +48,7 @@
   {{end}}</tbody>
 </table>
 </section>
+{{end}}
 
 {{$needValues := false}}{{range .Data.Envs}}{{if or .Values .Imports}}{{$needValues = true}}{{end}}{{end}}
 {{if $needValues}}
@@ -75,7 +82,7 @@
     <tbody>{{range .}}
     <tr>
       <td><strong>{{.Name}}</strong><br><span class="hint">{{.Kind}}</span><br><code class="small">{{.Address}}</code>{{with .Reason}}<div class="hint">{{.}}</div>{{end}}</td>
-      <td>{{if eq .Role "selected"}}you picked it{{else if eq .Role "dependency"}}your selection uses it{{else if eq .Role "environment"}}whole environment{{else if eq .Role "excluded"}}excluded{{else}}{{.Role}}{{end}}</td>
+      <td>{{if eq .Role "selected"}}{{if $d.Families}}in a chosen section, or picked{{else}}you picked it{{end}}{{else if eq .Role "dependency"}}your selection uses it{{else if eq .Role "environment"}}whole environment{{else if eq .Role "excluded"}}excluded{{else}}{{.Role}}{{end}}</td>
       <td>{{.StatusText}}</td>
       <td>{{.ActionText}}</td>
       <td>{{if .Dependency}}
@@ -117,6 +124,7 @@
 <section id="submit">
 <h2>Submit</h2>
 <div class="warning" role="note"><p><strong>Undoing a change can delete things.</strong> Merging adds and changes resources; it never deletes. A Git revert can delete resources in Terraform &mdash; fix forward with a new request instead. Consider lifecycle { prevent_destroy = true } on critical resources such as populations and applications.</p></div>
+<p>Submitting creates the Git branch <code>{{.Data.Branch}}</code> from the default branch{{if eq $d.Mode "mr"}} and opens a merge request from it{{end}}.</p>
 {{if .Data.CanSubmit}}
 <form method="post" action="/drafts/{{$d.ID}}/submit">
   <input type="hidden" name="csrf" value="{{$csrf}}">
@@ -126,7 +134,7 @@
   <button type="submit" class="primary">Submit to GitLab</button>
 </form>
 {{else}}
-<p>You can submit once every environment above is ready and the request has not changed since this preview.</p>
+<p class="problem"><strong>Cannot submit yet.</strong> {{.Data.WhyNot}}</p>
 {{end}}
 </section>
 

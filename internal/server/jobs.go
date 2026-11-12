@@ -66,6 +66,8 @@ func (s *Server) startJob(d *Draft, kind string, fn func(ctx context.Context, st
 			job.Err = "Cancelled."
 		case errors.Is(err, context.DeadlineExceeded):
 			job.Err = "This took too long and was stopped."
+		case errors.Is(err, errNoSourceID):
+			job.Err = noSourceIDText
 		default:
 			job.Err = s.redact(err.Error())
 		}
@@ -100,6 +102,19 @@ func (s *Server) snapshotDirs() []string {
 	return dirs
 }
 
+// envFor is env with the source's configured environment ID, if any.
+func (s *Server) envFor(project gitlab.Project, workspace, head string, req *request.Request, exp request.Exporter) request.Env {
+	e := s.env(project, workspace, head, req.RequestID, exp)
+	e.SourceEnvironmentID = s.cfg.SourceEnvironmentIDs[req.Source]
+	return e
+}
+
+// noSourceIDText explains errNoSourceID to the person and the operator.
+const noSourceIDText = "This server does not know the PingOne environment ID of the source environment, so it cannot read it. The operator adds it to the server configuration under \"sourceEnvironmentIds\" (for example {\"development\": \"<environment ID>\"}) and restarts the server. (The alternative is a pingone_environment_id line in the source's .tfvars file on the default branch.)"
+
+// errNoSourceID is a source whose PingOne environment ID is not known.
+var errNoSourceID = errors.New("the PingOne environment ID of the source is not known")
+
 func (s *Server) env(project gitlab.Project, workspace, head, requestID string, exp request.Exporter) request.Env {
 	return request.Env{Workspace: workspace, Layout: s.layout, Rollout: s.cfg.Rollout, AllowedSources: s.cfg.Sources,
 		Exporter: exp, Credentials: s.creds, TerraformBin: s.cfg.Tools.Terraform,
@@ -125,7 +140,7 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		}
 		stage("Exporting the source environment and merging")
 		rec, frozen := newRecorder(s.exporter)
-		res := request.Run(ctx, s.env(project, snap, head, req.RequestID, rec), req)
+		res := request.Run(ctx, s.envFor(project, snap, head, req, rec), req)
 		s.scrub(res)
 		if ctx.Err() != nil {
 			os.RemoveAll(snap)
@@ -180,7 +195,7 @@ func (s *Server) runSubmit(d *Draft, req *request.Request, p *preview) func(cont
 			}
 		}
 		stage("Committing to GitLab")
-		res := request.Run(ctx, s.env(project, p.snapshot, p.head, req.RequestID, replayer{f: p.frozen}), req)
+		res := request.Run(ctx, s.envFor(project, p.snapshot, p.head, req, replayer{f: p.frozen}), req)
 		s.scrub(res)
 		finish(res, res.Error != nil && res.Error.Code == request.ErrConflict)
 		return nil
@@ -229,6 +244,9 @@ func (s *Server) runSearch(d *Draft, source string) func(context.Context, func(s
 // sourceEnvironmentID reads pingone_environment_id from the source
 // environment's tfvars on the default branch, as the engine does.
 func (s *Server) sourceEnvironmentID(ctx context.Context, branch, source string) (string, error) {
+	if id := s.cfg.SourceEnvironmentIDs[source]; id != "" {
+		return id, nil
+	}
 	p, err := s.layout.Overlay(source)
 	if err != nil {
 		return "", err
@@ -246,7 +264,7 @@ func (s *Server) sourceEnvironmentID(ctx context.Context, branch, source string)
 	}
 	v, ok := o.Values[neutralize.EnvironmentIDVariable]
 	if !ok || v.Type().FriendlyName() != "string" {
-		return "", fmt.Errorf("%s does not set %s", p, neutralize.EnvironmentIDVariable)
+		return "", fmt.Errorf("%w: %s does not set %s, and the server configuration has no sourceEnvironmentIds entry for %s", errNoSourceID, p, neutralize.EnvironmentIDVariable, source)
 	}
 	return v.AsString(), nil
 }

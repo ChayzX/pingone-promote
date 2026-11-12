@@ -58,10 +58,15 @@ type Config struct {
 	// Sources are the environments a request may export from; Rollout is
 	// the chain the pipeline applies after the source, in order. Names are
 	// the tfvars file names (development -> development.tfvars).
-	Sources        []string `json:"sources"`
-	Rollout        []string `json:"rollout"`
-	BranchPrefix   string   `json:"branchPrefix,omitempty"`
-	OverlayPattern string   `json:"overlayPattern,omitempty"`
+	Sources []string `json:"sources"`
+	// SourceEnvironmentIDs gives a source's PingOne environment ID, for a
+	// repository whose tfvars do not set pingone_environment_id (it comes
+	// from a CI variable). A source without one here is looked up in its
+	// tfvars on the default branch.
+	SourceEnvironmentIDs map[string]string `json:"sourceEnvironmentIds,omitempty"`
+	Rollout              []string          `json:"rollout"`
+	BranchPrefix         string            `json:"branchPrefix,omitempty"`
+	OverlayPattern       string            `json:"overlayPattern,omitempty"`
 	// Layout is "default" or "terraformer" (file names of the root).
 	Layout string `json:"layout,omitempty"`
 	// ApplyJobPattern names each environment's apply job in the pipeline
@@ -85,6 +90,7 @@ type Config struct {
 var (
 	envNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
 	hostRE    = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,253}[A-Za-z0-9])?$`)
+	envIDRE   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	jobPatRE  = regexp.MustCompile(`^[A-Za-z0-9 :._/-]{0,80}\{env\}[A-Za-z0-9 :._/-]{0,80}$`)
 )
 
@@ -160,6 +166,14 @@ func (c *Config) check() error {
 			return fmt.Errorf("environment %q is listed twice; a source cannot also be in the rollout", e)
 		}
 		seen[e] = true
+	}
+	for name, id := range c.SourceEnvironmentIDs {
+		if !seen[name] || !contains(c.Sources, name) {
+			return fmt.Errorf("sourceEnvironmentIds: %q is not one of the sources", name)
+		}
+		if !envIDRE.MatchString(id) {
+			return fmt.Errorf("sourceEnvironmentIds.%s must be a PingOne environment ID (a UUID)", name)
+		}
 	}
 	if c.BranchPrefix == "" {
 		c.BranchPrefix = gitlab.RequestBranchPrefix

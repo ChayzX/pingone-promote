@@ -103,6 +103,9 @@ type Request struct {
 	Flows []FlowRef `json:"flows"`
 	// Resources selects any supported configuration resource by type/name/ID or exact address.
 	Resources []ExcludeRef `json:"resources,omitempty"`
+	// Families selects every item of these catalog families (for example
+	// "davinci" or "applications"), as if each were listed in Resources.
+	Families []string `json:"families,omitempty"`
 	// ImportIDs adopt built-in objects (default population, default sign-on
 	// policy, predefined scopes, ...): env -> resource address -> that
 	// environment's ID. IDs are not secrets.
@@ -259,7 +262,7 @@ func (r *Request) Validate() error {
 		return invalid("confirmAll", "a whole-environment request (scope all) requires confirmAll: true")
 	case !r.Whole() && r.ConfirmAll:
 		return invalid("confirmAll", "confirmAll only applies to scope all")
-	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies)+len(r.Resources) == 0:
+	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies)+len(r.Resources)+len(r.Families) == 0:
 		return invalid("flows", "select at least one configuration resource")
 	case !r.Whole() && (len(r.Flows) > 20 || len(r.Applications) > 20 || len(r.FlowPolicies) > 20):
 		return invalid("flows", "at most 20 of each kind per request")
@@ -278,6 +281,13 @@ func (r *Request) Validate() error {
 		if err := checkRef(fmt.Sprintf("flowPolicies[%d]", i), f, false); err != nil {
 			return err
 		}
+	}
+	seenFamily := map[string]bool{}
+	for i, f := range r.Families {
+		if !catalog.ExportableFamily(f) || seenFamily[f] {
+			return invalid(fmt.Sprintf("families[%d]", i), "must be a configuration family, listed once")
+		}
+		seenFamily[f] = true
 	}
 	if err := r.checkResources(); err != nil {
 		return err

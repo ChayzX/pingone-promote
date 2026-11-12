@@ -21,8 +21,10 @@ and a **scratch GitLab project** for the first tests.
   create branches and merge requests in that project (a project access token
   with the Developer role and the `api` scope).
 - The config repository must already have one settings file per
-  environment at its root (`development.tfvars`, `testing.tfvars`, ...), and
-  the source's file must set `pingone_environment_id`.
+  environment at its root (`development.tfvars`, `testing.tfvars`, ...).
+  The server needs the source environment's PingOne ID: from
+  `pingone_environment_id` in its `.tfvars`, or from `sourceEnvironmentIds`
+  in the configuration (step 5).
 
 ## 1. Install Podman and start its machine
 
@@ -146,9 +148,10 @@ Change these values and save:
 | `pingone.regionCode` | the region, for example `NA` |
 | `pingone.workerEnvironmentId` | the ID of the environment that holds the worker application |
 | `sources` | the environment(s) you copy from, named like their `.tfvars` file, for example `["development"]` |
+| `sourceEnvironmentIds` | the PingOne environment ID of each source, for example `{"development": "<ID>"}` (PingOne admin console, Environment, Settings). Needed when your `.tfvars` files do not set `pingone_environment_id` (it comes from a GitLab CI variable); otherwise remove the line |
 | `rollout` | the environments the pipeline applies to, in order, for example `["testing", "stage", "production"]` |
 | `branchPrefix` | your branch prefix, for example `CIAM-` |
-| `applyJobPattern` | the name of your pipeline's apply job with `{env}`, for example `apply:{env}` |
+| `applyJobPattern` | the name of your pipeline's apply job with `{env}` where the environment name goes: for jobs named `terraform:apply-development`, `terraform:apply-stage`, ... use `terraform:apply-{env}` |
 | `tools.terraformSha256` | the first value from step 4 |
 | `tools.terraformerSha256` | the second value from step 4 |
 
@@ -202,15 +205,17 @@ Open <http://localhost:8080/>.
 ## 8. Use it
 
 1. **Start a new request**, type your name, choose the source environment.
-2. **Find items**: search by name or ID, or pick a type and leave the name
-   empty to list all of that type. Choose **Add** (or **Exclude**). Tick
-   "Also copy what my items depend on" to bring dependencies.
-3. **Preview the change.** The first preview reads the whole source
+2. **What to copy**: items you pick, whole sections (for example all of
+   DaVinci, or all applications), or the whole environment. Press
+   **Use this choice**.
+3. **Find items**: search by name or ID, or leave the name empty to list
+   everything. **Add** copies an item; **Leave out** keeps one out.
+4. **Preview the change.** The first preview reads the whole source
    environment and can take a minute.
-4. **Fill in what each environment needs** (URLs, IDs) and preview again
+5. **Fill in what each environment needs** (URLs, IDs) and preview again
    until it says **Ready to submit**.
-5. **Submit to GitLab** as a merge request or a branch only.
-6. Follow the rollout on the **Requests** page after the merge.
+6. **Submit to GitLab** as a merge request or a branch only.
+7. Follow the rollout on the **Requests** page after the merge.
 
 Good first tests: one notification template alone; one application with its
 dependencies; then the cases in `docs/acceptance/core-export.md`.
@@ -242,5 +247,6 @@ drafts. Submitted requests are in GitLab.
 | search or preview fails with a PingOne error | wrong region, worker environment, client ID or secret, or missing read roles | check the values; the worker needs read access to every service you copy |
 | `HTTP 403` notes that some item types were not read | the worker cannot read them, or the service is not licensed | expected for unlicensed services; otherwise add the read role |
 | GitLab errors on preview | wrong address, project ID or token, or GitLab is only reachable on a VPN the Podman machine does not use | check the values; `podman machine ssh curl -sI https://your-gitlab` tests the route |
+| "does not know the PingOne environment ID of the source" | your `.tfvars` do not set `pingone_environment_id` | add the source's ID under `sourceEnvironmentIds` (step 5), then `podman rm -f pingone-promote` and the start command of step 7 |
 | preview says a value or ID is needed | another environment needs its own value | fill it in on the preview page; it is saved in that environment's `.tfvars` |
 | "The default branch changed after the preview" | someone merged in between | press **Preview again**, then submit |

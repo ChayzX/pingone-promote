@@ -129,6 +129,18 @@ var Families = []string{
 	"protect", "authorize", "verify", "credentials", "platform", "identity_data",
 }
 
+// FamilyLabels names each exportable family for people.
+var FamilyLabels = map[string]string{
+	"davinci": "DaVinci (flows, connectors, variables, flow policies)", "applications": "Applications",
+	"resources_scopes_grants": "Resources, scopes and grants", "sign_on": "Sign-on policies", "directory": "Directory (populations, groups, schema, password policies)",
+	"mfa_devices": "MFA", "identity_providers": "External identity providers", "gateways": "Gateways", "branding": "Branding and themes",
+	"notifications": "Notifications and templates", "forms": "Forms", "agreements": "Agreements", "languages": "Languages",
+	"protect": "Protect (risk)", "authorize": "Authorize", "verify": "Verify", "credentials": "Credentials", "platform": "Platform settings (keys, domains, webhooks)",
+}
+
+// ExportableFamily reports whether a request may select a whole family.
+func ExportableFamily(f string) bool { _, ok := FamilyLabels[f]; return ok }
+
 const userData = "holds users, user data or user assignments; pingone-promote never exports identity data"
 
 func api(t, fam, path, emb string, name ...string) Def {

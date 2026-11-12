@@ -35,6 +35,7 @@ rejected. Secrets never go in this file.
 | `pingone.regionCode` | One of `NA`, `EU`, `CA`, `AP`, `AU`, `SG`. |
 | `pingone.workerEnvironmentId` | Environment holding the **read-only** source worker app. |
 | `sources` | Environments a request may export from (`development` means `development.tfvars`). |
+| `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Needed when a source's `.tfvars` does not set `pingone_environment_id` (for example when it comes from a GitLab CI variable). |
 | `rollout` | Environments the pipeline applies afterwards, in order. Must not overlap `sources`. |
 | `branchPrefix` | Request branch prefix, e.g. `CIAM-` (ends in `-` or `/`). |
 | `applyJobPattern` | Apply job name in the default-branch pipeline; must contain `{env}`. |

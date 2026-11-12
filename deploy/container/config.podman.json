@@ -13,9 +13,10 @@
     "workerEnvironmentId": "00000000-0000-0000-0000-000000000000"
   },
   "sources": ["development"],
+  "sourceEnvironmentIds": { "development": "00000000-0000-0000-0000-000000000000" },
   "rollout": ["testing", "stage", "production"],
   "branchPrefix": "CIAM-",
-  "applyJobPattern": "apply:{env}",
+  "applyJobPattern": "terraform:apply-{env}",
   "layout": "default",
   "tools": {
     "terraform": "/opt/pingone-promote/tools/terraform",

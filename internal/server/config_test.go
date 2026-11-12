@@ -444,3 +444,28 @@ func TestSecretsSystemdCredential(t *testing.T) {
 		t.Fatal("a 0440 file outside the credentials directory was accepted")
 	}
 }
+
+func TestSourceEnvironmentIDs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ids map[string]string
+		ok  bool
+	}{
+		"valid":         {map[string]string{"development": "22222222-2222-4222-8222-222222222222"}, true},
+		"not a source":  {map[string]string{"testing": "22222222-2222-4222-8222-222222222222"}, false},
+		"unknown name":  {map[string]string{"qa": "22222222-2222-4222-8222-222222222222"}, false},
+		"not an ID":     {map[string]string{"development": "dev-env"}, false},
+		"empty mapping": {map[string]string{}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := validConfig()
+			m["sourceEnvironmentIds"] = tc.ids
+			c, err := loadMap(t, m)
+			if (err == nil) != tc.ok {
+				t.Fatalf("err = %v, want ok=%v", err, tc.ok)
+			}
+			if tc.ok && len(tc.ids) > 0 && c.SourceEnvironmentIDs["development"] == "" {
+				t.Fatal("the ID was not kept")
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"pingone-promote/internal/catalog"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,6 +100,25 @@ type draftView struct {
 	Excluded     []itemView
 	ListLoaded   bool
 	SearchedOnce bool
+	// Sections are the families that can be copied whole.
+	Sections []sectionOption
+	// Branch is the Git branch a submit creates.
+	Branch string
+}
+
+type sectionOption struct {
+	Value, Label string
+	Checked      bool
+}
+
+func sectionOptions(d *Draft) []sectionOption {
+	var out []sectionOption
+	for _, f := range catalog.Families {
+		if l, ok := catalog.FamilyLabels[f]; ok {
+			out = append(out, sectionOption{Value: f, Label: l, Checked: contains(d.Families, f)})
+		}
+	}
+	return out
 }
 
 type itemView struct {
@@ -126,7 +146,8 @@ func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 		v := draftView{D: d, Sources: s.cfg.Sources, Rollout: s.cfg.Rollout, Notice: d.notice, Problem: d.problem,
 			Running: d.job != nil && d.job.Running, HasPreview: d.preview != nil,
 			Results: viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
-			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != "" || d.TypeFilter != "", Types: typeOptions(d)}
+			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.Query != "" || d.TypeFilter != "", Types: typeOptions(d),
+			Sections: sectionOptions(d), Branch: s.cfg.BranchPrefix + d.RequestID}
 		d.notice, d.problem = "", ""
 		s.render(w, r, http.StatusOK, "draft", "New request", v, false)
 	})
@@ -170,6 +191,17 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 			d.Source, d.Selected, d.Excluded, d.Results, d.Choices = src, nil, nil, nil, map[string]string{}
 		}
 		d.Whole = f.Get("scope") == request.ScopeAll
+		d.Families = nil
+		if f.Get("scope") == "sections" {
+			for _, fam := range catalog.Families {
+				if catalog.ExportableFamily(fam) && contains(f["family"], fam) {
+					d.Families = append(d.Families, fam)
+				}
+			}
+			if len(d.Families) == 0 {
+				d.notice = "Tick at least one section to copy whole sections."
+			}
+		}
 		d.ConfirmAll = d.Whole && f.Get("confirm_all") == "yes"
 		d.Upstream = f.Get("upstream") == "yes"
 		if m := f.Get("mode"); m == "mr" || m == "branch" {
@@ -415,6 +447,11 @@ type previewView struct {
 	NeedEnvs    []string
 	Skipped     []string
 	Warnings    []string
+	// Failed: the preview stopped with an error, so nothing was checked.
+	Failed bool
+	// WhyNot says why the request cannot be submitted yet.
+	WhyNot string
+	Branch string
 }
 
 var statusText = map[string]string{"new": "new", "changed-in-source": "changed in source", "git-newer": "Git is newer",
@@ -504,6 +541,25 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 		v.AlmostReady = onlyMissingValues(res)
 		v.Skipped, v.Warnings = splitWarnings(res.Warnings)
 		v.CanSubmit = v.Fresh && !v.HasBlockers && res.Status == request.StatusPreviewed && res.Error == nil && !v.Running
+		// A blocked preview also carries an error; only one that stopped
+		// before checking anything has no blockers and no changes.
+		v.Failed = res.Error != nil && len(res.Blockers) == 0 && len(res.Changes) == 0
+		v.Branch = s.cfg.BranchPrefix + d.RequestID
+		switch {
+		case v.CanSubmit:
+		case v.Running:
+			v.WhyNot = "Something is still running for this request."
+		case !v.Fresh:
+			v.WhyNot = "The request changed after this preview. Preview again."
+		case v.Failed:
+			v.WhyNot = "The preview stopped before it could check anything (see the message at the top). Fix that, then preview again."
+		case len(v.NeedEnvs) > 0:
+			v.WhyNot = "Not every environment is ready: " + strings.Join(v.NeedEnvs, ", ") + ". See Readiness by environment."
+		case v.HasBlockers:
+			v.WhyNot = "The request has a problem to fix first. See Readiness by environment."
+		default:
+			v.WhyNot = "The preview did not finish. Preview again."
+		}
 		s.render(w, r, http.StatusOK, "preview", "Preview", v, false)
 	})
 }

@@ -82,6 +82,8 @@ type Draft struct {
 	RequestedBy string // Person.Recorded()
 	Source      string
 	Whole       bool
+	// Families are whole sections chosen (scope "sections"); Whole wins.
+	Families    []string
 	ConfirmAll  bool
 	Upstream    bool
 	Mode        string
@@ -272,6 +274,7 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 	if d.Whole {
 		req.Scope, req.ConfirmAll = request.ScopeAll, d.ConfirmAll
 	} else {
+		req.Families = append(req.Families, d.Families...)
 		for _, it := range d.Selected {
 			req.Resources = append(req.Resources, request.ExcludeRef{Address: it.Address})
 		}
@@ -332,4 +335,15 @@ func fingerprint(r request.Request) string {
 	b, _ := json.Marshal(r)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// Scope is the page's choice: "selected", "sections" or "all".
+func (d *Draft) Scope() string {
+	switch {
+	case d.Whole:
+		return request.ScopeAll
+	case len(d.Families) > 0:
+		return "sections"
+	}
+	return request.ScopeSelected
 }

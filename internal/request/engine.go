@@ -376,7 +376,7 @@ func (r *runner) sourceEnvironmentID() (string, error) {
 	}
 	v, ok := o.Values[neutralize.EnvironmentIDVariable]
 	if !ok || v.Type().FriendlyName() != "string" {
-		return "", fmt.Errorf("%s does not set pingone_environment_id", p)
+		return "", fmt.Errorf("the PingOne environment ID of %s is not known: %s does not set pingone_environment_id, and the server configuration has no sourceEnvironmentIds entry for it", r.req.Source, p)
 	}
 	return v.AsString(), nil
 }
@@ -444,7 +444,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		}
 	}
 	sort.Strings(depExcluded)
-	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies) + len(req.Resources)
+	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies) + len(req.Resources) + len(req.Families)
 	var cat []exporter.Resource
 	if items+len(req.Exclude)+len(depExcluded) > 0 {
 		withIDs, allIDs := false, false
@@ -565,6 +565,34 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		}
 		if err := include(field, "resource", FlowRef{ID: ref.ID, Name: query}, matches); err != nil {
 			return nil, err
+		}
+	}
+	if len(req.Families) > 0 && !req.Whole() {
+		want := set(req.Families)
+		requestExcluded := map[string]bool{}
+		for _, e := range req.Exclude {
+			requestExcluded[e.Address] = e.Address != ""
+		}
+		found := map[string]int{}
+		for _, c := range cat {
+			d, ok := catalog.Get(c.Type)
+			// Owned children (a flow's deploy and enable, ...) travel with
+			// their parent, so an excluded parent takes them along.
+			if !ok || !want[d.Family] || d.Owned || requestExcluded[c.String()] || includedBy[c.String()] != "" {
+				continue
+			}
+			found[d.Family]++
+			includedBy[c.String()] = "families"
+			sel.seeds = append(sel.seeds, c.String())
+			r.res.Selected = append(r.res.Selected, Selected{Query: d.Family, Address: c.String(), Name: c.Name, ID: c.ID})
+		}
+		for _, f := range req.Families {
+			if found[f] == 0 {
+				r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s: nothing of this kind was found in %s", catalog.FamilyLabels[f], req.Source))
+			}
+		}
+		if len(sel.seeds) == 0 {
+			return nil, fail("families", "nothing in the chosen sections was found in "+req.Source, nil, "")
 		}
 	}
 	if req.Whole() {
