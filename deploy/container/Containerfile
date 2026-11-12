@@ -1,12 +1,12 @@
 # pingone-promote hosted server image.
 #
-#   podman build -f deploy/container/Containerfile -t pingone-promote:dev .
+#   podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .
 #
 # PIN BY DIGEST before any shared use. Look up the digest of the tag you
 # reviewed and pass it:
 #   podman pull docker.io/library/golang:1.27.3
 #   podman inspect --format '{{index .RepoDigests 0}}' docker.io/library/golang:1.27.3
-#   podman build --build-arg GO_IMAGE=docker.io/library/golang:1.27.3@sha256:<digest> \
+#   podman build --format docker --build-arg GO_IMAGE=docker.io/library/golang:1.27.3@sha256:<digest> \
 #                --build-arg RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:<digest> ...
 # The defaults below use tags so the file builds out of the box; a tag can
 # move, a digest cannot.

@@ -37,7 +37,7 @@ Full detail: [docs/operations.md](docs/operations.md#macos-local-test).
 Full detail: [docs/operations.md](docs/operations.md#container-and-kubernetes).
 
 1. Pin both base images by digest in `deploy/container/Containerfile`.
-2. `podman build -f deploy/container/Containerfile -t pingone-promote:dev .`
+2. `podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .`
 3. Get the Terraform digest: `podman run --rm --entrypoint sha256sum pingone-promote:dev /opt/pingone-promote/tools/terraform`
 4. Edit the ConfigMap in `deploy/kubernetes/deployment.yaml`: `gitlab`, `pingone`, `sources`, `rollout`, `terraformSha256`, and `allowedHosts` (your Ingress host name).
 5. `kubectl create namespace pingone-promote`
@@ -96,4 +96,5 @@ More failures: [docs/operations.md](docs/operations.md#troubleshooting).
 - Operating details and every config field: [docs/operations.md](docs/operations.md).
 - Rolling forward after a bad change: [docs/recovery.md](docs/recovery.md).
 - What can be exported: [docs/coverage.md](docs/coverage.md). Design: [docs/adr/README.md](docs/adr/README.md).
+- Updating to a newer build: [docs/updating.md](docs/updating.md).
 - Current state and open items: [docs/HANDOFF.md](docs/HANDOFF.md).

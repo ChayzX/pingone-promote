@@ -347,6 +347,30 @@ func TestConfigRejectTrailingDataAndMalformed(t *testing.T) {
 	}
 }
 
+// A configuration mistake names the setting or the line, never a value.
+func TestConfigErrorsSayWhere(t *testing.T) {
+	m := validConfig()
+	m["branchPrefx"] = "fixture-private"
+	_, err := loadMap(t, m)
+	if err == nil || !strings.Contains(err.Error(), `"branchPrefx"`) || strings.Contains(err.Error(), "fixture-private") {
+		t.Fatalf("unknown setting: %v", err)
+	}
+	m = validConfig()
+	m["sources"] = "fixture-private"
+	_, err = loadMap(t, m)
+	if err == nil || !strings.Contains(err.Error(), `"sources"`) || strings.Contains(err.Error(), "fixture-private") {
+		t.Fatalf("wrong kind: %v", err)
+	}
+	_, err = loadRaw(t, "{\n  \"listen\": \"fixture-private\",\n  \"signIn\": \"none\",\n}\n")
+	if err == nil || !strings.Contains(err.Error(), "line 4") || strings.Contains(err.Error(), "fixture-private") {
+		t.Fatalf("trailing comma: %v", err)
+	}
+	_, err = loadRaw(t, "{\n  \"listen\": \"x\"\n  \"signIn\": \"none\"\n}\n")
+	if err == nil || !strings.Contains(err.Error(), "line 3") {
+		t.Fatalf("missing comma: %v", err)
+	}
+}
+
 // TestConfigHasNoSecretField walks the JSON schema of Config: a secret must
 // never be placeable in the configuration file. secretsFile is a path to
 // the separate secrets file, not a value.

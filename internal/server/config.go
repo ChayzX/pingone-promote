@@ -104,6 +104,32 @@ var (
 	jobPatRE  = regexp.MustCompile(`^[A-Za-z0-9 :._/-]{0,80}\{env\}[A-Za-z0-9 :._/-]{0,80}$`)
 )
 
+// configDecodeError says where the configuration file is wrong: the line of
+// a syntax error, the name of an unknown or mistyped setting. It never
+// repeats a value from the file.
+func configDecodeError(raw []byte, err error) error {
+	line := func(off int64) int {
+		if off > int64(len(raw)) {
+			off = int64(len(raw))
+		}
+		return 1 + strings.Count(string(raw[:off]), "\n")
+	}
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syn):
+		return fmt.Errorf("configuration file is not valid JSON near line %d (look for a missing comma or quote, or a comma after the last item)", line(syn.Offset))
+	case errors.As(err, &typ):
+		return fmt.Errorf("configuration setting %q near line %d has the wrong kind of value (expected %s)", typ.Field, line(typ.Offset), typ.Type.String())
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return errors.New("configuration file ends early (a missing closing brace or bracket?)")
+	}
+	if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+		return fmt.Errorf("configuration file contains the unknown setting %s; check its spelling and where it sits (docs/podman-mac.md, step 5, lists every setting)", name)
+	}
+	return errors.New("configuration file is malformed")
+}
+
 // LoadConfig reads and checks the configuration file.
 func LoadConfig(path string) (Config, error) {
 	var c Config
@@ -114,7 +140,7 @@ func LoadConfig(path string) (Config, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
-		return c, errors.New("configuration file is malformed or contains an unknown field")
+		return c, configDecodeError(raw, err)
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF {

@@ -202,7 +202,7 @@ script prints it); your GitLab and PingOne values. Fill `secrets.env`. Then:
 Pin both base images by digest before shared use (instructions at the top of
 `deploy/container/Containerfile`).
 
-    podman build -f deploy/container/Containerfile -t pingone-promote:dev .
+    podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .
     podman run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:dev --version
     podman run --rm --entrypoint sha256sum pingone-promote:dev /opt/pingone-promote/tools/terraform
 

@@ -109,7 +109,7 @@ git clone https://github.com/ChayzX/pingone-promote.git && cd pingone-promote &&
 ## 3. Build the image
 
 ```bash
-podman build -f deploy/container/Containerfile -t pingone-promote:test --build-arg VERSION=$(git rev-parse --short HEAD) .
+podman build --format docker -f deploy/container/Containerfile -t pingone-promote:test --build-arg VERSION=$(git rev-parse --short HEAD) .
 ```
 
 (If you use a company root certificate, copy it into
@@ -237,7 +237,7 @@ dependencies; then the cases in `docs/acceptance/core-export.md`.
 | see the log (no secrets are ever logged) | `podman logs -f pingone-promote` |
 | stop | `podman stop pingone-promote` |
 | start again | `podman start pingone-promote` |
-| update to a newer build | `git pull`, repeat step 3, then `podman rm -f pingone-promote` and the start command of step 7 |
+| update to a newer build | follow [updating.md](updating.md) |
 | remove everything | `podman rm -f pingone-promote && podman secret rm pingone-promote-secrets && podman rmi pingone-promote:test` |
 
 Drafts are kept in memory only: stopping the container discards unfinished
@@ -247,6 +247,7 @@ drafts. Submitted requests are in GitLab.
 
 | What you see | Why | Fix |
 | --- | --- | --- |
+| the container stops right after `podman run` | the configuration has a mistake | `podman logs pingone-promote` names it; see [updating.md](updating.md), "If it does not start" |
 | `Cannot connect to Podman` | the Podman machine is not running | `podman machine start` |
 | `certificate signed by unknown authority` (machine, build, or PingOne/GitLab calls) | a company proxy inspects HTTPS | see "If you see certificate signed by unknown authority" under step 1 |
 | `--check-config` says a checksum does not match | the values in `tools` are not the ones the image has | repeat step 4 and copy both values again |
