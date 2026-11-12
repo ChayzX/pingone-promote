@@ -132,7 +132,7 @@ Tested 2026-11-11: the shipped unit's hardening as a transient unit on Ubuntu 24
 container with systemd as init. The service starts, `/healthz` answers, a foreign
 Host gets 421, a POST without a CSRF token gets 403, the process has no
 capabilities, `NoNewPrivs` and a seccomp filter, no secret reaches the journal,
-and `systemd-analyze security` rates it 1.6 (OK). SELinux on a real RHEL 9 host is
+and `systemd-analyze security` rates it 1.6 to 1.7 (OK). SELinux on a real RHEL 9 host is
 still untested; see `docs/acceptance/hosted-server.md`.
 
 `MemoryDenyWriteExecute=yes` is safe for this binary: it is a static Go
