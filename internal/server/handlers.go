@@ -162,7 +162,7 @@ func viewItems(items []Item, d *Draft) []itemView {
 func (s *Server) editDraft(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
 		v := draftView{D: d, Sources: s.cfg.Sources, Rollout: s.cfg.Rollout, Notice: d.notice, Problem: d.problem,
-			Running: d.job != nil && d.job.Running && d.job.Kind != "search", Loading: d.loads[d.Source] != nil && !d.loads[d.Source].finished(),
+			Running: d.job != nil && d.job.Running && d.job.Kind != "search", Loading: d.loads[d.Source] != nil && !d.loads[d.Source].finished() && d.catalogs[d.Source] == nil,
 			HasPreview: d.preview != nil,
 			Results:    viewItems(d.Results, d), Selected: viewItems(d.Selected, d), Excluded: viewItems(d.Excluded, d),
 			ListLoaded: d.catalogs[d.Source] != nil, SearchedOnce: d.searched, Types: typeOptions(d),
@@ -316,18 +316,24 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, draftURL(d, "#results"))
 			return
 		}
-		if r.PostForm.Get("refresh") == "yes" {
-			delete(d.catalogs, d.Source)
-			if l := d.loads[d.Source]; l != nil && l.finished() {
-				delete(d.loads, d.Source)
-			}
-		}
 		// The results always appear on this page: the list is read (or the
-		// read started with the draft is awaited) for a bounded time.
+		// read already running is awaited) for a bounded time.
 		source := d.Source
-		l := s.loadList(d, source)
+		refresh := r.PostForm.Get("refresh") == "yes"
+		var l *listLoad
+		if refresh {
+			l = s.reloadList(source)
+		} else {
+			l = s.loadList(d, source)
+		}
 		s.awaitList(r, l)
 		switch c := d.catalogs[source]; {
+		case refresh && l != nil && !l.finished():
+			d.Results, d.ResultsTotal = nil, 0
+			d.searchNotice = "Reading " + source + " again (a large environment takes a few minutes). Press Search in a moment; nothing you entered is lost."
+		case refresh && l != nil && l.err != "":
+			d.Results, d.ResultsTotal = nil, 0
+			d.searchProblem = "The items of " + source + " could not be read again: " + l.err
 		case c != nil:
 			d.Results, d.ResultsTotal = filterItems(c.items, q, d.TypeFilter)
 		case l != nil && l.finished() && l.err != "":
@@ -855,22 +861,56 @@ const searchWait = 40 * time.Second
 // loadList starts reading source's item list in the background unless a
 // fresh list or a running read exists, and returns the read (nil when the
 // list is fresh). The caller holds s.drafts.mu.
-func (s *Server) loadList(d *Draft, source string) *listLoad {
+func (s *Server) loadList(_ *Draft, source string) *listLoad {
 	if source == "" {
 		return nil
 	}
-	if c := d.catalogs[source]; c != nil && s.now().Sub(c.at) < catalogMaxAge {
+	if c := s.drafts.catalogs[source]; c != nil && s.now().Sub(c.at) < catalogMaxAge {
 		return nil
 	}
-	if l := d.loads[source]; l != nil && !l.finished() {
+	return s.reloadList(source)
+}
+
+// warm reads every source's item list when the server starts, and again
+// every catalogRefresh, so searches find it ready. A list being re-read
+// stays usable until the new one is in.
+func (s *Server) warm() {
+	start := func() {
+		s.drafts.mu.Lock()
+		defer s.drafts.mu.Unlock()
+		for _, src := range s.cfg.Sources {
+			s.reloadList(src)
+		}
+	}
+	start()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		t := time.NewTicker(catalogRefresh)
+		defer t.Stop()
+		for {
+			select {
+			case <-s.base.Done():
+				return
+			case <-t.C:
+				start()
+			}
+		}
+	}()
+}
+
+// reloadList starts a read of source's item list unless one is running,
+// and returns it. The caller holds s.drafts.mu.
+func (s *Server) reloadList(source string) *listLoad {
+	if source == "" {
+		return nil
+	}
+	if l := s.drafts.loads[source]; l != nil && !l.finished() {
 		return l
 	}
-	if d.loads == nil {
-		d.loads = map[string]*listLoad{}
-	}
 	l := &listLoad{done: make(chan struct{})}
-	d.loads[source] = l
-	run := s.runSearch(d, source)
+	s.drafts.loads[source] = l
+	run := s.runSearch(source)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()

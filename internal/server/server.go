@@ -167,7 +167,7 @@ func New(o Options) (*Server, error) {
 		return nil, err
 	}
 	s.sessions = &sessions{byID: map[string]*session{}, max: 1000, ttl: DraftIdleExpiry, now: s.now}
-	s.drafts = &drafts{byID: map[string]*Draft{}, now: s.now}
+	s.drafts = &drafts{byID: map[string]*Draft{}, now: s.now, catalogs: map[string]*catalogEntry{}, loads: map[string]*listLoad{}}
 	s.base, s.stop = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.janitor()
@@ -299,6 +299,7 @@ func (s *Server) Run(ctx context.Context, ready func(addr string)) error {
 		ready(ln.Addr().String())
 	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "tls", s.tls)
+	s.warm()
 	if s.cfg.Exposure != "" {
 		s.log.Warn("the server is exposed beyond this machine and there is no sign-in: anyone who can reach it can file requests under any name; merge request review is the control",
 			"exposure", s.cfg.Exposure)

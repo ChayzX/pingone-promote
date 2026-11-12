@@ -329,3 +329,32 @@ func TestSearchMessagesShowWithTheResults(t *testing.T) {
 		t.Fatalf("the search problem is not with the results:\n%s", p.body)
 	}
 }
+
+// The item list is read when the server starts and shared by every draft:
+// a later search uses it without reading the source again.
+func TestItemListIsReadAtStartAndShared(t *testing.T) {
+	e := newCoreEnv(t)
+	e.srv.warm()
+	e.srv.drafts.mu.Lock()
+	l := e.srv.drafts.loads["dev"]
+	e.srv.drafts.mu.Unlock()
+	if l == nil {
+		t.Fatal("no read started at launch")
+	}
+	<-l.done
+	if l.err != "" {
+		t.Fatal(l.err)
+	}
+	for i := 0; i < 2; i++ {
+		b := e.browser()
+		draft := b.newDraft()
+		p := b.post(draft+"/search", url.Values{"q": {"Customers"}})
+		mustContain(t, p.body, "pingone_population.pingcli__Customers")
+	}
+	e.srv.drafts.mu.Lock()
+	again := e.srv.drafts.loads["dev"]
+	e.srv.drafts.mu.Unlock()
+	if again != l {
+		t.Fatal("a search read the source again although the list was fresh")
+	}
+}

@@ -233,7 +233,7 @@ func (s *Server) runSubmit(d *Draft, req *request.Request, p *preview) func(cont
 
 // runSearch loads the source environment's resource list once per draft
 // and source (it is cached for a while) and filters it.
-func (s *Server) runSearch(d *Draft, source string) func(context.Context, func(string)) error {
+func (s *Server) runSearch(source string) func(context.Context, func(string)) error {
 	return func(ctx context.Context, stage func(string)) error {
 		stage("Checking the GitLab project")
 		project, err := s.gl.VerifyProject(ctx)
@@ -261,11 +261,8 @@ func (s *Server) runSearch(d *Draft, source string) func(context.Context, func(s
 		sort.Slice(items, func(i, j int) bool { return items[i].Address < items[j].Address })
 		s.drafts.mu.Lock()
 		defer s.drafts.mu.Unlock()
-		d.catalogs[source] = &catalogEntry{at: s.now(), items: items}
-		if d.Source == source {
-			d.Results, d.ResultsTotal = filterItems(items, d.Query, d.TypeFilter)
-		}
-		d.Updated = s.now()
+		s.drafts.catalogs[source] = &catalogEntry{at: s.now(), items: items}
+		s.log.Info("item list read", "source", source, "items", len(items))
 		return nil
 	}
 }

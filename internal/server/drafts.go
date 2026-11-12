@@ -28,6 +28,9 @@ const (
 	// MaxListResults caps a listing with no name typed.
 	MaxListResults = 200
 	catalogMaxAge  = 30 * time.Minute
+	// catalogRefresh re-reads every source's item list in the background,
+	// so a search rarely waits.
+	catalogRefresh = 20 * time.Minute
 )
 
 // Item is one resource of the source environment.
@@ -132,6 +135,11 @@ type drafts struct {
 	mu   sync.Mutex
 	byID map[string]*Draft
 	now  func() time.Time
+	// catalogs and loads are the source environments' item lists and
+	// their background reads, shared by every draft (each draft's
+	// catalogs and loads fields are these same maps). Guarded by mu.
+	catalogs map[string]*catalogEntry
+	loads    map[string]*listLoad
 }
 
 var errTooManyDrafts = errors.New("There are too many open drafts. Finish or wait for older drafts to expire.")
@@ -160,7 +168,7 @@ func (ds *drafts) create(sessionID string, sources []string) (*Draft, error) {
 	now := ds.now()
 	d := &Draft{ID: randomToken(18), SessionID: sessionID, RequestID: newRequestID(now), Created: now, Updated: now,
 		Upstream: true, Mode: "mr", Choices: map[string]string{}, Values: map[string]map[string]string{},
-		ImportIDs: map[string]map[string]string{}, catalogs: map[string]*catalogEntry{}}
+		ImportIDs: map[string]map[string]string{}, catalogs: ds.catalogs, loads: ds.loads}
 	if len(sources) > 0 {
 		d.Source = sources[0]
 	}
