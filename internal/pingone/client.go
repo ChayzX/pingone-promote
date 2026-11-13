@@ -73,9 +73,10 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 // retryable reports answers worth waiting for: rate limiting (429) and
-// temporary gateway or service failures.
+// temporary gateway or service failures. A 500 is tried three times in all
+// (PingOne's own SDK retries it too).
 func retryable(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError || status == http.StatusBadGateway ||
 		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
@@ -107,6 +108,9 @@ func (c *Client) getURL(ctx context.Context, u, display string) (map[string]any,
 		}
 		if !retryable(ae.Status) || attempt >= retries {
 			return nil, err
+		}
+		if ae.Status == http.StatusInternalServerError && attempt >= 2 {
+			return nil, err // a server error that persists is not waited out
 		}
 		wait := ae.retryAfter
 		if wait <= 0 {

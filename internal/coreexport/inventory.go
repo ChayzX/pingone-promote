@@ -71,6 +71,10 @@ func (inv *Inventory) Object(addr string) *Object { return inv.byAddr[addr] }
 
 // Read reads every core type of the catalog from the environment.
 func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
+	// Several types read the same collection (applications, populations,
+	// languages, digital wallet applications per application): each is
+	// requested once per read.
+	r = &memoReader{r: r, lists: map[string][]map[string]any{}, gets: map[string]map[string]any{}}
 	inv := &Inventory{EnvironmentID: env, byAddr: map[string]*Object{}, Skipped: map[string]string{}}
 	byType := map[string][]*Object{}
 	var defs []*catalog.Def
@@ -128,6 +132,48 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 	}
 	sort.Slice(inv.Objects, func(i, j int) bool { return inv.Objects[i].Address() < inv.Objects[j].Address() })
 	return inv, nil
+}
+
+// memoReader answers repeated requests within one Read from memory. API
+// objects are never modified after reading, so sharing them is safe.
+type memoReader struct {
+	r     Reader
+	mu    sync.Mutex
+	lists map[string][]map[string]any
+	gets  map[string]map[string]any
+}
+
+func (m *memoReader) List(ctx context.Context, env, path, embedded string) ([]map[string]any, error) {
+	k := path + "|" + embedded
+	m.mu.Lock()
+	v, ok := m.lists[k]
+	m.mu.Unlock()
+	if ok {
+		return v, nil
+	}
+	v, err := m.r.List(ctx, env, path, embedded)
+	if err == nil {
+		m.mu.Lock()
+		m.lists[k] = v
+		m.mu.Unlock()
+	}
+	return v, err
+}
+
+func (m *memoReader) Get(ctx context.Context, env, path string) (map[string]any, error) {
+	m.mu.Lock()
+	v, ok := m.gets[path]
+	m.mu.Unlock()
+	if ok {
+		return v, nil
+	}
+	v, err := m.r.Get(ctx, env, path)
+	if err == nil {
+		m.mu.Lock()
+		m.gets[path] = v
+		m.mu.Unlock()
+	}
+	return v, err
 }
 
 func isAPI(typ string) bool {

@@ -43,8 +43,10 @@ type Exporter struct {
 	DaVinci DaVinci
 	// NewReader builds the core API reader (default: pingone.New).
 	NewReader func(exporter.Credentials) (coreexport.Reader, error)
-	// CacheFor keeps one environment's inventory and DaVinci catalog for a
-	// short time, so one request run reads the tenant once (default 2m).
+	// CacheFor keeps one environment's inventory and DaVinci catalog, so
+	// previews reuse the read behind the item list (default 30m, as long as
+	// the server keeps the list). Forget drops it when the list is read
+	// again.
 	CacheFor time.Duration
 
 	mu    sync.Mutex
@@ -78,7 +80,7 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 	env := creds.ExportEnvironment()
 	ttl := e.CacheFor
 	if ttl == 0 {
-		ttl = 2 * time.Minute
+		ttl = 30 * time.Minute
 	}
 	e.mu.Lock()
 	c := e.cache[env]
@@ -128,20 +130,40 @@ func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env str
 	if err != nil {
 		return nil, err
 	}
-	inv, err := coreexport.Read(ctx, r, env)
+	// The core read and the DaVinci export run at the same time.
+	c := &cached{at: time.Now()}
+	dvCtx, cancelDV := context.WithCancel(ctx)
+	defer cancelDV()
+	dvDone := make(chan struct{})
+	go func() {
+		defer close(dvDone)
+		if e.DaVinci != nil {
+			c.dv, c.dvErr = e.DaVinci.CatalogAllIDs(dvCtx, creds)
+		}
+	}()
+	c.inv, err = coreexport.Read(ctx, r, env)
+	if err != nil {
+		cancelDV() // the read failed: do not wait for the DaVinci export
+	}
+	<-dvDone
 	if err != nil {
 		return nil, err
 	}
-	c := &cached{at: time.Now(), inv: inv}
-	if e.DaVinci != nil {
-		if c.dv, err = e.DaVinci.CatalogAllIDs(ctx, creds); err != nil {
-			if ctx.Err() != nil {
-				return nil, err
-			}
-			c.dv, c.dvErr = nil, err
+	if c.dvErr != nil {
+		if ctx.Err() != nil {
+			return nil, c.dvErr
 		}
+		c.dv = nil
 	}
 	return c, nil
+}
+
+// Forget drops the cached read of an environment, so the next call reads
+// it again (the server's "read again" and its periodic refresh).
+func (e *Exporter) Forget(creds exporter.Credentials) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.cache, creds.ExportEnvironment())
 }
 
 // Catalog lists every exportable resource of the source (DaVinci and core)

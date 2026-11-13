@@ -41,6 +41,15 @@ func (r *Runner) CatalogAllIDs(ctx context.Context, creds Credentials) ([]Resour
 }
 
 func (r *Runner) catalog(ctx context.Context, creds Credentials, withIDs, allTypes bool) ([]Resource, error) {
+	if allTypes {
+		// The whole export lists every resource itself: no separate
+		// --list-resources run (a second full read of DaVinci).
+		exp, err := r.Export(ctx, creds, ExportOptions{All: true, Imports: true, SkipValues: true})
+		if err != nil {
+			return nil, err
+		}
+		return resourcesOf(exp)
+	}
 	list, err := r.ListResources(ctx, creds)
 	if err != nil {
 		return nil, err
@@ -73,6 +82,29 @@ func (r *Runner) catalog(ctx context.Context, creds Credentials, withIDs, allTyp
 		if n, ok := names[a]; ok {
 			out[i].Name = n
 		}
+	}
+	return out, nil
+}
+
+// resourcesOf lists an export's resources with their IDs and exact names.
+func resourcesOf(exp *Export) ([]Resource, error) {
+	addrs, err := Addresses(exp)
+	if err != nil {
+		return nil, err
+	}
+	ids, names, err := ExportIDs(exp)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Resource, 0, len(addrs))
+	for _, s := range addrs {
+		typ, label, _ := strings.Cut(s, ".")
+		a := Address{Type: typ, Label: label}
+		name, ok := names[s]
+		if !ok {
+			name, _ = neutralize.DecodeLabel(label)
+		}
+		out = append(out, Resource{Address: a, Name: name, ID: ids[s]})
 	}
 	return out, nil
 }

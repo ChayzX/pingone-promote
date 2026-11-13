@@ -66,3 +66,33 @@ func TestUntrustedCertificateIsExplained(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// A PingOne server error (500) is tried three times in all: a passing one
+// is absorbed, a lasting one is reported.
+func TestServerErrorsAreRetriedBriefly(t *testing.T) {
+	var calls, fails atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/as/token") {
+			w.Write([]byte(`{"access_token":"t","expires_in":3600}`))
+			return
+		}
+		if calls.Add(1) <= fails.Load() {
+			http.Error(w, "oops", http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte(`{"name":"x"}`))
+	}))
+	defer srv.Close()
+	fails.Store(2)
+	if _, err := testClient(t, srv).Get(context.Background(), sourceEnv, "x"); err != nil {
+		t.Fatalf("a passing server error was not absorbed: %v", err)
+	}
+	calls.Store(0)
+	fails.Store(100)
+	if _, err := testClient(t, srv).Get(context.Background(), sourceEnv, "x"); err == nil {
+		t.Fatal("a lasting server error was not reported")
+	}
+	if n := calls.Load(); n != 3 {
+		t.Fatalf("a lasting server error was tried %d times, want 3", n)
+	}
+}

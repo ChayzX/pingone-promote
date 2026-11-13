@@ -98,6 +98,14 @@ func pingoneMessage(err error) (string, bool) {
 	return "", false
 }
 
+// forget drops the inner exporter's cached read of the source, when it
+// keeps one.
+func (p plainErrors) forget(c exporter.Credentials) {
+	if f, ok := p.inner.(interface{ Forget(exporter.Credentials) }); ok {
+		f.Forget(c)
+	}
+}
+
 // davinciProblem explains why the latest catalog read left out DaVinci
 // items, in plain words ("" when nothing is missing or the exporter
 // cannot say).

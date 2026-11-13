@@ -1008,17 +1008,26 @@ func (s *Server) loadList(_ *Draft, source string) *listLoad {
 }
 
 // warm reads every source's item list when the server starts, and again
-// every catalogRefresh, so searches find it ready. A list being re-read
-// stays usable until the new one is in.
+// every catalogRefresh for the sources a draft used within catalogMaxAge,
+// so searches find it ready without reading idle sources all day. A list
+// being re-read stays usable until the new one is in.
 func (s *Server) warm() {
-	start := func() {
+	start := func(onlyUsed bool) {
 		s.drafts.mu.Lock()
 		defer s.drafts.mu.Unlock()
+		used := map[string]bool{}
+		for _, d := range s.drafts.byID {
+			if s.now().Sub(d.Updated) < catalogMaxAge {
+				used[d.Source] = true
+			}
+		}
 		for _, src := range s.cfg.Sources {
-			s.reloadList(src)
+			if !onlyUsed || used[src] {
+				s.reloadList(src)
+			}
 		}
 	}
-	start()
+	start(false)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -1029,7 +1038,7 @@ func (s *Server) warm() {
 			case <-s.base.Done():
 				return
 			case <-t.C:
-				start()
+				start(true)
 			}
 		}
 	}()

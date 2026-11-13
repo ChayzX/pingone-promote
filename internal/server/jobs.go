@@ -248,6 +248,11 @@ func (s *Server) runSearch(source string) func(context.Context, func(string)) er
 		stage("Listing the source environment's resources")
 		creds := s.creds
 		creds.ExportEnvironmentID = id
+		// Reading the list reads the source again; previews then reuse
+		// that read until the list is read again.
+		if pe, ok := s.exporter.(plainErrors); ok {
+			pe.forget(creds)
+		}
 		list, err := s.exporter.CatalogAllIDs(ctx, creds)
 		if err != nil {
 			return err
