@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,21 @@ import (
 	"pingone-promote/internal/multiexport"
 )
 
+// readTree reads every file under dir.
+func readTree(dir string) map[string]string {
+	out := map[string]string{}
+	_ = filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		b, _ := os.ReadFile(p)
+		out[filepath.ToSlash(rel)] = string(b)
+		return nil
+	})
+	return out
+}
+
 // TestLiveBrowserServer serves the real server against a real source
 // environment (read-only) and a fake GitLab, for testing in a browser:
 //
@@ -26,6 +42,11 @@ import (
 //	PINGONE_PROMOTE_REAL_TERRAFORMER   pingcli-terraformer v0.6.0
 //	PINGONE_PROMOTE_DEMO_LOG           server log file (optional)
 //	PINGONE_PROMOTE_DEMO_STOP          a file whose creation stops the server
+//	PINGONE_PROMOTE_DEMO_REPO          a directory keeping the fake GitLab's main
+//	                                   branch across restarts (optional)
+//	PINGONE_PROMOTE_DEMO_MERGE         a file whose creation merges every open
+//	                                   request branch into main, as a reviewer
+//	                                   merging the MR would (optional)
 //
 // Nothing reaches a real GitLab; PingOne is only read.
 func TestLiveBrowserServer(t *testing.T) {
@@ -45,7 +66,26 @@ func TestLiveBrowserServer(t *testing.T) {
 		}
 	}
 	f.Close()
-	gl := gitlabtest.New(t, repoFiles(t))
+	repoDir := os.Getenv("PINGONE_PROMOTE_DEMO_REPO")
+	start := repoFiles(t)
+	if repoDir != "" {
+		if saved := readTree(repoDir); len(saved) > 0 {
+			start = saved
+		}
+	}
+	gl := gitlabtest.New(t, start)
+	save := func() {
+		if repoDir == "" {
+			return
+		}
+		_ = os.RemoveAll(repoDir)
+		for p, c := range gl.Files(gl.DefaultBranch) {
+			full := filepath.Join(repoDir, filepath.FromSlash(p))
+			_ = os.MkdirAll(filepath.Dir(full), 0o700)
+			_ = os.WriteFile(full, []byte(c), 0o600)
+		}
+	}
+	defer save()
 	st := gitlabtest.NewStatus(gl)
 	cfg := testConfig(t, gl)
 	host, _, _ := net.SplitHostPort(addr)
@@ -90,8 +130,20 @@ func TestLiveBrowserServer(t *testing.T) {
 	go srv.Serve(ln)
 	defer srv.Close()
 	t.Logf("live server on http://%s (fake GitLab at %s)", addr, gl.BaseURL())
-	stop := os.Getenv("PINGONE_PROMOTE_DEMO_STOP")
+	stop, merge := os.Getenv("PINGONE_PROMOTE_DEMO_STOP"), os.Getenv("PINGONE_PROMOTE_DEMO_MERGE")
 	for deadline := time.Now().Add(4 * time.Hour); time.Now().Before(deadline); time.Sleep(time.Second) {
+		if merge != "" {
+			if _, err := os.Stat(merge); err == nil {
+				for b := range gl.Branches() {
+					if strings.HasPrefix(b, "pingone-promote/") {
+						gl.Merge(b)
+						t.Logf("merged %s into %s", b, gl.DefaultBranch)
+					}
+				}
+				save()
+				_ = os.Remove(merge)
+			}
+		}
 		if stop != "" {
 			if _, err := os.Stat(stop); err == nil {
 				return

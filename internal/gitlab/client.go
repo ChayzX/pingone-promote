@@ -101,6 +101,12 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 // DoQuery is Do with query parameters, which apiURL never accepts inside the
 // path itself.
 func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	return c.doQuery(ctx, method, path, query, body, out, maxResponse)
+}
+
+// doQuery is DoQuery reading at most limit bytes of response (a file read
+// carries the file base64-encoded in JSON).
+func (c *Client) doQuery(ctx context.Context, method, path string, query url.Values, body, out any, limit int) error {
 	u, err := c.apiURL(path)
 	if err != nil {
 		return err
@@ -148,8 +154,8 @@ func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Val
 		raw, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 		return &HTTPError{Status: res.StatusCode, Conflict: isConflict(res.StatusCode, raw)}
 	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
-	if err != nil || len(data) > maxResponse {
+	data, err := io.ReadAll(io.LimitReader(res.Body, int64(limit)+1))
+	if err != nil || len(data) > limit {
 		return errors.New("GitLab response was invalid or too large")
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {

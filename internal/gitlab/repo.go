@@ -79,7 +79,7 @@ func (c *Client) GetFile(ctx context.Context, ref, path string) (RepoFile, error
 		BlobID       string `json:"blob_id"`
 		LastCommitID string `json:"last_commit_id"`
 	}
-	err := c.DoQuery(ctx, http.MethodGet, c.project()+"/repository/files/"+url.PathEscape(path), url.Values{"ref": {ref}}, nil, &raw)
+	err := c.doQuery(ctx, http.MethodGet, c.project()+"/repository/files/"+url.PathEscape(path), url.Values{"ref": {ref}}, nil, &raw, maxFile/3*4+(1<<20))
 	if IsNotFound(err) {
 		return RepoFile{Path: path}, nil
 	}

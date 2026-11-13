@@ -309,3 +309,18 @@ func TestHostedCommitBranchNames(t *testing.T) {
 		})
 	}
 }
+
+// A whole environment's flows file (over 20 MB) is read back: file reads
+// are not held to the 2 MB limit of other GitLab answers.
+func TestLargeFileIsRead(t *testing.T) {
+	big := strings.Repeat("resource \"pingone_davinci_flow\" \"x\" {}\n", 600000) // about 23 MB
+	f := gitlabtest.New(t, map[string]string{"main.tf": "x = 1\n", "definitions/pingone_davinci_flow.tf": big})
+	c := snapshotClient(t, f)
+	got, err := c.GetFile(context.Background(), "main", "definitions/pingone_davinci_flow.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Content) != len(big) {
+		t.Fatalf("read %d bytes, want %d", len(got.Content), len(big))
+	}
+}
