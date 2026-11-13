@@ -217,7 +217,11 @@ func TestEndToEndNoChanges(t *testing.T) {
 	// Flow A is identical in the source and in Git.
 	selectByID(t, b, draft, "f0000000000000000000000000000001", "pingone_davinci_flow.pingcli__Flow-0020-A")
 	p := previewDraft(t, b, draft, mainForm("Ana", func(v url.Values) { v.Del("upstream") }))
-	mustContain(t, p.body, "Submit to GitLab")
+	mustContain(t, p.body, "Nothing to submit")
+	if strings.Contains(p.body, "Submit to GitLab") {
+		t.Fatal("a request with no changes offers a submit")
+	}
+	// A submit sent anyway commits nothing.
 	commits := len(e.gl.CommitOrder)
 	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"mr"}}))
 	mustContain(t, p.body, "Git already has all of this. Nothing was committed.")

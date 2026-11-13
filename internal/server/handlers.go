@@ -627,6 +627,8 @@ type previewView struct {
 	Problem     string
 	Fresh       bool
 	CanSubmit   bool
+	// NoChanges: Git already has everything in the request.
+	NoChanges bool
 	Running     bool
 	Types       []typeView
 	Changes     []changeView
@@ -732,6 +734,9 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 		v.AlmostReady = onlyMissingValues(res)
 		v.Skipped, v.Warnings = splitWarnings(res.Warnings)
 		v.CanSubmit = v.Fresh && !v.HasBlockers && res.Status == request.StatusPreviewed && res.Error == nil && !v.Running
+		if v.CanSubmit && len(res.Files) == 0 {
+			v.CanSubmit, v.NoChanges = false, true
+		}
 		// A blocked preview also carries an error; only one that stopped
 		// before checking anything has no blockers and no changes.
 		v.Failed = res.Error != nil && len(res.Blockers) == 0 && len(res.Changes) == 0

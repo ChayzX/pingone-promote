@@ -5,7 +5,9 @@
 {{if not .Data.Fresh}}<div class="problem" role="alert"><p>The request changed after this preview. Preview again before submitting.</p>
 <form method="post" action="/drafts/{{$d.ID}}/preview"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="primary">Preview again</button></form></div>{{end}}
 
-{{if .Data.CanSubmit}}
+{{if .Data.NoChanges}}
+<div class="ready" role="status"><p><strong>Nothing to submit.</strong> Git already has everything in this request as it is in {{$d.Source}}.</p></div>
+{{else if .Data.CanSubmit}}
 <div class="ready" role="status"><p><strong>Ready to submit.</strong> Every environment has what it needs. Check the changes below, then submit.</p><p><a href="#submit">Go to Submit</a></p></div>
 {{else if .Data.AlmostReady}}
 <div class="notice" role="status"><p><strong>Almost ready.</strong> {{range $i, $e := .Data.NeedEnvs}}{{if $i}}, {{end}}{{$e}}{{end}} {{if eq (len .Data.NeedEnvs) 1}}needs{{else}}need{{end}} {{if eq (len .Data.NeedEnvs) 1}}a value{{else}}values{{end}} before this can be submitted. <a href="#values">Fill them in below</a>.</p></div>
@@ -133,6 +135,8 @@
   <label class="inline"><input type="radio" name="mode" value="branch"{{if eq $d.Mode "branch"}} checked{{end}}> Only save a Git branch (no merge request yet)</label></fieldset>
   <button type="submit" class="primary">Submit to GitLab</button>
 </form>
+{{else if .Data.NoChanges}}
+<p>Nothing to submit: Git already matches {{$d.Source}} for every item in this request.</p>
 {{else}}
 <p class="problem"><strong>Cannot submit yet.</strong> {{.Data.WhyNot}}</p>
 {{end}}
