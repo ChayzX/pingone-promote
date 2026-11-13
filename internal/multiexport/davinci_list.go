@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -108,8 +109,17 @@ func davinciListing(ctx context.Context, r coreexport.Reader, env string) (dvLis
 	for _, v := range vars {
 		name, ctxName := str(v["name"]), str(v["context"])
 		add(neutralize.TypeVariable, neutralize.Label(name, ctxName), name, str(v["id"]), v)
-		if val, ok := v["value"].(string); ok && str(v["dataType"]) == "string" {
-			values[str(v["id"])] = val
+		// Every type but secret (masked by the API); terraformer writes
+		// them all as strings (objects as JSON).
+		if dt := str(v["dataType"]); dt != "secret" && v["value"] != nil {
+			switch val := v["value"].(type) {
+			case string:
+				values[str(v["id"])] = val
+			default:
+				if b, err := json.Marshal(val); err == nil {
+					values[str(v["id"])] = string(b)
+				}
+			}
 		}
 	}
 	for _, c := range conns {

@@ -143,7 +143,7 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 			line += fmt.Sprintf("; %d not found there under the same name (or a secret, which is never filled in)", asked-n)
 		}
 		if f != nil && len(f.Skipped) > 0 {
-			line += fmt.Sprintf("; %d kinds of items could not be read there (the worker may lack a read role)", len(f.Skipped))
+			line += fmt.Sprintf("; %d kinds of items could not be read there (not available in that environment, or no read role for them)", len(f.Skipped))
 		}
 		if f != nil && f.DaVinci != "" {
 			line += "; its DaVinci items could not be read"
