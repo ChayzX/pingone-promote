@@ -122,6 +122,8 @@ type Draft struct {
 	// Filled marks values the server entered from what an environment
 	// already has (env -> variable or address -> environment read).
 	Filled filled
+	// FillReport says, per environment, what was filled in or why not.
+	FillReport []string
 
 	Query string
 	// TypeFilter limits search results to one resource type ("" all).

@@ -45,6 +45,8 @@ func readTree(dir string) map[string]string {
 //	PINGONE_PROMOTE_DEMO_STOP          a file whose creation stops the server
 //	PINGONE_PROMOTE_DEMO_REPO          a directory keeping the fake GitLab's main
 //	                                   branch across restarts (optional)
+//	PINGONE_PROMOTE_DEMO_FILL          1: every rollout environment reads the
+//	                                   source to fill in values (optional)
 //	PINGONE_PROMOTE_DEMO_MERGE         a file whose creation merges every open
 //	                                   request branch into main, as a reviewer
 //	                                   merging the MR would (optional)
@@ -95,6 +97,14 @@ func TestLiveBrowserServer(t *testing.T) {
 	cfg.PingOne.WorkerEnvironmentID = vals["PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID"]
 	if src := vals["PINGONE_PROMOTE_SOURCE_ENVIRONMENT_ID"]; src != "" {
 		cfg.SourceEnvironmentIDs = map[string]string{"dev": src}
+		// PINGONE_PROMOTE_DEMO_FILL=1 lets every rollout environment stand
+		// for the source, to try filling in values from an environment.
+		if os.Getenv("PINGONE_PROMOTE_DEMO_FILL") == "1" {
+			cfg.EnvironmentIDs = map[string]string{}
+			for _, env := range cfg.Rollout {
+				cfg.EnvironmentIDs[env] = src
+			}
+		}
 	}
 	exp := &multiexport.Exporter{}
 	if bin := os.Getenv("PINGONE_PROMOTE_REAL_TERRAFORMER"); bin != "" {

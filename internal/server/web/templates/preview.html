@@ -54,6 +54,7 @@
 
 {{$needValues := false}}{{range .Data.Envs}}{{if or .Values .Imports .Entered}}{{$needValues = true}}{{end}}{{end}}
 {{if $needValues}}
+{{with $d.FillReport}}<div class="notice" role="status"><p><strong>Values from the environments</strong></p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
 {{if .Data.Filled}}<p class="notice" role="status">{{.Data.Filled}} {{if eq .Data.Filled 1}}value was{{else}}values were{{end}} filled in from what the environments already have (read-only). Check {{if eq .Data.Filled 1}}it{{else}}them{{end}} below; change or clear any that is wrong.</p>{{end}}
 <section id="values">
 <h2>Fill in what each environment needs</h2>

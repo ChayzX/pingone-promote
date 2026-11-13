@@ -3,8 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"pingone-promote/internal/coreexport"
 	"pingone-promote/internal/exporter"
@@ -37,86 +40,162 @@ type filled map[string]map[string]string
 // environment ID, the ID of an existing item, the import ID of one to
 // adopt, a DaVinci variable's value or an attribute's value. Only empty
 // fields are filled, never secrets; everything filled stays editable and
-// is marked. It reports whether anything was entered.
+// is marked. The environments are read at the same time. What happened
+// per environment is kept for the page (d.FillReport). It reports whether
+// anything was entered.
 func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, stage func(string)) bool {
-	changed := false
-	for _, env := range append([]string{d.Source}, s.cfg.Rollout...) {
-		bs := res.Blockers[env]
+	if len(s.cfg.EnvironmentIDs) == 0 && len(s.cfg.SourceEnvironmentIDs) == 0 {
+		return false
+	}
+	envs := append([]string{d.Source}, s.cfg.Rollout...)
+	fr, canRead := s.exporter.(factsReader)
+	type read struct {
+		f   *multiexport.Facts
+		err error
+	}
+	reads := map[string]*read{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var reading []string
+	for _, env := range envs {
 		id := s.cfg.envID(env)
-		if len(bs) == 0 || id == "" {
+		if env == d.Source || id == "" || !canRead || !needsFacts(res.Blockers[env]) {
 			continue
 		}
-		var facts *multiexport.Facts
-		load := func() *multiexport.Facts {
-			if facts != nil || env == d.Source {
-				return facts
-			}
-			fr, ok := s.exporter.(factsReader)
-			if !ok {
-				return nil
-			}
-			stage("Reading what " + env + " already has (read-only), to fill in its values")
+		reading = append(reading, env)
+		wg.Add(1)
+		go func(env, id string) {
+			defer wg.Done()
 			creds := s.creds
 			creds.ExportEnvironmentID = id
 			f, err := fr.EnvironmentFacts(ctx, creds)
-			if err != nil || f == nil {
-				s.log.Warn("could not read an environment to fill in values", "env", env, "error", errString(err))
-				facts = &multiexport.Facts{}
-				return facts
+			if err == nil && f == nil {
+				err = errors.New("nothing was returned")
 			}
-			facts = f
-			return facts
-		}
+			mu.Lock()
+			reads[env] = &read{f: f, err: err}
+			mu.Unlock()
+		}(env, id)
+	}
+	if len(reading) > 0 {
+		stage("Reading what " + strings.Join(reading, ", ") + " already " + map[bool]string{true: "has", false: "have"}[len(reading) == 1] + " (read-only), to fill in values")
+		wg.Wait()
+	}
+	changed := false
+	var report []string
+	for _, env := range envs {
+		bs := res.Blockers[env]
+		asked := 0
 		for _, b := range bs {
-			var name, value string
+			if b.Code == "missing_value" && b.Var != "" || b.Code == "missing_import" && b.Address != "" {
+				asked++
+			}
+		}
+		if asked == 0 {
+			continue
+		}
+		id := s.cfg.envID(env)
+		if id == "" {
+			report = append(report, env+": nothing filled in, because its PingOne environment ID is not in environmentIds in the server configuration (the name must be exactly "+env+").")
+			continue
+		}
+		r := reads[env]
+		if r != nil && r.err != nil {
+			s.log.Warn("could not read an environment to fill in values", "env", env, "error", r.err.Error())
+			report = append(report, env+": could not be read, so only its environment ID was filled in: "+s.redact(r.err.Error())+". Check that the worker has read roles in "+env+".")
+		}
+		var f *multiexport.Facts
+		if r != nil && r.err == nil {
+			f = r.f
+		}
+		n := 0
+		s.drafts.mu.Lock()
+		for _, b := range bs {
 			switch {
 			case b.Code == "missing_value" && b.Var == neutralize.EnvironmentIDVariable:
-				name, value = b.Var, id
-			case b.Code == "missing_value" && b.Var != "":
-				f := load()
-				if f == nil {
-					continue
+				if d.setValue(env, b.Var, id) {
+					n++
 				}
-				name, value = b.Var, factValue(f, res.Variables[b.Var])
-			case b.Code == "missing_import" && b.Address != "":
-				f := load()
-				if f == nil || f.ImportIDs[b.Address] == "" {
-					continue
+			case b.Code == "missing_value" && b.Var != "" && f != nil:
+				v := factValue(f, res.Variables[b.Var])
+				if v != "" && !secretscan.CredentialValue(v) && len(secretscan.ScanText("", []byte(v))) == 0 && d.setValue(env, b.Var, v) {
+					n++
 				}
-				s.drafts.mu.Lock()
-				if d.ImportIDs == nil {
-					d.ImportIDs = map[string]map[string]string{}
+			case b.Code == "missing_import" && b.Address != "" && f != nil:
+				if v := f.ImportIDs[b.Address]; v != "" && d.setImportID(env, b.Address, v) {
+					n++
 				}
-				if d.ImportIDs[env] == nil {
-					d.ImportIDs[env] = map[string]string{}
-				}
-				if d.ImportIDs[env][b.Address] == "" {
-					d.ImportIDs[env][b.Address] = f.ImportIDs[b.Address]
-					d.markFilled(env, b.Address, env)
-					changed = true
-				}
-				s.drafts.mu.Unlock()
-				continue
 			}
-			if name == "" || value == "" || secretscan.CredentialValue(value) || len(secretscan.ScanText("", []byte(value))) > 0 {
-				continue
-			}
-			s.drafts.mu.Lock()
-			if d.Values == nil {
-				d.Values = map[string]map[string]string{}
-			}
-			if d.Values[env] == nil {
-				d.Values[env] = map[string]string{}
-			}
-			if d.Values[env][name] == "" {
-				d.Values[env][name] = value
-				d.markFilled(env, name, env)
-				changed = true
-			}
-			s.drafts.mu.Unlock()
+		}
+		s.drafts.mu.Unlock()
+		if n > 0 {
+			changed = true
+		}
+		if r != nil && r.err != nil {
+			continue
+		}
+		if f != nil && len(f.Raw) == 0 && len(f.Skipped) > 0 {
+			report = append(report, fmt.Sprintf("%s: nothing could be read there (%d of %d filled in). The worker probably has no read role in %s, or its ID in environmentIds is wrong.", env, n, asked, env))
+			continue
+		}
+		line := fmt.Sprintf("%s: %d of %d filled in from what %s has now", env, n, asked, env)
+		if n < asked {
+			line += fmt.Sprintf("; %d not found there under the same name (or a secret, which is never filled in)", asked-n)
+		}
+		if f != nil && len(f.Skipped) > 0 {
+			line += fmt.Sprintf("; %d kinds of items could not be read there (the worker may lack a read role)", len(f.Skipped))
+		}
+		if f != nil && f.DaVinci != "" {
+			line += "; its DaVinci items could not be read"
+		}
+		report = append(report, line+".")
+	}
+	s.drafts.mu.Lock()
+	d.FillReport = report
+	s.drafts.mu.Unlock()
+	return changed
+}
+
+// needsFacts reports whether any blocker can be filled from what the
+// environment has (beyond its own ID).
+func needsFacts(bs []request.BlockerOut) bool {
+	for _, b := range bs {
+		if b.Code == "missing_value" && b.Var != "" && b.Var != neutralize.EnvironmentIDVariable || b.Code == "missing_import" && b.Address != "" {
+			return true
 		}
 	}
-	return changed
+	return false
+}
+
+// setValue enters a value the server found, unless one was entered.
+func (d *Draft) setValue(env, name, v string) bool {
+	if d.Values == nil {
+		d.Values = map[string]map[string]string{}
+	}
+	if d.Values[env] == nil {
+		d.Values[env] = map[string]string{}
+	}
+	if d.Values[env][name] != "" {
+		return false
+	}
+	d.Values[env][name] = v
+	d.markFilled(env, name, env)
+	return true
+}
+
+func (d *Draft) setImportID(env, addr, v string) bool {
+	if d.ImportIDs == nil {
+		d.ImportIDs = map[string]map[string]string{}
+	}
+	if d.ImportIDs[env] == nil {
+		d.ImportIDs[env] = map[string]string{}
+	}
+	if d.ImportIDs[env][addr] != "" {
+		return false
+	}
+	d.ImportIDs[env][addr] = v
+	d.markFilled(env, addr, env)
+	return true
 }
 
 func (d *Draft) markFilled(env, key, from string) {

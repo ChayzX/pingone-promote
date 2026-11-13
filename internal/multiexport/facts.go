@@ -25,6 +25,11 @@ type Facts struct {
 	// Raw are the API objects, for attribute values.
 	Raw map[string]map[string]any
 	At  time.Time
+	// Skipped are kinds of items that could not be read (403: no read
+	// role, or a service the environment does not have), and DaVinci is
+	// why DaVinci could not be read ("" when it was).
+	Skipped map[string]string
+	DaVinci string
 }
 
 type factsEntry struct {
@@ -108,6 +113,10 @@ func (e *Exporter) readFacts(ctx context.Context, creds exporter.Credentials, en
 			f.ImportIDs[a] = o.ImportID
 		}
 		f.Raw[a] = o.Raw
+	}
+	f.Skipped = inv.Skipped
+	if dvErr != nil {
+		f.DaVinci = dvErr.Error()
 	}
 	if dvErr == nil { // an environment without DaVinci has core facts only
 		for _, it := range dv {

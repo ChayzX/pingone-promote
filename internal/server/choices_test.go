@@ -176,3 +176,20 @@ func TestValuesFilledInFromTheEnvironments(t *testing.T) {
 		t.Fatal("a value the person changed is still marked as filled in")
 	}
 }
+
+// The preview says per environment what was filled in, or why not: an
+// environment missing from environmentIds, one the worker cannot read.
+func TestFillReportExplainsBlankValues(t *testing.T) {
+	e := newCoreEnvWith(t, func(c *Config) {
+		c.EnvironmentIDs = map[string]string{"dev": firstUseSourceID, "qa": firstUseSourceID, "prod": "99999999-9999-4999-8999-999999999999"}
+	})
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	t.Log(regexp.MustCompile(`(?s)<strong>Values from the environments</strong>.*?</ul>`).FindString(p.body))
+	mustContain(t, p.body, "Values from the environments", "qa: ", "filled in from what qa has now",
+		"stage: nothing filled in, because its PingOne environment ID is not in environmentIds")
+	if !strings.Contains(p.body, "prod: nothing could be read there") {
+		t.Errorf("an unreadable prod is not explained")
+	}
+}
