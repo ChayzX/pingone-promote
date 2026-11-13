@@ -73,7 +73,7 @@ jobs:
           grep -E '^(ok|FAIL|\?)' "$RUNNER_TEMP/test.log"
           # Only these tests may skip here: fixture regeneration (manual) and
           # tests that exist for Windows development machines.
-          allowed='TestLiveTenant|TestSlicesMatchTheRealTerraformer|TestLiveBrowserServer|TestRegenerateRepoFixture|TestSecretsWindowsRefusesUnverifiable|TestDemoServer|TestPageSnapshots'
+          allowed='TestLiveTenant|TestLiveQuickList|TestSlicesMatchTheRealTerraformer|TestLiveBrowserServer|TestRegenerateRepoFixture|TestSecretsWindowsRefusesUnverifiable|TestDemoServer|TestPageSnapshots'
           if grep -E -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E "($allowed) " > "$RUNNER_TEMP/skips.txt"; then
             cat "$RUNNER_TEMP/skips.txt" | annotate "unexpected skips"
             echo "unexpected skipped tests:"; cat "$RUNNER_TEMP/skips.txt"; exit 1

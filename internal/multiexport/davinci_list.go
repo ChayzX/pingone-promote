@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -88,6 +89,9 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]export
 		add(neutralize.TypeVariable, neutralize.Label(name, ctxName), name, str(v["id"]), v)
 	}
 	for _, c := range conns {
+		if !hexID.MatchString(str(c["id"])) {
+			continue // built in (defaultUserPool, ...): terraformer does not export it
+		}
 		add(neutralize.TypeConnector, neutralize.Label(str(c["name"])), str(c["name"]), str(c["id"]), c)
 	}
 	for i, a := range apps {
@@ -101,6 +105,9 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]export
 	sum := sha256.Sum256([]byte(strings.Join(fp, "\n")))
 	return out, hex.EncodeToString(sum[:]), nil
 }
+
+// hexID is a DaVinci object ID; built-in connector instances have names.
+var hexID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func str(v any) string {
 	switch x := v.(type) {
