@@ -512,6 +512,9 @@ resource "pingone_davinci_variable" "pingcli__cancelUrl_flowInstance" {
 			if r.Variables[v] == nil || !r.Variables[v].PerEnvironment() {
 				t.Fatalf("%s is not a per-environment variable", v)
 			}
+			if ctx := strings.TrimPrefix(v, "davinci_variable_cancelUrl_"); !strings.Contains(r.Variables[v].Description, "("+strings.TrimSuffix(ctx, "_value")+")") {
+				t.Fatalf("%s: the description %q does not name its context", v, r.Variables[v].Description)
+			}
 			if _, ok := r.SourceValues[v]; ok {
 				t.Fatalf("%s: the shared value must not be guessed", v)
 			}

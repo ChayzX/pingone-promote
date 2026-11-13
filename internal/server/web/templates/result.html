@@ -11,11 +11,16 @@
 {{with .Error}}<p class="problem">{{.Message}}</p>{{end}}
 <ul class="links">
   {{with .MRUrl}}<li>Merge request: <a href="{{.}}">{{.}}</a></li>{{end}}
-  {{with .BranchURL}}<li>Branch: <a href="{{.}}">{{$.Data.R.Branch}}</a></li>{{end}}
+  {{if or .CommitID (not .Error)}}{{with .BranchURL}}<li>Branch: <a href="{{.}}">{{$.Data.R.Branch}}</a></li>{{end}}{{end}}
   {{if .CommitID}}<li>Commit: {{with .DiffURL}}<a href="{{.}}">{{short $.Data.R.CommitID}}</a>{{else}}{{short $.Data.R.CommitID}}{{end}}</li>{{end}}
 </ul>
+{{if .Error}}{{if not .CommitID}}
+<h2>What to do</h2>
+<p>Nothing was committed to GitLab. Fix the problem above, then preview again and submit.</p>{{end}}
+{{else}}
 <h2>What happens next</h2>
 <p>Someone reviews and merges the change in GitLab. After the merge the pipeline rolls it out one environment at a time. Follow each environment on the <a href="/requests">Requests</a> page.</p>
+{{end}}
 {{end}}{{end}}
 <p><a href="/drafts/{{$d.ID}}/preview">Back to the preview</a> &middot; <a href="/">Your drafts</a></p>
 {{end}}

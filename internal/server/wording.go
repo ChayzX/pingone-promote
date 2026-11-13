@@ -95,6 +95,10 @@ func valueLabel(d *Draft, res *request.Result, name string) (label, hint string)
 	case v.Kind == "excluded_ref" && v.Resource != "":
 		label = "ID of the " + describe(d, v.Resource) + " in this environment"
 		hint = "It is not part of this copy, so each environment refers to the one it already has."
+	case strings.HasPrefix(name, "davinci_form_"):
+		// terraformer's own wording names no form.
+		label = "ID of the DaVinci form “" + strings.TrimPrefix(name, "davinci_form_") + "” in this environment"
+		hint = "DaVinci forms are not copied, so each environment refers to its own."
 	case v.Attribute != "" && v.Resource != "":
 		label = attributeLabel(v.Attribute) + " of the " + describe(d, v.Resource)
 	case v.Description != "":

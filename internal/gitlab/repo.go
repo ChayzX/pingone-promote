@@ -59,8 +59,12 @@ type RepoFile struct {
 	Exists       bool
 }
 
-// maxFile bounds a decoded repository file.
-const maxFile = 16 << 20
+// maxFile bounds a decoded repository file. A whole environment's
+// DaVinci flows file passes 20 MB; it is hclblocks.MaxFileSize.
+const maxFile = MaxFileSize
+
+// MaxFileSize is the largest file read from or committed to GitLab.
+const MaxFileSize = 64 << 20
 
 // GetFile reads path at ref. A missing file returns Exists == false and no
 // error.

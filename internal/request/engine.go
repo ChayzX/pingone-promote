@@ -304,6 +304,13 @@ func (r *runner) run(ctx context.Context) {
 		}
 		m.Files[p] = out
 	}
+	// A file GitLab would refuse is a blocker now, not a failed submit.
+	for _, p := range m.ChangedPaths() {
+		if n := len(m.Files[p]); n > gitlab.MaxFileSize {
+			res.Blockers[RequestBlockers] = append(res.Blockers[RequestBlockers], BlockerOut{Code: "file_too_large", Address: p,
+				Message: fmt.Sprintf("%s would be %d MB, more than the %d MB GitLab accepts from this tool; copy fewer items at once (whole sections, or leave some out)", p, n>>20, gitlab.MaxFileSize>>20)})
+		}
+	}
 	diff, err := m.Diff(head)
 	if err != nil {
 		res.fail(ErrPreflight, "internal", err.Error(), true)

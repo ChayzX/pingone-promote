@@ -276,6 +276,9 @@ type state struct {
 	// shared are variables terraformer declared twice, identically, for two
 	// resources (DaVinci variables with one name in two contexts).
 	shared map[string]bool
+	// desc overrides a variable's description (split shared variables
+	// name their context).
+	desc map[string]string
 	// excl is Options.Excluded by address; exclVar maps terraformer's
 	// variable name for an excluded reference to the address; mapBack maps
 	// such a variable of a Git-managed resource to its address.
@@ -303,7 +306,7 @@ func Neutralize(in *Input, opts Options) (*Result, error) {
 		SourceIDs:          map[string]string{},
 		GlobalVariableRefs: map[string][]string{},
 	}, relabel: map[*rawBlock]string{}, varRenameBy: map[*rawBlock]map[string]string{},
-		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{}, shared: map[string]bool{},
+		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{}, shared: map[string]bool{}, desc: map[string]string{},
 		excl: map[string]Excluded{}, exclVar: map[string]string{}, mapBack: map[string]string{}}
 	for _, e := range opts.Excluded {
 		if !excludedAddressRE.MatchString(e.Address) {
@@ -694,6 +697,13 @@ func (s *state) splitShared() error {
 			}
 			s.varRenameBy[rb][name] = n
 			s.noValue[n] = true
+			if d, ok := s.decls[name]; ok && d.desc != "" {
+				where := stripPrefix(label)
+				if c, ok := literalString(rb.attrs["context"]); ok && c != "" {
+					where = c
+				}
+				s.desc[n] = d.desc + " (" + where + ")"
+			}
 			made = append(made, n)
 		}
 		sort.Strings(made)
@@ -892,6 +902,9 @@ func (s *state) excludedRef(addr string) *Variable {
 // keep makes a variable environment-local and records its source value.
 func (s *state) keep(name string, d decl) *Variable {
 	desc := d.desc
+	if o, ok := s.desc[name]; ok {
+		desc = o
+	}
 	if desc == "" {
 		desc = "Environment value " + name
 	}
