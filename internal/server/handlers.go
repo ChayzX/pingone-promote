@@ -629,13 +629,13 @@ type typeView struct {
 }
 
 type previewView struct {
-	D           *Draft
-	R           *request.Result
-	Problem     string
-	Fresh       bool
-	CanSubmit   bool
+	D         *Draft
+	R         *request.Result
+	Problem   string
+	Fresh     bool
+	CanSubmit bool
 	// NoChanges: Git already has everything in the request.
-	NoChanges bool
+	NoChanges   bool
 	Running     bool
 	Types       []typeView
 	Changes     []changeView
