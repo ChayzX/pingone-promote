@@ -51,7 +51,7 @@ table { border-collapse: collapse; width: 100%; margin: 8px 0; }
 th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 th { background: var(--panel); font-weight: 600; }
 td.actions form { display: inline-block; margin-right: 4px; }
-code { font: 13px/1.4 ui-monospace, "SF Mono", Consolas, monospace; }
+code { font: 13px/1.4 ui-monospace, "SF Mono", Consolas, monospace; overflow-wrap: anywhere; }
 code.small { font-size: 12px; color: var(--muted); word-break: break-all; }
 .hint, .meta { color: var(--muted); font-size: 14px; }
 .notice { padding: 8px 12px; border-left: 4px solid var(--accent); background: var(--panel); }
