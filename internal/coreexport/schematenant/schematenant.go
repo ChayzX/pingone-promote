@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"pingone-promote/internal/catalog"
@@ -28,6 +29,7 @@ import (
 // children are read under). It stands in for tenants whose data our hand
 // written fixture does not cover.
 type Tenant struct {
+	mu     sync.Mutex
 	defs   []*catalog.Def
 	pats   map[string]*regexp.Regexp
 	cache  map[string][]map[string]any
@@ -68,6 +70,8 @@ func ID(typ string, variant int, scope string) string {
 }
 
 func (st *Tenant) Get(_ context.Context, _, path string) (map[string]any, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	st.reads++
 	for _, d := range st.defs {
 		if (d.Singleton || d.Embedded == "") && st.pats[d.Type].MatchString(path) {
@@ -82,6 +86,8 @@ func (st *Tenant) Get(_ context.Context, _, path string) (map[string]any, error)
 }
 
 func (st *Tenant) List(_ context.Context, _, path, embedded string) ([]map[string]any, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	st.reads++
 	var out []map[string]any
 	found := false

@@ -49,6 +49,15 @@ type Exporter struct {
 
 	mu    sync.Mutex
 	cache map[string]*cached
+	// reading holds the read in progress per environment: callers that
+	// arrive meanwhile wait for it instead of reading the source again.
+	reading map[string]*reading
+}
+
+type reading struct {
+	done chan struct{}
+	c    *cached
+	err  error
 }
 
 type cached struct {
@@ -80,7 +89,37 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 		e.mu.Unlock()
 		return c, nil
 	}
+	if rd := e.reading[env]; rd != nil {
+		e.mu.Unlock()
+		select {
+		case <-rd.done:
+			return rd.c, rd.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	rd := &reading{done: make(chan struct{})}
+	if e.reading == nil {
+		e.reading = map[string]*reading{}
+	}
+	e.reading[env] = rd
 	e.mu.Unlock()
+	rd.c, rd.err = e.read(ctx, creds, env)
+	e.mu.Lock()
+	if rd.err == nil {
+		if e.cache == nil {
+			e.cache = map[string]*cached{}
+		}
+		e.cache[env] = rd.c
+	}
+	delete(e.reading, env)
+	e.mu.Unlock()
+	close(rd.done)
+	return rd.c, rd.err
+}
+
+// read reads the source environment once (core inventory and DaVinci).
+func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env string) (*cached, error) {
 	nr := e.NewReader
 	if nr == nil {
 		nr = DefaultReader
@@ -93,7 +132,7 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 	if err != nil {
 		return nil, err
 	}
-	c = &cached{at: time.Now(), inv: inv}
+	c := &cached{at: time.Now(), inv: inv}
 	if e.DaVinci != nil {
 		if c.dv, err = e.DaVinci.CatalogAllIDs(ctx, creds); err != nil {
 			if ctx.Err() != nil {
@@ -102,12 +141,6 @@ func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cach
 			c.dv, c.dvErr = nil, err
 		}
 	}
-	e.mu.Lock()
-	if e.cache == nil {
-		e.cache = map[string]*cached{}
-	}
-	e.cache[env] = c
-	e.mu.Unlock()
 	return c, nil
 }
 

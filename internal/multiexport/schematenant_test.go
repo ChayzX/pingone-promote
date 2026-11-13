@@ -2,6 +2,7 @@ package multiexport
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"pingone-promote/internal/catalog"
@@ -67,5 +68,49 @@ func TestEverySingleItemExports(t *testing.T) {
 			}
 			neutralized(t, exp)
 		}
+	}
+}
+
+// TestConcurrentCallersShareOneRead: the item list read at startup and a
+// preview that start together read the source once, not once each (a full
+// read is hundreds of API calls and a terraformer run).
+func TestConcurrentCallersShareOneRead(t *testing.T) {
+	st := schematenant.New()
+	fake := exportertest.Build(t, t.TempDir(), exportertest.FixtureDir("cross"))
+	var mu sync.Mutex
+	readers := 0
+	e := &Exporter{
+		DaVinci: &exporter.Runner{Config: exporter.Config{Path: fake.Path, SHA256: fake.SHA256, Version: fake.Version}},
+		NewReader: func(exporter.Credentials) (coreexport.Reader, error) {
+			mu.Lock()
+			readers++
+			mu.Unlock()
+			return st, nil
+		},
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			var err error
+			if i%2 == 0 {
+				_, err = e.CatalogAllIDs(context.Background(), creds)
+			} else {
+				_, err = e.WholeExport(context.Background(), creds, nil)
+			}
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if readers != 1 {
+		t.Fatalf("the source was read %d times", readers)
 	}
 }
