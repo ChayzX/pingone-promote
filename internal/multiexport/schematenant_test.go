@@ -114,3 +114,43 @@ func TestConcurrentCallersShareOneRead(t *testing.T) {
 		t.Fatalf("the source was read %d times", readers)
 	}
 }
+
+// TestOneTerraformerRunPerRead: the item list runs terraformer once, and
+// previews (alone, with dependencies, whole) are cut from that run.
+func TestOneTerraformerRunPerRead(t *testing.T) {
+	fake := exportertest.Build(t, t.TempDir(), exportertest.FixtureDir("cross"))
+	st := schematenant.New()
+	e := &Exporter{
+		DaVinci:   &exporter.Runner{Config: exporter.Config{Path: fake.Path, SHA256: fake.SHA256, Version: fake.Version}},
+		NewReader: func(exporter.Credentials) (coreexport.Reader, error) { return st, nil },
+	}
+	items, err := e.CatalogAllIDs(context.Background(), creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flow string
+	for _, it := range items {
+		if it.Type == "pingone_davinci_flow" {
+			flow = it.String()
+			break
+		}
+	}
+	if _, err := e.SelectedExport(context.Background(), creds, []string{flow}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.ScopedExport(context.Background(), creds, []string{flow}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.WholeExport(context.Background(), creds, nil); err != nil {
+		t.Fatal(err)
+	}
+	runs := 0
+	for _, inv := range fake.Invocations(t) {
+		if len(inv.Argv) > 1 && inv.Argv[1] == "export" {
+			runs++
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("terraformer exported %d times, want 1", runs)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -302,8 +303,8 @@ func TestRateLimitedReadsAreRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.AuthBase, c.APIBase = f.AuthBase(), f.APIBase()
-	waits := 0
-	c.Sleep = func(context.Context, time.Duration) error { waits++; return nil }
+	var waits atomic.Int32 // reads run in parallel
+	c.Sleep = func(context.Context, time.Duration) error { waits.Add(1); return nil }
 	inv, err := Read(context.Background(), c, env)
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +313,7 @@ func TestRateLimitedReadsAreRetried(t *testing.T) {
 	if len(inv.Skipped) != len(plain.Skipped) || len(inv.Objects) != len(plain.Objects) {
 		t.Fatalf("throttled reads were not retried: %d objects (want %d), skipped %v", len(inv.Objects), len(plain.Objects), inv.Skipped)
 	}
-	if waits == 0 {
+	if waits.Load() == 0 {
 		t.Fatal("no retry waited")
 	}
 }

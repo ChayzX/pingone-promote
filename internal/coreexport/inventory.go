@@ -83,45 +83,70 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 			defs = append(defs, d)
 		}
 	}
+	// Types are read in rounds: every type whose parent is read runs in the
+	// same round, up to readers at a time (the client waits out 429s).
+	// Results are applied in catalog order, so the output does not depend
+	// on timing.
 	done := map[string]bool{}
 	for len(done) < len(defs) {
-		progress := false
+		var ready []*catalog.Def
 		for _, d := range defs {
-			if done[d.Type] || (d.Parent != "" && !done[d.Parent] && isAPI(d.Parent)) {
-				continue
+			if !done[d.Type] && (d.Parent == "" || done[d.Parent] || !isAPI(d.Parent)) {
+				ready = append(ready, d)
 			}
-			objs, err := readType(ctx, r, env, d, byType, func(w string) { inv.Warnings = append(inv.Warnings, w) })
-			if err != nil {
-				// One type the tenant answers unexpectedly must not stop the
-				// whole read: it is skipped and reported. Only failures that
-				// would hit every type (sign-in, network, cancellation) stop.
-				var ae *pingone.APIError
-				switch {
-				case pingone.Forbidden(err):
-					inv.Skipped[d.Type] = "the worker cannot read it (HTTP 403: service not licensed or no read role)"
-				case pingone.NotFound(err):
-					inv.Skipped[d.Type] = "not available in this environment (HTTP 404)"
-				case pingone.BadResponse(err):
-					// One endpoint answering in another format (XML, ...)
-					// must not stop the whole read.
-					inv.Skipped[d.Type] = "PingOne's answer could not be read (it is not JSON); references to these items keep their source IDs, so report it"
-				case errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500 && ae.Status != http.StatusUnauthorized && ae.Status != http.StatusTooManyRequests:
-					// A request this tool builds wrongly for this tenant. A
-					// server error (5xx) or throttling that outlasted the
-					// retries stops the read instead: skipping would turn
-					// every reference to the type into a literal source ID.
-					inv.Skipped[d.Type] = fmt.Sprintf("the PingOne API refused the request (HTTP %d); references to these items keep their source IDs, so report it", ae.Status)
-				default:
-					return nil, fmt.Errorf("coreexport: %s: %w", d.Type, err)
-				}
-				objs = nil
-			}
-			byType[d.Type] = objs
-			done[d.Type] = true
-			progress = true
 		}
-		if !progress {
+		if len(ready) == 0 {
 			return nil, fmt.Errorf("coreexport: the catalog has a parent cycle")
+		}
+		type result struct {
+			objs     []*Object
+			warnings []string
+			err      error
+		}
+		results := make([]result, len(ready))
+		rctx, cancel := context.WithCancel(ctx)
+		sem := make(chan struct{}, readers)
+		var wg sync.WaitGroup
+		for i, d := range ready {
+			wg.Add(1)
+			go func(i int, d *catalog.Def) {
+				defer wg.Done()
+				select {
+				case sem <- struct{}{}:
+				case <-rctx.Done():
+					results[i].err = rctx.Err()
+					return
+				}
+				defer func() { <-sem }()
+				res := &results[i]
+				res.objs, res.err = readType(rctx, r, env, d, byType, func(w string) { res.warnings = append(res.warnings, w) })
+				if res.err != nil && fatalRead(res.err) {
+					cancel() // the read stops: do not start more requests
+				}
+			}(i, d)
+		}
+		wg.Wait()
+		cancel()
+		for i, d := range ready {
+			res := results[i]
+			inv.Warnings = append(inv.Warnings, res.warnings...)
+			if res.err != nil {
+				why, skip := skipReason(res.err)
+				if !skip {
+					// The first failure that stops the read, in catalog
+					// order (others may be cancellations it caused).
+					for j := i; j < len(ready); j++ {
+						if results[j].err != nil && fatalRead(results[j].err) && !errors.Is(results[j].err, context.Canceled) {
+							return nil, fmt.Errorf("coreexport: %s: %w", ready[j].Type, results[j].err)
+						}
+					}
+					return nil, fmt.Errorf("coreexport: %s: %w", d.Type, res.err)
+				}
+				inv.Skipped[d.Type] = why
+				res.objs = nil
+			}
+			byType[d.Type] = res.objs
+			done[d.Type] = true
 		}
 	}
 	for _, d := range defs {
@@ -175,6 +200,36 @@ func (m *memoReader) Get(ctx context.Context, env, path string) (map[string]any,
 	}
 	return v, err
 }
+
+// readers is how many requests a read makes at a time.
+const readers = 6
+
+// skipReason says why a type that failed is skipped, or false when the
+// failure stops the whole read. One type the tenant answers unexpectedly
+// must not stop the whole read: it is skipped and reported. Only failures
+// that would hit every type (sign-in, network, cancellation) stop.
+func skipReason(err error) (string, bool) {
+	var ae *pingone.APIError
+	switch {
+	case pingone.Forbidden(err):
+		return "the worker cannot read it (HTTP 403: service not licensed or no read role)", true
+	case pingone.NotFound(err):
+		return "not available in this environment (HTTP 404)", true
+	case pingone.BadResponse(err):
+		// One endpoint answering in another format (XML, ...) must not
+		// stop the whole read.
+		return "PingOne's answer could not be read (it is not JSON); references to these items keep their source IDs, so report it", true
+	case errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500 && ae.Status != http.StatusUnauthorized && ae.Status != http.StatusTooManyRequests:
+		// A request this tool builds wrongly for this tenant. A server
+		// error (5xx) or throttling that outlasted the retries stops the
+		// read instead: skipping would turn every reference to the type
+		// into a literal source ID.
+		return fmt.Sprintf("the PingOne API refused the request (HTTP %d); references to these items keep their source IDs, so report it", ae.Status), true
+	}
+	return "", false
+}
+
+func fatalRead(err error) bool { _, skip := skipReason(err); return !skip }
 
 func isAPI(typ string) bool {
 	d, ok := catalog.Get(typ)

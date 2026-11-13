@@ -66,6 +66,10 @@ type cached struct {
 	at  time.Time
 	inv *coreexport.Inventory
 	dv  []exporter.Resource
+	// dvSrc is the whole DaVinci export behind dv, when the DaVinci
+	// exporter keeps one: selections are cut from it instead of running
+	// terraformer again.
+	dvSrc *exporter.Source
 	// dvErr is why DaVinci could not be read (an environment without
 	// DaVinci, or a worker without the DaVinci role). Core items still work.
 	dvErr error
@@ -137,7 +141,11 @@ func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env str
 	dvDone := make(chan struct{})
 	go func() {
 		defer close(dvDone)
-		if e.DaVinci != nil {
+		if cs, ok := e.DaVinci.(interface {
+			CatalogSource(context.Context, exporter.Credentials) ([]exporter.Resource, *exporter.Source, error)
+		}); ok {
+			c.dv, c.dvSrc, c.dvErr = cs.CatalogSource(dvCtx, creds)
+		} else if e.DaVinci != nil {
 			c.dv, c.dvErr = e.DaVinci.CatalogAllIDs(dvCtx, creds)
 		}
 	}()
@@ -445,6 +453,12 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 					}
 				}
 				switch {
+				case c.dvSrc != nil && whole:
+					dvExp, err = c.dvSrc.Whole(dvExclude)
+				case c.dvSrc != nil && upstream:
+					dvExp, err = c.dvSrc.Scoped(sortedKeys(dv), dvExclude)
+				case c.dvSrc != nil:
+					dvExp, err = c.dvSrc.Selected(sortedKeys(dv), dvExclude)
 				case whole:
 					dvExp, err = e.DaVinci.WholeExport(ctx, creds, dvExclude)
 				case upstream:

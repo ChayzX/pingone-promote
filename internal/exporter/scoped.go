@@ -40,6 +40,25 @@ func (r *Runner) CatalogAllIDs(ctx context.Context, creds Credentials) ([]Resour
 	return r.catalog(ctx, creds, true, true)
 }
 
+// CatalogSource is CatalogAllIDs that also keeps the whole export (with
+// values) as a Source, so selections are cut from it without running
+// terraformer again.
+func (r *Runner) CatalogSource(ctx context.Context, creds Credentials) ([]Resource, *Source, error) {
+	exp, err := r.Export(ctx, creds, ExportOptions{All: true, Imports: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	src, err := NewSource(exp)
+	if err != nil {
+		return nil, nil, err
+	}
+	list, err := src.Resources()
+	if err != nil {
+		return nil, nil, err
+	}
+	return list, src, nil
+}
+
 func (r *Runner) catalog(ctx context.Context, creds Credentials, withIDs, allTypes bool) ([]Resource, error) {
 	if allTypes {
 		// The whole export lists every resource itself: no separate
