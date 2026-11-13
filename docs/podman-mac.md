@@ -147,11 +147,12 @@ Change these values and save:
 | `pingone.regionCode` | the region, for example `NA` |
 | `pingone.workerEnvironmentId` | the ID of the environment that holds the worker application |
 | `sources` | the environment(s) you copy from, named like their `.tfvars` file, for example `["development"]` |
+| `environmentIds` | Recommended: every environment's PingOne ID, sources and rollout, for example `{"dev": "<ID>", "qa": "<ID>", "stage": "<ID>", "prod": "<ID>"}`. The server then fills in `pingone_environment_id` where a `.tfvars` lacks it, and reads each rollout environment read-only (the same worker needs read roles there) to fill in the values a request needs that the environment already has: IDs of existing items, import IDs to adopt them, DaVinci variable values and environment-specific attributes. Filled values are marked on the page and stay editable; secrets are never filled in. |
 | `sourceEnvironmentIds` | the PingOne environment ID of each source, for example `{"development": "<ID>"}` (PingOne admin console, Environment, Settings). Not needed when each `.tfvars` sets `pingone_environment_id` (the usual case): leave it out |
 | `overlayPattern` | only if your environments' `.tfvars` are not at the repository root: for example `envs/{env}.tfvars` |
 | `repository` | only if your repository differs from the default: `moduleName`/`moduleDir` (the module that holds the PingOne resources, default `davinci` in `definitions/`), `customerSecretsFile`, `ciVariables` (variables your pipeline supplies, never asked for or written to `.tfvars`; add `pingone_environment_id` only if a GitLab CI variable supplies it instead of the `.tfvars`), `vaultPathPrefix`/`vaultMount` (where new secrets live in Vault, default `apps/pingone-davinci/${VAULT_PATH_ENV}/pingone` and `secret`) |
 | `rollout` | the environments the pipeline applies to, in order, for example `["testing", "stage", "production"]` |
-| `branchPattern`, `branchExample` | the rule for branch names, which people type when they submit (a Jira key): for example `CIAM-[0-9]+` and `CIAM-1234`. The whole name must match; nothing is added to it |
+| `branchPattern`, `branchExample` | the rule for branch names, which people type when they submit (a Jira key): for example `CIAM-[0-9]+(-[0-9]+)?` and `CIAM-1234` (CIAM-1234-1 also matches, for a second branch of one ticket). The whole name must match; nothing is added to it |
 | `applyJobPattern` | the name of your pipeline's apply job with `{env}` where the environment name goes: for jobs named `terraform:apply-development`, `terraform:apply-stage`, ... use `terraform:apply-{env}` |
 | `tools.terraformSha256` | the first value from step 4 |
 | `tools.terraformerSha256` | the second value from step 4 |

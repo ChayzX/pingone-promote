@@ -35,12 +35,13 @@ rejected. Secrets never go in this file.
 | `pingone.regionCode` | One of `NA`, `EU`, `CA`, `AP`, `AU`, `SG`. |
 | `pingone.workerEnvironmentId` | Environment holding the **read-only** source worker app. |
 | `sources` | Environments a request may export from (`development` means `development.tfvars`). |
+| `environmentIds` | Recommended: every environment's PingOne ID, sources and rollout, for example `{"dev": "<ID>", "qa": "<ID>", "stage": "<ID>", "prod": "<ID>"}`. The server then fills in `pingone_environment_id` where a `.tfvars` lacks it, and reads each rollout environment read-only (the same worker needs read roles there) to fill in the values a request needs that the environment already has: IDs of existing items, import IDs to adopt them, DaVinci variable values and environment-specific attributes. Filled values are marked on the page and stay editable; secrets are never filled in. |
 | `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Rarely needed: the source's ID is read from `pingone_environment_id` in its `.tfvars`. Use it only when that file cannot set it; if a GitLab CI variable supplies the ID, also list `pingone_environment_id` in `repository.ciVariables`. |
 | `rollout` | Environments the pipeline applies afterwards, in order. Must not overlap `sources`. |
 | `overlayPattern` | Where each environment's tfvars live, default `{env}.tfvars`. |
 | `repository` | Optional overrides: `moduleName`, `moduleDir`, `moduleFile`, `variablesFile`, `secretsFile`, `importsFile`, `customerSecretsFile`; `ciVariables` (root variables the pipeline supplies, never asked for or written to tfvars); `vaultPathPrefix`, `vaultMount` (Vault location of new secrets). |
 | `branchPrefix` | Request branch prefix, e.g. `CIAM-` (ends in `-` or `/`). |
-| `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+`; nothing is added to it, and an existing branch is refused. Without it, branches are `branchPrefix` + request ID. |
+| `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+(-[0-9]+)?` (CIAM-1234, or CIAM-1234-1 for a second branch of one ticket); nothing is added to it, and an existing branch is refused. Without it, branches are `branchPrefix` + request ID. |
 | `applyJobPattern` | Apply job name in the default-branch pipeline; must contain `{env}`. |
 | `layout` | `default` or `terraformer`. |
 | `tools.terraform`, `terraformVersion`, `terraformSha256` | Terraform path, version (must be `1.16.7`), and the SHA-256 of the **extracted binary**. |

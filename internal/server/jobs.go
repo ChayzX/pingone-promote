@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,7 +105,7 @@ func (s *Server) snapshotDirs() []string {
 // envFor is env with the source's configured environment ID, if any.
 func (s *Server) envFor(project gitlab.Project, workspace, head string, req *request.Request, exp request.Exporter) request.Env {
 	e := s.env(project, workspace, head, req.RequestID, exp)
-	e.SourceEnvironmentID = s.cfg.SourceEnvironmentIDs[req.Source]
+	e.SourceEnvironmentID = s.cfg.envID(req.Source)
 	if s.branchRE() != nil {
 		e.Branch, e.BranchPattern = req.BranchName, s.branchRE()
 	}
@@ -144,7 +145,7 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 			if b, exists, err := s.gl.GetBranch(ctx, req.BranchName); err != nil {
 				return err
 			} else if exists && !strings.Contains(b.Commit.Message, gitlab.RequestTrailer+req.RequestID) {
-				return fmt.Errorf("%w: %s", errBranchTaken, req.BranchName)
+				return &branchTakenError{name: req.BranchName, free: s.freeBranch(ctx, req.BranchName)}
 			}
 		}
 		stage("Reading the default branch from GitLab")
@@ -172,6 +173,22 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		rec, frozen := newRecorder(s.exporter)
 		res := request.Run(ctx, s.envFor(project, snap, head, req, rec), req)
 		s.scrub(res)
+		// Values the environments already have are entered, then the
+		// request is previewed again with them (the export is reused).
+		if ctx.Err() == nil && s.autofill(ctx, d, res, stage) {
+			s.drafts.mu.Lock()
+			req2, err := s.buildRequest(d, true)
+			s.drafts.mu.Unlock()
+			if err == nil {
+				stage("Merging again with the values filled in")
+				req, fp = req2, fingerprint(*req2)
+				rec, frozen = newRecorder(s.exporter)
+				res = request.Run(ctx, s.envFor(project, snap, head, req, rec), req)
+				s.scrub(res)
+			} else {
+				s.log.Warn("filled-in values were refused", "error", err.Error())
+			}
+		}
 		if ctx.Err() != nil {
 			os.RemoveAll(snap)
 			return ctx.Err()
@@ -286,7 +303,7 @@ func (s *Server) runSearch(source string) func(context.Context, func(string)) er
 // sourceEnvironmentID reads pingone_environment_id from the source
 // environment's tfvars on the default branch, as the engine does.
 func (s *Server) sourceEnvironmentID(ctx context.Context, branch, source string) (string, error) {
-	if id := s.cfg.SourceEnvironmentIDs[source]; id != "" {
+	if id := s.cfg.envID(source); id != "" {
 		return id, nil
 	}
 	p, err := s.layout.Overlay(source)
@@ -418,7 +435,15 @@ func plainJobError(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "This took too long and was stopped."
 	case errors.Is(err, errBranchTaken):
-		return "The Git branch " + strings.TrimPrefix(err.Error(), errBranchTaken.Error()+": ") + " already exists. Go back, type a branch name that is not used yet, and preview again."
+		var bt *branchTakenError
+		if errors.As(err, &bt) {
+			msg := "The Git branch " + bt.name + " already exists. Go back, type a branch name that is not used yet, and preview again."
+			if bt.free != "" {
+				msg += " " + bt.free + " is free."
+			}
+			return msg
+		}
+		return "The Git branch already exists. Go back, type a branch name that is not used yet, and preview again."
 	case errors.Is(err, errNoSourceID):
 		return noSourceIDText
 	}
@@ -457,4 +482,43 @@ func localModuleDirs(snap string, have []string) []string {
 		}
 	}
 	return out
+}
+
+// branchTakenError is a typed branch name that exists already; free is a
+// name with a number added that does not, when one was found.
+type branchTakenError struct{ name, free string }
+
+func (e *branchTakenError) Error() string { return errBranchTaken.Error() + ": " + e.name }
+func (e *branchTakenError) Unwrap() error { return errBranchTaken }
+
+var branchSuffixRE = regexp.MustCompile(`^(.*)-([0-9]+)$`)
+
+// freeBranch finds the first unused name after branch with a number
+// added (CIAM-1234 -> CIAM-1234-1, CIAM-1234-1 -> CIAM-1234-2) that the
+// branch pattern accepts, or "".
+func (s *Server) freeBranch(ctx context.Context, branch string) string {
+	base, n := branch, 0
+	if m := branchSuffixRE.FindStringSubmatch(branch); m != nil && s.branchRE().MatchString(m[1]) {
+		base, n = m[1], atoiOr(m[2], 0)
+	}
+	for i := n + 1; i <= n+20; i++ {
+		c := base + "-" + strconv.Itoa(i)
+		if !s.branchRE().MatchString(c) {
+			return ""
+		}
+		if _, exists, err := s.gl.GetBranch(ctx, c); err != nil {
+			return ""
+		} else if !exists {
+			return c
+		}
+	}
+	return ""
+}
+
+func atoiOr(s string, def int) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
 }

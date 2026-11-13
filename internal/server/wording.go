@@ -89,6 +89,8 @@ func attributeLabel(path string) string {
 func valueLabel(d *Draft, res *request.Result, name string) (label, hint string) {
 	v, ok := res.Variables[name]
 	switch {
+	case name == neutralize.EnvironmentIDVariable:
+		return "The PingOne environment ID of this environment", "Terraform applies this environment's changes to the PingOne environment with this ID (pingone_environment_id). It is missing from this environment's .tfvars file. The operator can list every environment's ID under environmentIds in the server configuration; it is then filled in automatically."
 	case !ok:
 		// A root variable of the repository that this copy does not set.
 		return "Repository setting " + name, "Required by the repository, which has no value for it in this environment. If your pipeline supplies it (a GitLab CI variable), the operator adds it to repository.ciVariables in the server configuration instead."

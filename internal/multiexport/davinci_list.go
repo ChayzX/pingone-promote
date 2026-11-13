@@ -29,6 +29,21 @@ import (
 // values are the string variables' values by ID (secret ones are masked by
 // the API and left out).
 func davinciList(ctx context.Context, r coreexport.Reader, env string) (_ []exporter.Resource, fingerprint string, values map[string]string, _ error) {
+	l, err := davinciListing(ctx, r, env)
+	return l.items, l.fp, l.values, err
+}
+
+// dvListing is the quick DaVinci list: items, fingerprint, string
+// variable values by ID and the API objects by ID.
+type dvListing struct {
+	items  []exporter.Resource
+	fp     string
+	values map[string]string
+	raw    map[string]map[string]any
+}
+
+func davinciListing(ctx context.Context, r coreexport.Reader, env string) (dvListing, error) {
+	var l dvListing
 	type coll struct{ path, embedded string }
 	colls := []coll{{"flows", "flows"}, {"variables", "variables"}, {"connectorInstances", "connectorInstances"}, {"davinciApplications", "davinciApplications"}}
 	results := make([][]map[string]any, len(colls))
@@ -44,7 +59,7 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) (_ []expo
 	wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return nil, "", nil, err
+			return l, err
 		}
 	}
 	flows, vars, conns, apps := results[0], results[1], results[2], results[3]
@@ -64,14 +79,16 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) (_ []expo
 	wg.Wait()
 	for _, err := range perrs {
 		if err != nil {
-			return nil, "", nil, err
+			return l, err
 		}
 	}
 
 	var out []exporter.Resource
 	var fp []string
+	l.raw = map[string]map[string]any{}
 	add := func(typ, label, name, id string, raw map[string]any, extra ...string) {
 		out = append(out, exporter.Resource{Address: exporter.Address{Type: typ, Label: label}, Name: name, ID: id})
+		l.raw[id] = raw
 		line := typ + " " + id + " " + str(raw["updatedAt"])
 		for _, k := range extra {
 			line += " " + str(raw[k])
@@ -87,7 +104,7 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) (_ []expo
 			out = append(out, exporter.Resource{Address: exporter.Address{Type: typ, Label: l}, Name: name, ID: id})
 		}
 	}
-	values = map[string]string{}
+	values := map[string]string{}
 	for _, v := range vars {
 		name, ctxName := str(v["name"]), str(v["context"])
 		add(neutralize.TypeVariable, neutralize.Label(name, ctxName), name, str(v["id"]), v)
@@ -110,7 +127,8 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) (_ []expo
 	}
 	sort.Strings(fp)
 	sum := sha256.Sum256([]byte(strings.Join(fp, "\n")))
-	return out, hex.EncodeToString(sum[:]), values, nil
+	l.items, l.fp, l.values = out, hex.EncodeToString(sum[:]), values
+	return l, nil
 }
 
 // hexID is a DaVinci object ID; built-in connector instances have names.

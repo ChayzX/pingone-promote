@@ -64,8 +64,16 @@ type Config struct {
 	// from a CI variable). A source without one here is looked up in its
 	// tfvars on the default branch.
 	SourceEnvironmentIDs map[string]string `json:"sourceEnvironmentIds,omitempty"`
-	Rollout              []string          `json:"rollout"`
-	BranchPrefix         string            `json:"branchPrefix,omitempty"`
+	// EnvironmentIDs gives every environment's PingOne environment ID
+	// (sources and rollout). With it the server enters
+	// pingone_environment_id where a tfvars file lacks it, and reads each
+	// rollout environment (read-only, with the same worker) to fill in the
+	// values a request needs that the environment already has: the IDs of
+	// existing items and DaVinci variable values. sourceEnvironmentIds are
+	// included.
+	EnvironmentIDs map[string]string `json:"environmentIds,omitempty"`
+	Rollout        []string          `json:"rollout"`
+	BranchPrefix   string            `json:"branchPrefix,omitempty"`
 	// BranchPattern, when set, makes the person type the branch name (for
 	// example a Jira key) and is the rule it must match whole, such as
 	// CIAM-[0-9]+. BranchExample is shown as the example.
@@ -211,6 +219,18 @@ func (c *Config) check() error {
 			return fmt.Errorf("sourceEnvironmentIds.%s must be a PingOne environment ID (a UUID)", name)
 		}
 	}
+	for name, id := range c.EnvironmentIDs {
+		if !seen[name] {
+			return fmt.Errorf("environmentIds: %q is neither a source nor a rollout environment", name)
+		}
+		if !envIDRE.MatchString(id) {
+			return fmt.Errorf("environmentIds.%s must be a PingOne environment ID (a UUID)", name)
+		}
+		if other, ok := c.SourceEnvironmentIDs[name]; ok && !strings.EqualFold(other, id) {
+			return fmt.Errorf("environmentIds.%s differs from sourceEnvironmentIds.%s", name, name)
+		}
+	}
+
 	if c.BranchPrefix == "" {
 		c.BranchPrefix = gitlab.RequestBranchPrefix
 	}
@@ -452,4 +472,13 @@ func compileBranchPattern(p string) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("branchPattern is not a valid regular expression: %v", err)
 	}
 	return re, nil
+}
+
+// envID is an environment's configured PingOne ID (environmentIds, or
+// sourceEnvironmentIds for a source), or "".
+func (c *Config) envID(name string) string {
+	if id := c.EnvironmentIDs[name]; id != "" {
+		return id
+	}
+	return c.SourceEnvironmentIDs[name]
 }

@@ -220,3 +220,16 @@ func TestSourceIDsDoNotHideTheTfvarsID(t *testing.T) {
 	p = b.wait(b.post(draft+"/values", form))
 	mustContain(t, p.body, "Submit to GitLab", `pingone_environment_id`, "22222222-2222-4222-8222-222222222222")
 }
+
+// A typed branch that another request already uses is refused, with the
+// next free name with a number added (CIAM-0000-1).
+func TestTypedBranchTakenSuggestsAFreeName(t *testing.T) {
+	e := newCoreEnvWith(t, func(c *Config) { c.BranchPattern = "CIAM-[0-9]+(-[0-9]+)?" })
+	e.gl.Edit("CIAM-77", "README.md", "someone else's\n")
+	e.gl.Edit("CIAM-77-1", "README.md", "and another\n")
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", notificationsOnly("CIAM-77")))
+	p := b.wait(b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { notificationsOnly("CIAM-77")(v); v.Set("action", "preview") })))
+	mustContain(t, p.body, "CIAM-77 already exists", "CIAM-77-2 is free")
+}

@@ -748,3 +748,51 @@ func sortedAttrNames(m map[string]catalog.Attr) []string {
 	sort.Strings(out)
 	return out
 }
+
+// AttributeValue reads a Terraform attribute path of a core type from its
+// API object as the renderer does (renames, hoisted blocks, fallbacks), or
+// nil.
+func AttributeValue(typ string, raw map[string]any, path string) any {
+	d, ok := catalog.Get(typ)
+	if !ok || raw == nil {
+		return nil
+	}
+	r := &renderer{def: d}
+	var cur any = raw
+	full := ""
+	for i, seg := range strings.Split(path, ".") {
+		if full != "" {
+			full += "."
+		}
+		full += seg
+		m, ok := cur.(map[string]any)
+		if !ok {
+			if l, isList := cur.([]any); isList && len(l) == 1 {
+				m, ok = l[0].(map[string]any)
+			}
+			if !ok {
+				return nil
+			}
+		}
+		if cond, ok := d.Hoist[full]; ok {
+			if !Cond(cond, raw) {
+				return nil
+			}
+			cur = m // the block is read from the same object
+			continue
+		}
+		if rn, ok := d.Rename[full]; ok {
+			v, ok := renameValue(rn, m, nil)
+			if !ok {
+				return nil
+			}
+			cur = v
+		} else {
+			cur = r.find(m, seg, i == 0)
+		}
+		if cur == nil {
+			return nil
+		}
+	}
+	return cur
+}

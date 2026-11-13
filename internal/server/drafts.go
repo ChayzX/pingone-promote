@@ -119,6 +119,9 @@ type Draft struct {
 	Choices     map[string]string            // address -> update | keep | exclude
 	Values      map[string]map[string]string // env -> variable -> text
 	ImportIDs   map[string]map[string]string // env -> address -> ID
+	// Filled marks values the server entered from what an environment
+	// already has (env -> variable or address -> environment read).
+	Filled filled
 
 	Query string
 	// TypeFilter limits search results to one resource type ("" all).

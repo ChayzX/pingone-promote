@@ -144,3 +144,35 @@ func TestUpdateOnAReferencedItemAdoptsByKnownID(t *testing.T) {
 		}
 	}
 }
+
+// With every environment's PingOne ID configured, the preview fills in
+// what the environments already have: their own ID where a tfvars file
+// lacks it, and values read from them (here the fixture tenant stands for
+// every environment). Filled values stay editable and are marked.
+func TestValuesFilledInFromTheEnvironments(t *testing.T) {
+	e := newCoreEnvWith(t, func(c *Config) {
+		c.EnvironmentIDs = map[string]string{"dev": firstUseSourceID, "qa": firstUseSourceID, "stage": firstUseSourceID, "prod": firstUseSourceID}
+	})
+	dropLines(e, "qa.tfvars", "pingone_environment_id")
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	if strings.Contains(p.body, `name="v:qa:pingone_environment_id" value=""`) {
+		t.Fatal("qa's environment ID is asked although it is configured")
+	}
+	mustContain(t, p.body, "filled in from what the environments already have", "Filled in from what qa has now", `value="`+firstUseSourceID+`"`)
+	got := map[string]bool{}
+	for _, m := range regexp.MustCompile(`Filled in from what (\w+) has now; check it\.[^<]*<code class="small">([^<]+)</code>`).FindAllStringSubmatch(p.body, -1) {
+		got[m[1]+" "+m[2]] = true
+	}
+	for _, want := range []string{"qa pingone_environment_id", "prod notification_settings_environment_from_email_address"} {
+		if !got[want] {
+			t.Errorf("not filled in: %s (filled: %v)", want, got)
+		}
+	}
+	// Changing a filled value removes the mark.
+	p = b.wait(b.post(draft+"/values", url.Values{"v:qa:pingone_environment_id": {"22222222-2222-4222-8222-222222222222"}}))
+	if strings.Contains(p.body, "Filled in from what qa has now; check it. The PingOne environment ID") {
+		t.Fatal("a value the person changed is still marked as filled in")
+	}
+}

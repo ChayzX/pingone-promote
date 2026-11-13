@@ -54,6 +54,7 @@
 
 {{$needValues := false}}{{range .Data.Envs}}{{if or .Values .Imports .Entered}}{{$needValues = true}}{{end}}{{end}}
 {{if $needValues}}
+{{if .Data.Filled}}<p class="notice" role="status">{{.Data.Filled}} {{if eq .Data.Filled 1}}value was{{else}}values were{{end}} filled in from what the environments already have (read-only). Check {{if eq .Data.Filled 1}}it{{else}}them{{end}} below; change or clear any that is wrong.</p>{{end}}
 <section id="values">
 <h2>Fill in what each environment needs</h2>
 <p class="hint">These values differ between environments, for example URLs and IDs. Each one is saved in that environment's settings in Git, with this request. Never type a password, key or other secret here: secrets come from Vault, and a value that looks like a secret is refused.</p>
@@ -64,7 +65,7 @@
     <legend>{{.Label}}</legend>
     {{range .Values}}<div class="field"><label for="{{.Name}}">{{.Label}}</label>{{if .List}}<textarea id="{{.Name}}" name="{{.Name}}" rows="3" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{.Value}}</textarea>{{else}}<input type="text" id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{end}}<p class="hint" id="{{.Name}}-hint">{{.Hint}} <code class="small">{{.Key}}</code></p></div>{{end}}
     {{range .Imports}}<div class="field"><label for="{{.Name}}">{{.Label}}</label><input type="text" id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" maxlength="512" autocomplete="off" aria-describedby="{{.Name}}-hint"><p class="hint" id="{{.Name}}-hint">{{.Hint}} <code class="small">{{.Key}}</code></p></div>{{end}}
-    {{with .Entered}}<details><summary>{{len .}} already entered (change or clear one here)</summary>
+    {{with .Entered}}<details{{if $.Data.Filled}} open{{end}}><summary>{{len .}} already entered (change or clear one here)</summary>
     {{range .}}<div class="field"><label for="{{.Name}}">{{.Label}}</label>{{if .List}}<textarea id="{{.Name}}" name="{{.Name}}" rows="3" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{.Value}}</textarea>{{else}}<input type="text" id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{end}}<p class="hint" id="{{.Name}}-hint">{{.Hint}} <code class="small">{{.Key}}</code></p></div>{{end}}
     </details>{{end}}
   </fieldset>

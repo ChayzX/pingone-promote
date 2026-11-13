@@ -614,8 +614,10 @@ type envView struct {
 	Blockers []blockerView
 	Values   []valueField
 	Imports  []valueField
-	// Entered are values and IDs already entered, editable.
+	// Entered are values and IDs already entered, editable. Filled counts
+	// those the server filled in from what the environment has.
 	Entered []valueField
+	Filled  int
 }
 
 func importField(d *Draft, env, addr string) valueField {
@@ -672,8 +674,10 @@ type previewView struct {
 	CanSubmit bool
 	// NoChanges: Git already has everything in the request. Kept counts
 	// items that differ from the source and keep their Git version.
-	NoChanges   bool
-	Kept        int
+	NoChanges bool
+	Kept      int
+	// Filled counts values the server filled in from the environments.
+	Filled      int
 	Running     bool
 	Types       []typeView
 	Changes     []changeView
@@ -780,13 +784,23 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 				if f.List {
 					f.Value, f.Hint = jsonToLines(f.Value), "One per line."
 				}
+				if from := d.Filled[env][name]; from != "" {
+					f.Hint = "Filled in from what " + from + " has now; check it. " + f.Hint
+					ev.Filled++
+				}
 				ev.Entered = append(ev.Entered, f)
 			}
 			for _, a := range sortedKeysS(d.ImportIDs[env]) {
 				if !hasField(ev.Imports, a) {
-					ev.Entered = append(ev.Entered, importField(d, env, a))
+					f := importField(d, env, a)
+					if from := d.Filled[env][a]; from != "" {
+						f.Hint = "Filled in from what " + from + " has now (the existing item with the same name); check it."
+						ev.Filled++
+					}
+					ev.Entered = append(ev.Entered, f)
 				}
 			}
+			v.Filled += ev.Filled
 			if !ev.Ready && env != request.RequestBlockers {
 				v.NeedEnvs = append(v.NeedEnvs, env)
 			}
@@ -945,6 +959,13 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 			}
 			s.redirect(w, r, draftURL(d, "/preview"))
 			return
+		}
+		for env, m := range d.Filled {
+			for k := range m {
+				if d.Values[env][k] != oldV[env][k] || d.ImportIDs[env][k] != oldI[env][k] {
+					delete(m, k) // changed by the person
+				}
+			}
 		}
 		d.Updated = s.now()
 		s.preview(w, r, d, draftURL(d, "/preview"))

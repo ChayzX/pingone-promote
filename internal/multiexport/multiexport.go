@@ -61,6 +61,8 @@ type Exporter struct {
 	// clients keeps the default reader per worker, so its access token
 	// and connections carry over from one read to the next.
 	clients map[exporter.Credentials]coreexport.Reader
+	// facts are other environments' reads (EnvironmentFacts).
+	facts map[string]*factsEntry
 }
 
 // reader returns the core API reader for the worker.

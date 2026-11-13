@@ -1060,6 +1060,14 @@ func ownedChildren(owners map[string]string, seed string) []string {
 // export for screens.
 func describeVariables(neu *neutralize.Result) map[string]VariableOut {
 	out := map[string]VariableOut{}
+	// The one resource a value variable belongs to (a DaVinci variable's
+	// value, a connector property), for looking it up elsewhere.
+	usedBy := map[string][]string{}
+	for _, b := range neu.Blocks {
+		for _, v := range b.Vars {
+			usedBy[v] = append(usedBy[v], b.Address)
+		}
+	}
 	for name, v := range neu.Variables {
 		if !v.PerEnvironment() || name == neutralize.EnvironmentIDVariable {
 			continue
@@ -1073,6 +1081,8 @@ func describeVariables(neu *neutralize.Result) map[string]VariableOut {
 			typ, after, _ := strings.Cut(rest, ".")
 			label, attr, _ := strings.Cut(after, ".")
 			vo.Resource, vo.Attribute = typ+"."+label, attr
+		case len(usedBy[name]) == 1 && strings.HasPrefix(usedBy[name][0], neutralize.TypeVariable+"."):
+			vo.Resource, vo.Attribute = usedBy[name][0], "value"
 		}
 		if sv, ok := neu.SourceValues[name]; ok && sv.IsKnown() && !sv.IsNull() {
 			if sv.Type() == cty.String {

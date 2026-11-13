@@ -14,7 +14,7 @@
   },
   "sources": ["development"],
   "rollout": ["testing", "stage", "production"],
-  "branchPattern": "CIAM-[0-9]+",
+  "branchPattern": "CIAM-[0-9]+(-[0-9]+)?",
   "branchExample": "CIAM-1234",
   "applyJobPattern": "terraform:apply-{env}",
   "layout": "default",
