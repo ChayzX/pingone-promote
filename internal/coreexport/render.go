@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -582,10 +583,15 @@ func (r *renderer) dynamic(v any, path string) string {
 // ID variable. The source environment ID stays literal: the neutralizer
 // replaces it everywhere with var.pingone_environment_id.
 func (r *renderer) stringExpr(s, path string) string {
-	if addr, ok := r.in.IDs[s]; ok && addr != r.obj.Address() {
-		return r.idExpr(s, path)
+	if addr, ok := r.in.IDs[s]; ok {
+		if addr != r.obj.Address() {
+			return r.idExpr(s, path)
+		}
+		return quote(s) // its own ID (a predefined language's language_id)
 	}
-	if idShaped.MatchString(s) && s != r.in.Inventory.EnvironmentID {
+	if idShaped.MatchString(s) && s != r.in.Inventory.EnvironmentID && !slices.Contains(r.def.EnvLocal, path) {
+		// A per-environment value is entered for every environment, so a
+		// source ID there is expected.
 		r.out.Unresolved[r.obj.Address()+" "+path] = s
 	}
 	return quote(s)

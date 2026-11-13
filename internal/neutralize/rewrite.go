@@ -90,9 +90,10 @@ func (s *state) liftAttributes() error {
 			}
 			v, diags := e.Value(nil)
 			if diags.HasErrors() {
-				// It holds references (to other resources or secrets), which
-				// are already environment-neutral; keep it as it is.
-				s.res.Warnings = append(s.res.Warnings, fmt.Sprintf("%s.%s holds references and was not made a per-environment value; check it is the same in every environment", rb.addr(), rule.Attribute))
+				// It holds references (to other resources, variables or
+				// secrets), which are already environment-neutral (a customer
+				// added language's language_id refers to the language created
+				// in each environment); keep it as it is.
 				continue
 			}
 			label := rb.label
