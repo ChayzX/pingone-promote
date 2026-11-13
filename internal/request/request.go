@@ -150,6 +150,8 @@ type ValidationError struct {
 	Code  string `json:"code"`
 	Field string `json:"field,omitempty"`
 	Msg   string `json:"message"`
+	// Plain is the message in the words a page shows, when it differs.
+	Plain string `json:"-"`
 }
 
 func (e *ValidationError) Error() string {
@@ -324,7 +326,7 @@ func (r *Request) Validate() error {
 				return invalid(field, "must be the environment's PingOne ID, a UUID such as 01234567-89ab-cdef-0123-456789abcdef")
 			}
 			if kind := secretKind(k, v); kind != "" {
-				return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like a secret (" + kind + "); secrets come from customer_secrets.yml"}
+				return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like a secret (" + kind + "); secrets come from customer_secrets.yml", Plain: "looks like a password, key or token. Secrets come from Vault, never from this form"}
 			}
 		}
 	}
@@ -552,8 +554,8 @@ func secretKind(name string, v cty.Value) string {
 		}
 		// A DaVinci variable's value variable is named after the variable
 		// (davinci_variable_<name>_value).
-		if base, ok := strings.CutPrefix(name, "davinci_variable_"); ok {
-			base = strings.TrimSuffix(base, "_value")
+		if strings.HasPrefix(name, "davinci_variable_") {
+			base := secretscan.VariableBase(name)
 			if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && (secretscan.CredentialName(base) || secretscan.CredentialValue(s)) {
 				return secretscan.KindNamed
 			}

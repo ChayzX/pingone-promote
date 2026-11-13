@@ -379,6 +379,9 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 func plainValidation(err error) error {
 	var ve *request.ValidationError
 	if errors.As(err, &ve) {
+		if ve.Plain != "" {
+			return ve // the page words it (saveValues)
+		}
 		if ve.Field != "" {
 			return fmt.Errorf("%s: %s", ve.Field, ve.Msg)
 		}

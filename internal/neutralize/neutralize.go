@@ -940,7 +940,7 @@ func (s *state) keep(name string, d decl) *Variable {
 // credentials) or by its source value (a JWT, a private key, or base64 of
 // "user:password").
 func (s *state) credentialValue(name string) bool {
-	base := strings.TrimSuffix(strings.TrimPrefix(name, "davinci_variable_"), "_value")
+	base := secretscan.VariableBase(name)
 	if secretscan.HasSecretSuffix(base) || secretscan.CredentialName(base) {
 		return true
 	}

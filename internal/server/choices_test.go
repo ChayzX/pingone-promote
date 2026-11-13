@@ -94,3 +94,53 @@ func TestValuesAreLimitedAndEditable(t *testing.T) {
 	}
 	mustContain(t, p.body, `name="v:qa:`+subflowIDVar+`"`)
 }
+
+// After a request that referred to the subflow by ID variable is merged,
+// choosing "update" for it copies it, and each environment adopts the
+// object whose ID Git already holds instead of creating another.
+func TestUpdateOnAReferencedItemAdoptsByKnownID(t *testing.T) {
+	e := newEnv(t, nil)
+	b := e.browser()
+	ids := map[string]string{"qa": "f2000000000000000000000000000003", "stage": "f3000000000000000000000000000003", "prod": "f4000000000000000000000000000003"}
+
+	// 1. Flow B with the subflow left out: an ID variable per environment.
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Jane Doe", nil))
+	selectByID(t, b, draft, flowBID, flowB)
+	previewDraft(t, b, draft, mainForm("Jane Doe", nil))
+	b.wait(b.post(draft+"/choices", url.Values{"c:" + subflowAddr: {"exclude"}}))
+	vals := url.Values{}
+	for env, id := range ids {
+		vals.Set("v:"+env+":"+subflowIDVar, id)
+	}
+	p := b.wait(b.post(draft+"/values", vals))
+	id := requestID(t, p.body)
+	b.wait(b.post(draft+"/submit", url.Values{"mode": {"branch"}}))
+	e.gl.Merge("pingone-promote/" + id)
+
+	// 2. Flow B again without dependencies; the subflow is only referred
+	// to. Choosing update copies it.
+	draft = b.newDraft()
+	noDeps := func(v url.Values) { v.Del("upstream") }
+	b.post(draft+"/save", mainForm("Jane Doe", noDeps))
+	selectByID(t, b, draft, flowBID, flowB)
+	p = previewDraft(t, b, draft, mainForm("Jane Doe", noDeps))
+	row, ok := rows(p.body)[subflowAddr]
+	if !ok || !strings.Contains(row, `value="update"`) {
+		t.Fatalf("the subflow row offers no update:\n%s", row)
+	}
+	p = b.wait(b.post(draft+"/choices", url.Values{"c:" + subflowAddr: {"update"}}))
+	row = rows(p.body)[subflowAddr]
+	mustContain(t, row, "added")
+	mustContain(t, p.body, "already exists in", "it is imported there, not created")
+	id = requestID(t, p.body)
+	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"branch"}}))
+	mustContain(t, p.body, "Submitted")
+	files := e.gl.Files("pingone-promote/" + id)
+	for env, want := range ids {
+		re := regexp.MustCompile(`"module\.[a-z_-]+\.` + regexp.QuoteMeta(subflowAddr) + `"\s*=\s*"` + want + `"`)
+		if !re.MatchString(files[env+".tfvars"]) {
+			t.Errorf("%s does not import the existing subflow %s:\n%s", env, want, files[env+".tfvars"])
+		}
+	}
+}

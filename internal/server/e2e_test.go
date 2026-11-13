@@ -88,7 +88,7 @@ func TestEndToEndMergeRequestWithMissingValuesAndRollout(t *testing.T) {
 
 	// A secret-looking value is refused and not kept.
 	p = b.post(draft+"/values", url.Values{"v:qa:" + subflowIDVar: {"-----BEGIN RSA PRIVATE KEY-----"}})
-	mustContain(t, p.body, "Nothing was saved.", "looks like a secret")
+	mustContain(t, p.body, "Nothing was saved: the value of", "for qa looks like a password, key or token. Secrets come from Vault")
 	if strings.Contains(p.body, "BEGIN RSA PRIVATE KEY") {
 		t.Fatal("the refused value was shown again")
 	}

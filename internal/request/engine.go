@@ -664,6 +664,26 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			return nil, fail("families", "nothing in the chosen sections was found in "+req.Source, nil, "")
 		}
 	}
+	// "update" on an item the export only refers to (an ID variable) copies
+	// it, as if it were picked.
+	if !req.Whole() {
+		byAddr := map[string]exporter.Resource{}
+		for _, c := range cat {
+			byAddr[c.String()] = c
+		}
+		for _, a := range sortedKeysOf(req.DependencyChoices) {
+			if req.DependencyChoices[a] != string(promote.ChoiceUpdate) || includedBy[a] != "" {
+				continue
+			}
+			c, ok := byAddr[a]
+			if !ok {
+				continue // not an item of the source (a Git-only address)
+			}
+			includedBy[a] = "choice"
+			sel.seeds = append(sel.seeds, a)
+			r.res.Selected = append(r.res.Selected, Selected{Query: "update", Address: a, Name: c.Name, ID: c.ID})
+		}
+	}
 	if req.Whole() {
 		// A whole-environment request has no selected item: the listed
 		// items were only resolved so that a conflicting exclude is caught.
@@ -1071,4 +1091,13 @@ func describeVariables(neu *neutralize.Result) map[string]VariableOut {
 
 func builtInNote(n int) string {
 	return fmt.Sprintf("%d items that PingOne creates in every environment (default policies, system applications, predefined attributes and templates) are not copied; each environment keeps its own. To copy one, pick it", n)
+}
+
+func sortedKeysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -87,7 +87,7 @@
     <thead><tr><th scope="col">Item</th><th scope="col">Why it is here</th><th scope="col">Status</th><th scope="col">What happens</th><th scope="col">Your choice</th></tr></thead>
     <tbody>{{range .}}{{if ne .Action "excluded"}}{{template "changerow" .}}{{end}}{{end}}</tbody>
   </table>
-  {{if $excluded}}<details><summary>{{$excluded}} {{if eq $excluded 1}}item it refers to is{{else}}items it refers to are{{end}} not copied: each environment uses its own (open to choose otherwise)</summary>
+  {{if $excluded}}<details><summary>{{$excluded}} related {{if eq $excluded 1}}item is{{else}}items are{{end}} not copied: each environment uses its own (open to choose otherwise)</summary>
   <table>
     <caption class="sr-only">Items referred to but not copied</caption>
     <thead><tr><th scope="col">Item</th><th scope="col">Why it is here</th><th scope="col">Status</th><th scope="col">What happens</th><th scope="col">Your choice</th></tr></thead>

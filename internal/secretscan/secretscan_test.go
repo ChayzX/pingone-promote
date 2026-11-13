@@ -25,6 +25,15 @@ func TestMaskedValueIsAWholeString(t *testing.T) {
 }
 
 func TestCredentialNamesAndValues(t *testing.T) {
+	for name, want := range map[string]string{
+		"davinci_variable_passwordPolicyId_company_value":       "passwordPolicyId",
+		"davinci_variable_forgotPasswordUrl_flowInstance_value": "forgotPasswordUrl",
+		"davinci_variable_RumAccessToken_value":                 "RumAccessToken",
+	} {
+		if got := VariableBase(name); got != want || CredentialName(got) != (want == "RumAccessToken") && want != "RumAccessToken" {
+			t.Errorf("VariableBase(%q) = %q", name, got)
+		}
+	}
 	for name, want := range map[string]bool{
 		"LdapDSBindCreds": true, "basicAuthCredDV": true, "PingFedAuthNCreds": true, "basicAuthCred": true, "userCredentials": true,
 		"adminPassword": true, "basicAuthLDAP": true, "csr_splunkHec_secret": true,
@@ -40,6 +49,8 @@ func TestCredentialNamesAndValues(t *testing.T) {
 		"https://example.com/x": false, "aGVsbG8gd29ybGQ=": false, "Example Corp": false,
 		"ghp_" + strings.Repeat("a1B2", 9): true, "Bearer abcdef0123456789": true, "Splunk 1234abcd-12ab-34cd-56ef-1234567890ab": true,
 		"glpat-abcdefghij0123456789": true, "Bearer": false, "basic settings": false,
+		"Authorization: Bearer abcdef0123456789xyz": true, "SSWS 00abcdefghijklmnopqrstuvwxyz": true, "ApiKey abcdef0123456789xyz": true,
+		"https://x.example.com/cb?access_token=abcdef012345": true, "https://x.example.com/cb?state=abcdef012345": false,
 	} {
 		if got := CredentialValue(v); got != want {
 			t.Errorf("CredentialValue(%q) = %v", v, got)

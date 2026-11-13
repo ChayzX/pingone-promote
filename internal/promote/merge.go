@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"pingone-promote/internal/catalog"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,8 +184,11 @@ type merger struct {
 	files map[string]*hclblocks.File
 	res   *MergeResult
 
-	written  map[string]bool // addresses added or updated
-	selected map[string]bool
+	written map[string]bool // addresses added or updated
+	// adoptedByID lists, per added address, the environments that adopt
+	// it by the ID an earlier request stored for it.
+	adoptedByID map[string][]string
+	selected    map[string]bool
 	// movedFrom maps a relabelled address to its old address in Git.
 	movedFrom map[string]string
 }
@@ -203,7 +207,7 @@ func Merge(req MergeRequest) (*MergeResult, error) {
 	}
 	m := &merger{req: req, l: l, view: newView(req.Head), files: map[string]*hclblocks.File{},
 		res:     &MergeResult{Files: map[string][]byte{}, Changes: []Change{}, Blockers: []Blocker{}, RequiredSecrets: []string{}},
-		written: map[string]bool{}, selected: map[string]bool{}}
+		written: map[string]bool{}, selected: map[string]bool{}, adoptedByID: map[string][]string{}}
 	var err error
 	if m.head, err = loadIndex(req.Head, l); err != nil {
 		return nil, err
@@ -769,6 +773,12 @@ func (m *merger) envs() []string {
 }
 
 func (m *merger) overlays() error {
+	defer func() {
+		for _, a := range keysSorted(m.adoptedByID) {
+			m.res.Warnings = append(m.res.Warnings, a+" already exists in "+strings.Join(m.adoptedByID[a], ", ")+
+				" (Git has its ID from an earlier request): it is imported there, not created")
+		}
+	}()
 	needed := []*neutralize.Variable{m.req.Export.Variables[neutralize.EnvironmentIDVariable]}
 	for _, v := range m.neededVars() {
 		if v.PerEnvironment() {
@@ -809,7 +819,20 @@ func (m *merger) overlays() error {
 		if env == m.req.SourceEnv {
 			ids, changed = m.sourceImportIDs(ids)
 		}
-		if extra := m.req.ImportIDs[env]; len(extra) > 0 {
+		extra := map[string]string{}
+		if env != m.req.SourceEnv {
+			// An item an earlier request referred to by ID variable already
+			// exists here (Git holds its ID): adopt it by import instead
+			// of creating it again.
+			for a, id := range m.knownIDs(cur) {
+				extra[a] = id
+				m.adoptedByID[a] = append(m.adoptedByID[a], env)
+			}
+		}
+		for a, id := range m.req.ImportIDs[env] {
+			extra[a] = id
+		}
+		if len(extra) > 0 {
 			var more bool
 			ids, more = m.withImportIDs(ids, extra)
 			changed = changed || more
@@ -1086,4 +1109,37 @@ func (m *merger) adoption() ([]Blocker, error) {
 		}
 	}
 	return out, nil
+}
+
+// knownIDs lists newly added addresses whose ID the environment's settings
+// already hold in the ID variable an earlier request used for them, for
+// types imported by that ID alone.
+func (m *merger) knownIDs(cur *overlay.Overlay) map[string]string {
+	out := map[string]string{}
+	for a := range m.written {
+		if _, inHead := m.head.texts[a]; inHead || !importable(a) {
+			continue
+		}
+		typ, _, _ := strings.Cut(a, ".")
+		if f := catalog.ImportFormat(typ); f != catalog.ImportID && f != "" {
+			continue
+		}
+		if typ == neutralize.TypeFlowPolicy {
+			continue // imported by application and policy ID
+		}
+		v, ok := cur.Values[neutralize.ExcludedVariableName(a)]
+		if ok && !v.IsNull() && v.Type() == cty.String && v.AsString() != "" {
+			out[a] = v.AsString()
+		}
+	}
+	return out
+}
+
+func keysSorted(m map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

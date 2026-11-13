@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"pingone-promote/internal/catalog"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"pingone-promote/internal/request"
 )
@@ -354,7 +356,7 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		}
 		title, desc := strings.TrimSpace(f.Get("title")), f.Get("description")
 		switch {
-		case len(title) > 255 || strings.ContainsAny(title, "\r\n"):
+		case len(title) > 255 || strings.IndexFunc(title, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\u0085' }) >= 0:
 			d.problem = "The merge request title must be one line of at most 255 characters; it was not saved."
 		case len(desc) > 64<<10:
 			d.problem = "The note for reviewers must be at most 64 KB; it was not saved."
@@ -405,6 +407,7 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		case "preview":
 			if d.problem != "" {
+				d.Step = 3 // the title and note are on step 3
 				s.redirect(w, r, draftURL(d, ""))
 				return
 			}
@@ -931,6 +934,15 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.buildRequest(d, true); err != nil {
 			d.Values, d.ImportIDs = oldV, oldI
 			d.problem = "Nothing was saved. " + s.redact(err.Error())
+			var ve *request.ValidationError
+			if errors.As(err, &ve) && ve.Plain != "" {
+				// envValues.<env>.<name>
+				parts := strings.SplitN(ve.Field, ".", 3)
+				if len(parts) == 3 && d.preview != nil && d.preview.result != nil {
+					label, _ := valueLabel(d, d.preview.result, parts[2])
+					d.problem = "Nothing was saved: the value of " + label + " for " + parts[1] + " " + ve.Plain + "."
+				}
+			}
 			s.redirect(w, r, draftURL(d, "/preview"))
 			return
 		}

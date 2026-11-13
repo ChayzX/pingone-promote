@@ -144,7 +144,7 @@ var urlNameRE = regexp.MustCompile(`(?i)(url|uri|href|link|endpoint|path|page|re
 // tokenRE matches an HTTP authorization value and the access tokens of
 // well-known services (GitHub, GitLab, Slack, AWS, Stripe, OpenAI-style
 // keys, Splunk HEC "Splunk <token>").
-var tokenRE = regexp.MustCompile(`^(?i:bearer|basic|splunk|token)\s+[A-Za-z0-9._~+/=-]{16,}$|^(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpors]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9_-]{20,})$`)
+var tokenRE = regexp.MustCompile(`^(?i:authorization:\s*)?(?i:bearer|basic|splunk|token|ssws|apikey|api-key|negotiate)\s+[A-Za-z0-9._~+/=-]{16,}$|^(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpors]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9_-]{20,})$`)
 
 // credWordRE matches "cred", "creds" or "credential(s)" as a word of a
 // camelCase or snake_case name (not "credit").
@@ -154,7 +154,7 @@ var credWordRE = regexp.MustCompile(`[Cc]red(?:s|entials?)?(?:$|[^a-z])`)
 // name: a JWT, a private key, or base64 of "user:password".
 func CredentialValue(v string) bool {
 	v = strings.TrimSpace(v)
-	if JWT.MatchString(v) || PrivateKey.MatchString(v) || tokenRE.MatchString(v) {
+	if JWT.MatchString(v) || PrivateKey.MatchString(v) || tokenRE.MatchString(v) || queryTokenRE.MatchString(v) {
 		return true
 	}
 	if len(v) < 8 || strings.ContainsAny(v, " {}<>") {
@@ -174,4 +174,18 @@ func CredentialValue(v string) bool {
 		}
 	}
 	return true
+}
+
+// queryTokenRE matches a URL that carries a credential in its query.
+var queryTokenRE = regexp.MustCompile(`(?i)[?&#](access_token|id_token|refresh_token|api_?key|client_secret|password|passwd|sig|token)=[^&#\s]{8,}`)
+
+// variableContextRE matches the context a split DaVinci value variable
+// carries after its name (davinci_variable_<name>_<context>_value).
+var variableContextRE = regexp.MustCompile(`_(company|flowInstance|flow|user)$`)
+
+// VariableBase is the DaVinci variable name a value variable stands for:
+// davinci_variable_passwordPolicyId_company_value -> passwordPolicyId.
+func VariableBase(name string) string {
+	base := strings.TrimSuffix(strings.TrimPrefix(name, "davinci_variable_"), "_value")
+	return variableContextRE.ReplaceAllString(base, "")
 }
