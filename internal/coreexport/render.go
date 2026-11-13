@@ -212,10 +212,13 @@ func (r *renderer) attrs(schema map[string]catalog.Attr, src map[string]any, pat
 				v = []any{src}
 			}
 		} else if rn, ok := r.def.Rename[full]; ok {
-			if rn == "-" {
+			var parent map[string]any
+			if r.obj.Parent != nil {
+				parent = r.obj.Parent.Raw
+			}
+			if v, ok = renameValue(rn, src, parent); !ok {
 				continue
 			}
-			v = Lookup(src, rn)
 		} else {
 			v = r.find(src, n, path == "")
 		}
@@ -294,6 +297,69 @@ func splitTop(s string) []string {
 // then the same name ignoring case and underscores (bindDN for bind_dn),
 // then "<x>.id" for an attribute "<x>_id", then the catalog's fallback
 // sub-objects at the root level.
+// renameValue reads an attribute through its Rename entry: "-" skips it;
+// "path" reads the API field path, "^path" the parent object's field and
+// "=value" is the value itself; a "?cond" suffix applies it only when src
+// satisfies cond.
+func renameValue(rn string, src, parent map[string]any) (any, bool) {
+	if rn == "-" {
+		return nil, false
+	}
+	p, cond, ok := strings.Cut(rn, "?")
+	if ok && !Cond(cond, src) {
+		return nil, false
+	}
+	switch {
+	case strings.HasPrefix(p, "="):
+		return p[1:], true
+	case strings.HasPrefix(p, "^"):
+		if parent == nil {
+			return nil, true
+		}
+		return Lookup(parent, p[1:]), true
+	}
+	return Lookup(src, p), true
+}
+
+// MissingRequired lists the top-level attributes the provider requires
+// that raw does not give, so the object would not be valid Terraform (an
+// unconfigured setting reads as {}).
+func MissingRequired(d *catalog.Def, raw, parent map[string]any) []string {
+	attrs, ok := catalog.Schema(d.Type)
+	if !ok {
+		return nil
+	}
+	skip := map[string]bool{"id": true, "environment_id": true, d.ParentAttr: true, d.ParentValue: true, d.ParentName: true}
+	for a := range d.Ancestors {
+		skip[a] = true
+	}
+	r := &renderer{def: d}
+	var out []string
+	for _, n := range sortedAttrNames(attrs) {
+		a := attrs[n]
+		if !a.Required || a.Secret() || skip[n] {
+			continue
+		}
+		var v any
+		if cond, ok := d.Hoist[n]; ok {
+			if Cond(cond, raw) {
+				v = raw
+			}
+		} else if rn, ok := d.Rename[n]; ok {
+			if rn == "-" {
+				continue
+			}
+			v, _ = renameValue(rn, raw, parent) // under a false condition: missing
+		} else {
+			v = r.find(raw, n, true)
+		}
+		if v == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func (r *renderer) find(src map[string]any, name string, top bool) any {
 	if v, ok := src[camel(name)]; ok {
 		return v
@@ -636,6 +702,15 @@ func quote(s string) string {
 }
 
 func sortedKeysS(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedAttrNames(m map[string]catalog.Attr) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

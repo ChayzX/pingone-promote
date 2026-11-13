@@ -288,6 +288,20 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 				return
 			}
 		}
+		var praw map[string]any
+		if parent != nil {
+			praw = parent.Raw
+		}
+		if miss := MissingRequired(d, raw, praw); len(miss) > 0 {
+			// Nothing configured (an unset reCAPTCHA, an application
+			// without metadata) is simply not copied; anything else is
+			// reported.
+			if configured(raw) {
+				name, _ := raw["name"].(string)
+				warn(fmt.Sprintf("%s %q is not copied: the API does not return %s, which the Terraform provider requires; copy it by hand", d.Type, name, strings.Join(miss, ", ")))
+			}
+			return
+		}
 		o := &Object{Type: d.Type, Raw: raw, Parent: parent}
 		o.ID, _ = raw["id"].(string)
 		if d.Path == "" && parent != nil {
@@ -431,11 +445,43 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		if err != nil {
 			return nil, err
 		}
+		if d.Detail {
+			var paths []string
+			for _, it := range items {
+				if id, _ := it["id"].(string); id != "" {
+					paths = append(paths, d.Path+"/"+id)
+				}
+			}
+			prefetch(ctx, r, env, paths, "")
+		}
 		for _, it := range items {
+			if id, _ := it["id"].(string); d.Detail && id != "" && Cond(d.Match, it) {
+				full, err := r.Get(ctx, env, d.Path+"/"+id)
+				if pingone.NotFound(err) {
+					continue // deleted meanwhile
+				}
+				if err != nil {
+					return nil, err
+				}
+				it = full
+			}
 			add(it, nil)
 		}
 	}
 	return out, nil
+}
+
+// configured reports whether an API object holds settings, not only
+// bookkeeping (links, IDs, timestamps).
+func configured(raw map[string]any) bool {
+	for k := range raw {
+		switch k {
+		case "_links", "id", "environment", "createdAt", "updatedAt", "created", "modified", "application":
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func sortedAllowed(m map[string][]string) []string {

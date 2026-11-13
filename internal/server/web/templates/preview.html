@@ -74,7 +74,7 @@
 {{with .Data.Changes}}
 <section id="changes">
 <h2>Items in this request</h2>
-<p class="hint">An item marked <em>added</em> is created in each environment when the change rolls out; if one already exists there (made by hand), that environment's apply fails, so leave it out or have it imported first. Status compares the source environment with Git. For an item your selection depends on, choose whether to update it, keep the version in Git, or leave it out.</p>
+<p class="hint">An item marked <em>added</em> is created in each environment when the change rolls out; if one already exists there (made by hand), that environment's apply fails, so leave it out or have it imported first. Status compares the source environment with Git. Where an item differs from Git, choose whether to update it from the source or keep the version in Git; an item your selection depends on can also be left out.</p>
 {{if $.Data.Unchanged}}<p class="hint">{{$.Data.Unchanged}} items already match Git and are not listed.</p>{{end}}
 <form method="post" action="/drafts/{{$d.ID}}/choices">
   <input type="hidden" name="csrf" value="{{$csrf}}">
@@ -87,17 +87,17 @@
       <td>{{if eq .Role "selected"}}{{if $d.Families}}in a chosen section, or picked{{else}}you picked it{{end}}{{else if eq .Role "dependency"}}your selection uses it{{else if eq .Role "environment"}}whole environment{{else if eq .Role "excluded"}}excluded{{else}}{{.Role}}{{end}}</td>
       <td>{{.StatusText}}</td>
       <td>{{.ActionText}}</td>
-      <td>{{if .Dependency}}
+      <td>{{if .Choosable}}
         <select name="c:{{.Address}}" aria-label="Choice for {{.Name}}">
           <option value=""{{if eq .Choice ""}} selected{{end}}>default</option>
           <option value="update"{{if eq .Choice "update"}} selected{{end}}>update (use the source version)</option>
           <option value="keep"{{if eq .Choice "keep"}} selected{{end}}>keep the Git version</option>
-          <option value="exclude"{{if eq .Choice "exclude"}} selected{{end}}>exclude (leave it out)</option>
+          {{if .CanExclude}}<option value="exclude"{{if eq .Choice "exclude"}} selected{{end}}>exclude (leave it out)</option>{{end}}
         </select>{{end}}</td>
     </tr>
     {{end}}</tbody>
   </table>
-  {{range .}}{{if .Dependency}}<button type="submit">Apply choices and preview again</button>{{break}}{{end}}{{end}}
+  {{range .}}{{if .Choosable}}<button type="submit">Apply choices and preview again</button>{{break}}{{end}}{{end}}
 </form>
 </section>
 {{end}}

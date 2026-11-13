@@ -612,9 +612,16 @@ type changeView struct {
 	Name       string
 	StatusText string
 	ActionText string
-	Dependency bool
+	// Choosable: the row offers update / keep (and exclude when
+	// CanExclude).
+	Choosable  bool
+	CanExclude bool
 	Choice     string
 }
+
+// differs: statuses where Git and the source disagree, so the person
+// chooses which version the request keeps.
+var differs = map[string]bool{"changed-in-source": true, "git-newer": true, "changed-in-both": true}
 
 type typeView struct {
 	Kind string
@@ -677,7 +684,11 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 			}
 			typ, _, _ := strings.Cut(c.Address, ".")
 			cv := changeView{ChangeOut: c, Kind: resourceLabel(typ), Name: itemName(d, c.Address), StatusText: statusText[c.Status], ActionText: actionText[c.Action],
-				Dependency: c.Role == "dependency" && (c.Action != "unchanged" || d.Choices[c.Address] != ""), Choice: d.Choices[c.Address]}
+				Choice: d.Choices[c.Address]}
+			// A dependency can be updated, kept or left out; an item the
+			// person asked for that differs from Git can be updated or kept.
+			cv.Choosable = c.Role == "dependency" && (c.Action != "unchanged" || cv.Choice != "") || differs[c.Status]
+			cv.CanExclude = c.Role == "dependency"
 			cv.Kind = capitalize(cv.Kind)
 			if cv.StatusText == "" {
 				cv.StatusText = c.Status
@@ -767,10 +778,13 @@ func (s *Server) saveChoices(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, draftURL(d, ""))
 			return
 		}
-		deps := map[string]bool{}
+		deps, canExclude := map[string]bool{}, map[string]bool{}
 		for _, c := range d.preview.result.Changes {
-			if c.Role == "dependency" {
+			if c.Role == "dependency" || differs[c.Status] {
 				deps[c.Address] = true
+			}
+			if c.Role == "dependency" {
+				canExclude[c.Address] = true
 			}
 		}
 		for a := range d.Choices {
@@ -779,7 +793,14 @@ func (s *Server) saveChoices(w http.ResponseWriter, r *http.Request) {
 		next := map[string]string{}
 		for a := range deps {
 			switch c := r.PostForm.Get("c:" + a); c {
-			case "update", "keep", "exclude":
+			case "exclude":
+				if !canExclude[a] {
+					d.problem = "Only an item your selection depends on can be left out here; leave other items out in step 2."
+					s.redirect(w, r, draftURL(d, "/preview"))
+					return
+				}
+				next[a] = c
+			case "update", "keep":
 				next[a] = c
 			case "":
 			default:

@@ -235,6 +235,16 @@ func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env str
 		close(c.dvReady)
 		return c, nil
 	}
+	if quick && prev != nil && !prev.dvDone() && prev.dvFP == c.dvFP {
+		// DaVinci is unchanged since prev's export started (a read again
+		// right after a read): share that run instead of starting another.
+		go func() {
+			defer close(c.dvReady)
+			<-prev.dvReady
+			c.dv, c.dvSrc, c.dvErr, c.dvExportAt, c.dvAt = prev.dv, prev.dvSrc, prev.dvErr, prev.dvExportAt, prev.dvAt
+		}()
+		return c, nil
+	}
 	c.dvAt = time.Now()
 	dvCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readTimeout)
 	go func() {

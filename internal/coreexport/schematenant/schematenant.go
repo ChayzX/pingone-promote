@@ -80,6 +80,14 @@ func (st *Tenant) Get(_ context.Context, _, path string) (map[string]any, error)
 				return objs[0], nil
 			}
 		}
+		// One item of a collection read on its own (Def.Detail).
+		if coll, id, ok := cutLast(path); d.Detail && ok && st.pats[d.Type].MatchString(coll) {
+			for _, o := range st.objects(d, coll) {
+				if o["id"] == id {
+					return o, nil
+				}
+			}
+		}
 	}
 	st.Missing["GET "+path] = true
 	return nil, &pingone.APIError{Status: 404, Path: path}
@@ -132,6 +140,24 @@ func (st *Tenant) objects(d *catalog.Def, path string) []map[string]any {
 		}
 		for f, val := range v.set {
 			setPath(raw, f, val)
+		}
+		// A fixed value applies only without some field ("=X?f!~."): leave
+		// that field out.
+		for _, rn := range d.Rename {
+			if _, cond, ok := strings.Cut(rn, "?"); ok && strings.HasPrefix(rn, "=") {
+				if f, _, neg := strings.Cut(cond, "!~"); neg {
+					deletePath(raw, f)
+				}
+			}
+		}
+		// A value the provider cannot set leaves the object out: generate
+		// one it can.
+		for f, allowed := range d.Allowed {
+			if cur, ok := lookupPath(raw, f); ok {
+				if _, s := cur.(string); s {
+					setPath(raw, f, allowed[0])
+				}
+			}
 		}
 		scope := ""
 		if strings.Contains(d.Path, "{") {
@@ -294,16 +320,24 @@ func (st *Tenant) fill(d *catalog.Def, schema map[string]catalog.Attr, dst map[s
 			continue
 		}
 		key := camelName(n)
+		cond := ""
 		if rn, ok := d.Rename[full]; ok {
 			if rn == "-" {
 				continue
 			}
-			key = rn
+			key, cond, _ = strings.Cut(rn, "?")
+			if strings.HasPrefix(key, "^") || strings.HasPrefix(key, "=") {
+				continue // read from the parent, or a fixed value
+			}
 		}
 		if _, ok := lookupPath(dst, key); ok {
-			continue // a sibling (a hoisted option or a derived child) set it
+			continue // a sibling (a hoisted option, a derived child or another scope) set it
 		}
 		setPath(dst, key, st.gen(d, a, n, full))
+		if f, val, ok := strings.Cut(cond, "="); ok {
+			// The value is read only under its condition ("scope.type=X").
+			setPath(dst, f, strings.Split(val, "|")[0])
+		}
 	}
 }
 
@@ -500,4 +534,24 @@ func tfEnv(home string) []string {
 		}
 	}
 	return env
+}
+
+func cutLast(path string) (string, string, bool) {
+	i := strings.LastIndex(path, "/")
+	if i < 0 {
+		return "", "", false
+	}
+	return path[:i], path[i+1:], true
+}
+
+func deletePath(m map[string]any, path string) {
+	parts := strings.Split(path, ".")
+	for _, p := range parts[:len(parts)-1] {
+		n, ok := m[p].(map[string]any)
+		if !ok {
+			return
+		}
+		m = n
+	}
+	delete(m, parts[len(parts)-1])
 }

@@ -165,6 +165,17 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(o)
 		return
 	}
+	// One item of a collection, as GET <collection>/<id> returns it.
+	if i := strings.LastIndex(p, "/"); i > 0 {
+		if c, ok := f.Tenant.Collections[p[:i]]; ok {
+			for _, it := range c.Items {
+				if it["id"] == p[i+1:] {
+					_ = json.NewEncoder(w).Encode(it)
+					return
+				}
+			}
+		}
+	}
 	http.Error(w, `{"code":"NOT_FOUND"}`, http.StatusNotFound)
 }
 

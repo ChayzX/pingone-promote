@@ -162,3 +162,31 @@ func TestUnchangedDaVinciSkipsTerraformer(t *testing.T) {
 		t.Fatalf("terraformer ran %d times after a change, want 2", n)
 	}
 }
+
+// A read again while terraformer still runs shares that run when DaVinci is
+// unchanged, and starts another when it changed.
+func TestReadAgainSharesTheRunningExport(t *testing.T) {
+	e, api, dv, _ := quickSetup(t)
+	dv.gate = make(chan struct{})
+	if _, err := e.CatalogAllIDs(context.Background(), creds); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Refresh(context.Background(), creds); err != nil {
+		t.Fatal(err)
+	}
+	api.updated.Store("2026-03-03T00:00:00Z")
+	if _, err := e.Refresh(context.Background(), creds); err != nil {
+		t.Fatal(err)
+	}
+	close(dv.gate)
+	exp, err := e.WholeExport(context.Background(), creds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exp.Files) == 0 {
+		t.Fatal("the shared export is empty")
+	}
+	if n := dv.runs.Load(); n != 2 {
+		t.Fatalf("terraformer ran %d times, want 2 (one shared, one after the change)", n)
+	}
+}

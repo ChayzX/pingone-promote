@@ -123,6 +123,9 @@ type Def struct {
 	// left out with a warning, since writing it without that value would
 	// remove the value in the source environment on its next apply.
 	Allowed map[string][]string `json:"allowed,omitempty"`
+	// Detail: the collection leaves out fields its items have (a form's
+	// components), so each item is read on its own (GET Path/{id}).
+	Detail bool `json:"detail,omitempty"`
 	// Verified is true only after a live acceptance run.
 	Verified bool `json:"verified"`
 }
@@ -208,7 +211,12 @@ var defs = []Def{
 	with(child("pingone_application_resource_grant", "applications", "pingone_application", "application_id", "applications/{parent}/grants", "grants", true, "resource.id"), func(d *Def) {
 		d.Rename = map[string]string{"custom_resource_id": "resource.id"}
 	}),
-	child("pingone_application_role_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"),
+	with(child("pingone_application_role_assignment", "applications", "pingone_application", "application_id", "applications/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"), func(d *Def) {
+		// The API names the scope once ({id, type}); the provider has one
+		// attribute per scope type.
+		d.Rename = map[string]string{"scope_environment_id": "scope.id?scope.type=ENVIRONMENT",
+			"scope_organization_id": "scope.id?scope.type=ORGANIZATION", "scope_population_id": "scope.id?scope.type=POPULATION"}
+	}),
 	limit(child("pingone_application_metadata", "applications", "pingone_application", "application_id", "applications/{parent}/metadata", "metadata", true, "key"),
 		"metadata is read as a key/value map; nested values are exported as strings"),
 	none("pingone_application_secret", "applications", "client secrets are generated per environment and read by Terraform in that environment; copying them is forbidden"),
@@ -229,7 +237,11 @@ var defs = []Def{
 		d.ParentMatch = "type=CUSTOM"
 	}),
 	with(limit(child("pingone_resource_attribute", "resources_scopes_grants", "pingone_resource", "custom_resource_id", "resources/{parent}/attributes", "attributes", true, "name"),
-		"predefined attributes of the built-in resources are adopted by import"), func(d *Def) { d.Builtin = "type=CORE|PREDEFINED" }),
+		"predefined attributes of the built-in resources are adopted by import"), func(d *Def) {
+		d.Builtin = "type=CORE|PREDEFINED"
+		// The provider's resource_type is the parent resource's type.
+		d.Rename = map[string]string{"resource_type": "^type"}
+	}),
 	with(child("pingone_resource_scope_openid", "resources_scopes_grants", "pingone_resource", "", "resources/{parent}/scopes", "scopes", false, "name"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin = Limited, "scopes of the built-in OpenID Connect resource; built-in ones (openid, profile, email, ...) are adopted by import", "builtin=true"
 		d.ParentMatch = "type=OPENID_CONNECT"
@@ -285,6 +297,9 @@ var defs = []Def{
 	with(api("pingone_mfa_device_policy_default", "mfa_devices", "deviceAuthenticationPolicies", "deviceAuthenticationPolicies", "name"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin = Limited, "the default device policy exists in every environment and is adopted by import", "default=true"
 		d.Match = d.Builtin
+		// The API has no policy type: a PingOne MFA policy has no PingID
+		// desktop settings (a PingID policy is reported, not guessed).
+		d.Rename = map[string]string{"policy_type": "=PING_ONE_MFA?desktop!~."}
 	}),
 	with(api("pingone_mfa_fido2_policy", "mfa_devices", "fido2Policies", "fido2Policies", "name"), func(d *Def) { d.EnvLocal = []string{"relying_party_id"} }),
 	single("pingone_mfa_settings", "mfa_devices", "mfaSettings"),
@@ -342,7 +357,7 @@ var defs = []Def{
 		d.Status, d.Reason = Limited, "custom provider auth tokens are secrets (customer_secrets.yml); request headers of custom providers are never exported (they can carry credentials) and are set by hand"
 		d.Rename = map[string]string{"provider_custom.requests.headers": "-"}
 	}),
-	api("pingone_form", "forms", "forms", "forms", "name"),
+	with(api("pingone_form", "forms", "forms", "forms", "name"), func(d *Def) { d.Detail = true }),
 	with(single("pingone_forms_recaptcha_v2", "forms", "forms/recaptchaV2"), func(d *Def) {
 		d.Status, d.Reason = Limited, "the reCAPTCHA secret key is a secret (customer_secrets.yml); the site key is a per-environment value"
 		d.EnvLocal = []string{"site_key"}
@@ -411,7 +426,8 @@ var defs = []Def{
 	limit(child("pingone_credential_issuance_rule", "credentials", "pingone_credential_type", "credential_type_id", "credentialTypes/{parent}/issuanceRules", "issuanceRules", true, "id"), "labels end with the rule ID (the API object has no name)"),
 
 	// --- Platform ---
-	single("pingone_administrator_security", "platform", "adminConfig"),
+	// The provider can only enforce MFA for administrators.
+	with(single("pingone_administrator_security", "platform", "adminConfig"), func(d *Def) { d.Allowed = map[string][]string{"mfaStatus": {"ENFORCE"}} }),
 	with(api("pingone_alert_channel", "platform", "alertChannels", "alertChannels", "alertName"), func(d *Def) { d.EnvLocal = []string{"addresses"} }),
 	with(api("pingone_certificate", "platform", "certificates", "certificates", "subjectDN"), func(d *Def) {
 		d.Status, d.Reason = Limited, "certificates are environment-specific: each environment has its own; references to them become per-environment certificate ID variables unless the operator exports the certificate (PEM is a per-environment value)"
@@ -436,7 +452,7 @@ var defs = []Def{
 		d.Status, d.Reason = Limited, "key material is never exported: a generated key is recreated in each environment from its settings; imported PKCS#12 keys are per-environment secrets; default signing keys are adopted"
 		d.Builtin = "default=true"
 	}),
-	api("pingone_key_rotation_policy", "platform", "keyRotationPolicies", "keyRotationPolicies", "name"),
+	with(api("pingone_key_rotation_policy", "platform", "keyRotationPolicies", "keyRotationPolicies", "name"), func(d *Def) { d.Rename = map[string]string{"subject_dn": "dn"} }),
 	with(single("pingone_rate_limit_configuration", "platform", "rateLimitConfigurations"), func(d *Def) {
 		d.Singleton, d.Import, d.Embedded, d.NameAttrs = false, ImportID, "rateLimitConfigurations", []string{"type", "value"}
 		d.EnvLocal = []string{"value"}
