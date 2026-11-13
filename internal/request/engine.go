@@ -627,7 +627,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		for _, e := range req.Exclude {
 			requestExcluded[e.Address] = e.Address != ""
 		}
-		found, builtIn := map[string]int{}, 0
+		found, builtIn, builtInOf := map[string]int{}, 0, map[string]int{}
 		for _, c := range cat {
 			d, ok := catalog.Get(c.Type)
 			// Owned children (a flow's deploy and enable, ...) travel with
@@ -639,6 +639,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			// environment are copied only when picked.
 			if c.BuiltIn {
 				builtIn++
+				builtInOf[d.Family]++
 				continue
 			}
 			found[d.Family]++
@@ -650,9 +651,14 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			r.res.Warnings = append(r.res.Warnings, builtInNote(builtIn))
 		}
 		for _, f := range req.Families {
-			if found[f] == 0 {
+			if found[f] == 0 && builtInOf[f] > 0 {
+				r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s: %s has only items PingOne creates in every environment, so none are copied", catalog.FamilyLabels[f], req.Source))
+			} else if found[f] == 0 {
 				r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s: nothing of this kind was found in %s", catalog.FamilyLabels[f], req.Source))
 			}
+		}
+		if len(sel.seeds) == 0 && builtIn > 0 {
+			return nil, fail("families", "the chosen sections hold only items PingOne creates in every environment, which are not copied; pick one of them to copy it", nil, "")
 		}
 		if len(sel.seeds) == 0 {
 			return nil, fail("families", "nothing in the chosen sections was found in "+req.Source, nil, "")

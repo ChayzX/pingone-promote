@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"pingone-promote/internal/neutralize"
 	"sort"
 	"strings"
 	"sync"
@@ -42,7 +43,21 @@ type Item struct {
 }
 
 func itemOf(r exporter.Resource) Item {
-	return Item{Address: r.String(), Type: r.Type, Name: r.Name, ID: r.ID}
+	return Item{Address: r.String(), Type: r.Type, Name: variableName(r), ID: r.ID}
+}
+
+// variableName shows a DaVinci variable's context with its name: one name
+// can exist as a company and a flow instance variable.
+func variableName(r exporter.Resource) string {
+	if r.Type != neutralize.TypeVariable {
+		return r.Name
+	}
+	for _, ctx := range []string{"company", "flowInstance", "flow", "user"} {
+		if strings.HasSuffix(r.Label, "_"+ctx) {
+			return r.Name + " (" + ctx + ")"
+		}
+	}
+	return r.Name
 }
 
 // Job is the one background job a draft can have at a time.
