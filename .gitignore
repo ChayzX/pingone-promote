@@ -32,3 +32,6 @@ terraform/modules/**/.terraform.lock.hcl
 # Company root certificates for image builds (deploy/container/extra-ca/README.md)
 /deploy/container/extra-ca/*.crt
 /deploy/container/extra-ca/*.pem
+*.test.exe
+*.test
+*.prof
