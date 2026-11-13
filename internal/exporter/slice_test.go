@@ -105,6 +105,20 @@ func sameExport(t *testing.T, what string, got, want *Export, extraVars bool) {
 				delete(g.imports, a)
 			}
 		}
+		// Variables only those additions used go with them.
+		used := map[string]bool{"pingone_environment_id": true}
+		for _, text := range g.resources {
+			for _, m := range sliceVarRE.FindAllStringSubmatch(text, -1) {
+				used[m[1]] = true
+			}
+		}
+		var vars []string
+		for _, v := range g.vars {
+			if used[v] {
+				vars = append(vars, v)
+			}
+		}
+		g.vars = vars
 	}
 	if len(w.resources) == 0 {
 		t.Errorf("%s: terraformer exported nothing; nothing was compared", what)
@@ -148,11 +162,14 @@ func sameExport(t *testing.T, what string, got, want *Export, extraVars bool) {
 }
 
 // templateNamed reports whether a flow in n names the variable a in a
-// {{global...variables.x}} template.
+// {{global...variables.x}} template or its depends_on.
 func templateNamed(n normal, a string) bool {
 	for r, text := range n.resources {
 		if !strings.HasPrefix(r, "pingone_davinci_flow.") {
 			continue
+		}
+		if strings.Contains(text, a+",") || strings.Contains(text, a+"\n") {
+			return true // in the flow's depends_on
 		}
 		for _, re := range []*regexp.Regexp{globalVarRE, companyVarRE} {
 			for _, m := range re.FindAllStringSubmatch(text, -1) {
@@ -257,6 +274,9 @@ func TestSlicesMatchTheRealTerraformer(t *testing.T) {
 	}
 	if extra := os.Getenv("SLICE_EXTRA"); extra != "" {
 		addrs = append(addrs, strings.Split(extra, ",")...)
+	}
+	if only := os.Getenv("SLICE_ONLY"); only != "" {
+		addrs = strings.Split(only, ",")
 	}
 	t.Logf("comparing %d items", len(addrs))
 	compareSlices(t, r, c, addrs)

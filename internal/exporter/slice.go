@@ -235,7 +235,10 @@ func (s *Source) write(sel map[string]bool) (*Export, error) {
 			continue
 		}
 		addrs = append(addrs, b.addr())
-		text := s.rewriteFallbacks(b.text, sel, fallbacks)
+		text, err := s.rewriteFallbacks(b.text, sel, fallbacks)
+		if err != nil {
+			return nil, fmt.Errorf("exporter: %s: %w", b.addr(), err)
+		}
 		byType[b.typ] = append(byType[b.typ], string(text))
 		seen := map[string]bool{}
 		for _, m := range sliceVarRE.FindAllSubmatch(text, -1) {
@@ -330,7 +333,7 @@ func (s *Source) write(sel map[string]bool) (*Export, error) {
 // outside the selection with their fallback variable. References inside
 // "${...}" templates and in a flow graph's values stay resource
 // references, as terraformer leaves them.
-func (s *Source) rewriteFallbacks(text []byte, sel map[string]bool, out map[string]sliceFallback) []byte {
+func (s *Source) rewriteFallbacks(text []byte, sel map[string]bool, out map[string]sliceFallback) ([]byte, error) {
 	var b strings.Builder
 	last := 0
 	for _, m := range sliceIDRefRE.FindAllSubmatchIndex(text, -1) {
@@ -345,12 +348,16 @@ func (s *Source) rewriteFallbacks(text []byte, sel map[string]bool, out map[stri
 			continue
 		}
 		name := nonVarRE.ReplaceAllString(addr+"_id", "_")
-		id := s.ids[addr]
+		id, ok := s.ids[addr]
+		if !ok {
+			// Its ID variable would have no value in any environment.
+			return nil, fmt.Errorf("refers to %s, which the export has no import ID for", addr)
+		}
 		out[name] = sliceFallback{typ: string(text[m[2]:m[3]]), id: id[strings.LastIndex(id, "/")+1:]}
 		b.Write(text[last:m[0]])
 		b.WriteString("var." + name)
 		last = m[1]
 	}
 	b.Write(text[last:])
-	return []byte(b.String())
+	return []byte(b.String()), nil
 }

@@ -1,0 +1,164 @@
+package multiexport
+
+import (
+	"context"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"pingone-promote/internal/coreexport"
+	"pingone-promote/internal/coreexport/schematenant"
+	"pingone-promote/internal/exporter"
+	"pingone-promote/internal/exporter/exportertest"
+	"pingone-promote/internal/neutralize"
+)
+
+// apiReader answers the DaVinci list endpoints from a fixed list (as the
+// API would) and everything else from the generated tenant.
+type apiReader struct {
+	coreexport.Reader
+	flows, vars, conns []map[string]any
+	updated            atomic.Value // string: updatedAt of every item
+}
+
+func (a *apiReader) List(ctx context.Context, env, path, embedded string) ([]map[string]any, error) {
+	stamp := func(items []map[string]any) []map[string]any {
+		out := make([]map[string]any, len(items))
+		for i, it := range items {
+			m := map[string]any{}
+			for k, v := range it {
+				m[k] = v
+			}
+			m["updatedAt"] = a.updated.Load()
+			out[i] = m
+		}
+		return out
+	}
+	switch {
+	case path == "flows":
+		return stamp(a.flows), nil
+	case path == "variables":
+		return stamp(a.vars), nil
+	case path == "connectorInstances":
+		return stamp(a.conns), nil
+	case path == "davinciApplications":
+		return nil, nil
+	}
+	return a.Reader.List(ctx, env, path, embedded)
+}
+
+// gatedDaVinci holds the terraformer export until released and counts runs.
+type gatedDaVinci struct {
+	*exporter.Runner
+	gate chan struct{}
+	runs atomic.Int32
+}
+
+func (g *gatedDaVinci) CatalogSource(ctx context.Context, c exporter.Credentials) ([]exporter.Resource, *exporter.Source, error) {
+	g.runs.Add(1)
+	if g.gate != nil {
+		<-g.gate
+	}
+	return g.Runner.CatalogSource(ctx, c)
+}
+
+func quickSetup(t *testing.T) (*Exporter, *apiReader, *gatedDaVinci, []exporter.Resource) {
+	t.Helper()
+	fake := exportertest.Build(t, t.TempDir(), exportertest.FixtureDir("cross"))
+	runner := &exporter.Runner{Config: exporter.Config{Path: fake.Path, SHA256: fake.SHA256, Version: fake.Version}}
+	full, _, err := runner.CatalogSource(context.Background(), creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &apiReader{Reader: schematenant.New()}
+	api.updated.Store("2026-01-01T00:00:00Z")
+	for _, r := range full {
+		switch r.Type {
+		case neutralize.TypeFlow:
+			// The API name gives another label than terraformer's here:
+			// selections must still find the flow by ID.
+			api.flows = append(api.flows, map[string]any{"id": r.ID, "name": r.Name + " (renamed)"})
+		case neutralize.TypeConnector:
+			api.conns = append(api.conns, map[string]any{"id": r.ID, "name": r.Name})
+		}
+	}
+	if len(api.flows) == 0 {
+		t.Fatal("the fixture has no flows")
+	}
+	dv := &gatedDaVinci{Runner: runner}
+	e := &Exporter{DaVinci: dv, NewReader: func(exporter.Credentials) (coreexport.Reader, error) { return api, nil }}
+	return e, api, dv, full
+}
+
+// The item list comes from the API while terraformer still runs; a flow
+// picked from it is exported (matched by ID) once terraformer is in.
+func TestQuickDaVinciListThenExportByID(t *testing.T) {
+	e, _, dv, _ := quickSetup(t)
+	dv.gate = make(chan struct{})
+	start := time.Now()
+	items, err := e.CatalogAllIDs(context.Background(), creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("the item list waited for terraformer")
+	}
+	var flow string
+	for _, it := range items {
+		if it.Type == neutralize.TypeFlow {
+			flow = it.String()
+		}
+	}
+	if !strings.Contains(flow, "renamed") {
+		t.Fatalf("the item list does not come from the API: %q", flow)
+	}
+	go func() { time.Sleep(100 * time.Millisecond); close(dv.gate) }()
+	exp, err := e.SelectedExport(context.Background(), creds, []string{flow}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addrs, err := exporter.Addresses(exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range addrs {
+		if strings.HasPrefix(a, neutralize.TypeFlow+".") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the flow picked from the quick list was not exported: %v", addrs)
+	}
+}
+
+// A refresh with DaVinci unchanged reuses the export; a change reruns it.
+func TestUnchangedDaVinciSkipsTerraformer(t *testing.T) {
+	e, api, dv, _ := quickSetup(t)
+	if _, err := e.CatalogAllIDs(context.Background(), creds); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.WholeExport(context.Background(), creds, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Refresh(context.Background(), creds); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.WholeExport(context.Background(), creds, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := dv.runs.Load(); n != 1 {
+		t.Fatalf("terraformer ran %d times for an unchanged DaVinci, want 1", n)
+	}
+	api.updated.Store("2026-02-02T00:00:00Z")
+	if _, err := e.Refresh(context.Background(), creds); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.WholeExport(context.Background(), creds, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := dv.runs.Load(); n != 2 {
+		t.Fatalf("terraformer ran %d times after a change, want 2", n)
+	}
+}

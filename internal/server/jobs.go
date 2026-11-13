@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pingone-promote/internal/catalog"
+	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/gitlab"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
@@ -248,12 +249,14 @@ func (s *Server) runSearch(source string) func(context.Context, func(string)) er
 		stage("Listing the source environment's resources")
 		creds := s.creds
 		creds.ExportEnvironmentID = id
-		// Reading the list reads the source again; previews then reuse
-		// that read until the list is read again.
+		// Reading the list reads the source again; previews keep using
+		// the previous read until the new one is in, then reuse it.
+		var list []exporter.Resource
 		if pe, ok := s.exporter.(plainErrors); ok {
-			pe.forget(creds)
+			list, err = pe.refresh(ctx, creds)
+		} else {
+			list, err = s.exporter.CatalogAllIDs(ctx, creds)
 		}
-		list, err := s.exporter.CatalogAllIDs(ctx, creds)
 		if err != nil {
 			return err
 		}

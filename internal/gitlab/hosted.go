@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // This file holds the calls the hosted server needs and a CI job does not:
@@ -111,6 +112,7 @@ func (c *Client) snapshot(ctx context.Context, branch string, dirs []string, lim
 		if err != nil {
 			return "", "", err
 		}
+		var want []string
 		for _, e := range entries {
 			if e.Type != "blob" || !hasSnapshotExt(e.Name) || strings.HasPrefix(e.Name, ".") || isCIFile(e.Name) {
 				continue // not read: other files, dot files, CI files
@@ -122,10 +124,15 @@ func (c *Client) snapshot(ctx context.Context, branch string, dirs []string, lim
 			if files++; files > lim.Files {
 				return "", "", errors.New("the repository has too many Terraform files to read")
 			}
-			f, err := c.GetFile(ctx, head, e.Path)
-			if err != nil {
-				return "", "", err
-			}
+			want = append(want, e.Path)
+		}
+		got, err := c.getFiles(ctx, head, want)
+		if err != nil {
+			return "", "", err
+		}
+		for i, p := range want {
+			e := struct{ Path string }{p}
+			f := got[i]
 			if !f.Exists {
 				return "", "", fmt.Errorf("%s disappeared from commit %s while it was read", e.Path, short(head))
 			}
@@ -150,6 +157,84 @@ func (c *Client) snapshot(ctx context.Context, branch string, dirs []string, lim
 		}
 	}
 	return own, head, nil
+}
+
+// getFiles reads files of one commit, several at a time. A commit never
+// changes, so files read before (another preview of the same head) are
+// answered from memory.
+func (c *Client) getFiles(ctx context.Context, head string, paths []string) ([]RepoFile, error) {
+	out := make([]RepoFile, len(paths))
+	errs := make([]error, len(paths))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, p := range paths {
+		if f, ok := commitFiles.get(c.Config.BaseURL, c.Config.ProjectID, head, p); ok {
+			out[i] = f
+			continue
+		}
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
+			}
+			defer func() { <-sem }()
+			out[i], errs[i] = c.GetFile(ctx, head, p)
+			if errs[i] == nil && out[i].Exists {
+				commitFiles.put(c.Config.BaseURL, c.Config.ProjectID, head, p, out[i])
+			}
+		}(i, p)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// commitFiles remembers the files of the last few commits read.
+var commitFiles = &fileCache{heads: map[string]map[string]RepoFile{}}
+
+type fileCache struct {
+	mu    sync.Mutex
+	order []string
+	heads map[string]map[string]RepoFile
+}
+
+// fileCacheHeads is how many commits' files are kept.
+const fileCacheHeads = 3
+
+func (fc *fileCache) key(base string, project any, head string) string {
+	return fmt.Sprintf("%s|%v|%s", base, project, head)
+}
+
+func (fc *fileCache) get(base string, project any, head, p string) (RepoFile, bool) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	f, ok := fc.heads[fc.key(base, project, head)][p]
+	return f, ok
+}
+
+func (fc *fileCache) put(base string, project any, head, p string, f RepoFile) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	k := fc.key(base, project, head)
+	m := fc.heads[k]
+	if m == nil {
+		m = map[string]RepoFile{}
+		fc.heads[k] = m
+		fc.order = append(fc.order, k)
+		for len(fc.order) > fileCacheHeads {
+			delete(fc.heads, fc.order[0])
+			fc.order = fc.order[1:]
+		}
+	}
+	m[p] = f
 }
 
 func hasSnapshotExt(name string) bool {

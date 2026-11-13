@@ -54,6 +54,32 @@ type Exporter struct {
 	// reading holds the read in progress per environment: callers that
 	// arrive meanwhile wait for it instead of reading the source again.
 	reading map[string]*reading
+	// clients keeps the default reader per worker, so its access token
+	// and connections carry over from one read to the next.
+	clients map[exporter.Credentials]coreexport.Reader
+}
+
+// reader returns the core API reader for the worker.
+func (e *Exporter) reader(c exporter.Credentials) (coreexport.Reader, error) {
+	if e.NewReader != nil {
+		return e.NewReader(c)
+	}
+	key := c
+	key.ExportEnvironmentID = "" // one client reads every environment the worker may
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if r, ok := e.clients[key]; ok {
+		return r, nil
+	}
+	r, err := DefaultReader(c)
+	if err != nil {
+		return nil, err
+	}
+	if e.clients == nil {
+		e.clients = map[exporter.Credentials]coreexport.Reader{}
+	}
+	e.clients[key] = r
+	return r, nil
 }
 
 type reading struct {
@@ -70,6 +96,18 @@ type cached struct {
 	// exporter keeps one: selections are cut from it instead of running
 	// terraformer again.
 	dvSrc *exporter.Source
+	// dvAt is when DaVinci was last read (a failure is retried after
+	// dvRetryAfter without reading the core again).
+	dvAt time.Time
+	// dvReady closes when the terraformer export is in; dv, dvSrc, dvErr
+	// and dvExportAt are set before. dvFast is the quick list from the
+	// API (davinciList) with its fingerprint dvFP, for the item list
+	// meanwhile.
+	dvReady    chan struct{}
+	dvExportAt time.Time
+	dvFast     []exporter.Resource
+	dvFP       string
+	dvFastErr  error
 	// dvErr is why DaVinci could not be read (an environment without
 	// DaVinci, or a worker without the DaVinci role). Core items still work.
 	dvErr error
@@ -81,97 +119,184 @@ func DefaultReader(c exporter.Credentials) (coreexport.Reader, error) {
 }
 
 func (e *Exporter) state(ctx context.Context, creds exporter.Credentials) (*cached, error) {
+	return e.get(ctx, creds, false)
+}
+
+// readTimeout bounds one read of a source.
+const readTimeout = 20 * time.Minute
+
+// get returns the cached read of the source, reading it when there is none
+// or it is older than CacheFor (force: always read). Callers that arrive
+// during a read wait for it. The read runs on its own, detached from the
+// caller that started it, so one person cancelling a preview does not
+// fail another's item list; a caller that leaves stops waiting only. A
+// failed read keeps the previous one. When only DaVinci failed (an
+// environment without it, a missing role), only DaVinci is read again.
+func (e *Exporter) get(ctx context.Context, creds exporter.Credentials, force bool) (*cached, error) {
 	env := creds.ExportEnvironment()
 	ttl := e.CacheFor
 	if ttl == 0 {
 		ttl = 30 * time.Minute
 	}
 	e.mu.Lock()
-	c := e.cache[env]
-	if c != nil && c.dvErr != nil && ttl > dvRetryAfter {
-		ttl = dvRetryAfter // a DaVinci failure may be transient: read again soon
+	// Reads nobody asked for within ttl are dropped: the cached DaVinci
+	// export holds values, which are not kept longer than needed.
+	for k, old := range e.cache {
+		if k != env && time.Since(old.at) >= ttl {
+			delete(e.cache, k)
+		}
 	}
-	if c != nil && time.Since(c.at) < ttl {
+	c := e.cache[env]
+	coreFresh := c != nil && time.Since(c.at) < ttl
+	if !force && coreFresh && (!c.dvDone() || c.dvErr == nil || time.Since(c.dvAt) < dvRetryAfter) {
 		e.mu.Unlock()
 		return c, nil
 	}
-	if rd := e.reading[env]; rd != nil {
-		e.mu.Unlock()
-		select {
-		case <-rd.done:
-			return rd.c, rd.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
+	rd := e.reading[env]
+	if rd == nil {
+		var keep *cached
+		if !force && coreFresh {
+			keep = c // only DaVinci failed: read it again, keep the core read
 		}
-	}
-	rd := &reading{done: make(chan struct{})}
-	if e.reading == nil {
-		e.reading = map[string]*reading{}
-	}
-	e.reading[env] = rd
-	e.mu.Unlock()
-	rd.c, rd.err = e.read(ctx, creds, env)
-	e.mu.Lock()
-	if rd.err == nil {
-		if e.cache == nil {
-			e.cache = map[string]*cached{}
+		rd = &reading{done: make(chan struct{})}
+		if e.reading == nil {
+			e.reading = map[string]*reading{}
 		}
-		e.cache[env] = rd.c
+		e.reading[env] = rd
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readTimeout)
+		go func() {
+			defer cancel()
+			rd.c, rd.err = e.read(rctx, creds, env, keep, c)
+			e.mu.Lock()
+			if rd.err == nil {
+				if e.cache == nil {
+					e.cache = map[string]*cached{}
+				}
+				e.cache[env] = rd.c
+			}
+			delete(e.reading, env)
+			e.mu.Unlock()
+			close(rd.done)
+		}()
 	}
-	delete(e.reading, env)
 	e.mu.Unlock()
-	close(rd.done)
-	return rd.c, rd.err
+	select {
+	case <-rd.done:
+		return rd.c, rd.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
-// read reads the source environment once (core inventory and DaVinci).
-func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env string) (*cached, error) {
-	nr := e.NewReader
-	if nr == nil {
-		nr = DefaultReader
+// dvReuseFor bounds how long an unchanged DaVinci export is reused.
+const dvReuseFor = 2 * time.Hour
+
+// read reads the source environment. The core inventory and the quick
+// DaVinci list (davinciList) are read at the same time and returned; the
+// terraformer export runs on in the background (dvReady closes when it is
+// in), unless the quick list shows DaVinci unchanged since prev's export,
+// which is then reused. Without a quick list (no DaVinci items, or the API
+// refused it) read waits for terraformer. With keep, the core read is
+// reused.
+func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env string, keep, prev *cached) (*cached, error) {
+	c := &cached{at: time.Now(), dvReady: make(chan struct{})}
+	if keep != nil {
+		c.at, c.inv = keep.at, keep.inv
 	}
-	r, err := nr(creds)
+	if e.DaVinci == nil {
+		close(c.dvReady)
+	}
+	r, err := e.reader(creds)
 	if err != nil {
 		return nil, err
 	}
-	// The core read and the DaVinci export run at the same time.
-	c := &cached{at: time.Now()}
-	dvCtx, cancelDV := context.WithCancel(ctx)
-	defer cancelDV()
-	dvDone := make(chan struct{})
+	var wg sync.WaitGroup
+	if e.DaVinci != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.dvFast, c.dvFP, c.dvFastErr = davinciList(ctx, r, env)
+		}()
+	}
+	if keep == nil {
+		c.inv, err = coreexport.Read(ctx, r, env)
+	}
+	wg.Wait()
+	if err != nil {
+		return nil, err
+	}
+	if e.DaVinci == nil {
+		return c, nil
+	}
+	quick := c.dvFastErr == nil && len(c.dvFast) > 0
+	if quick && prev != nil && prev.dvDone() && prev.dvErr == nil && prev.dvSrc != nil && prev.dvFP == c.dvFP && time.Since(prev.dvExportAt) < dvReuseFor {
+		// DaVinci is unchanged: no terraformer run.
+		c.dv, c.dvSrc, c.dvExportAt, c.dvAt = prev.dv, prev.dvSrc, prev.dvExportAt, prev.dvAt
+		close(c.dvReady)
+		return c, nil
+	}
+	c.dvAt = time.Now()
+	dvCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readTimeout)
 	go func() {
-		defer close(dvDone)
+		defer cancel()
+		defer close(c.dvReady)
+		defer func() {
+			if p := recover(); p != nil {
+				c.dv, c.dvSrc, c.dvErr = nil, nil, fmt.Errorf("multiexport: reading DaVinci failed unexpectedly: %v", p)
+			}
+		}()
 		if cs, ok := e.DaVinci.(interface {
 			CatalogSource(context.Context, exporter.Credentials) ([]exporter.Resource, *exporter.Source, error)
 		}); ok {
 			c.dv, c.dvSrc, c.dvErr = cs.CatalogSource(dvCtx, creds)
-		} else if e.DaVinci != nil {
+		} else {
 			c.dv, c.dvErr = e.DaVinci.CatalogAllIDs(dvCtx, creds)
 		}
-	}()
-	c.inv, err = coreexport.Read(ctx, r, env)
-	if err != nil {
-		cancelDV() // the read failed: do not wait for the DaVinci export
-	}
-	<-dvDone
-	if err != nil {
-		return nil, err
-	}
-	if c.dvErr != nil {
-		if ctx.Err() != nil {
-			return nil, c.dvErr
+		if c.dvErr != nil {
+			c.dv, c.dvSrc = nil, nil
 		}
-		c.dv = nil
+		c.dvExportAt = time.Now()
+	}()
+	if !quick {
+		select {
+		case <-c.dvReady:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return c, nil
 }
 
-// Forget drops the cached read of an environment, so the next call reads
-// it again (the server's "read again" and its periodic refresh).
-func (e *Exporter) Forget(creds exporter.Credentials) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	delete(e.cache, creds.ExportEnvironment())
+// dvDone reports whether the DaVinci export is in (dv, dvSrc and dvErr
+// may be read only then).
+func (c *cached) dvDone() bool {
+	select {
+	case <-c.dvReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// awaitDaVinci waits for the DaVinci export.
+func (c *cached) awaitDaVinci(ctx context.Context) error {
+	select {
+	case <-c.dvReady:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Refresh reads the source again and returns its item list; until the new
+// read is in, previews keep using the previous one (the server's "read
+// again" and its periodic refresh).
+func (e *Exporter) Refresh(ctx context.Context, creds exporter.Credentials) ([]exporter.Resource, error) {
+	c, err := e.get(ctx, creds, true)
+	if err != nil {
+		return nil, err
+	}
+	return listOf(c), nil
 }
 
 // Catalog lists every exportable resource of the source (DaVinci and core)
@@ -181,7 +306,15 @@ func (e *Exporter) Catalog(ctx context.Context, creds exporter.Credentials, _ bo
 	if err != nil {
 		return nil, err
 	}
-	out := append([]exporter.Resource(nil), c.dv...)
+	return listOf(c), nil
+}
+
+func listOf(c *cached) []exporter.Resource {
+	dv := c.dvFast
+	if c.dvDone() && (c.dvErr == nil || len(dv) == 0) {
+		dv = c.dv // the export is in: its list is authoritative
+	}
+	out := append([]exporter.Resource(nil), dv...)
 	for _, o := range c.inv.Objects {
 		d, _ := catalog.Get(o.Type)
 		id := o.ID
@@ -191,7 +324,7 @@ func (e *Exporter) Catalog(ctx context.Context, creds exporter.Credentials, _ bo
 		out = append(out, exporter.Resource{Address: exporter.Address{Type: o.Type, Label: o.Label}, Name: o.Name, ID: id})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
-	return out, nil
+	return out
 }
 
 // DaVinciProblem is why the latest read of the source left out its DaVinci
@@ -200,6 +333,9 @@ func (e *Exporter) DaVinciProblem(creds exporter.Credentials) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if c := e.cache[creds.ExportEnvironment()]; c != nil {
+		if !c.dvDone() {
+			return c.dvFastErr // the export is still running
+		}
 		return c.dvErr
 	}
 	return nil
@@ -355,6 +491,13 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 	if err != nil {
 		return nil, err
 	}
+	// An export needs the DaVinci export (core objects can refer to
+	// DaVinci items by ID too). Items chosen from the quick list are
+	// matched to it by ID.
+	if err := c.awaitDaVinci(ctx); err != nil {
+		return nil, err
+	}
+	seeds, exclude = toExport(seeds, c.dvFast, c.dv), toExport(exclude, c.dvFast, c.dv)
 	ids := index(c)
 	core, dv := map[string]bool{}, map[string]bool{}
 	excluded := func(a string) bool { return matches(exclude, a) }

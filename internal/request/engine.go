@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"pingone-promote/internal/exporter"
@@ -257,12 +258,33 @@ func (r *runner) run(ctx context.Context) {
 	res.setBlockers(m.Blockers)
 	res.Warnings = append(res.Warnings, m.Warnings...)
 	r.secrets(m)
-	// The fmt gate runs on every file, preview or not.
+	// The fmt gate runs on every file, preview or not; the formatter runs
+	// for several files at a time, and results are taken in path order.
+	var fmtPaths []string
 	for _, p := range m.ChangedPaths() {
-		if !strings.HasSuffix(p, ".tf") && !strings.HasSuffix(p, ".tfvars") {
-			continue
+		if strings.HasSuffix(p, ".tf") || strings.HasSuffix(p, ".tfvars") {
+			fmtPaths = append(fmtPaths, p)
 		}
-		out, err := tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, m.Files[p])
+	}
+	type fmtResult struct {
+		out []byte
+		err error
+	}
+	fmtResults := make([]fmtResult, len(fmtPaths))
+	var fmtWG sync.WaitGroup
+	fmtSem := make(chan struct{}, 4)
+	for i, p := range fmtPaths {
+		fmtWG.Add(1)
+		go func(i int, content []byte) {
+			defer fmtWG.Done()
+			fmtSem <- struct{}{}
+			defer func() { <-fmtSem }()
+			fmtResults[i].out, fmtResults[i].err = tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, content)
+		}(i, m.Files[p])
+	}
+	fmtWG.Wait()
+	for i, p := range fmtPaths {
+		out, err := fmtResults[i].out, fmtResults[i].err
 		var mismatch *tffmt.FormatMismatchError
 		if errors.As(err, &mismatch) {
 			// A file people edit (an environment's tfvars, ...) may not be

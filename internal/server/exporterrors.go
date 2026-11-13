@@ -98,12 +98,20 @@ func pingoneMessage(err error) (string, bool) {
 	return "", false
 }
 
-// forget drops the inner exporter's cached read of the source, when it
-// keeps one.
-func (p plainErrors) forget(c exporter.Credentials) {
-	if f, ok := p.inner.(interface{ Forget(exporter.Credentials) }); ok {
-		f.Forget(c)
+// refresh reads the source's item list again, through the inner
+// exporter's Refresh when it keeps a cached read (which stays in use until
+// the new one is in), else through CatalogAllIDs.
+func (p plainErrors) refresh(ctx context.Context, c exporter.Credentials) ([]exporter.Resource, error) {
+	if r, ok := p.inner.(interface {
+		Refresh(context.Context, exporter.Credentials) ([]exporter.Resource, error)
+	}); ok {
+		out, err := r.Refresh(ctx, c)
+		if err != nil {
+			return nil, p.wrap("catalog", err)
+		}
+		return out, nil
 	}
+	return p.CatalogAllIDs(ctx, c)
 }
 
 // davinciProblem explains why the latest catalog read left out DaVinci

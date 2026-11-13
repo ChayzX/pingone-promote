@@ -246,11 +246,19 @@ func (s *Submitter) CommitToBranch(ctx context.Context, bc BranchCommit) (Result
 		return Result{}, &ConflictError{Paths: []string{bc.Branch}, Reason: "the request branch moved after the job started (head " + short(branch.Commit.ID) + ", job read " + short(bc.ExpectedHead) + ")"}
 	}
 	actions := make([]map[string]string, 0, len(bc.Files)+1)
-	for _, f := range bc.Files {
-		cur, err := c.GetFile(ctx, bc.Branch, f.Path)
-		if err != nil {
-			return Result{}, &PreflightError{Err: err}
-		}
+	// The branch is at ExpectedHead (checked above), so the files are read
+	// at that commit: those the preview already read come from memory, the
+	// rest several at a time.
+	paths := make([]string, len(bc.Files))
+	for i, f := range bc.Files {
+		paths[i] = f.Path
+	}
+	current, err := c.getFiles(ctx, bc.ExpectedHead, paths)
+	if err != nil {
+		return Result{}, &PreflightError{Err: err}
+	}
+	for i, f := range bc.Files {
+		cur := current[i]
 		a := map[string]string{"action": "create", "file_path": f.Path, "content": string(f.Content)}
 		if cur.Exists {
 			a["action"], a["last_commit_id"] = "update", cur.LastCommitID

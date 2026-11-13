@@ -137,7 +137,15 @@ func New(c Credentials) (*Client, error) {
 		return nil, errors.New("pingone: region code must be one of AP, AU, CA, EU, NA, SG")
 	}
 	return &Client{creds: c, AuthBase: "https://auth.pingone." + tld, APIBase: "https://api.pingone." + tld + "/v1",
-		HTTP: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+		HTTP: &http.Client{Timeout: 60 * time.Second, Transport: transport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+}
+
+// transport keeps enough idle connections for a read's parallel requests
+// (the default keeps two per host); HTTP/2 is used when PingOne offers it.
+func transport() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = 16
+	return t
 }
 
 // APIError is a non-2xx response. Body is never included: it is diagnostic

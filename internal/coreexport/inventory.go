@@ -74,7 +74,7 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 	// Several types read the same collection (applications, populations,
 	// languages, digital wallet applications per application): each is
 	// requested once per read.
-	r = &memoReader{r: r, lists: map[string][]map[string]any{}, gets: map[string]map[string]any{}}
+	r = newMemoReader(r)
 	inv := &Inventory{EnvironmentID: env, byAddr: map[string]*Object{}, Skipped: map[string]string{}}
 	byType := map[string][]*Object{}
 	var defs []*catalog.Def
@@ -159,49 +159,88 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 	return inv, nil
 }
 
-// memoReader answers repeated requests within one Read from memory. API
-// objects are never modified after reading, so sharing them is safe.
+// memoReader answers each request once per Read: repeated and concurrent
+// identical requests share one answer (errors included), and at most
+// maxInFlight requests reach PingOne at a time. API objects are never
+// modified after reading, so sharing them is safe.
 type memoReader struct {
-	r     Reader
-	mu    sync.Mutex
-	lists map[string][]map[string]any
-	gets  map[string]map[string]any
+	r    Reader
+	sem  chan struct{}
+	mu   sync.Mutex
+	memo map[string]*memoEntry
+}
+
+type memoEntry struct {
+	done chan struct{}
+	list []map[string]any
+	doc  map[string]any
+	err  error
+}
+
+// maxInFlight bounds the requests one read has open at once.
+const maxInFlight = 10
+
+func newMemoReader(r Reader) *memoReader {
+	return &memoReader{r: r, sem: make(chan struct{}, maxInFlight), memo: map[string]*memoEntry{}}
+}
+
+func (m *memoReader) do(ctx context.Context, key string, fetch func(*memoEntry)) *memoEntry {
+	m.mu.Lock()
+	e, ok := m.memo[key]
+	if !ok {
+		e = &memoEntry{done: make(chan struct{})}
+		m.memo[key] = e
+	}
+	m.mu.Unlock()
+	if ok {
+		select {
+		case <-e.done:
+		case <-ctx.Done():
+			return &memoEntry{err: ctx.Err()}
+		}
+		return e
+	}
+	select {
+	case m.sem <- struct{}{}:
+		fetch(e)
+		<-m.sem
+	case <-ctx.Done():
+		e.err = ctx.Err()
+	}
+	close(e.done)
+	return e
 }
 
 func (m *memoReader) List(ctx context.Context, env, path, embedded string) ([]map[string]any, error) {
-	k := path + "|" + embedded
-	m.mu.Lock()
-	v, ok := m.lists[k]
-	m.mu.Unlock()
-	if ok {
-		return v, nil
-	}
-	v, err := m.r.List(ctx, env, path, embedded)
-	if err == nil {
-		m.mu.Lock()
-		m.lists[k] = v
-		m.mu.Unlock()
-	}
-	return v, err
+	e := m.do(ctx, "L "+path+"|"+embedded, func(e *memoEntry) { e.list, e.err = m.r.List(ctx, env, path, embedded) })
+	return e.list, e.err
 }
 
 func (m *memoReader) Get(ctx context.Context, env, path string) (map[string]any, error) {
-	m.mu.Lock()
-	v, ok := m.gets[path]
-	m.mu.Unlock()
-	if ok {
-		return v, nil
-	}
-	v, err := m.r.Get(ctx, env, path)
-	if err == nil {
-		m.mu.Lock()
-		m.gets[path] = v
-		m.mu.Unlock()
-	}
-	return v, err
+	e := m.do(ctx, "G "+path, func(e *memoEntry) { e.doc, e.err = m.r.Get(ctx, env, path) })
+	return e.doc, e.err
 }
 
-// readers is how many requests a read makes at a time.
+// prefetch requests paths at the same time, so the loop that follows
+// (which keeps catalog order) finds them answered. Errors are kept for it.
+func prefetch(ctx context.Context, r Reader, env string, paths []string, embedded string) {
+	var wg sync.WaitGroup
+	for _, p := range paths {
+		wg.Add(1)
+		go func(p string) {
+			defer wg.Done()
+			if embedded == "" {
+				_, _ = r.Get(ctx, env, p)
+			} else {
+				_, _ = r.List(ctx, env, p, embedded)
+			}
+		}(p)
+	}
+	wg.Wait()
+}
+
+// readers is how many types a read works on at a time (requests are
+// bounded by maxInFlight).
 const readers = 6
 
 // skipReason says why a type that failed is skipped, or false when the
@@ -286,6 +325,13 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		if err != nil {
 			return nil, err
 		}
+		var paths []string
+		for _, t := range templates {
+			if id, _ := t["id"].(string); id != "" && (!strings.HasPrefix(d.Match, "template.id") || Cond(d.Match, map[string]any{"template": map[string]any{"id": id}})) {
+				paths = append(paths, strings.ReplaceAll(d.Path, "{template}", id))
+			}
+		}
+		prefetch(ctx, r, env, paths, d.Embedded)
 		for _, t := range templates {
 			id, _ := t["id"].(string)
 			if id == "" || (strings.HasPrefix(d.Match, "template.id") && !Cond(d.Match, map[string]any{"template": map[string]any{"id": id}})) {
@@ -305,6 +351,13 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		if err != nil {
 			return nil, err
 		}
+		var paths []string
+		for _, s := range schemas {
+			if id, _ := s["id"].(string); id != "" {
+				paths = append(paths, strings.ReplaceAll(d.Path, "{schema}", id))
+			}
+		}
+		prefetch(ctx, r, env, paths, d.Embedded)
 		for _, s := range schemas {
 			id, _ := s["id"].(string)
 			if id == "" {
@@ -320,6 +373,19 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 			}
 		}
 	case d.Parent != "":
+		if strings.Contains(d.Path, "/") && strings.Contains(d.Path, "{parent}") {
+			var paths []string
+			for _, p := range byType[d.Parent] {
+				if Cond(d.ParentMatch, p.Raw) {
+					path := strings.ReplaceAll(d.Path, "{parent}", p.ID)
+					if p.Parent != nil {
+						path = strings.ReplaceAll(path, "{grandparent}", p.Parent.ID)
+					}
+					paths = append(paths, path)
+				}
+			}
+			prefetch(ctx, r, env, paths, d.Embedded)
+		}
 		for _, p := range byType[d.Parent] {
 			if !Cond(d.ParentMatch, p.Raw) {
 				continue
