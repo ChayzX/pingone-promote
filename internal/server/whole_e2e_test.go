@@ -139,8 +139,11 @@ func TestWholeEnvironmentFromTheFixtureTenant(t *testing.T) {
 	})
 	// The fixture forbids voice phrases (listed apart, as unlicensed);
 	// nothing needs checking.
-	if warnings := wholeEnvironment(t, e); len(warnings) != 0 {
-		t.Errorf("things to check: %q", warnings)
+	// Only the note about built-in items, which are not copied.
+	for _, w := range wholeEnvironment(t, e) {
+		if !strings.Contains(w, "items that PingOne creates in every environment") {
+			t.Errorf("things to check: %q", w)
+		}
 	}
 	if core.Writes() != 0 {
 		t.Fatalf("%d writes reached PingOne", core.Writes())

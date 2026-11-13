@@ -267,7 +267,7 @@ func (r *Request) Validate() error {
 	case !r.Whole() && r.ConfirmAll:
 		return invalid("confirmAll", "confirmAll only applies to scope all")
 	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies)+len(r.Resources)+len(r.Families) == 0:
-		return invalid("flows", "select at least one configuration resource")
+		return invalid("flows", "choose at least one item to copy (step 2), or another option in step 1")
 	case !r.Whole() && (len(r.Flows) > 20 || len(r.Applications) > 20 || len(r.FlowPolicies) > 20):
 		return invalid("flows", "at most 20 of each kind per request")
 	}

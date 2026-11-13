@@ -208,11 +208,18 @@ func TestConnectorPropertyIDs(t *testing.T) {
     },
     "other" : {
       "value" : "ffffffffffffffffffffffffffffffff"
+    },
+    "viaVariable" : {
+      "value" : var.davinci_connection_Http_connectionId
+    },
+    "plain" : {
+      "value" : var.davinci_connection_Http_region
     }
   })
 }
 `
-	out := &exporter.Export{EnvironmentID: env, ModuleDir: exporter.ModuleDir, Files: map[string][]byte{exporter.ModuleDir + "/pingone_davinci_connector_instance.tf": []byte(src)}}
+	out := &exporter.Export{EnvironmentID: env, ModuleDir: exporter.ModuleDir, Files: map[string][]byte{exporter.ModuleDir + "/pingone_davinci_connector_instance.tf": []byte(src),
+		"ping-export-terraform.auto.tfvars": []byte("davinci_connection_Http_connectionId = \"3b55f2ca6689560c64cb5bed5afbe40f\"\ndavinci_connection_Http_region = \"NA\"\n")}}
 	ids := map[string]string{"3b55f2ca6689560c64cb5bed5afbe40f": "pingone_davinci_connector_instance.pingcli__Token", "a2beb5d1-e874-42da-9149-8d1263a1ffdd": "pingone_application.pingcli__App"}
 	connectorRefs(out, ids, map[string]bool{"pingone_davinci_connector_instance.pingcli__Token": true})
 	got := string(out.Files[exporter.ModuleDir+"/pingone_davinci_connector_instance.tf"])
@@ -220,6 +227,9 @@ func TestConnectorPropertyIDs(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("lacks %s:\n%s", want, got)
 		}
+	}
+	if strings.Count(got, "pingone_davinci_connector_instance.pingcli__Token.id") != 2 || !strings.Contains(got, "var.davinci_connection_Http_region") {
+		t.Errorf("an ID set through a variable is not a reference, or another variable changed:\n%s", got)
 	}
 	if out.Referenced["pingone_application.pingcli__App"] != "a2beb5d1-e874-42da-9149-8d1263a1ffdd" {
 		t.Errorf("the application outside the export is not referenced by ID variable: %v", out.Referenced)

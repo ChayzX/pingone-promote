@@ -2,6 +2,7 @@ package secretscan
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestCredentialNamesAndValues(t *testing.T) {
 	for name, want := range map[string]bool{
 		"LdapDSBindCreds": true, "basicAuthCredDV": true, "PingFedAuthNCreds": true, "basicAuthCred": true, "userCredentials": true,
 		"adminPassword": true, "basicAuthLDAP": true, "csr_splunkHec_secret": true,
-		"creditLimit": false, "forgotPasswordUrl": false, "resetPasswordPage": false, "logoUrl": false, "tokenEndpointUrl": false, "companyName": false,
+		"creditLimit": false, "forgotPasswordUrl": false, "resetPasswordPage": false, "passwordPolicyId": false, "secretQuestionFlowId": false, "logoUrl": false, "tokenEndpointUrl": false, "companyName": false,
 	} {
 		if got := CredentialName(name); got != want {
 			t.Errorf("CredentialName(%q) = %v", name, got)
@@ -37,6 +38,8 @@ func TestCredentialNamesAndValues(t *testing.T) {
 		base64.StdEncoding.EncodeToString([]byte("uid=svc,ou=apps:s3cret!")): true,
 		base64.StdEncoding.EncodeToString([]byte("user:pw")):                 true,
 		"https://example.com/x": false, "aGVsbG8gd29ybGQ=": false, "Example Corp": false,
+		"ghp_" + strings.Repeat("a1B2", 9): true, "Bearer abcdef0123456789": true, "Splunk 1234abcd-12ab-34cd-56ef-1234567890ab": true,
+		"glpat-abcdefghij0123456789": true, "Bearer": false, "basic settings": false,
 	} {
 		if got := CredentialValue(v); got != want {
 			t.Errorf("CredentialValue(%q) = %v", v, got)

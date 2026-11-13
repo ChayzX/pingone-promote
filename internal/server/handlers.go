@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/request"
 )
 
@@ -355,7 +354,7 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		}
 		title, desc := strings.TrimSpace(f.Get("title")), f.Get("description")
 		switch {
-		case len(title) > 255 || strings.ContainsAny(title, "\n"):
+		case len(title) > 255 || strings.ContainsAny(title, "\r\n"):
 			d.problem = "The merge request title must be one line of at most 255 characters; it was not saved."
 		case len(desc) > 64<<10:
 			d.problem = "The note for reviewers must be at most 64 KB; it was not saved."
@@ -405,6 +404,10 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, draftURL(d, ""))
 			return
 		case "preview":
+			if d.problem != "" {
+				s.redirect(w, r, draftURL(d, ""))
+				return
+			}
 		default:
 			if d.notice == "" && d.problem == "" {
 				d.notice = "Saved."
@@ -1195,20 +1198,15 @@ func asciiPrintable(s string) bool {
 }
 
 // fillable lists the values and import IDs a person may enter for env
-// after the draft's last preview: the values its change declares and the
-// existing items it adopts. The environment ID only when env's settings
-// lack it (the preview asks for it then).
+// after the draft's last preview: what the preview asks for (a missing
+// value, the ID of an existing item to adopt) and what was entered then.
+// Values Git or the source already has are not changed here.
 func fillable(d *Draft, env string) (values, imports map[string]bool) {
 	values, imports = map[string]bool{}, map[string]bool{}
 	if d.preview == nil || d.preview.result == nil {
 		return
 	}
 	res := d.preview.result
-	for name := range res.Variables {
-		values[name] = true
-	}
-	delete(values, neutralize.EnvironmentIDVariable)
-	delete(values, "import_ids")
 	for _, b := range res.Blockers[env] {
 		switch {
 		case b.Code == "missing_value" && b.Var != "":
@@ -1219,9 +1217,7 @@ func fillable(d *Draft, env string) (values, imports map[string]bool) {
 	}
 	// Entered earlier, so asked for then (the blocker is gone now).
 	for name := range d.Values[env] {
-		if name == neutralize.EnvironmentIDVariable {
-			values[name] = true
-		}
+		values[name] = true
 	}
 	for a := range d.ImportIDs[env] {
 		imports[a] = true

@@ -500,7 +500,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 	sort.Strings(depExcluded)
 	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies) + len(req.Resources) + len(req.Families)
 	var cat []exporter.Resource
-	if items+len(req.Exclude)+len(depExcluded) > 0 {
+	if items+len(req.Exclude)+len(depExcluded) > 0 || req.Whole() {
 		withIDs, allIDs := false, false
 		if !req.Whole() && !req.Upstream() {
 			withIDs, allIDs = true, true

@@ -137,8 +137,14 @@ func CredentialName(name string) bool {
 	return false
 }
 
-// urlNameRE matches names of links and addresses.
-var urlNameRE = regexp.MustCompile(`(?i)(url|uri|href|link|endpoint|path|page|redirect)s?$`)
+// urlNameRE matches names of links, addresses and IDs (a password
+// policy's ID is not a password).
+var urlNameRE = regexp.MustCompile(`(?i)(url|uri|href|link|endpoint|path|page|redirect)s?$|(Id|ID|_id|Ids|IDs|_ids)$`)
+
+// tokenRE matches an HTTP authorization value and the access tokens of
+// well-known services (GitHub, GitLab, Slack, AWS, Stripe, OpenAI-style
+// keys, Splunk HEC "Splunk <token>").
+var tokenRE = regexp.MustCompile(`^(?i:bearer|basic|splunk|token)\s+[A-Za-z0-9._~+/=-]{16,}$|^(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpors]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9_-]{20,})$`)
 
 // credWordRE matches "cred", "creds" or "credential(s)" as a word of a
 // camelCase or snake_case name (not "credit").
@@ -148,7 +154,7 @@ var credWordRE = regexp.MustCompile(`[Cc]red(?:s|entials?)?(?:$|[^a-z])`)
 // name: a JWT, a private key, or base64 of "user:password".
 func CredentialValue(v string) bool {
 	v = strings.TrimSpace(v)
-	if JWT.MatchString(v) || PrivateKey.MatchString(v) {
+	if JWT.MatchString(v) || PrivateKey.MatchString(v) || tokenRE.MatchString(v) {
 		return true
 	}
 	if len(v) < 8 || strings.ContainsAny(v, " {}<>") {

@@ -12,6 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 	"path"
 	"regexp"
 	"slices"
@@ -953,7 +956,22 @@ func connectorRefs(out *exporter.Export, ids map[string]string, exported map[str
 	if !ok {
 		return
 	}
+	// terraformer usually writes the property as a variable whose value
+	// (in the tfvars) is the ID.
+	values := tfvarsStrings(out.Files)
 	var unknown []string
+	src = connectorPropertyVarRE.ReplaceAllFunc(src, func(m []byte) []byte {
+		sm := connectorPropertyVarRE.FindSubmatch(m)
+		v, ok := values[string(sm[2])]
+		if !ok || !connectorIDRE.MatchString(v) || v == out.EnvironmentID {
+			return m
+		}
+		if _, known := ids[v]; !known {
+			unknown = append(unknown, v)
+			return m
+		}
+		return append(append([]byte(nil), sm[1]...), `"`+v+`"`...)
+	})
 	src = connectorPropertyIDRE.ReplaceAllFunc(src, func(m []byte) []byte {
 		sm := connectorPropertyIDRE.FindSubmatch(m)
 		id := string(sm[2])
@@ -978,4 +996,37 @@ func connectorRefs(out *exporter.Export, ids map[string]string, exported map[str
 		sort.Strings(unknown)
 		out.Warnings = append(out.Warnings, "Connector properties hold IDs of items this tool does not know ("+strings.Join(slices.Compact(unknown), ", ")+"), so they keep the source environment's value; check each connector in every environment")
 	}
+}
+
+// connectorPropertyVarRE matches a connector property set from a variable.
+var connectorPropertyVarRE = regexp.MustCompile(`("value"\s*:\s*)var\.([A-Za-z0-9_]+)`)
+
+// connectorIDRE matches a DaVinci (32 hex) or PingOne (UUID) ID.
+var connectorIDRE = regexp.MustCompile(`^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`)
+
+// tfvarsStrings reads the string values of the export's *.auto.tfvars
+// (the first of a name set twice, as HCL reads it).
+func tfvarsStrings(files map[string][]byte) map[string]string {
+	out := map[string]string{}
+	for p, src := range files {
+		if !strings.HasSuffix(p, ".auto.tfvars") {
+			continue
+		}
+		f, _ := hclsyntax.ParseConfig(src, p, hcl.InitialPos)
+		if f == nil {
+			continue
+		}
+		body, ok := f.Body.(*hclsyntax.Body)
+		if !ok {
+			continue
+		}
+		for name, a := range body.Attributes {
+			if v, d := a.Expr.Value(nil); !d.HasErrors() && v.Type() == cty.String && !v.IsNull() {
+				if _, dup := out[name]; !dup {
+					out[name] = v.AsString()
+				}
+			}
+		}
+	}
+	return out
 }
