@@ -23,15 +23,84 @@ func splitLines(b []byte) []string {
 	return strings.Split(s, "\n")
 }
 
-// DiffLines computes a shortest edit script (Myers, O((N+M)D)).
+// maxEditDistance bounds the Myers search: the saved frontiers take
+// about D*D words, so a larger difference (a whole environment's flows
+// replaced) is shown as one replaced block instead.
+const maxEditDistance = 2000
+
+// DiffLines computes an edit script: a shortest one (Myers) when the files
+// differ in at most maxEditDistance lines; otherwise the part between their
+// common prefix and suffix gets one if it can, else it is removed and
+// added as one block. Memory stays bounded for files of any size.
 func DiffLines(a, b []string) []Op {
+	if ops, ok := myers(a, b); ok {
+		return ops
+	}
+	pre := 0
+	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
+		pre++
+	}
+	suf := 0
+	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
+		suf++
+	}
+	var ops []Op
+	for i := 0; i < pre; i++ {
+		ops = append(ops, Op{Kind: ' ', Line: a[i], OldLine: i + 1, NewLine: i + 1})
+	}
+	am, bm := a[pre:len(a)-suf], b[pre:len(b)-suf]
+	mid, ok := myers(am, bm)
+	if !ok {
+		mid = nil
+		for i, l := range am {
+			mid = append(mid, Op{Kind: '-', Line: l, OldLine: i + 1})
+		}
+		for j, l := range bm {
+			mid = append(mid, Op{Kind: '+', Line: l, NewLine: j + 1})
+		}
+	}
+	for _, op := range mid {
+		if op.OldLine > 0 {
+			op.OldLine += pre
+		}
+		if op.NewLine > 0 {
+			op.NewLine += pre
+		}
+		ops = append(ops, op)
+	}
+	for i := 0; i < suf; i++ {
+		oi, ni := len(a)-suf+i, len(b)-suf+i
+		ops = append(ops, Op{Kind: ' ', Line: a[oi], OldLine: oi + 1, NewLine: ni + 1})
+	}
+	return ops
+}
+
+// myers is the Myers shortest edit script, O((N+M)D) time; it saves only
+// the frontier each step uses (2d+1 entries), and gives up (false) when
+// the edit distance exceeds maxEditDistance.
+func myers(a, b []string) ([]Op, bool) {
 	n, m := len(a), len(b)
+	if n == 0 || m == 0 {
+		var ops []Op
+		for i, l := range a {
+			ops = append(ops, Op{Kind: '-', Line: l, OldLine: i + 1})
+		}
+		for j, l := range b {
+			ops = append(ops, Op{Kind: '+', Line: l, NewLine: j + 1})
+		}
+		return ops, true
+	}
 	max := n + m
+	limit := max
+	if limit > maxEditDistance {
+		limit = maxEditDistance
+	}
 	off := max + 1
 	v := make([]int, 2*max+3)
+	// trace[d] holds v[off-d .. off+d] after step d.
 	var trace [][]int
 	final := -1
-	for d := 0; d <= max && final < 0; d++ {
+	for d := 0; d <= limit && final < 0; d++ {
 		for k := -d; k <= d; k += 2 {
 			var x int
 			if k == -d || (k != d && v[off+k-1] < v[off+k+1]) {
@@ -50,18 +119,21 @@ func DiffLines(a, b []string) []Op {
 				break
 			}
 		}
-		trace = append(trace, append([]int(nil), v...))
+		trace = append(trace, append([]int(nil), v[off-d:off+d+1]...))
 	}
+	if final < 0 {
+		return nil, false
+	}
+	at := func(d, k int) int { return trace[d][k+d] }
 	var ops []Op
 	x, y := n, m
 	for d := final; d > 0; d-- {
-		vv := trace[d-1]
 		k := x - y
 		prevK := k - 1
-		if k == -d || (k != d && vv[off+k-1] < vv[off+k+1]) {
+		if k == -d || (k != d && at(d-1, k-1) < at(d-1, k+1)) {
 			prevK = k + 1
 		}
-		prevX := vv[off+prevK]
+		prevX := at(d-1, prevK)
 		prevY := prevX - prevK
 		for x > prevX && y > prevY {
 			ops = append(ops, Op{Kind: ' ', Line: a[x-1], OldLine: x, NewLine: y})
@@ -84,7 +156,7 @@ func DiffLines(a, b []string) []Op {
 	for i, j := 0, len(ops)-1; i < j; i, j = i+1, j-1 {
 		ops[i], ops[j] = ops[j], ops[i]
 	}
-	return ops
+	return ops, true
 }
 
 // UnifiedDiff renders a git-style unified diff with three context lines.

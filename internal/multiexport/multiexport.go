@@ -327,6 +327,19 @@ func listOf(c *cached) []exporter.Resource {
 	return out
 }
 
+// DaVinciPending reports whether a DaVinci export behind a cached read is
+// still running (an export of that source waits for it).
+func (e *Exporter) DaVinciPending() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, c := range e.cache {
+		if !c.dvDone() {
+			return true
+		}
+	}
+	return false
+}
+
 // DaVinciProblem is why the latest read of the source left out its DaVinci
 // items (nil when they were read). It never reads the source itself.
 func (e *Exporter) DaVinciProblem(creds exporter.Credentials) error {

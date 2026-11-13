@@ -1,9 +1,11 @@
 package promote
 
 import (
+	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 )
 
 func lcs(a, b []string) int {
@@ -65,5 +67,44 @@ func TestUnifiedDiff(t *testing.T) {
 	}
 	if UnifiedDiff("f", nil, []byte("a\n")) != "--- /dev/null\n+++ b/f\n@@ -0,0 +1,1 @@\n+a\n" {
 		t.Fatal(UnifiedDiff("f", nil, []byte("a\n")))
+	}
+}
+
+// A whole environment's files (hundreds of thousands of lines, added or
+// rewritten) are diffed in bounded memory, and the script still rebuilds
+// both sides.
+func TestDiffLinesLargeInputs(t *testing.T) {
+	big := make([]string, 300000)
+	for i := range big {
+		big[i] = fmt.Sprintf("line %d", i)
+	}
+	other := make([]string, 300000)
+	for i := range other {
+		other[i] = fmt.Sprintf("other %d", i)
+	}
+	mixed := append(append(append([]string(nil), big[:1000]...), other[:5000]...), big[1000:]...)
+	for name, c := range map[string][2][]string{
+		"added":     {nil, big},
+		"deleted":   {big, nil},
+		"rewritten": {big, other},
+		"inserted":  {big, mixed},
+	} {
+		start := time.Now()
+		ops := DiffLines(c[0], c[1])
+		var olds, news []string
+		for _, op := range ops {
+			if op.Kind != '+' {
+				olds = append(olds, op.Line)
+			}
+			if op.Kind != '-' {
+				news = append(news, op.Line)
+			}
+		}
+		if len(olds) != len(c[0]) || len(news) != len(c[1]) {
+			t.Fatalf("%s: the script does not rebuild both sides", name)
+		}
+		if d := time.Since(start); d > 10*time.Second {
+			t.Fatalf("%s took %s", name, d)
+		}
 	}
 }

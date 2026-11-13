@@ -114,6 +114,12 @@ func (p plainErrors) refresh(ctx context.Context, c exporter.Credentials) ([]exp
 	return p.CatalogAllIDs(ctx, c)
 }
 
+// davinciPending reports whether the exporter is still exporting DaVinci.
+func (p plainErrors) davinciPending() bool {
+	dp, ok := p.inner.(interface{ DaVinciPending() bool })
+	return ok && dp.DaVinciPending()
+}
+
 // davinciProblem explains why the latest catalog read left out DaVinci
 // items, in plain words ("" when nothing is missing or the exporter
 // cannot say).

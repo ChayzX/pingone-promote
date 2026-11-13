@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 
@@ -656,17 +655,27 @@ func (s *state) resolveCollisions() error {
 // readDecls) a variable of its own, named after its label, whose value is
 // entered per environment.
 func (s *state) splitShared() error {
-	for _, name := range sortedSet(s.shared) {
-		var users []*rawBlock
-		for _, rb := range s.raw {
-			refs, err := varRefs(rb.text)
-			if err != nil {
-				return err
-			}
-			if slices.Contains(refs, name) && s.finalVarName(rb, name) == name {
-				users = append(users, rb)
+	if len(s.shared) == 0 {
+		return nil
+	}
+	// Each block is lexed once, whatever the number of shared variables.
+	usersOf := map[string][]*rawBlock{}
+	for _, rb := range s.raw {
+		if !bytes.Contains(rb.text, []byte("var.")) {
+			continue
+		}
+		refs, err := varRefs(rb.text)
+		if err != nil {
+			return err
+		}
+		for _, n := range refs {
+			if s.shared[n] && s.finalVarName(rb, n) == n {
+				usersOf[n] = append(usersOf[n], rb)
 			}
 		}
+	}
+	for _, name := range sortedSet(s.shared) {
+		users := usersOf[name]
 		if len(users) < 2 {
 			continue
 		}

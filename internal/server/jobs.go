@@ -168,7 +168,15 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 				return err
 			}
 		}
-		stage("Exporting the source environment and merging")
+		if pe, ok := s.exporter.(plainErrors); ok {
+			if pe.davinciPending() {
+				stage("Waiting for the DaVinci export of " + req.Source + " (it started with the item list and takes about a minute), then merging")
+			} else {
+				stage("Exporting the source environment and merging")
+			}
+		} else {
+			stage("Exporting the source environment and merging")
+		}
 		rec, frozen := newRecorder(s.exporter)
 		res := request.Run(ctx, s.envFor(project, snap, head, req, rec), req)
 		s.scrub(res)
