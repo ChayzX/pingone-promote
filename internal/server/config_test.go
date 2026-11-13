@@ -518,3 +518,24 @@ func TestBranchPattern(t *testing.T) {
 		})
 	}
 }
+
+// environmentIds: an environment that is neither a source nor in the
+// rollout is noted, not fatal; a malformed ID still is.
+func TestEnvironmentIDsExtraNameIsAWarning(t *testing.T) {
+	m := validConfig()
+	m["environmentIds"] = map[string]string{"development": "11111111-1111-4111-8111-111111111111", "testing": "22222222-2222-4222-8222-222222222222", "test": "33333333-3333-4333-8333-333333333333"}
+	c, err := loadMap(t, m)
+	if err != nil {
+		t.Fatalf("an extra environment stops the server: %v", err)
+	}
+	if len(c.warnings) != 1 || !strings.Contains(c.warnings[0], `"test"`) {
+		t.Fatalf("warnings %v", c.warnings)
+	}
+	if c.envID("testing") == "" || c.envID("test") != "" {
+		t.Fatalf("ids %v", c.EnvironmentIDs)
+	}
+	m["environmentIds"] = map[string]string{"testing": "not-a-uuid"}
+	if _, err := loadMap(t, m); err == nil {
+		t.Fatal("a malformed ID was accepted")
+	}
+}

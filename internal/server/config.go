@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"pingone-promote/internal/gitlab"
@@ -77,9 +78,11 @@ type Config struct {
 	// BranchPattern, when set, makes the person type the branch name (for
 	// example a Jira key) and is the rule it must match whole, such as
 	// CIAM-[0-9]+. BranchExample is shown as the example.
-	BranchPattern  string `json:"branchPattern,omitempty"`
-	BranchExample  string `json:"branchExample,omitempty"`
-	branchRE       *regexp.Regexp
+	BranchPattern string `json:"branchPattern,omitempty"`
+	BranchExample string `json:"branchExample,omitempty"`
+	branchRE      *regexp.Regexp
+	// warnings are configuration problems that do not stop the server.
+	warnings       []string
 	OverlayPattern string `json:"overlayPattern,omitempty"`
 	// Layout is "default" or "terraformer" (file names of the root).
 	Layout string `json:"layout,omitempty"`
@@ -219,9 +222,14 @@ func (c *Config) check() error {
 			return fmt.Errorf("sourceEnvironmentIds.%s must be a PingOne environment ID (a UUID)", name)
 		}
 	}
-	for name, id := range c.EnvironmentIDs {
+	for _, name := range sortedNames(c.EnvironmentIDs) {
+		id := c.EnvironmentIDs[name]
 		if !seen[name] {
-			return fmt.Errorf("environmentIds: %q is neither a source nor a rollout environment", name)
+			// An extra environment (not copied from or rolled out to)
+			// is only of no use: noted, not fatal.
+			c.warnings = append(c.warnings, fmt.Sprintf("environmentIds: %q is neither in sources nor in rollout, so it is not used; check the name matches the .tfvars file (%s.tfvars)", name, name))
+			delete(c.EnvironmentIDs, name)
+			continue
 		}
 		if !envIDRE.MatchString(id) {
 			return fmt.Errorf("environmentIds.%s must be a PingOne environment ID (a UUID)", name)
@@ -481,4 +489,13 @@ func (c *Config) envID(name string) string {
 		return id
 	}
 	return c.SourceEnvironmentIDs[name]
+}
+
+func sortedNames(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

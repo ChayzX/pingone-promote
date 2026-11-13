@@ -107,6 +107,9 @@ func New(o Options) (*Server, error) {
 	}
 	s.log = slog.New(redactingHandler{next: logger.Handler(), redact: s.redact})
 	s.exporter = plainErrors{inner: o.Exporter, log: s.log, redact: s.redact}
+	for _, w := range o.Config.warnings {
+		s.log.Warn("configuration", "problem", w)
+	}
 	gl, err := gitlab.NewClient(gitlab.Config{BaseURL: o.Config.GitLab.BaseURL, ProjectID: o.Config.GitLab.ProjectID, TerraformBin: o.Config.Tools.Terraform}, o.Secrets.GitLabToken)
 	if err != nil {
 		return nil, errors.New("server: GitLab configuration: " + s.redact(err.Error()))
