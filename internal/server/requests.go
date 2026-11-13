@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -163,8 +164,11 @@ func (s *Server) requestRows(ctx context.Context, label string) ([]requestRow, e
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(rest)))
 	for _, b := range rest {
-		rows = append(rows, requestRow{Branch: b, BranchURL: branchURL(b), Rollout: s.notStarted(), Note: "Branch only, no merge request."})
+		rows = append(rows, requestRow{Branch: b, BranchURL: branchURL(b), Rollout: s.notStarted()})
 	}
+	// Newest first: request branches are named after their request ID,
+	// which starts with the time it was made.
+	sort.SliceStable(rows, func(i, j int) bool { return requestKey(rows[i].Branch) > requestKey(rows[j].Branch) })
 	return rows, nil
 }
 
@@ -207,3 +211,9 @@ func (s *Server) rollout(ctx context.Context, sha, branch string) ([]rolloutCell
 	}
 	return cells, ""
 }
+
+var requestIDRE = regexp.MustCompile(`\d{8}-\d{6}-[a-z0-9]{6}`)
+
+// requestKey orders rows by their request ID (its time), when the branch
+// name has one.
+func requestKey(branch string) string { return requestIDRE.FindString(branch) }

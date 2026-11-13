@@ -123,7 +123,7 @@ func TestLiveTenant(t *testing.T) {
 	for a, id := range exp.Referenced {
 		excluded = append(excluded, neutralize.Excluded{Address: a, ID: id})
 	}
-	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName},
+	neu, err := neutralize.Neutralize(exp.NeutralizeInput(),
 		neutralize.Options{SourceEnvironmentID: creds.ExportEnvironment(), Excluded: excluded, Lift: lift})
 	if err != nil {
 		t.Fatal(check(err.Error()))
@@ -184,6 +184,11 @@ func TestLiveTenant(t *testing.T) {
 		}
 	} else {
 		logf("whole environment: %d files, %d secrets", len(res.Files), len(res.RequiredSecrets))
+		// PINGONE_PROMOTE_LIVE_OUT keeps the merged repository, to plan it
+		// against the source environment (which should only import).
+		if out := os.Getenv("PINGONE_PROMOTE_LIVE_OUT"); out != "" {
+			writeTree(t, out, apply(head, res))
+		}
 		// check --root, terraform validate (every diagnostic counts: these
 		// are real values) and a mock plan for the source environment.
 		if t.Run("whole", func(t *testing.T) { endToEndPlans(t, apply(head, res), res.RequiredSecrets, []string{"dev"}) }) {
@@ -282,7 +287,7 @@ func liveNeutralize(exp *exporter.Export, env string) error {
 	for a, id := range exp.Referenced {
 		ex = append(ex, neutralize.Excluded{Address: a, ID: id})
 	}
-	_, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName},
+	_, err := neutralize.Neutralize(exp.NeutralizeInput(),
 		neutralize.Options{SourceEnvironmentID: env, Excluded: ex})
 	return err
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -370,6 +371,11 @@ func (s *state) readDecls() error {
 		}
 		s.decls[name] = d
 	}
+	for _, name := range s.in.Shared {
+		if _, ok := s.decls[name]; ok {
+			s.shared[name] = true
+		}
+	}
 	return nil
 }
 
@@ -679,10 +685,10 @@ func (s *state) splitShared() error {
 	}
 	for _, name := range sortedSet(s.shared) {
 		users := usersOf[name]
-		if len(users) < 2 {
+		if len(users) == 0 || (len(users) == 1 && !slices.Contains(s.in.Shared, name)) {
 			continue
 		}
-		var made []string
+		var made, unknown []string
 		for _, rb := range users {
 			label := rb.label
 			if nl, ok := s.relabel[rb]; ok {
@@ -696,7 +702,12 @@ func (s *state) splitShared() error {
 				s.varRenameBy[rb] = map[string]string{}
 			}
 			s.varRenameBy[rb][name] = n
-			s.noValue[n] = true
+			if v, ok := s.in.Values[rb.addr()]; ok {
+				s.values[n] = cty.StringVal(v)
+			} else {
+				s.noValue[n] = true
+				unknown = append(unknown, n)
+			}
 			if d, ok := s.decls[name]; ok && d.desc != "" {
 				where := stripPrefix(label)
 				if c, ok := literalString(rb.attrs["context"]); ok && c != "" {
@@ -707,7 +718,10 @@ func (s *state) splitShared() error {
 			made = append(made, n)
 		}
 		sort.Strings(made)
-		s.res.Warnings = append(s.res.Warnings, "terraformer exported one value variable ("+name+") for several resources; each now has its own ("+strings.Join(made, ", ")+"), and its value is entered for every environment")
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			s.res.Warnings = append(s.res.Warnings, "terraformer exported one value variable ("+name+") for several resources; each now has its own ("+strings.Join(made, ", ")+"), and the value of "+strings.Join(unknown, ", ")+" is entered for every environment")
+		}
 	}
 	return nil
 }
@@ -834,8 +848,15 @@ func (s *state) classifyVariables() error {
 			sort.Strings(targets)
 		}
 		for _, name := range targets {
+			// A DaVinci variable of type string that holds a credential
+			// (its name or its value says so) is kept out of Git like a
+			// secret variable: its value comes from Vault.
+			credential := !d.sensitive && usedBy[origin][TypeVariable] && len(usedBy[origin]) == 1 && s.credentialValue(name)
+			if credential {
+				s.res.Warnings = append(s.res.Warnings, "DaVinci variable value "+name+" looks like a credential, so it is not written to Git: it is a secret (customer_secrets.yml, from Vault). Consider making the variable a secret in DaVinci")
+			}
 			switch {
-			case d.sensitive:
+			case d.sensitive || credential:
 				mapped := name
 				if m, ok := s.opts.SecretNames[name]; ok && m != "" {
 					mapped = m
@@ -912,4 +933,20 @@ func (s *state) keep(name string, d decl) *Variable {
 		s.res.SourceValues[name] = v
 	}
 	return &Variable{Name: name, Type: d.typ, Description: desc, Kind: KindEnvLocal, Origin: name}
+}
+
+// credentialValue reports whether a DaVinci variable's value variable holds
+// a credential: by the variable's name (a password, token, secret or
+// credentials) or by its source value (a JWT, a private key, or base64 of
+// "user:password").
+func (s *state) credentialValue(name string) bool {
+	base := strings.TrimSuffix(strings.TrimPrefix(name, "davinci_variable_"), "_value")
+	if secretscan.HasSecretSuffix(base) || secretscan.CredentialName(base) {
+		return true
+	}
+	v, ok := s.values[name]
+	if !ok || v.IsNull() || !v.IsKnown() || v.Type() != cty.String {
+		return false
+	}
+	return secretscan.CredentialValue(v.AsString())
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -56,6 +57,7 @@ type Source struct {
 	decls   []hclblocks.Block // module variables.tf blocks, in order
 	declSrc []byte
 	values  map[string]string // variable -> value expression text
+	shared  []string          // value variables declared for several resources
 }
 
 // NewSource prepares a whole export (All, Imports and values) for slicing.
@@ -126,6 +128,16 @@ func NewSource(full *Export) (*Source, error) {
 	if s.decls == nil {
 		return nil, errors.New("exporter: the export has no variables.tf")
 	}
+	seen := map[string]bool{}
+	for _, d := range s.decls {
+		if d.Type == "variable" && len(d.Labels) == 1 {
+			if seen[d.Labels[0]] && !slices.Contains(s.shared, d.Labels[0]) {
+				s.shared = append(s.shared, d.Labels[0])
+			}
+			seen[d.Labels[0]] = true
+		}
+	}
+	sort.Strings(s.shared)
 	return s, nil
 }
 
@@ -326,7 +338,7 @@ func (s *Source) write(sel map[string]bool) (*Export, error) {
 	}
 	files[full.ModuleName+"-terraform.auto.tfvars"] = []byte(tv.String())
 	return &Export{EnvironmentID: full.EnvironmentID, ModuleDir: full.ModuleDir, ModuleName: full.ModuleName,
-		Files: files, Findings: secretscan.ScanFiles(files)}, nil
+		Files: files, Findings: secretscan.ScanFiles(files), SharedValues: s.shared}, nil
 }
 
 // rewriteFallbacks replaces attribute references (<addr>.id) to resources

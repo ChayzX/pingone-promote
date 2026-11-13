@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/request"
 )
 
@@ -324,6 +325,9 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		d.Whole = f.Get("scope") == request.ScopeAll
 		d.Families = nil
 		d.WantSections = f.Get("scope") == "sections"
+		if !d.WantSections && len(f["family"]) > 0 {
+			d.notice = "The ticked sections are only used with Whole sections; you chose another option, so they were ignored."
+		}
 		if d.WantSections {
 			for _, fam := range catalog.Families {
 				if catalog.ExportableFamily(fam) && contains(f["family"], fam) {
@@ -349,8 +353,15 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 				d.Branch = b
 			}
 		}
-		d.Title = strings.TrimSpace(f.Get("title"))
-		d.Description = f.Get("description")
+		title, desc := strings.TrimSpace(f.Get("title")), f.Get("description")
+		switch {
+		case len(title) > 255 || strings.ContainsAny(title, "\n"):
+			d.problem = "The merge request title must be one line of at most 255 characters; it was not saved."
+		case len(desc) > 64<<10:
+			d.problem = "The note for reviewers must be at most 64 KB; it was not saved."
+		default:
+			d.Title, d.Description = title, desc
+		}
 	}
 	d.Updated = s.now()
 	// The name is typed on step 1; later steps use the saved one.
@@ -579,7 +590,8 @@ func (s *Server) jobPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
-		if d.job != nil && d.job.Running && d.job.cancel != nil {
+		// A commit to GitLab is not interrupted half way.
+		if d.job != nil && d.job.Running && d.job.cancel != nil && d.job.Stage != commitStage {
 			d.job.cancel()
 		}
 		s.redirect(w, r, draftURL(d, "/job"))
@@ -596,6 +608,22 @@ type envView struct {
 	Blockers []blockerView
 	Values   []valueField
 	Imports  []valueField
+	// Entered are values and IDs already entered, editable.
+	Entered []valueField
+}
+
+func importField(d *Draft, env, addr string) valueField {
+	return valueField{Name: "i:" + env + ":" + addr, Key: addr, Value: d.ImportIDs[env][addr],
+		Label: capitalize("ID of the existing " + describe(d, addr)), Hint: "It already exists in " + env + "; find its ID in the PingOne admin console there."}
+}
+
+func hasField(fs []valueField, key string) bool {
+	for _, f := range fs {
+		if f.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 type valueField struct {
@@ -616,7 +644,9 @@ type changeView struct {
 	// CanExclude).
 	Choosable  bool
 	CanExclude bool
-	Choice     string
+	// Why says why the item is in the request.
+	Why    string
+	Choice string
 }
 
 // differs: statuses where Git and the source disagree, so the person
@@ -634,8 +664,10 @@ type previewView struct {
 	Problem   string
 	Fresh     bool
 	CanSubmit bool
-	// NoChanges: Git already has everything in the request.
+	// NoChanges: Git already has everything in the request. Kept counts
+	// items that differ from the source and keep their Git version.
 	NoChanges   bool
+	Kept        int
 	Running     bool
 	Types       []typeView
 	Changes     []changeView
@@ -678,6 +710,9 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Slice(v.Types, func(i, j int) bool { return v.Types[i].Kind < v.Types[j].Kind })
 		for _, c := range res.Changes {
+			if c.Action == "kept_differs" {
+				v.Kept++
+			}
 			if d.Whole && c.Action == "unchanged" {
 				v.Unchanged++
 				continue
@@ -689,6 +724,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 			// person asked for that differs from Git can be updated or kept.
 			cv.Choosable = c.Role == "dependency" && (c.Action != "unchanged" || cv.Choice != "") || differs[c.Status]
 			cv.CanExclude = c.Role == "dependency"
+			cv.Why = whyText(d, c.Role)
 			cv.Kind = capitalize(cv.Kind)
 			if cv.StatusText == "" {
 				cv.StatusText = c.Status
@@ -723,8 +759,26 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 					}
 					ev.Values = append(ev.Values, f)
 				case b.Code == "missing_import" && b.Address != "":
-					ev.Imports = append(ev.Imports, valueField{Name: "i:" + env + ":" + b.Address, Key: b.Address, Value: d.ImportIDs[env][b.Address],
-						Label: capitalize("ID of the existing " + describe(d, b.Address)), Hint: "It already exists in " + env + "; find its ID in the PingOne admin console there."})
+					ev.Imports = append(ev.Imports, importField(d, env, b.Address))
+				}
+			}
+			// What was entered stays editable: a typo can be corrected,
+			// or cleared to enter it again.
+			okV, _ := fillable(d, env)
+			for _, name := range sortedKeysS(d.Values[env]) {
+				if !okV[name] || hasField(ev.Values, name) {
+					continue
+				}
+				label, hint := valueLabel(d, res, name)
+				f := valueField{Name: "v:" + env + ":" + name, Key: name, Value: d.Values[env][name], Label: capitalize(label), Hint: hint, List: isListValue(d, name)}
+				if f.List {
+					f.Value, f.Hint = jsonToLines(f.Value), "One per line."
+				}
+				ev.Entered = append(ev.Entered, f)
+			}
+			for _, a := range sortedKeysS(d.ImportIDs[env]) {
+				if !hasField(ev.Imports, a) {
+					ev.Entered = append(ev.Entered, importField(d, env, a))
 				}
 			}
 			if !ev.Ready && env != request.RequestBlockers {
@@ -843,6 +897,14 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 			env, name, ok := strings.Cut(rest, ":")
 			if !ok || !contains(envs, env) || name == "" || len(name) > 512 || len(vals[0]) > 8<<10 {
 				continue
+			}
+			// Only what this request asks for: never the environment ID
+			// or a variable the request does not declare.
+			okV, okI := fillable(d, env)
+			if kind == "v" && !okV[name] || kind == "i" && !okI[name] {
+				d.problem = "Nothing was saved: this request has no value named " + name + "."
+				s.redirect(w, r, draftURL(d, "/preview"))
+				return
 			}
 			dst := values
 			if kind == "i" {
@@ -1130,4 +1192,68 @@ func asciiPrintable(s string) bool {
 		}
 	}
 	return true
+}
+
+// fillable lists the values and import IDs a person may enter for env
+// after the draft's last preview: the values its change declares and the
+// existing items it adopts. The environment ID only when env's settings
+// lack it (the preview asks for it then).
+func fillable(d *Draft, env string) (values, imports map[string]bool) {
+	values, imports = map[string]bool{}, map[string]bool{}
+	if d.preview == nil || d.preview.result == nil {
+		return
+	}
+	res := d.preview.result
+	for name := range res.Variables {
+		values[name] = true
+	}
+	delete(values, neutralize.EnvironmentIDVariable)
+	delete(values, "import_ids")
+	for _, b := range res.Blockers[env] {
+		switch {
+		case b.Code == "missing_value" && b.Var != "":
+			values[b.Var] = true
+		case b.Code == "missing_import" && b.Address != "":
+			imports[b.Address] = true
+		}
+	}
+	// Entered earlier, so asked for then (the blocker is gone now).
+	for name := range d.Values[env] {
+		if name == neutralize.EnvironmentIDVariable {
+			values[name] = true
+		}
+	}
+	for a := range d.ImportIDs[env] {
+		imports[a] = true
+	}
+	return
+}
+
+func sortedKeysS(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// commitStage is the job stage that writes to GitLab.
+const commitStage = "Committing to GitLab"
+
+func whyText(d *Draft, role string) string {
+	switch role {
+	case "selected":
+		if len(d.Families) > 0 {
+			return "in a chosen section, or picked"
+		}
+		return "you picked it"
+	case "dependency":
+		return "your selection uses it"
+	case "environment":
+		return "whole environment"
+	case "excluded":
+		return "excluded"
+	}
+	return role
 }

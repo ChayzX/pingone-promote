@@ -290,7 +290,15 @@ var defs = []Def{
 	with(child("pingone_schema_attribute", "directory", "", "", "schemas/{schema}/attributes", "attributes", false, "name"), func(d *Def) {
 		d.Status, d.Reason, d.Builtin, d.Import = Limited, "the API returns the user schema's standard attributes too; only CUSTOM attributes are created, standard ones are adopted", "schemaType=CORE|STANDARD", ImportParentID
 	}),
-	with(api("pingone_password_policy", "directory", "passwordPolicies", "passwordPolicies", "name"), func(d *Def) { d.Builtin = "default=true" }),
+	with(api("pingone_password_policy", "directory", "passwordPolicies", "passwordPolicies", "name"), func(d *Def) {
+		d.Builtin = "default=true"
+		// minCharacters is keyed by the characters themselves ("@" reads a
+		// key literally: the special characters contain dots).
+		d.Rename = map[string]string{"excludes_commonly_used_passwords": "excludesCommonlyUsed",
+			"password_age_max": "maxAgeDays", "password_age_min": "minAgeDays",
+			"min_characters.alphabetical_lowercase": "@abcdefghijklmnopqrstuvwxyz", "min_characters.alphabetical_uppercase": "@ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+			"min_characters.numeric": "@0123456789", "min_characters.special_characters": "@~!@#$%^&*()-_=+[]{}|;:,.<>/?"}
+	}),
 
 	// --- MFA and devices ---
 	with(api("pingone_mfa_device_policy", "mfa_devices", "deviceAuthenticationPolicies", "deviceAuthenticationPolicies", "name"), func(d *Def) { d.Match = "default!=true" }),
@@ -323,10 +331,14 @@ var defs = []Def{
 	child("pingone_gateway_role_assignment", "gateways", "pingone_gateway", "gateway_id", "gateways/{parent}/roleAssignments", "roleAssignments", true, "role.id", "scope.type"),
 
 	// --- Branding, notifications, forms, agreements, languages ---
-	single("pingone_branding_settings", "branding", "branding"),
+	// Unconfigured settings have no company name and the all-zero logo ID.
+	with(single("pingone_branding_settings", "branding", "branding"), func(d *Def) { d.Match = "companyName~.||logo.id~[1-9a-f]" }),
 	with(api("pingone_branding_theme", "branding", "themes", "themes", "configuration.name"), func(d *Def) {
 		d.Status, d.Reason = Limited, "logo and background images are referenced by image ID and URL; the image itself is a separate pingone_image (not exportable)"
-		d.Rename = map[string]string{"name": "configuration.name"}
+		// The API has a background type; the provider has a flag for the
+		// default background (the colour is kept with it).
+		d.Rename = map[string]string{"name": "configuration.name",
+			"use_default_background": "=true?configuration.backgroundType=DEFAULT"}
 		d.Fallback = []string{"configuration"}
 	}),
 	with(child("pingone_branding_theme_default", "branding", "pingone_branding_theme", "branding_theme_id", "", "", true), func(d *Def) {
@@ -345,6 +357,8 @@ var defs = []Def{
 		d.Hoist = map[string]string{"email": "deliveryMethod=Email", "sms": "deliveryMethod=SMS", "voice": "deliveryMethod=Voice", "push": "deliveryMethod=Push"}
 		d.EnvLocal = []string{"email.from.address", "email.reply_to.address"}
 		d.Rename = map[string]string{"template_name": "template.id"}
+		// PingOne's predefined contents exist in every environment.
+		d.Builtin = "default=true"
 		// The templates provider 1.24.0 can manage (others, such as
 		// invite_admin, are left out).
 		d.Match = "template.id=account_created|account_updated|credential_issued|credential_revoked|credential_updated|credential_verification|device_pairing|digital_wallet_pairing|email_verification_admin|email_verification_user|email_phone_verification|general|id_verification|new_device_paired|password_change_admin|password_change_user|recovery_code_template|password_recovery_new|strong_authentication|transaction|verification_code_template|verification_code_new"

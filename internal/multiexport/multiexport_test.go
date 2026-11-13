@@ -63,7 +63,7 @@ func neutralized(t *testing.T, exp *exporter.Export) *neutralize.Result {
 		ex = append(ex, neutralize.Excluded{Address: a, ID: id})
 	}
 	sort.Slice(ex, func(i, j int) bool { return ex[i].Address < ex[j].Address })
-	res, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName},
+	res, err := neutralize.Neutralize(exp.NeutralizeInput(),
 		neutralize.Options{SourceEnvironmentID: env, Excluded: ex})
 	if err != nil {
 		t.Fatal(err)

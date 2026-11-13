@@ -108,7 +108,7 @@ Totals: 53 covered, 31 covered with documented limits, 17 not possible (101 reso
 | `pingone_notification_policy` | covered | pingone-api | - | - | no | - |
 | `pingone_notification_settings` | covered | pingone-api | per environment: `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | - |
 | `pingone_notification_settings_email` | covered with documented limits | pingone-api | per environment: `host`, `port`, `username`, `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | SMTP host, port and user are per-environment values; the SMTP password and OAuth client secret are secrets (customer_secrets.yml); not copied while PingOne's own email delivery is used (no sender set) |
-| `pingone_notification_template_content` | covered | pingone-api | per environment: `email.from.address`, `email.reply_to.address` | - | no | - |
+| `pingone_notification_template_content` | covered | pingone-api | per environment: `email.from.address`, `email.reply_to.address`; built-in when `default=true` | - | no | - |
 | `pingone_phone_delivery_settings` | covered with documented limits | pingone-api | - | - | no | custom provider auth tokens are secrets (customer_secrets.yml); request headers of custom providers are never exported (they can carry credentials) and are set by hand |
 
 ## forms

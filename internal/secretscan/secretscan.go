@@ -7,9 +7,11 @@ package secretscan
 
 import (
 	"bytes"
+	"encoding/base64"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -114,4 +116,56 @@ func ScanFiles(files map[string][]byte) []Finding {
 func SuspectLiteral(name, value string) bool {
 	v := strings.TrimSpace(value)
 	return v != "" && HasSecretSuffix(name) && !TemplateOnly.MatchString(v) && !Masked.MatchString(v)
+}
+
+// CredentialName is the rule for DaVinci variable names: one that names a
+// credential anywhere (basicAuthCred, LdapDSBindCreds, PingFedAuthNCreds,
+// RumAccessToken) rather than only at the end.
+func CredentialName(name string) bool {
+	if urlNameRE.MatchString(name) {
+		return false // forgotPasswordUrl: a link, not a password
+	}
+	if credWordRE.MatchString(name) {
+		return true
+	}
+	n := compact(name)
+	for _, s := range []string{"password", "passwd", "passphrase", "secret", "apikey", "privatekey", "basicauth", "bindpw"} {
+		if strings.Contains(n, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// urlNameRE matches names of links and addresses.
+var urlNameRE = regexp.MustCompile(`(?i)(url|uri|href|link|endpoint|path|page|redirect)s?$`)
+
+// credWordRE matches "cred", "creds" or "credential(s)" as a word of a
+// camelCase or snake_case name (not "credit").
+var credWordRE = regexp.MustCompile(`[Cc]red(?:s|entials?)?(?:$|[^a-z])`)
+
+// CredentialValue reports whether a value is a credential whatever its
+// name: a JWT, a private key, or base64 of "user:password".
+func CredentialValue(v string) bool {
+	v = strings.TrimSpace(v)
+	if JWT.MatchString(v) || PrivateKey.MatchString(v) {
+		return true
+	}
+	if len(v) < 8 || strings.ContainsAny(v, " {}<>") {
+		return false
+	}
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil {
+		return false
+	}
+	user, pass, ok := strings.Cut(string(b), ":")
+	if !ok || user == "" || pass == "" || !utf8.Valid(b) {
+		return false
+	}
+	for _, r := range string(b) {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }

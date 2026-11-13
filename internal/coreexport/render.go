@@ -305,12 +305,19 @@ func renameValue(rn string, src, parent map[string]any) (any, bool) {
 	if rn == "-" {
 		return nil, false
 	}
+	if k, ok := strings.CutPrefix(rn, "@"); ok {
+		return src[k], true // a key read literally
+	}
 	p, cond, ok := strings.Cut(rn, "?")
 	if ok && !Cond(cond, src) {
 		return nil, false
 	}
 	switch {
 	case strings.HasPrefix(p, "="):
+		switch p[1:] {
+		case "true", "false":
+			return p[1:] == "true", true
+		}
 		return p[1:], true
 	case strings.HasPrefix(p, "^"):
 		if parent == nil {
@@ -335,28 +342,51 @@ func MissingRequired(d *catalog.Def, raw, parent map[string]any) []string {
 	}
 	r := &renderer{def: d}
 	var out []string
-	for _, n := range sortedAttrNames(attrs) {
-		a := attrs[n]
-		if !a.Required || a.Secret() || skip[n] {
-			continue
-		}
-		var v any
-		if cond, ok := d.Hoist[n]; ok {
-			if Cond(cond, raw) {
-				v = raw
-			}
-		} else if rn, ok := d.Rename[n]; ok {
-			if rn == "-" {
+	// Nested objects that are written (present, or hoisted) must have
+	// their own required attributes too (an MFA action's device policy).
+	var walk func(attrs map[string]catalog.Attr, src map[string]any, path string)
+	walk = func(attrs map[string]catalog.Attr, src map[string]any, path string) {
+		for _, n := range sortedAttrNames(attrs) {
+			a, full := attrs[n], path+n
+			if a.Secret() || (path == "" && skip[n]) || !a.Configurable() {
 				continue
 			}
-			v, _ = renameValue(rn, raw, parent) // under a false condition: missing
-		} else {
-			v = r.find(raw, n, true)
-		}
-		if v == nil {
-			out = append(out, n)
+			var v any
+			if cond, ok := d.Hoist[full]; ok {
+				if Cond(cond, raw) {
+					v = src
+				}
+			} else if rn, ok := d.Rename[full]; ok {
+				if rn == "-" {
+					continue
+				}
+				v, _ = renameValue(rn, src, parent) // under a false condition: missing
+			} else {
+				v = r.find(src, n, path == "")
+			}
+			if v == nil {
+				if a.Required {
+					out = append(out, full)
+				}
+				continue
+			}
+			switch x := v.(type) {
+			case map[string]any: // an object, or a hoisted block
+				if a.Nesting != "" && a.Nesting != "map" {
+					walk(a.Attrs, x, full+".")
+				}
+			case []any: // blocks
+				if a.Nesting == "list" || a.Nesting == "set" {
+					for _, e := range x {
+						if m, ok := e.(map[string]any); ok {
+							walk(a.Attrs, m, full+".")
+						}
+					}
+				}
+			}
 		}
 	}
+	walk(attrs, raw, "")
 	return out
 }
 

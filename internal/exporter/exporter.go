@@ -52,6 +52,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"pingone-promote/internal/neutralize"
 	"regexp"
 	"runtime"
 	"sort"
@@ -470,6 +471,14 @@ type Export struct {
 	// Owners maps an exported owned child (a sign-on policy action, an
 	// application's attribute mapping) to its parent's address.
 	Owners map[string]string
+	// SharedValues are value variables terraformer declares for several
+	// resources of the whole source (one DaVinci variable name in several
+	// contexts). Each user gets a variable of its own even when this
+	// export has only one of them, so names never depend on the selection.
+	SharedValues []string
+	// Values are DaVinci variable values read from the API (address ->
+	// value), for value variables terraformer cannot tell apart.
+	Values map[string]string
 }
 
 // Module directory and name we pass explicitly (terraformer's defaults).
@@ -574,4 +583,10 @@ func readTree(dir string, max int64) (map[string][]byte, error) {
 		return nil
 	})
 	return files, err
+}
+
+// NeutralizeInput is the neutralizer's input for the export, with what it
+// knows about the whole source (shared value variables, variable values).
+func (e *Export) NeutralizeInput() *neutralize.Input {
+	return &neutralize.Input{Files: e.Files, ModuleDir: e.ModuleDir, ModuleName: e.ModuleName, Shared: e.SharedValues, Values: e.Values}
 }

@@ -67,14 +67,6 @@ func (s *Server) startJob(d *Draft, kind string, fn func(ctx context.Context, st
 		case err == nil:
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errBranchTaken) || errors.Is(err, errNoSourceID):
 			job.Err = plainJobError(err)
-		case errors.Is(err, context.Canceled):
-			job.Err = "Cancelled."
-		case errors.Is(err, context.DeadlineExceeded):
-			job.Err = "This took too long and was stopped."
-		case errors.Is(err, errBranchTaken):
-			job.Err = "The Git branch " + strings.TrimPrefix(err.Error(), errBranchTaken.Error()+": ") + " already exists. Go back, type a branch name that is not used yet, and preview again."
-		case errors.Is(err, errNoSourceID):
-			job.Err = noSourceIDText
 		default:
 			job.Err = s.redact(err.Error())
 		}
@@ -232,7 +224,7 @@ func (s *Server) runSubmit(d *Draft, req *request.Request, p *preview) func(cont
 				return nil
 			}
 		}
-		stage("Committing to GitLab")
+		stage(commitStage)
 		res := request.Run(ctx, s.envFor(project, p.snapshot, p.head, req, replayer{f: p.frozen}), req)
 		s.scrub(res)
 		finish(res, res.Error != nil && res.Error.Code == request.ErrConflict)

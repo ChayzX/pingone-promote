@@ -283,8 +283,7 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		}
 		for _, f := range sortedAllowed(d.Allowed) {
 			if bad := disallowed(raw, f, d.Allowed[f]); len(bad) > 0 {
-				name, _ := raw["name"].(string)
-				warn(fmt.Sprintf("%s %q is not copied: %s holds %s, which the Terraform provider cannot set; copy it by hand", d.Type, name, f, strings.Join(bad, ", ")))
+				warn(fmt.Sprintf("%s is not copied: %s holds %s, which the Terraform provider cannot set; copy it by hand", objName(d, raw), f, strings.Join(bad, ", ")))
 				return
 			}
 		}
@@ -292,13 +291,15 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		if parent != nil {
 			praw = parent.Raw
 		}
-		if miss := MissingRequired(d, raw, praw); len(miss) > 0 {
+		// A built-in object stays (references to it become ID variables);
+		// it is copied only when picked.
+		builtin := (d.Builtin != "" && Cond(d.Builtin, raw)) || (parent != nil && parent.Builtin && d.Owned)
+		if miss := MissingRequired(d, raw, praw); len(miss) > 0 && !builtin {
 			// Nothing configured (an unset reCAPTCHA, an application
 			// without metadata) is simply not copied; anything else is
 			// reported.
 			if configured(raw) {
-				name, _ := raw["name"].(string)
-				warn(fmt.Sprintf("%s %q is not copied: the API does not return %s, which the Terraform provider requires; copy it by hand", d.Type, name, strings.Join(miss, ", ")))
+				warn(fmt.Sprintf("%s is not copied: the API does not return %s, which the Terraform provider requires; copy it by hand", objName(d, raw), strings.Join(miss, ", ")))
 			}
 			return
 		}
@@ -755,4 +756,13 @@ func importID(tmpl string, o *Object) string {
 		}
 	}
 	return strings.NewReplacer("{id}", o.ID, "{parent}", parent, "{grandparent}", grand).Replace(tmpl)
+}
+
+// objName names an API object in a message: its type and name, or the
+// type alone for a setting without a name.
+func objName(d *catalog.Def, raw map[string]any) string {
+	if name, _ := raw["name"].(string); name != "" {
+		return fmt.Sprintf("%s %q", d.Type, name)
+	}
+	return d.Type
 }

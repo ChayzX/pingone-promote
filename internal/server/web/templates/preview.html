@@ -6,7 +6,7 @@
 <form method="post" action="/drafts/{{$d.ID}}/preview"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="primary">Preview again</button></form></div>{{end}}
 
 {{if .Data.NoChanges}}
-<div class="ready" role="status"><p><strong>Nothing to submit.</strong> Git already has everything in this request as it is in {{$d.Source}}.</p></div>
+<div class="ready" role="status"><p><strong>Nothing to submit.</strong> {{if .Data.Kept}}Git already has everything this request would change. {{.Data.Kept}} {{if eq .Data.Kept 1}}item differs{{else}}items differ{{end}} from {{$d.Source}} and {{if eq .Data.Kept 1}}keeps its{{else}}keep their{{end}} Git version; choose update for one below to copy it.{{else}}Git already has everything in this request as it is in {{$d.Source}}.{{end}}</p></div>
 {{else if .Data.CanSubmit}}
 <div class="ready" role="status"><p><strong>Ready to submit.</strong> Every environment has what it needs. Check the changes below, then submit.</p><p><a href="#submit">Go to Submit</a></p></div>
 {{else if .Data.AlmostReady}}
@@ -52,18 +52,21 @@
 </section>
 {{end}}
 
-{{$needValues := false}}{{range .Data.Envs}}{{if or .Values .Imports}}{{$needValues = true}}{{end}}{{end}}
+{{$needValues := false}}{{range .Data.Envs}}{{if or .Values .Imports .Entered}}{{$needValues = true}}{{end}}{{end}}
 {{if $needValues}}
 <section id="values">
 <h2>Fill in what each environment needs</h2>
 <p class="hint">These values differ between environments, for example URLs and IDs. Each one is saved in that environment's settings in Git, with this request. Never type a password, key or other secret here: secrets come from Vault, and a value that looks like a secret is refused.</p>
 <form method="post" action="/drafts/{{$d.ID}}/values">
   <input type="hidden" name="csrf" value="{{$csrf}}">
-  {{range .Data.Envs}}{{if or .Values .Imports}}
+  {{range .Data.Envs}}{{if or .Values .Imports .Entered}}
   <fieldset id="env-{{.Env}}">
     <legend>{{.Label}}</legend>
     {{range .Values}}<div class="field"><label for="{{.Name}}">{{.Label}}</label>{{if .List}}<textarea id="{{.Name}}" name="{{.Name}}" rows="3" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{.Value}}</textarea>{{else}}<input type="text" id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{end}}<p class="hint" id="{{.Name}}-hint">{{.Hint}} <code class="small">{{.Key}}</code></p></div>{{end}}
     {{range .Imports}}<div class="field"><label for="{{.Name}}">{{.Label}}</label><input type="text" id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" maxlength="512" autocomplete="off" aria-describedby="{{.Name}}-hint"><p class="hint" id="{{.Name}}-hint">{{.Hint}} <code class="small">{{.Key}}</code></p></div>{{end}}
+    {{with .Entered}}<details><summary>{{len .}} already entered (change or clear one here)</summary>
+    {{range .}}<div class="field"><label for="{{.Name}}">{{.Label}}</label>{{if .List}}<textarea id="{{.Name}}" name="{{.Name}}" rows="3" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{.Value}}</textarea>{{else}}<input type="text" id="{{.Name}}" name="{{.Name}}" value="{{.Value}}" maxlength="8192" autocomplete="off" aria-describedby="{{.Name}}-hint">{{end}}<p class="hint" id="{{.Name}}-hint">{{.Hint}} <code class="small">{{.Key}}</code></p></div>{{end}}
+    </details>{{end}}
   </fieldset>
   {{end}}{{end}}
   <button type="submit" class="primary">Save and preview again</button>
@@ -78,25 +81,19 @@
 {{if $.Data.Unchanged}}<p class="hint">{{$.Data.Unchanged}} items already match Git and are not listed.</p>{{end}}
 <form method="post" action="/drafts/{{$d.ID}}/choices">
   <input type="hidden" name="csrf" value="{{$csrf}}">
+  {{$excluded := 0}}{{range .}}{{if eq .Action "excluded"}}{{$excluded = add $excluded 1}}{{end}}{{end}}
   <table>
     <caption class="sr-only">Every item in this request</caption>
     <thead><tr><th scope="col">Item</th><th scope="col">Why it is here</th><th scope="col">Status</th><th scope="col">What happens</th><th scope="col">Your choice</th></tr></thead>
-    <tbody>{{range .}}
-    <tr>
-      <td><strong>{{.Name}}</strong><br><span class="hint">{{.Kind}}</span><br><code class="small">{{.Address}}</code>{{with .Reason}}<div class="hint">{{.}}</div>{{end}}</td>
-      <td>{{if eq .Role "selected"}}{{if $d.Families}}in a chosen section, or picked{{else}}you picked it{{end}}{{else if eq .Role "dependency"}}your selection uses it{{else if eq .Role "environment"}}whole environment{{else if eq .Role "excluded"}}excluded{{else}}{{.Role}}{{end}}</td>
-      <td>{{.StatusText}}</td>
-      <td>{{.ActionText}}</td>
-      <td>{{if .Choosable}}
-        <select name="c:{{.Address}}" aria-label="Choice for {{.Name}}">
-          <option value=""{{if eq .Choice ""}} selected{{end}}>default</option>
-          <option value="update"{{if eq .Choice "update"}} selected{{end}}>update (use the source version)</option>
-          <option value="keep"{{if eq .Choice "keep"}} selected{{end}}>keep the Git version</option>
-          {{if .CanExclude}}<option value="exclude"{{if eq .Choice "exclude"}} selected{{end}}>exclude (leave it out)</option>{{end}}
-        </select>{{end}}</td>
-    </tr>
-    {{end}}</tbody>
+    <tbody>{{range .}}{{if ne .Action "excluded"}}{{template "changerow" .}}{{end}}{{end}}</tbody>
   </table>
+  {{if $excluded}}<details><summary>{{$excluded}} {{if eq $excluded 1}}item it refers to is{{else}}items it refers to are{{end}} not copied: each environment uses its own (open to choose otherwise)</summary>
+  <table>
+    <caption class="sr-only">Items referred to but not copied</caption>
+    <thead><tr><th scope="col">Item</th><th scope="col">Why it is here</th><th scope="col">Status</th><th scope="col">What happens</th><th scope="col">Your choice</th></tr></thead>
+    <tbody>{{range .}}{{if eq .Action "excluded"}}{{template "changerow" .}}{{end}}{{end}}</tbody>
+  </table>
+  </details>{{end}}
   {{range .}}{{if .Choosable}}<button type="submit">Apply choices and preview again</button>{{break}}{{end}}{{end}}
 </form>
 </section>
@@ -136,7 +133,7 @@
   <button type="submit" class="primary">Submit to GitLab</button>
 </form>
 {{else if .Data.NoChanges}}
-<p>Nothing to submit: Git already matches {{$d.Source}} for every item in this request.</p>
+<p>Nothing to submit: Git already has everything this request would change.</p>
 {{else}}
 <p class="problem"><strong>Cannot submit yet.</strong> {{.Data.WhyNot}}</p>
 {{end}}
@@ -155,4 +152,20 @@
 <pre class="diff" tabindex="0" aria-label="Diff of the Git changes">{{$r.Diff}}</pre></details>{{end}}
 </section>
 {{end}}
+{{end}}
+
+{{define "changerow"}}
+    <tr>
+      <td><strong>{{.Name}}</strong><br><span class="hint">{{.Kind}}</span><br><code class="small">{{.Address}}</code>{{with .Reason}}<div class="hint">{{.}}</div>{{end}}</td>
+      <td>{{.Why}}</td>
+      <td>{{.StatusText}}</td>
+      <td>{{.ActionText}}</td>
+      <td>{{if .Choosable}}
+        <select name="c:{{.Address}}" aria-label="Choice for {{.Name}}">
+          <option value=""{{if eq .Choice ""}} selected{{end}}>default</option>
+          <option value="update"{{if eq .Choice "update"}} selected{{end}}>update (use the source version)</option>
+          <option value="keep"{{if eq .Choice "keep"}} selected{{end}}>keep the Git version</option>
+          {{if .CanExclude}}<option value="exclude"{{if eq .Choice "exclude"}} selected{{end}}>exclude (leave it out)</option>{{end}}
+        </select>{{end}}</td>
+    </tr>
 {{end}}

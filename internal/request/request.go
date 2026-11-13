@@ -550,6 +550,14 @@ func secretKind(name string, v cty.Value) string {
 		if secretscan.SuspectLiteral(name, s) {
 			return secretscan.KindNamed
 		}
+		// A DaVinci variable's value variable is named after the variable
+		// (davinci_variable_<name>_value).
+		if base, ok := strings.CutPrefix(name, "davinci_variable_"); ok {
+			base = strings.TrimSuffix(base, "_value")
+			if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && (secretscan.CredentialName(base) || secretscan.CredentialValue(s)) {
+				return secretscan.KindNamed
+			}
+		}
 	case v.CanIterateElements():
 		for it := v.ElementIterator(); it.Next(); {
 			_, e := it.Element()

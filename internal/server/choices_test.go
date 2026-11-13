@@ -60,3 +60,37 @@ func TestWholeEnvironmentOffersUpdateForDifferingItems(t *testing.T) {
 	mustContain(t, row, "updated", `value="update" selected`)
 	t.Logf("%s: updated on request", addr)
 }
+
+// A values form can set only what the request asks for (never another
+// environment's ID or an undeclared variable), and what was entered stays
+// editable.
+func TestValuesAreLimitedAndEditable(t *testing.T) {
+	e := newEnv(t, nil)
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Jane Doe", nil))
+	selectByID(t, b, draft, flowBID, flowB)
+	p := previewDraft(t, b, draft, mainForm("Jane Doe", nil))
+	p = b.wait(b.post(draft+"/choices", url.Values{"c:" + subflowAddr: {"exclude"}}))
+	mustContain(t, p.body, `name="v:qa:`+subflowIDVar+`"`)
+
+	for _, tampered := range []url.Values{
+		{"v:qa:pingone_environment_id": {"00000000-0000-4000-8000-000000000001"}},
+		{"v:qa:totally_unknown_var": {"hello"}},
+		{"i:qa:pingone_population.pingcli__Nope": {"00000000-0000-4000-8000-000000000001"}},
+	} {
+		p = b.post(draft+"/values", tampered)
+		mustContain(t, p.body, "Nothing was saved: this request has no value named")
+	}
+
+	p = b.wait(b.post(draft+"/values", url.Values{"v:qa:" + subflowIDVar: {"f2000000000000000000000000000099"}}))
+	mustContain(t, p.body, "already entered", `value="f2000000000000000000000000000099"`)
+	// Corrected, then cleared: asked for again.
+	p = b.wait(b.post(draft+"/values", url.Values{"v:qa:" + subflowIDVar: {"f2000000000000000000000000000003"}}))
+	mustContain(t, p.body, `value="f2000000000000000000000000000003"`)
+	p = b.wait(b.post(draft+"/values", url.Values{"v:qa:" + subflowIDVar: {""}}))
+	if strings.Contains(p.body, `value="f2000000000000000000000000000003"`) {
+		t.Fatal("a cleared value is still shown")
+	}
+	mustContain(t, p.body, `name="v:qa:`+subflowIDVar+`"`)
+}

@@ -12,7 +12,8 @@
     {{if and .MR (eq .MR.State "merged")}}
     {{range .Rollout}}<td><span class="state state-{{.State}}">{{if .URL}}<a href="{{.URL}}">{{.State}}</a>{{else}}{{.State}}{{end}}</span>{{with .Detail}}<div class="hint">{{.}}</div>{{end}}</td>{{end}}
     {{else if and .MR (eq .MR.State "closed")}}<td colspan="{{$n}}"><span class="hint">Not rolled out: the merge request was closed.</span></td>
-    {{else}}<td colspan="{{$n}}"><span class="hint">Rolls out after the merge request is reviewed and merged.</span></td>{{end}}
+    {{else if .MR}}<td colspan="{{$n}}"><span class="hint">Rolls out after the merge request is reviewed and merged.</span></td>
+    {{else}}<td colspan="{{$n}}"><span class="hint">Open a merge request from this branch to roll it out.</span></td>{{end}}
   </tr>
   {{end}}</tbody>
 </table>

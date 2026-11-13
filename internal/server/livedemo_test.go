@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -131,14 +132,23 @@ func TestLiveBrowserServer(t *testing.T) {
 	defer srv.Close()
 	t.Logf("live server on http://%s (fake GitLab at %s)", addr, gl.BaseURL())
 	stop, merge := os.Getenv("PINGONE_PROMOTE_DEMO_STOP"), os.Getenv("PINGONE_PROMOTE_DEMO_MERGE")
+	merged := map[string]bool{}
 	for deadline := time.Now().Add(4 * time.Hour); time.Now().Before(deadline); time.Sleep(time.Second) {
 		if merge != "" {
 			if _, err := os.Stat(merge); err == nil {
+				// Each request branch once, oldest first (request IDs
+				// start with their time), as reviewers would merge them.
+				var branches []string
 				for b := range gl.Branches() {
-					if strings.HasPrefix(b, "pingone-promote/") {
-						gl.Merge(b)
-						t.Logf("merged %s into %s", b, gl.DefaultBranch)
+					if strings.HasPrefix(b, "pingone-promote/") && !merged[b] {
+						branches = append(branches, b)
 					}
+				}
+				sort.Strings(branches)
+				for _, b := range branches {
+					gl.Merge(b)
+					merged[b] = true
+					t.Logf("merged %s into %s", b, gl.DefaultBranch)
 				}
 				save()
 				_ = os.Remove(merge)

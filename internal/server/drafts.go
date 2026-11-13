@@ -339,7 +339,7 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 		}
 	}
 	if d.RequestedBy == "" {
-		return nil, errors.New("Type your name.")
+		return nil, errors.New("Type your name in step 1 (What to copy).")
 	}
 	if !d.Whole && d.WantSections && len(d.Families) == 0 {
 		return nil, errors.New("Tick at least one section in step 1, or choose another option.")

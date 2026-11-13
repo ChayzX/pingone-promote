@@ -325,6 +325,10 @@ func (st *Tenant) fill(d *catalog.Def, schema map[string]catalog.Attr, dst map[s
 			if rn == "-" {
 				continue
 			}
+			if k, lit := strings.CutPrefix(rn, "@"); lit {
+				dst[k] = st.gen(d, a, n, full) // a key read literally
+				continue
+			}
 			key, cond, _ = strings.Cut(rn, "?")
 			if strings.HasPrefix(key, "^") || strings.HasPrefix(key, "=") {
 				continue // read from the parent, or a fixed value

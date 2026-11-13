@@ -190,3 +190,41 @@ func TestReadAgainSharesTheRunningExport(t *testing.T) {
 		t.Fatalf("terraformer ran %d times, want 2 (one shared, one after the change)", n)
 	}
 }
+
+// IDs in connector properties become references, or ID variables when the
+// item is not in the export; unknown IDs are reported.
+func TestConnectorPropertyIDs(t *testing.T) {
+	const env = "12e2ce5a-d22b-4ac4-802f-060df245995d"
+	src := `resource "pingone_davinci_connector_instance" "pingcli__Http" {
+  properties = jsonencode({
+    "connectionId" : {
+      "value" : "3b55f2ca6689560c64cb5bed5afbe40f"
+    },
+    "clientId" : {
+      "value" : "a2beb5d1-e874-42da-9149-8d1263a1ffdd"
+    },
+    "envId" : {
+      "value" : "` + env + `"
+    },
+    "other" : {
+      "value" : "ffffffffffffffffffffffffffffffff"
+    }
+  })
+}
+`
+	out := &exporter.Export{EnvironmentID: env, ModuleDir: exporter.ModuleDir, Files: map[string][]byte{exporter.ModuleDir + "/pingone_davinci_connector_instance.tf": []byte(src)}}
+	ids := map[string]string{"3b55f2ca6689560c64cb5bed5afbe40f": "pingone_davinci_connector_instance.pingcli__Token", "a2beb5d1-e874-42da-9149-8d1263a1ffdd": "pingone_application.pingcli__App"}
+	connectorRefs(out, ids, map[string]bool{"pingone_davinci_connector_instance.pingcli__Token": true})
+	got := string(out.Files[exporter.ModuleDir+"/pingone_davinci_connector_instance.tf"])
+	for _, want := range []string{`"value" : pingone_davinci_connector_instance.pingcli__Token.id`, `"value" : pingone_application.pingcli__App.id`, `"value" : "` + env + `"`, `"ffffffffffffffffffffffffffffffff"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %s:\n%s", want, got)
+		}
+	}
+	if out.Referenced["pingone_application.pingcli__App"] != "a2beb5d1-e874-42da-9149-8d1263a1ffdd" {
+		t.Errorf("the application outside the export is not referenced by ID variable: %v", out.Referenced)
+	}
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "ffffffffffffffffffffffffffffffff") {
+		t.Errorf("warnings %v", out.Warnings)
+	}
+}

@@ -22,6 +22,10 @@ type Resource struct {
 	Name string `json:"name"`
 	// ID is the DaVinci ID, when the catalog was built with IDs.
 	ID string `json:"id,omitempty"`
+	// BuiltIn items exist in every environment (default policies, system
+	// applications); a section or the whole environment leaves them out
+	// unless they are picked.
+	BuiltIn bool `json:"builtIn,omitempty"`
 }
 
 // Catalog lists the source environment's resources. --list-resources

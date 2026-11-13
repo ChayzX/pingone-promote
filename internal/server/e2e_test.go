@@ -160,7 +160,7 @@ func TestEndToEndBranchOnly(t *testing.T) {
 		t.Fatalf("branch only: MRs=%d branch=%v", len(e.gl.MRs), e.gl.HasBranch("pingone-promote/"+id))
 	}
 	// A branch without a merge request is listed too.
-	mustContain(t, b.get("/requests").body, "pingone-promote/"+id, "Branch only, no merge request.")
+	mustContain(t, b.get("/requests").body, "pingone-promote/"+id, "branch only, no merge request", "Open a merge request from this branch to roll it out.")
 	// Submitting again is idempotent.
 	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"branch"}}))
 	mustContain(t, p.body, "already submitted")

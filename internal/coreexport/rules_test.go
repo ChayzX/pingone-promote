@@ -2,6 +2,7 @@ package coreexport
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -168,5 +169,20 @@ func TestDerivedRequiredValues(t *testing.T) {
 	}
 	if !strings.Contains(text, `resource_type = "OPENID_CONNECT"`) {
 		t.Errorf("resource_type not rendered from the parent:\n%s", text)
+	}
+}
+
+// The built-in Multi_Factor policy's MFA action has no device policy, which
+// the provider requires: it is not copied.
+func TestNestedRequiredAttributes(t *testing.T) {
+	d := def(t, "pingone_sign_on_policy_action")
+	action := map[string]any{"id": "a1", "priority": 2, "type": "MULTI_FACTOR_AUTHENTICATION"}
+	miss := MissingRequired(d, action, nil)
+	if !slices.Contains(miss, "mfa.device_sign_on_policy_id") {
+		t.Fatalf("missing %v", miss)
+	}
+	action["deviceAuthenticationPolicy"] = map[string]any{"id": "p1"}
+	if miss := MissingRequired(d, action, nil); slices.Contains(miss, "mfa.device_sign_on_policy_id") {
+		t.Fatalf("still missing %v", miss)
 	}
 }

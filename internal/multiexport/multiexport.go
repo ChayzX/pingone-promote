@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -107,6 +108,7 @@ type cached struct {
 	dvExportAt time.Time
 	dvFast     []exporter.Resource
 	dvFP       string
+	dvValues   map[string]string // string variable values by ID
 	dvFastErr  error
 	// dvErr is why DaVinci could not be read (an environment without
 	// DaVinci, or a worker without the DaVinci role). Core items still work.
@@ -215,7 +217,7 @@ func (e *Exporter) read(ctx context.Context, creds exporter.Credentials, env str
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.dvFast, c.dvFP, c.dvFastErr = davinciList(ctx, r, env)
+			c.dvFast, c.dvFP, c.dvValues, c.dvFastErr = davinciList(ctx, r, env)
 		}()
 	}
 	if keep == nil {
@@ -331,7 +333,7 @@ func listOf(c *cached) []exporter.Resource {
 		if d.Path == "" || d.Singleton {
 			id = "" // derived objects and singletons are not searched by ID
 		}
-		out = append(out, exporter.Resource{Address: exporter.Address{Type: o.Type, Label: o.Label}, Name: o.Name, ID: id})
+		out = append(out, exporter.Resource{Address: exporter.Address{Type: o.Type, Label: o.Label}, Name: o.Name, ID: id, BuiltIn: o.Builtin})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 	return out
@@ -685,6 +687,16 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 	if err != nil {
 		return nil, err
 	}
+	connectorRefs(out, ids, exported)
+	if dvExp != nil {
+		out.SharedValues = dvExp.SharedValues
+		out.Values = map[string]string{}
+		for _, r := range c.dv {
+			if v, ok := c.dvValues[r.ID]; ok && r.Type == neutralize.TypeVariable && exported[r.String()] {
+				out.Values[r.String()] = v
+			}
+		}
+	}
 	out.Owners = map[string]string{}
 	for a := range core {
 		o := c.inv.Object(a)
@@ -924,4 +936,46 @@ func idIsReference(o *coreexport.Object) bool {
 		}
 	}
 	return false
+}
+
+// connectorPropertyIDRE matches a connector property whose value is an
+// ID literal (terraformer writes connector properties as they are).
+var connectorPropertyIDRE = regexp.MustCompile(`("value"\s*:\s*)"([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"`)
+
+// connectorRefs turns IDs in connector properties into references (the
+// connection an HTTP connector signs with, the application a PingOne
+// connector authenticates as), so each environment uses its own. One that
+// is not in the export becomes a per-environment ID variable (Referenced);
+// an unknown one stays literal and is reported.
+func connectorRefs(out *exporter.Export, ids map[string]string, exported map[string]bool) {
+	p := out.ModuleDir + "/" + neutralize.TypeConnector + ".tf"
+	src, ok := out.Files[p]
+	if !ok {
+		return
+	}
+	var unknown []string
+	src = connectorPropertyIDRE.ReplaceAllFunc(src, func(m []byte) []byte {
+		sm := connectorPropertyIDRE.FindSubmatch(m)
+		id := string(sm[2])
+		if id == out.EnvironmentID {
+			return m // the neutralizer makes it var.pingone_environment_id
+		}
+		a, ok := ids[id]
+		if !ok {
+			unknown = append(unknown, id)
+			return m
+		}
+		if !exported[a] {
+			if out.Referenced == nil {
+				out.Referenced = map[string]string{}
+			}
+			out.Referenced[a] = id
+		}
+		return append(append([]byte(nil), sm[1]...), a+".id"...)
+	})
+	out.Files[p] = src
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		out.Warnings = append(out.Warnings, "Connector properties hold IDs of items this tool does not know ("+strings.Join(slices.Compact(unknown), ", ")+"), so they keep the source environment's value; check each connector in every environment")
+	}
 }

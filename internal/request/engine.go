@@ -210,7 +210,7 @@ func (r *runner) run(ctx context.Context) {
 		}
 	}
 	res.Warnings = append(res.Warnings, exp.Warnings...)
-	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName}, neutralize.Options{
+	neu, err := neutralize.Neutralize(exp.NeutralizeInput(), neutralize.Options{
 		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings,
 		Excluded: sel.neutralizeExcluded(), Lift: LiftRules()})
 	if err != nil {
@@ -627,7 +627,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		for _, e := range req.Exclude {
 			requestExcluded[e.Address] = e.Address != ""
 		}
-		found := map[string]int{}
+		found, builtIn := map[string]int{}, 0
 		for _, c := range cat {
 			d, ok := catalog.Get(c.Type)
 			// Owned children (a flow's deploy and enable, ...) travel with
@@ -635,10 +635,19 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			if !ok || !want[d.Family] || d.Owned || requestExcluded[c.String()] || includedBy[c.String()] != "" || req.DependencyChoices[c.String()] == string(promote.ChoiceExclude) {
 				continue
 			}
+			// As for the whole environment: items that exist in every
+			// environment are copied only when picked.
+			if c.BuiltIn {
+				builtIn++
+				continue
+			}
 			found[d.Family]++
 			includedBy[c.String()] = "families"
 			sel.seeds = append(sel.seeds, c.String())
 			r.res.Selected = append(r.res.Selected, Selected{Query: d.Family, Address: c.String(), Name: c.Name, ID: c.ID})
+		}
+		if builtIn > 0 {
+			r.res.Warnings = append(r.res.Warnings, builtInNote(builtIn))
 		}
 		for _, f := range req.Families {
 			if found[f] == 0 {
@@ -653,6 +662,15 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		// A whole-environment request has no selected item: the listed
 		// items were only resolved so that a conflicting exclude is caught.
 		sel.seeds = nil
+		builtIn := 0
+		for _, c := range cat {
+			if d, ok := catalog.Get(c.Type); c.BuiltIn && ok && !d.Owned {
+				builtIn++
+			}
+		}
+		if builtIn > 0 {
+			r.res.Warnings = append(r.res.Warnings, builtInNote(builtIn))
+		}
 		if items > 0 {
 			r.res.Warnings = append(r.res.Warnings, "flows, applications and flowPolicies are ignored when scope is all; the whole environment is exported")
 		}
@@ -1043,4 +1061,8 @@ func describeVariables(neu *neutralize.Result) map[string]VariableOut {
 		out[name] = vo
 	}
 	return out
+}
+
+func builtInNote(n int) string {
+	return fmt.Sprintf("%d items that PingOne creates in every environment (default policies, system applications, predefined attributes and templates) are not copied; each environment keeps its own. To copy one, pick it", n)
 }

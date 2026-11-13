@@ -25,7 +25,10 @@ import (
 //
 // It also returns a fingerprint of what changes when DaVinci changes
 // (IDs, update times, flow versions and enabled state), never of values.
-func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]exporter.Resource, string, error) {
+//
+// values are the string variables' values by ID (secret ones are masked by
+// the API and left out).
+func davinciList(ctx context.Context, r coreexport.Reader, env string) (_ []exporter.Resource, fingerprint string, values map[string]string, _ error) {
 	type coll struct{ path, embedded string }
 	colls := []coll{{"flows", "flows"}, {"variables", "variables"}, {"connectorInstances", "connectorInstances"}, {"davinciApplications", "davinciApplications"}}
 	results := make([][]map[string]any, len(colls))
@@ -41,7 +44,7 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]export
 	wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 	}
 	flows, vars, conns, apps := results[0], results[1], results[2], results[3]
@@ -61,7 +64,7 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]export
 	wg.Wait()
 	for _, err := range perrs {
 		if err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 	}
 
@@ -84,9 +87,13 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]export
 			out = append(out, exporter.Resource{Address: exporter.Address{Type: typ, Label: l}, Name: name, ID: id})
 		}
 	}
+	values = map[string]string{}
 	for _, v := range vars {
 		name, ctxName := str(v["name"]), str(v["context"])
 		add(neutralize.TypeVariable, neutralize.Label(name, ctxName), name, str(v["id"]), v)
+		if val, ok := v["value"].(string); ok && str(v["dataType"]) == "string" {
+			values[str(v["id"])] = val
+		}
 	}
 	for _, c := range conns {
 		if !hexID.MatchString(str(c["id"])) {
@@ -103,7 +110,7 @@ func davinciList(ctx context.Context, r coreexport.Reader, env string) ([]export
 	}
 	sort.Strings(fp)
 	sum := sha256.Sum256([]byte(strings.Join(fp, "\n")))
-	return out, hex.EncodeToString(sum[:]), nil
+	return out, hex.EncodeToString(sum[:]), values, nil
 }
 
 // hexID is a DaVinci object ID; built-in connector instances have names.

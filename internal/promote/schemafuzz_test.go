@@ -126,7 +126,7 @@ func TestSchemaTenantWholeEnvironment(t *testing.T) {
 	for a, id := range exp.Referenced {
 		excluded = append(excluded, neutralize.Excluded{Address: a, ID: id})
 	}
-	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName},
+	neu, err := neutralize.Neutralize(exp.NeutralizeInput(),
 		neutralize.Options{SourceEnvironmentID: devEnv, SecretNames: testSecretNames, Excluded: excluded, Lift: lift})
 	if err != nil {
 		t.Fatal(err)
