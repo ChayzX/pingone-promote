@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -170,6 +171,7 @@ type Result struct {
 	// GlobalVariableRefs lists {{global.variables.x}} names per flow.
 	GlobalVariableRefs map[string][]string `json:"globalVariableRefs,omitempty"`
 	// MissingDependencies are addresses referenced (by a reference or a
+	// {{global.variables.x}} template, whose alternatives are joined by "|")
 	// {{global.variables.x}} expression) that the export does not contain.
 	MissingDependencies []string             `json:"missingDependencies,omitempty"`
 	Findings            []secretscan.Finding `json:"findings,omitempty"`
@@ -236,6 +238,7 @@ var (
 	secretNameRE      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,127}$`)
 	excludedAddressRE = regexp.MustCompile(`^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$`)
 	globalVarRE       = regexp.MustCompile(`\{\{\s*global\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
+	companyVarRE      = regexp.MustCompile(`\{\{\s*global\.company\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
 )
 
 type rawBlock struct {
@@ -271,6 +274,9 @@ type state struct {
 	rename  map[string]string // terraformer var -> final name (global)
 	lifted  map[*rawBlock][]lift
 	noValue map[string]bool
+	// shared are variables terraformer declared twice, identically, for two
+	// resources (DaVinci variables with one name in two contexts).
+	shared map[string]bool
 	// excl is Options.Excluded by address; exclVar maps terraformer's
 	// variable name for an excluded reference to the address; mapBack maps
 	// such a variable of a Git-managed resource to its address.
@@ -298,7 +304,7 @@ func Neutralize(in *Input, opts Options) (*Result, error) {
 		SourceIDs:          map[string]string{},
 		GlobalVariableRefs: map[string][]string{},
 	}, relabel: map[*rawBlock]string{}, varRenameBy: map[*rawBlock]map[string]string{},
-		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{},
+		inline: map[string]cty.Value{}, rename: map[string]string{}, lifted: map[*rawBlock][]lift{}, noValue: map[string]bool{}, shared: map[string]bool{},
 		excl: map[string]Excluded{}, exclVar: map[string]string{}, mapBack: map[string]string{}}
 	for _, e := range opts.Excluded {
 		if !excludedAddressRE.MatchString(e.Address) {
@@ -309,7 +315,7 @@ func Neutralize(in *Input, opts Options) (*Result, error) {
 	}
 	s.res.Variables[EnvironmentIDVariable] = &Variable{Name: EnvironmentIDVariable, Type: "string",
 		Description: "The PingOne environment ID to configure DaVinci resources in", Kind: KindEnvironmentID}
-	steps := []func() error{s.readDecls, s.readValues, s.readImports, s.readBlocks, s.resolveCollisions, s.classifyVariables, s.liftAttributes, s.rewrite, s.scan}
+	steps := []func() error{s.readDecls, s.readValues, s.readImports, s.readBlocks, s.resolveCollisions, s.splitShared, s.classifyVariables, s.liftAttributes, s.rewrite, s.scan}
 	for _, step := range steps {
 		if err := step(); err != nil {
 			return nil, err
@@ -334,9 +340,6 @@ func (s *state) readDecls() error {
 			continue
 		}
 		name := b.Labels[0]
-		if _, dup := s.decls[name]; dup {
-			return &CollisionError{What: "variable", Name: name, Addresses: []string{p}, Hint: "terraformer declared it twice; two resources produced the same variable name"}
-		}
 		d := decl{typ: "string"}
 		if a, ok := b.Body.Attributes["type"]; ok {
 			r := a.Expr.Range()
@@ -351,6 +354,17 @@ func (s *state) readDecls() error {
 			if v, diags := a.Expr.Value(nil); !diags.HasErrors() && v.Type() == cty.Bool {
 				d.sensitive = v.True()
 			}
+		}
+		if prev, dup := s.decls[name]; dup {
+			// terraformer 0.6.0 names a DaVinci variable's value variable
+			// after the name alone, so one name in two contexts declares
+			// it twice. Identical declarations are split per resource by
+			// splitShared; different ones cannot be told apart.
+			if prev != d {
+				return &CollisionError{What: "variable", Name: name, Addresses: []string{p}, Hint: "terraformer declared it twice, differently; two resources produced the same variable name"}
+			}
+			s.shared[name] = true
+			continue
 		}
 		s.decls[name] = d
 	}
@@ -371,13 +385,55 @@ func (s *state) readValues() error {
 		}
 		o, err := overlay.ParseOverlay(src, p)
 		if err != nil {
-			return fmt.Errorf("neutralize: %w (a duplicate key means two resources share a variable name)", err)
+			vals, ok := s.valuesWithSharedKeys(src, p)
+			if !ok {
+				return fmt.Errorf("neutralize: %w (a duplicate key means two resources share a variable name)", err)
+			}
+			o = &overlay.Overlay{Values: vals}
 		}
 		for k, v := range o.Values {
 			s.values[k] = v
 		}
 	}
 	return nil
+}
+
+var redefinedRE = regexp.MustCompile(`argument "([^"]+)" was already set`)
+
+// valuesWithSharedKeys reads an auto.tfvars that sets a shared variable
+// twice (see readDecls). Only such repeats are tolerated; the shared
+// values themselves are dropped, since which belongs to which resource is
+// lost.
+func (s *state) valuesWithSharedKeys(src []byte, p string) (map[string]cty.Value, bool) {
+	f, diags := hclsyntax.ParseConfig(src, p, hcl.InitialPos)
+	if f == nil {
+		return nil, false
+	}
+	for _, d := range diags {
+		if d.Severity != hcl.DiagError {
+			continue
+		}
+		m := redefinedRE.FindStringSubmatch(d.Detail)
+		if d.Summary != "Attribute redefined" || m == nil || !s.shared[m[1]] {
+			return nil, false
+		}
+	}
+	body, ok := f.Body.(*hclsyntax.Body)
+	if !ok || len(body.Blocks) > 0 {
+		return nil, false
+	}
+	out := map[string]cty.Value{}
+	for name, attr := range body.Attributes {
+		if s.shared[name] {
+			continue
+		}
+		v, d := attr.Expr.Value(nil)
+		if d.HasErrors() {
+			return nil, false
+		}
+		out[name] = v
+	}
+	return out, true
 }
 
 func (s *state) readImports() error {
@@ -594,6 +650,56 @@ func (s *state) resolveCollisions() error {
 	}
 	sort.Slice(s.res.Renames, func(i, j int) bool { return s.res.Renames[i].To < s.res.Renames[j].To })
 	return nil
+}
+
+// splitShared gives each resource that uses a shared variable (see
+// readDecls) a variable of its own, named after its label, whose value is
+// entered per environment.
+func (s *state) splitShared() error {
+	for _, name := range sortedSet(s.shared) {
+		var users []*rawBlock
+		for _, rb := range s.raw {
+			refs, err := varRefs(rb.text)
+			if err != nil {
+				return err
+			}
+			if slices.Contains(refs, name) && s.finalVarName(rb, name) == name {
+				users = append(users, rb)
+			}
+		}
+		if len(users) < 2 {
+			continue
+		}
+		var made []string
+		for _, rb := range users {
+			label := rb.label
+			if nl, ok := s.relabel[rb]; ok {
+				label = nl
+			}
+			n := strings.TrimSuffix(name, "_value") + "_" + VariableName(stripPrefix(label)) + "_value"
+			if rb.typ == TypeVariable {
+				n = "davinci_variable_" + VariableName(stripPrefix(label)) + "_value"
+			}
+			if s.varRenameBy[rb] == nil {
+				s.varRenameBy[rb] = map[string]string{}
+			}
+			s.varRenameBy[rb][name] = n
+			s.noValue[n] = true
+			made = append(made, n)
+		}
+		sort.Strings(made)
+		s.res.Warnings = append(s.res.Warnings, "terraformer exported one value variable ("+name+") for several resources; each now has its own ("+strings.Join(made, ", ")+"), and its value is entered for every environment")
+	}
+	return nil
+}
+
+func sortedSet(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // varRefs lists var.<name> references in block text.

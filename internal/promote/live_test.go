@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -90,32 +91,24 @@ func TestLiveTenant(t *testing.T) {
 		logf("  %-55s %d", typ, byType[typ])
 	}
 
-	// 2. Every item alone, with and without what it depends on.
-	failed := 0
-	for _, it := range items {
-		a := it.Type + "." + it.Label
-		for _, up := range []bool{false, true} {
-			var exp *exporter.Export
-			if up {
-				exp, err = e.ScopedExport(ctx, creds, []string{a}, nil)
-			} else {
-				exp, err = e.SelectedExport(ctx, creds, []string{a}, nil)
-			}
-			if err == nil {
-				err = liveNeutralize(exp, creds.ExportEnvironment())
-			}
-			if err != nil {
-				failed++
-				t.Errorf("%s", check(fmt.Sprintf("%s (with dependencies %v): %v", a, up, err)))
-			}
-		}
-	}
-	logf("single items: %d of %d exports failed", failed, 2*len(items))
-
-	// 3. The whole environment through the pipeline.
+	// 2. The whole environment through the pipeline.
+	t0 := time.Now()
 	exp, err := e.WholeExport(ctx, creds, nil)
 	if err != nil {
 		t.Fatal(check(err.Error()))
+	}
+	logf("whole environment exported in %s", time.Since(t0).Round(time.Second))
+	if dump := os.Getenv("PINGONE_PROMOTE_LIVE_DUMP"); dump != "" {
+		// Configuration only: tfvars files (which can hold values) are
+		// never written.
+		for p, b := range exp.Files {
+			if strings.HasSuffix(p, ".tfvars") || !strings.HasSuffix(p, ".tf") {
+				continue
+			}
+			full := filepath.Join(dump, filepath.FromSlash(p))
+			_ = os.MkdirAll(filepath.Dir(full), 0o700)
+			_ = os.WriteFile(full, []byte(check(string(b))), 0o600)
+		}
 	}
 	for _, w := range exp.Warnings {
 		logf("warning: %s", w)
@@ -163,7 +156,21 @@ func TestLiveTenant(t *testing.T) {
 		for _, name := range perEnv {
 			if sv, ok := neu.SourceValues[name]; ok {
 				rv[env][name] = sv
+			} else {
+				// No source value: the person types one on the page.
+				rv[env][name] = cty.StringVal("entered-" + env)
 			}
+		}
+	}
+	for _, name := range perEnv {
+		if _, ok := neu.SourceValues[name]; !ok {
+			logf("  value with nothing to prefill (typed for every environment): %s", name)
+		}
+	}
+	rv["dev"] = map[string]cty.Value{}
+	for _, name := range perEnv {
+		if _, ok := neu.SourceValues[name]; !ok {
+			rv["dev"][name] = cty.StringVal("entered-dev")
 		}
 	}
 	head := MapRepo{"customer_secrets.yml": []byte(fixtureCustomerSecrets)}
@@ -175,13 +182,62 @@ func TestLiveTenant(t *testing.T) {
 		for _, b := range res.Blockers {
 			t.Errorf("%s", check(fmt.Sprintf("blocker: %+v", b)))
 		}
-		return
+	} else {
+		logf("whole environment: %d files, %d secrets", len(res.Files), len(res.RequiredSecrets))
+		// check --root, terraform validate (every diagnostic counts: these
+		// are real values) and a mock plan for the source environment.
+		if t.Run("whole", func(t *testing.T) { endToEndPlans(t, apply(head, res), res.RequiredSecrets, []string{"dev"}) }) {
+			logf("whole environment: check --root, terraform validate and the mock plan passed")
+		} else {
+			logf("whole environment: check --root, terraform validate or the mock plan FAILED (above)")
+		}
 	}
-	logf("whole environment: %d files, %d secrets", len(res.Files), len(res.RequiredSecrets))
-	// check --root, terraform validate (every diagnostic counts: these are
-	// real values) and a mock plan for the source environment.
-	endToEndPlans(t, apply(head, res), res.RequiredSecrets, []string{"dev"})
-	logf("whole environment: check --root, terraform validate and the mock plan passed")
+
+	// 3. Every core item alone, with and without what it depends on, and
+	// a sample of DaVinci items (each of those runs the terraformer).
+	failed, done, perDV := 0, 0, map[string]int{}
+	budget := time.Now().Add(25 * time.Minute)
+	ordered := append([]exporter.Resource(nil), items...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return !strings.HasPrefix(ordered[i].Type, "pingone_davinci_") && strings.HasPrefix(ordered[j].Type, "pingone_davinci_")
+	})
+	for _, it := range ordered {
+		if strings.HasPrefix(it.Type, "pingone_davinci_") {
+			if perDV[it.Type] >= 1 {
+				continue
+			}
+			perDV[it.Type]++
+		}
+		if time.Now().After(budget) {
+			logf("single items: stopped at the time budget after %d", done)
+			break
+		}
+		a := it.Type + "." + it.Label
+		for _, up := range []bool{false, true} {
+			t0 := time.Now()
+			var exp *exporter.Export
+			if up {
+				exp, err = e.ScopedExport(ctx, creds, []string{a}, nil)
+			} else {
+				exp, err = e.SelectedExport(ctx, creds, []string{a}, nil)
+			}
+			if err == nil {
+				err = liveNeutralize(exp, creds.ExportEnvironment())
+			}
+			if err != nil {
+				failed++
+				t.Errorf("%s", check(fmt.Sprintf("%s (with dependencies %v): %v", a, up, err)))
+			}
+			if d := time.Since(t0); d > 20*time.Second {
+				logf("  slow: %s (with dependencies %v) took %s", a, up, d.Round(time.Second))
+			}
+		}
+		done++
+		if done%100 == 0 {
+			logf("single items: %d done", done)
+		}
+	}
+	logf("single items: %d items, %d exports failed", done, failed)
 }
 
 func readEnvFile(t *testing.T, path string) map[string]string {

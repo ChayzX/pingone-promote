@@ -455,3 +455,116 @@ func TestExcludedAddressMustBeAnAddress(t *testing.T) {
 		t.Fatal("bad excluded address accepted")
 	}
 }
+
+// TestOneNameInTwoContexts: terraformer 0.6.0 declares one value variable
+// for DaVinci variables that share a name across contexts (company and
+// flowInstance) and may set it twice in its tfvars. Each resource gets its
+// own variable; the shared value is not guessed.
+func TestOneNameInTwoContexts(t *testing.T) {
+	decl := `variable "davinci_variable_cancelUrl_value" {
+  type        = string
+  description = "Value for DaVinci variable cancelUrl"
+}
+`
+	for _, tfvars := range []string{
+		"davinci_variable_cancelUrl_value = \"https://a.example.com\"\n",
+		"davinci_variable_cancelUrl_value = \"https://a.example.com\"\ndavinci_variable_cancelUrl_value = \"\"\n",
+	} {
+		in := &neutralize.Input{Files: map[string][]byte{
+			"ping-export-module/variables.tf": []byte("variable \"pingone_environment_id\" {\n  type = string\n}\n\n" + decl + decl),
+			"ping-export-module/pingone_davinci_variable.tf": []byte(`
+resource "pingone_davinci_variable" "pingcli__cancelUrl_company" {
+  environment_id = var.pingone_environment_id
+  name           = "cancelUrl"
+  context        = "company"
+  data_type      = "string"
+  mutable        = true
+  value = {
+    string = var.davinci_variable_cancelUrl_value
+  }
+}
+
+resource "pingone_davinci_variable" "pingcli__cancelUrl_flowInstance" {
+  environment_id = var.pingone_environment_id
+  name           = "cancelUrl"
+  context        = "flowInstance"
+  data_type      = "string"
+  mutable        = false
+  value = {
+    string = var.davinci_variable_cancelUrl_value
+  }
+}
+`),
+			"ping-export.auto.tfvars": []byte(tfvars),
+		}}
+		r, err := neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for addr, v := range map[string]string{
+			"pingone_davinci_variable.pingcli__cancelUrl_company":      "davinci_variable_cancelUrl_company_value",
+			"pingone_davinci_variable.pingcli__cancelUrl_flowInstance": "davinci_variable_cancelUrl_flowInstance_value",
+		} {
+			b := r.Block(addr)
+			if b == nil || !bytes.Contains(b.Text, []byte("var."+v)) {
+				t.Fatalf("%s does not use %s:\n%v", addr, v, b)
+			}
+			if r.Variables[v] == nil || !r.Variables[v].PerEnvironment() {
+				t.Fatalf("%s is not a per-environment variable", v)
+			}
+			if _, ok := r.SourceValues[v]; ok {
+				t.Fatalf("%s: the shared value must not be guessed", v)
+			}
+		}
+		if r.Variables["davinci_variable_cancelUrl_value"] != nil {
+			t.Fatal("the shared variable is still declared")
+		}
+	}
+	// Two different declarations of one name still fail closed.
+	other := strings.Replace(decl, "string", "number", 1)
+	in := &neutralize.Input{Files: map[string][]byte{
+		"ping-export-module/variables.tf": []byte(decl + other),
+	}}
+	var ce *neutralize.CollisionError
+	if _, err := neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv}); !errors.As(err, &ce) {
+		t.Fatalf("want collision error, got %v", err)
+	}
+}
+
+// {{global.variables.x}} names a flow instance variable and
+// {{global.company.variables.x}} a company one.
+func TestFlowVariableReferencesByContext(t *testing.T) {
+	in := &neutralize.Input{Files: map[string][]byte{
+		"ping-export-module/variables.tf": []byte("variable \"pingone_environment_id\" {\n  type = string\n}\n"),
+		"ping-export-module/pingone_davinci_variable.tf": []byte(`
+resource "pingone_davinci_variable" "pingcli__AccessToken_flowInstance" {
+  environment_id = var.pingone_environment_id
+  name           = "AccessToken"
+  context        = "flowInstance"
+  data_type      = "string"
+  mutable        = true
+}
+`),
+		"ping-export-module/pingone_davinci_flow.tf": []byte(`
+resource "pingone_davinci_flow" "pingcli__F" {
+  environment_id = var.pingone_environment_id
+  name           = "F"
+  description    = "{{global.variables.AccessToken}} {{global.company.variables.cancelUrl}}"
+}
+`),
+	}}
+	r, err := neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(r.MissingDependencies, " "); got != "pingone_davinci_variable.pingcli__cancelUrl_company" {
+		t.Fatalf("missing: %q", got)
+	}
+	in.Files["ping-export-module/pingone_davinci_variable.tf"] = []byte("")
+	if r, err = neutralize.Neutralize(in, neutralize.Options{SourceEnvironmentID: devEnv}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(r.MissingDependencies, " "); got != "pingone_davinci_variable.pingcli__AccessToken_flowInstance|pingone_davinci_variable.pingcli__AccessToken_company pingone_davinci_variable.pingcli__cancelUrl_company" {
+		t.Fatalf("missing: %q", got)
+	}
+}

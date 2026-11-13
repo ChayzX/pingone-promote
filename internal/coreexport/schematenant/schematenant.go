@@ -221,12 +221,29 @@ func clone(m map[string]any) map[string]any {
 }
 
 func splitCond(c string) (string, []string) {
+	c, _, _ = strings.Cut(c, "||")
 	f, vals, _ := strings.Cut(strings.Replace(c, "!=", "=", 1), "=")
 	return f, strings.Split(vals, "|")
 }
 
-// satisfy returns a field setting that makes condition c evaluate to want.
+var groupRE = regexp.MustCompile(`\(([^|)]*)[^)]*\)`)
+
+// satisfy returns a field setting that makes condition c evaluate to want
+// (for alternatives joined by "||", the first one).
 func satisfy(c string, want bool) (string, any) {
+	c, _, _ = strings.Cut(c, "||")
+	if i := strings.Index(c, "~"); i > 0 {
+		neg := c[i-1] == '!'
+		f := strings.TrimSuffix(c[:i], "!")
+		if want != neg {
+			// An example matching the pattern: first alternative of each
+			// group, ".+" as "x", anchors dropped.
+			ex := groupRE.ReplaceAllString(c[i+1:], "$1")
+			ex = strings.NewReplacer("^", "", "$", "", ".+", "x", ".*", "").Replace(ex)
+			return f, ex
+		}
+		return f, "FUZZ_OTHER"
+	}
 	f, vals := splitCond(c)
 	neg := strings.Contains(c, "!=")
 	if want != neg {

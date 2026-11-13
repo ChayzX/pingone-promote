@@ -19,8 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/neutralize"
@@ -83,7 +86,7 @@ func Read(ctx context.Context, r Reader, env string) (*Inventory, error) {
 			if done[d.Type] || (d.Parent != "" && !done[d.Parent] && isAPI(d.Parent)) {
 				continue
 			}
-			objs, err := readType(ctx, r, env, d, byType)
+			objs, err := readType(ctx, r, env, d, byType, func(w string) { inv.Warnings = append(inv.Warnings, w) })
 			if err != nil {
 				// One type the tenant answers unexpectedly must not stop the
 				// whole read: it is skipped and reported. Only failures that
@@ -132,11 +135,18 @@ func isAPI(typ string) bool {
 	return ok && d.Exporter == catalog.ExporterAPI
 }
 
-func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType map[string][]*Object) ([]*Object, error) {
+func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType map[string][]*Object, warn func(string)) ([]*Object, error) {
 	var out []*Object
 	add := func(raw map[string]any, parent *Object) {
 		if !Cond(d.Match, raw) {
 			return
+		}
+		for _, f := range sortedAllowed(d.Allowed) {
+			if bad := disallowed(raw, f, d.Allowed[f]); len(bad) > 0 {
+				name, _ := raw["name"].(string)
+				warn(fmt.Sprintf("%s %q is not copied: %s holds %s, which the Terraform provider cannot set; copy it by hand", d.Type, name, f, strings.Join(bad, ", ")))
+				return
+			}
 		}
 		o := &Object{Type: d.Type, Raw: raw, Parent: parent}
 		o.ID, _ = raw["id"].(string)
@@ -177,8 +187,8 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		}
 		for _, t := range templates {
 			id, _ := t["id"].(string)
-			if id == "" {
-				continue
+			if id == "" || (strings.HasPrefix(d.Match, "template.id") && !Cond(d.Match, map[string]any{"template": map[string]any{"id": id}})) {
+				continue // a template whose contents are not copied is not read
 			}
 			items, err := r.List(ctx, env, strings.ReplaceAll(d.Path, "{template}", id), d.Embedded)
 			if err != nil {
@@ -261,6 +271,47 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 	return out, nil
 }
 
+func sortedAllowed(m map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// disallowed lists the values at a dot path (through objects and lists of
+// objects) that are not in allowed.
+func disallowed(raw map[string]any, path string, allowed []string) []string {
+	var bad []string
+	seen := map[string]bool{}
+	var walk func(v any, parts []string)
+	walk = func(v any, parts []string) {
+		switch x := v.(type) {
+		case []any:
+			for _, it := range x {
+				walk(it, parts)
+			}
+			return
+		case map[string]any:
+			if len(parts) > 0 {
+				walk(x[parts[0]], parts[1:])
+			}
+			return
+		}
+		if len(parts) != 0 || v == nil {
+			return
+		}
+		s := str(v)
+		if !slices.Contains(allowed, s) && !seen[s] {
+			seen[s] = true
+			bad = append(bad, s)
+		}
+	}
+	walk(raw, strings.Split(path, "."))
+	return bad
+}
+
 // refID reads "<attr without _id>.id" or "<camel attr>" from an object.
 func refID(raw map[string]any, attr string) string {
 	if attr == "" {
@@ -276,15 +327,35 @@ func refID(raw map[string]any, attr string) string {
 	return s
 }
 
-// Cond evaluates "field=a|b" or "field!=a|b" on an API object. An empty
-// condition is true; a missing field compares as "" (and as "false" for
-// boolean-looking values).
+// Cond evaluates "field=a|b", "field!=a|b", "field~regexp" or
+// "field!~regexp" on an API object; alternatives joined by "||" hold when
+// any does. An empty condition is true; a missing field compares as "" (and
+// as "false" for boolean-looking values).
 func Cond(c string, raw map[string]any) bool {
 	if c == "" {
 		return true
 	}
-	neg := strings.Contains(c, "!=")
-	field, values, _ := strings.Cut(strings.Replace(c, "!=", "=", 1), "=")
+	for _, alt := range strings.Split(c, "||") {
+		if cond1(alt, raw) {
+			return true
+		}
+	}
+	return false
+}
+
+var condREs sync.Map // pattern -> *regexp.Regexp
+
+func cond1(c string, raw map[string]any) bool {
+	i := strings.IndexAny(c, "=~")
+	if i < 0 {
+		return false
+	}
+	neg := i > 0 && c[i-1] == '!'
+	field := c[:i]
+	if neg {
+		field = c[:i-1]
+	}
+	op, values := c[i], c[i+1:]
 	got := Lookup(raw, field)
 	s := ""
 	switch v := got.(type) {
@@ -300,6 +371,14 @@ func Cond(c string, raw map[string]any) bool {
 		s = fmt.Sprint(v)
 	}
 	match := false
+	if op == '~' {
+		re, ok := condREs.Load(values)
+		if !ok {
+			re = regexp.MustCompile(values)
+			condREs.Store(values, re)
+		}
+		return re.(*regexp.Regexp).MatchString(s) != neg
+	}
 	for _, want := range strings.Split(values, "|") {
 		if s == want || (s == "" && want == "false") {
 			match = true

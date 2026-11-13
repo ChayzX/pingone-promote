@@ -118,6 +118,11 @@ type Def struct {
 	// that share an API collection are told apart this way.
 	Match       string `json:"match,omitempty"`
 	ParentMatch string `json:"parentMatch,omitempty"`
+	// Allowed limits API fields (dot paths through objects and lists) to
+	// the values the provider can set; an object with any other value is
+	// left out with a warning, since writing it without that value would
+	// remove the value in the source environment on its next apply.
+	Allowed map[string][]string `json:"allowed,omitempty"`
 	// Verified is true only after a live acceptance run.
 	Verified bool `json:"verified"`
 }
@@ -238,7 +243,11 @@ var defs = []Def{
 	none("pingone_resource_secret", "resources_scopes_grants", "resource secrets are generated per environment and read by Terraform there"),
 
 	// --- Sign-on policies and actions ---
-	with(api("pingone_sign_on_policy", "sign_on", "signOnPolicies", "signOnPolicies", "name"), func(d *Def) { d.Builtin = "default=true" }),
+	with(api("pingone_sign_on_policy", "sign_on", "signOnPolicies", "signOnPolicies", "name"), func(d *Def) {
+		// Single_Factor and Multi_Factor exist in every environment; the
+		// latter's MFA action has a format the provider cannot write.
+		d.Builtin = "default=true||name=Single_Factor|Multi_Factor"
+	}),
 	with(child("pingone_sign_on_policy_action", "sign_on", "pingone_sign_on_policy", "sign_on_policy_id", "signOnPolicies/{parent}/actions", "actions", true, "priority"), func(d *Def) {
 		d.Hoist = map[string]string{"login": "type=LOGIN", "mfa": "type=MULTI_FACTOR_AUTHENTICATION", "identity_provider": "type=IDENTITY_PROVIDER",
 			"identifier_first": "type=IDENTIFIER_FIRST", "agreement": "type=AGREEMENT", "progressive_profiling": "type=PROGRESSIVE_PROFILING",
@@ -311,7 +320,8 @@ var defs = []Def{
 	}),
 	with(single("pingone_notification_settings", "notifications", "notificationsSettings"), func(d *Def) { d.EnvLocal = []string{"from.email_address", "reply_to.email_address"} }),
 	with(single("pingone_notification_settings_email", "notifications", "notificationsSettings/emailDeliverySettings"), func(d *Def) {
-		d.Status, d.Reason = Limited, "SMTP host, port and user are per-environment values; the SMTP password and OAuth client secret are secrets (customer_secrets.yml)"
+		d.Status, d.Reason = Limited, "SMTP host, port and user are per-environment values; the SMTP password and OAuth client secret are secrets (customer_secrets.yml); not copied while PingOne's own email delivery is used (no sender set)"
+		d.Match = "from.emailAddress~."
 		d.EnvLocal = []string{"host", "port", "username", "from.email_address", "reply_to.email_address"}
 		d.Secrets = map[string]string{"password": "protocol=SMTP|SMTPS"}
 	}),
@@ -320,8 +330,14 @@ var defs = []Def{
 		d.Hoist = map[string]string{"email": "deliveryMethod=Email", "sms": "deliveryMethod=SMS", "voice": "deliveryMethod=Voice", "push": "deliveryMethod=Push"}
 		d.EnvLocal = []string{"email.from.address", "email.reply_to.address"}
 		d.Rename = map[string]string{"template_name": "template.id"}
+		// The templates provider 1.24.0 can manage (others, such as
+		// invite_admin, are left out).
+		d.Match = "template.id=account_created|account_updated|credential_issued|credential_revoked|credential_updated|credential_verification|device_pairing|digital_wallet_pairing|email_verification_admin|email_verification_user|email_phone_verification|general|id_verification|new_device_paired|password_change_admin|password_change_user|recovery_code_template|password_recovery_new|strong_authentication|transaction|verification_code_template|verification_code_new"
 	}),
-	api("pingone_notification_policy", "notifications", "notificationsPolicies", "notificationsPolicies", "name"),
+	with(api("pingone_notification_policy", "notifications", "notificationsPolicies", "notificationsPolicies", "name"), func(d *Def) {
+		// Provider 1.24.0 accepts SMS and Voice quotas only (not WhatsApp).
+		d.Allowed = map[string][]string{"quotas.deliveryMethods": {"SMS", "Voice"}}
+	}),
 	with(single("pingone_phone_delivery_settings", "notifications", "notificationsSettings/phoneDeliverySettings"), func(d *Def) {
 		d.Status, d.Reason = Limited, "custom provider auth tokens are secrets (customer_secrets.yml); request headers of custom providers are never exported (they can carry credentials) and are set by hand"
 		d.Rename = map[string]string{"provider_custom.requests.headers": "-"}
@@ -609,5 +625,15 @@ func Resolve(kind string) (string, bool) {
 
 // DisplayName is a plain-language name for a type ("notification template content").
 func DisplayName(typ string) string {
-	return strings.ReplaceAll(strings.TrimPrefix(typ, "pingone_"), "_", " ")
+	words := strings.Split(strings.TrimPrefix(typ, "pingone_"), "_")
+	for i, w := range words {
+		if a, ok := acronyms[w]; ok {
+			words[i] = a
+		}
+	}
+	return strings.Join(words, " ")
 }
+
+// acronyms are written as people write them in type names.
+var acronyms = map[string]string{"mfa": "MFA", "api": "API", "pingone": "PingOne", "fido2": "FIDO2", "openid": "OpenID",
+	"oidc": "OIDC", "saml": "SAML", "sms": "SMS", "smtp": "SMTP", "ldap": "LDAP", "id": "ID", "url": "URL", "v2": "v2", "davinci": "DaVinci"}

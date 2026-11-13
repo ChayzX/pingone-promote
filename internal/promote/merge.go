@@ -354,8 +354,16 @@ func (m *merger) blocks() error {
 			m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockMissingDep, Address: a, Message: "selected resource is not in the export"})
 		}
 	}
-	for _, a := range m.req.Export.MissingDependencies {
-		if _, ok := m.head.defs[a]; !ok && !m.inExport(a) {
+	for _, alts := range m.req.Export.MissingDependencies {
+		// "a|b": any of the addresses satisfies the reference.
+		found := false
+		for _, a := range strings.Split(alts, "|") {
+			if _, ok := m.head.defs[a]; ok || m.inExport(a) {
+				found = true
+			}
+		}
+		if !found {
+			a, _, _ := strings.Cut(alts, "|")
 			m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockMissingDep, Address: a,
 				Message: "referenced by the export but neither exported nor managed in Git"})
 		}

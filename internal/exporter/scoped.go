@@ -195,6 +195,7 @@ func Addresses(e *Export) ([]string, error) {
 }
 
 var globalVarRE = regexp.MustCompile(`\{\{\s*global\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
+var companyVarRE = regexp.MustCompile(`\{\{\s*global\.company\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
 
 // Companions are a flow's deploy and enable resources (same label).
 func Companions(flowAddr string) []string {
@@ -286,7 +287,13 @@ func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds, exc
 			if path.Base(p) != neutralize.TypeFlow+".tf" {
 				continue
 			}
+			// {{global.variables.x}} is a flow instance variable (terraformer
+			// already follows it through depends_on); company variables are
+			// {{global.company.variables.x}}.
 			for _, m := range globalVarRE.FindAllSubmatch(src, -1) {
+				want(neutralize.TypeVariable + "." + neutralize.Label(string(m[1]), "flowInstance"))
+			}
+			for _, m := range companyVarRE.FindAllSubmatch(src, -1) {
 				want(neutralize.TypeVariable + "." + neutralize.Label(string(m[1]), "company"))
 			}
 		}

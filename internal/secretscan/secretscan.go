@@ -15,6 +15,11 @@ import (
 var (
 	// Masked matches a masked value as PingOne returns it ("******").
 	Masked = regexp.MustCompile(`\*{6,}`)
+	// MaskedString matches a masked value as a whole quoted string in
+	// configuration ("******", or \"******\" inside an encoded string),
+	// not asterisks within text such as a CSS comment banner or code that
+	// builds a mask ('*******' + digits).
+	MaskedString = regexp.MustCompile(`(?:^|[^\\])"\*{6,}"|\\"\*{6,}\\"`)
 	// PrivateKey matches a PEM private key header.
 	PrivateKey = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 	// JWT matches a signed or unsigned JSON Web Token.
@@ -82,7 +87,7 @@ func ScanText(file string, data []byte) []Finding {
 			out = append(out, Finding{File: file, Line: i + 1, Kind: KindPrivateKey})
 		case JWT.Match(line):
 			out = append(out, Finding{File: file, Line: i + 1, Kind: KindJWT})
-		case Masked.Match(line):
+		case MaskedString.Match(line):
 			out = append(out, Finding{File: file, Line: i + 1, Kind: KindMasked})
 		}
 	}

@@ -125,6 +125,9 @@ func blockerText(d *Draft, res *request.Result, env string, b request.BlockerOut
 	case b.Code == "missing_value" && b.Var != "":
 		label, _ := valueLabel(d, res, b.Var)
 		return blockerView{Text: "Needs a value: " + label, Tech: env + ".tfvars · " + b.Var}
+	case b.Code == "missing_dependency" && b.Address != "":
+		return blockerView{Text: "Needs the " + describe(d, b.Address) + ": the request uses it, but it is neither in the request nor in Git. Add it (or copy with “what it depends on”), or leave out what uses it.",
+			Tech: b.Address}
 	case b.Code == "missing_import" && b.Address != "":
 		return blockerView{Text: "Needs the ID of the existing " + describe(d, b.Address) + ". It already exists in every environment, so it is adopted, not created.",
 			Tech: env + ".tfvars import_ids · " + b.Address}

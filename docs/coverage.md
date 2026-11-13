@@ -17,8 +17,8 @@ Totals: 53 covered, 31 covered with documented limits, 17 not possible (101 reso
 | `pingone_davinci_application_secret` | not possible | - | - | - | no | the client secret is generated in each environment and read by Terraform there, never copied |
 | `pingone_davinci_connector_instance` | covered | pingcli-terraformer | - | - | yes (DaVinci, earlier live runs) | - |
 | `pingone_davinci_flow` | covered | pingcli-terraformer | - | - | yes (DaVinci, earlier live runs) | - |
-| `pingone_davinci_flow_deploy` | covered | pingcli-terraformer | exported with its davinci flow | - | yes (DaVinci, earlier live runs) | - |
-| `pingone_davinci_flow_enable` | covered | pingcli-terraformer | exported with its davinci flow | - | yes (DaVinci, earlier live runs) | - |
+| `pingone_davinci_flow_deploy` | covered | pingcli-terraformer | exported with its DaVinci flow | - | yes (DaVinci, earlier live runs) | - |
+| `pingone_davinci_flow_enable` | covered | pingcli-terraformer | exported with its DaVinci flow | - | yes (DaVinci, earlier live runs) | - |
 | `pingone_davinci_variable` | covered | pingcli-terraformer | - | - | yes (DaVinci, earlier live runs) | - |
 
 ## applications
@@ -44,14 +44,14 @@ Totals: 53 covered, 31 covered with documented limits, 17 not possible (101 reso
 | `pingone_resource_attribute` | covered with documented limits | pingone-api | built-in when `type=CORE|PREDEFINED`; exported with its resource | - | no | predefined attributes of the built-in resources are adopted by import |
 | `pingone_resource_scope` | covered | pingone-api | exported with its resource | - | no | - |
 | `pingone_resource_scope_openid` | covered with documented limits | pingone-api | built-in when `name=openid|profile|email|address|phone|offline_access` | - | no | scopes of the built-in OpenID Connect resource; built-in ones (openid, profile, email, ...) are adopted by import |
-| `pingone_resource_scope_pingone_api` | covered with documented limits | pingone-api | - | - | no | custom scopes of the PingOne API resource are exported; the API does not mark its predefined scopes, so do not select those |
+| `pingone_resource_scope_pingone_api` | covered with documented limits | pingone-api | built-in when `name!~^p1:(read|update):user:.+$` | - | no | only custom scopes (p1:read:user:<suffix>, p1:update:user:<suffix>) are created; predefined ones are adopted by import when selected |
 | `pingone_resource_secret` | not possible | - | - | - | no | resource secrets are generated per environment and read by Terraform there |
 
 ## sign on
 
 | Resource type | Status | Exporter | Environment-specific values / built-in | Tested | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `pingone_sign_on_policy` | covered | pingone-api | built-in when `default=true` | - | no | - |
+| `pingone_sign_on_policy` | covered | pingone-api | built-in when `default=true||name=Single_Factor|Multi_Factor` | - | no | - |
 | `pingone_sign_on_policy_action` | covered | pingone-api | exported with its sign on policy | - | no | - |
 
 ## directory
@@ -107,7 +107,7 @@ Totals: 53 covered, 31 covered with documented limits, 17 not possible (101 reso
 | --- | --- | --- | --- | --- | --- | --- |
 | `pingone_notification_policy` | covered | pingone-api | - | - | no | - |
 | `pingone_notification_settings` | covered | pingone-api | per environment: `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | - |
-| `pingone_notification_settings_email` | covered with documented limits | pingone-api | per environment: `host`, `port`, `username`, `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | SMTP host, port and user are per-environment values; the SMTP password and OAuth client secret are secrets (customer_secrets.yml) |
+| `pingone_notification_settings_email` | covered with documented limits | pingone-api | per environment: `host`, `port`, `username`, `from.email_address`, `reply_to.email_address`; one per environment, imported by environment ID | - | no | SMTP host, port and user are per-environment values; the SMTP password and OAuth client secret are secrets (customer_secrets.yml); not copied while PingOne's own email delivery is used (no sender set) |
 | `pingone_notification_template_content` | covered | pingone-api | per environment: `email.from.address`, `email.reply_to.address` | - | no | - |
 | `pingone_phone_delivery_settings` | covered with documented limits | pingone-api | - | - | no | custom provider auth tokens are secrets (customer_secrets.yml); request headers of custom providers are never exported (they can carry credentials) and are set by hand |
 
@@ -149,8 +149,8 @@ Totals: 53 covered, 31 covered with documented limits, 17 not possible (101 reso
 | --- | --- | --- | --- | --- | --- | --- |
 | `pingone_application_resource_permission` | covered | pingone-api | exported with its application resource | - | no | - |
 | `pingone_authorize_api_service` | covered | pingone-api | per environment: `base_urls` | - | no | - |
-| `pingone_authorize_api_service_deployment` | covered with documented limits | pingone-api | exported with its authorize api service | - | no | a deployment is an action; it is written so the pipeline deploys the API service after changes |
-| `pingone_authorize_api_service_operation` | covered | pingone-api | exported with its authorize api service | - | no | - |
+| `pingone_authorize_api_service_deployment` | covered with documented limits | pingone-api | exported with its authorize API service | - | no | a deployment is an action; it is written so the pipeline deploys the API service after changes |
+| `pingone_authorize_api_service_operation` | covered | pingone-api | exported with its authorize API service | - | no | - |
 | `pingone_authorize_application_role` | covered | pingone-api | - | - | no | - |
 | `pingone_authorize_application_role_permission` | covered | pingone-api | exported with its authorize application role | - | no | - |
 | `pingone_authorize_decision_endpoint` | covered with documented limits | pingone-api | per environment: `authorization_version_id` | - | no | the policy version (authorization_version_id) is per environment and becomes a per-environment variable |

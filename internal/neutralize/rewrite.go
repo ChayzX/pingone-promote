@@ -393,9 +393,17 @@ func (s *state) scan() error {
 			continue
 		}
 		s.res.GlobalVariableRefs[b.Address] = sortedKeys(names)
+		// {{global.variables.x}} is a flow instance variable; company
+		// variables are {{global.company.variables.x}}. Either context
+		// satisfies the first, since DaVinci falls back between them.
 		for n := range names {
-			a := TypeVariable + "." + Label(n, "company")
-			if !have[a] {
+			fi, co := TypeVariable+"."+Label(n, "flowInstance"), TypeVariable+"."+Label(n, "company")
+			if !have[fi] && !have[co] {
+				missing[fi+"|"+co] = true // either satisfies it
+			}
+		}
+		for _, m := range companyVarRE.FindAllSubmatch(b.Text, -1) {
+			if a := TypeVariable + "." + Label(string(m[1]), "company"); !have[a] {
 				missing[a] = true
 			}
 		}

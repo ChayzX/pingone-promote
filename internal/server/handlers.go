@@ -937,9 +937,9 @@ func typeOptions(d *Draft) []typeOption {
 			continue
 		}
 		seen[it.Type] = true
-		out = append(out, typeOption{Value: it.Type, Label: resourceLabel(it.Type), Selected: it.Type == d.TypeFilter})
+		out = append(out, typeOption{Value: it.Type, Label: capitalize(resourceLabel(it.Type)), Selected: it.Type == d.TypeFilter})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
 	return out
 }
 

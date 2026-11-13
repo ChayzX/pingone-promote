@@ -11,7 +11,7 @@
 <div class="notice" role="status"><p><strong>Almost ready.</strong> {{range $i, $e := .Data.NeedEnvs}}{{if $i}}, {{end}}{{$e}}{{end}} {{if eq (len .Data.NeedEnvs) 1}}needs{{else}}need{{end}} {{if eq (len .Data.NeedEnvs) 1}}a value{{else}}values{{end}} before this can be submitted. <a href="#values">Fill them in below</a>.</p></div>
 {{else}}{{with $r.Error}}
 <div class="problem" role="alert">
-  <p>{{.Message}}</p>
+  <p>{{if eq .Code "blocked"}}<strong>Not ready yet.</strong> The readiness table below says what still has to be done.{{else}}{{.Message}}{{end}}</p>
   {{with .Candidates}}<p>Several items match. Use the search to pick one:</p>
   <ul>{{range .}}<li>{{.Name}} <code>{{.ID}}</code> <code class="small">{{.Address}}</code></li>{{end}}</ul>{{end}}
 </div>

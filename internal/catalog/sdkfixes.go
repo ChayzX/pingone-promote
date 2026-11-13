@@ -36,8 +36,10 @@ var sdkFixes = map[string][]fix{
 	// standard scopes are known by name.
 	"pingone_resource_scope_openid": {func(d *Def) { d.Builtin = "name=openid|profile|email|address|phone|offline_access" }},
 	"pingone_resource_scope_pingone_api": {func(d *Def) {
-		d.Builtin = ""
-		d.Reason = "custom scopes of the PingOne API resource are exported; the API does not mark its predefined scopes, so do not select those"
+		// The provider creates only p1:read:user:<suffix> and
+		// p1:update:user:<suffix>; every other scope is predefined.
+		d.Builtin = "name!~^p1:(read|update):user:.+$"
+		d.Reason = "only custom scopes (p1:read:user:<suffix>, p1:update:user:<suffix>) are created; predefined ones are adopted by import when selected"
 	}},
 	"pingone_sign_on_policy_action": {renames(map[string]string{"registration_external_href": "registration.external.href"})},
 	// Both default objects are imported by the environment ID alone.

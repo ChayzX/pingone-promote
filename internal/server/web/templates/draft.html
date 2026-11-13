@@ -9,7 +9,8 @@
 {{with .Data.Problem}}<p class="problem" role="alert">{{.}}</p>{{end}}
 {{if .Data.Running}}<p class="notice">Something is running for this request. <a href="/drafts/{{$d.ID}}/job">See progress</a>.</p>{{end}}
 
-<form method="post" action="/drafts/{{$d.ID}}/save" id="main"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="step" value="{{$step}}"></form>
+<form method="post" action="/drafts/{{$d.ID}}/save" id="main"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="step" value="{{$step}}"><!-- Enter in a field presses the first button of the form: make it the
+step's main action, not Back. --><button type="submit" name="action" value="{{if eq $step 3}}preview{{else}}next{{end}}" class="sr-only" tabindex="-1" aria-hidden="true"{{if eq $step 2}} formnovalidate{{end}}>{{if eq $step 3}}Preview the change{{else}}Next{{end}}</button></form>
 
 {{if eq $step 1}}
 <section>
@@ -99,20 +100,23 @@
 {{else}}<h2>Leave items out (optional)</h2>
 <p class="hint">To keep an item out, for example a test application, search for it and choose <strong>Leave out</strong>.{{if eq $scope "sections"}} <strong>Add</strong> copies a single item from another section too.{{end}} Nothing to leave out? Press <em>Next</em> above.</p>
 {{end}}
+  <!-- Search has a form of its own: Enter in the search box searches
+       (in the main form it would press that form's first button, Back). -->
+  <form method="post" action="/drafts/{{$d.ID}}/search" id="search-form"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="step" value="{{$step}}"></form>
   <div class="search-row">
     <div>
       <label for="f-q">Name or ID</label>
-      <input type="search" id="f-q" name="q" form="main" value="{{$d.Query}}" maxlength="200">
+      <input type="search" id="f-q" name="q" form="search-form" value="{{$d.Query}}" maxlength="200">
     </div>
     {{with .Data.Types}}<div>
       <label for="f-t">Type</label>
-      <select id="f-t" name="t" form="main">
+      <select id="f-t" name="t" form="search-form">
         <option value="">All types</option>
         {{range .}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select>
     </div>{{end}}
   </div>
-  <div class="buttons"><button type="submit" form="main" formaction="/drafts/{{$d.ID}}/search" formnovalidate>Search</button></div>
+  <div class="buttons"><button type="submit" form="search-form">Search</button></div>
   <p class="hint">Leave the name empty to list every item{{with .Data.Types}} (of the chosen type){{end}}.</p>
 
 <div id="results">
@@ -140,7 +144,7 @@
 {{else if and .Data.SearchedOnce .Data.ListLoaded}}{{if eq .Data.ListSize 0}}<p role="status">PingOne returned no items for {{$d.Source}}. Check that the worker application has read roles on that environment, then tick "Read {{$d.Source}} again" and search.</p>{{else}}<p role="status">Nothing matches among the {{.Data.ListSize}} items of {{$d.Source}}. Try part of the name, the ID, or another type.</p>{{end}}{{end}}
 </div>
 <details class="small-print"><summary>Changed something in PingOne just now?</summary>
-  <label class="inline"><input type="checkbox" name="refresh" value="yes" form="main"> Read {{$d.Source}} again on the next search{{with .Data.ListAge}} (the list is {{.}} old){{end}}</label>
+  <label class="inline"><input type="checkbox" name="refresh" value="yes" form="search-form"> Read {{$d.Source}} again on the next search{{with .Data.ListAge}} (the list is {{.}} old){{end}}</label>
 </details>
 {{end}}
 </section>

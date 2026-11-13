@@ -479,7 +479,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 			}
 		}
 	}
-	out, err := combine(c, dvExp, rendered, ids, exported)
+	out, err := combine(c, dvExp, rendered, ids, exported, whole)
 	if err != nil {
 		return nil, err
 	}
@@ -508,13 +508,37 @@ const envIDVariable = `variable "pingone_environment_id" {
 }
 `
 
+// aboutExported reports whether a source-read note names a type that the
+// rendered core objects include. Notes that name no type are kept.
+func aboutExported(w string, core *coreexport.Rendered) bool {
+	typ := typeRE.FindString(w)
+	if typ == "" {
+		return true
+	}
+	for p := range core.Files {
+		if strings.HasSuffix(p, "/"+typ+".tf") {
+			return true
+		}
+	}
+	return false
+}
+
+var typeRE = regexp.MustCompile(`pingone_[a-z0-9_]+`)
+
 // combine merges the DaVinci export and the rendered core objects. Core IDs
 // that appear as whole string literals inside DaVinci blocks become
 // references (or ID variables when the core object is not exported).
-func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids map[string]string, exported map[string]bool) (*exporter.Export, error) {
+func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids map[string]string, exported map[string]bool, whole bool) (*exporter.Export, error) {
 	out := &exporter.Export{EnvironmentID: c.inv.EnvironmentID, ModuleDir: exporter.ModuleDir, ModuleName: exporter.ModuleName,
 		Files: map[string][]byte{}, Referenced: map[string]string{}, Adopt: core.Adopt}
-	out.Warnings = append(out.Warnings, c.inv.Warnings...)
+	// Notes from reading the source are shown for a whole environment, and
+	// otherwise only for the types in this export (a label clash among role
+	// assignments is no concern of a request for one flow).
+	for _, w := range c.inv.Warnings {
+		if whole || aboutExported(w, core) {
+			out.Warnings = append(out.Warnings, w)
+		}
+	}
 	if c.dvErr != nil {
 		why := "the DaVinci export failed"
 		var ex *exporter.ExecError
@@ -523,13 +547,17 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 		}
 		out.Warnings = append(out.Warnings, "DaVinci items were not read: "+why+". If the source environment has DaVinci, check the worker's DaVinci role and try again; only core PingOne items are in this export")
 	}
-	if len(c.inv.Skipped) > 0 && len(core.Unresolved) > 0 {
+	if len(core.Unresolved) > 0 {
 		keys := sortedKeysS(core.Unresolved)
 		more := ""
 		if len(keys) > 5 {
 			keys, more = keys[:5], fmt.Sprintf(" and %d more", len(core.Unresolved)-5)
 		}
-		out.Warnings = append(out.Warnings, "Some item types were not read, and these values look like IDs of objects that were not found, so they keep the source environment's ID: "+strings.Join(keys, ", ")+more+". Check them before merging")
+		why := "items this tool does not copy, such as images and PingOne's built-in roles"
+		if len(c.inv.Skipped) > 0 {
+			why += ", or items of a type that was not read"
+		}
+		out.Warnings = append(out.Warnings, "These values look like IDs of "+why+", so they keep the source environment's value: "+strings.Join(keys, ", ")+more+". Check that each is the same in every environment before merging")
 	}
 	for _, t := range sortedKeysS(c.inv.Skipped) {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%s was not read: %s", t, c.inv.Skipped[t]))
