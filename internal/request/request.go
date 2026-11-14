@@ -570,11 +570,25 @@ func secretKind(name string, v cty.Value) string {
 				return secretscan.KindNamed
 			}
 		}
+		// Text that is a JSON list or object (a DaVinci variable holding
+		// an object, kept as text) is checked part by part too.
+		if t := strings.TrimSpace(s); (strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")) && json.Valid([]byte(t)) {
+			if inner, err := jsonValue(json.RawMessage(t)); err == nil {
+				return secretKind(name, inner)
+			}
+		}
 	case v.CanIterateElements():
 		for it := v.ElementIterator(); it.Next(); {
-			_, e := it.Element()
-			if k := secretKind(name, e); k != "" {
-				return k
+			k, e := it.Element()
+			if kind := secretKind(name, e); kind != "" {
+				return kind
+			}
+			// {"password": "…"}: a non-empty string under a key named
+			// like a credential.
+			if (v.Type().IsObjectType() || v.Type().IsMapType()) && k.Type() == cty.String && e.Type() == cty.String && e.IsKnown() && !e.IsNull() {
+				if s := strings.TrimSpace(e.AsString()); s != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialName(k.AsString()) {
+					return secretscan.KindNamed
+				}
 			}
 		}
 	}
