@@ -11,7 +11,7 @@
 #   terraform            1.16.7   the terraform fmt gate (the server never plans or applies)
 #   pingcli-terraformer  0.6.0    the DaVinci exporter (ADR 0015)
 # Optional:
-#   --with-go            Go 1.27.3, to build pingone-promote from source (CI uses it)
+#   --with-go            Go 1.27.4, to build pingone-promote from source (CI uses it)
 #   --with-pingcli       pingcli 1.11.0. Not used by pingone-promote (ADR 0018:
 #                        pingcli 1.x has no export command); offered only for
 #                        operators who want it for diagnostics.
@@ -21,7 +21,7 @@ set -euo pipefail
 
 TERRAFORM_VERSION=1.16.7
 TERRAFORMER_VERSION=0.6.0
-GO_VERSION=1.27.3
+GO_VERSION=1.27.4
 PINGCLI_VERSION=1.11.0
 
 dest=./tools
@@ -60,10 +60,10 @@ digest() {
     terraformer/darwin_arm64) echo 80a18625c03b42745a1154491d71b597e738478c8997f9c72ac81f94fe63942b ;;
     terraformer/linux_amd64) echo be0bea0f4f7ecb4e33a95f9894793ae9c70bb3480665d9d303c06021b8ae4a98 ;;
     terraformer/linux_arm64) echo e934912a23b58418d673596c750281ba7dfe768ab0158e71eb4d63375aa156d7 ;;
-    go/darwin_amd64) echo b6f8e931e4ab497fcde6da8ae4499a58f9d258e55c8a80824a516eae5950a750 ;;
-    go/darwin_arm64) echo dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2 ;;
-    go/linux_amd64) echo 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;;
-    go/linux_arm64) echo a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 ;;
+    go/darwin_amd64) echo 2b799377704ef12db39bd254995d5c348c9cc8d86562ca817724390e56c38f43 ;;
+    go/darwin_arm64) echo 91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4 ;;
+    go/linux_amd64) echo 7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840 ;;
+    go/linux_arm64) echo 3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92 ;;
     pingcli/darwin_amd64) echo f61039aeb25d48d8e60f530f22b21e42b91fb8c2bb2d51a8b817f4275ac7234e ;;
     pingcli/darwin_arm64) echo 5e63751d9fb62ec69cd961f2a8048dd95fe0782b1ade1148e8327a974f3e713b ;;
     pingcli/linux_amd64) echo a9e6ff01e59731391826c67c91ea89d6f62fd3fc5ffd6fe28e43f25b6020862b ;;

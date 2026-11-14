@@ -72,10 +72,13 @@ type Env struct {
 	// SourceEnvironmentID overrides the source overlay's
 	// pingone_environment_id.
 	SourceEnvironmentID string
-	Exporter            Exporter
-	Credentials         exporter.Credentials
-	TerraformBin        string
-	SecretsConfig       *pipelinesecrets.Config
+	// SharedEnvironmentIDs lets several environments have the same
+	// PingOne environment ID (a demonstration only; see promote).
+	SharedEnvironmentIDs bool
+	Exporter             Exporter
+	Credentials          exporter.Credentials
+	TerraformBin         string
+	SecretsConfig        *pipelinesecrets.Config
 	// Committer is nil for local runs (files are written to Workspace).
 	Committer Committer
 	// CI facts: the request branch, the commit the job checked out, the
@@ -238,7 +241,7 @@ func (r *runner) run(ctx context.Context) {
 	}
 	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, WholeEnvironment: req.Whole(),
 		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig,
-		Adopt: exp.Adopt, ImportIDs: req.ImportIDs}
+		Adopt: exp.Adopt, ImportIDs: req.ImportIDs, SharedEnvironmentIDs: r.env.SharedEnvironmentIDs}
 	if req.BaseCommit != "" {
 		if r.env.BaseRepo == nil {
 			res.fail(ErrPreflight, "validation", "baseCommit was given but this run cannot read history", false)

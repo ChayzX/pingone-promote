@@ -104,9 +104,15 @@ func (s *state) liftAttributes() error {
 			if _, dup := s.res.Variables[name]; dup {
 				return &CollisionError{What: "variable", Name: name, Addresses: []string{rb.addr()}, Hint: "a lifted attribute's variable name is already taken"}
 			}
-			s.res.Variables[name] = &Variable{Name: name, Type: typeOf(v), Kind: KindEnvLocal, Origin: "lift:" + rb.addr() + "." + rule.Attribute,
-				Description: "Environment value for " + rule.Attribute + " of " + rb.typ + "." + label}
-			s.res.SourceValues[name] = v
+			if credentialSource(v) && secretNameRE.MatchString(name) {
+				// A credential inside an ordinary attribute (a password in
+				// a URL): never shown or written to Git.
+				s.res.Variables[name] = s.secretInstead(name, "lift:"+rb.addr()+"."+rule.Attribute, rule.Attribute+" of "+rb.typ+"."+label)
+			} else {
+				s.res.Variables[name] = &Variable{Name: name, Type: typeOf(v), Kind: KindEnvLocal, Origin: "lift:" + rb.addr() + "." + rule.Attribute,
+					Description: "Environment value for " + rule.Attribute + " of " + rb.typ + "." + label}
+				s.res.SourceValues[name] = v
+			}
 			r := e.Range()
 			// Ranges in the AST are file offsets; make them block-relative.
 			s.lifted[rb] = append(s.lifted[rb], lift{rng: r, name: name})
@@ -424,7 +430,7 @@ func (s *state) scan() error {
 			f.Name, f.Line = name, 0
 			s.res.Findings = append(s.res.Findings, f)
 		}
-		if secretscan.SuspectLiteral(name, v.AsString()) {
+		if secretscan.SuspectLiteral(name, v.AsString()) || credentialSource(v) {
 			s.res.Findings = append(s.res.Findings, secretscan.Finding{File: "source values", Kind: secretscan.KindNamed, Name: name})
 		}
 	}

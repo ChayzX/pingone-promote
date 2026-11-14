@@ -397,6 +397,12 @@ func (r *Request) Validate() error {
 	if !printable(r.Description, 64<<10) {
 		return invalid("description", "must be at most 64 KiB of text, with no control characters other than line breaks (\n) and tabs")
 	}
+	for _, ft := range [][2]string{{"title", r.Title}, {"description", r.Description}, {"commitMessage", r.CommitMessage}} {
+		field, text := ft[0], ft[1]
+		if secretscan.CredentialInText(text) {
+			return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like it contains a secret; a title or note is stored in Git and GitLab", Plain: "looks like it contains a password, key or token. Titles and notes are stored in Git and GitLab; leave secrets out"}
+		}
+	}
 	return nil
 }
 
@@ -566,9 +572,14 @@ func secretKind(name string, v cty.Value) string {
 		// (davinci_variable_<name>_value).
 		if strings.HasPrefix(name, "davinci_variable_") {
 			base := secretscan.VariableBase(name)
-			if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && (secretscan.CredentialName(base) || secretscan.CredentialValue(s)) {
+			if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialName(base) {
 				return secretscan.KindNamed
 			}
+		}
+		// A credential is one whatever the value is named: a token, base64
+		// of "user:password", a URL with a password, JSON holding one.
+		if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialValue(s) {
+			return secretscan.KindNamed
 		}
 		// Text that is a JSON list or object (a DaVinci variable holding
 		// an object, kept as text) is checked part by part too.
@@ -579,47 +590,24 @@ func secretKind(name string, v cty.Value) string {
 		}
 	case v.CanIterateElements():
 		for it := v.ElementIterator(); it.Next(); {
-			k, e := it.Element()
+			_, e := it.Element()
 			if kind := secretKind(name, e); kind != "" {
 				return kind
 			}
-			// {"password": "…"}: a non-empty string under a key named
-			// like a credential.
-			if (v.Type().IsObjectType() || v.Type().IsMapType()) && k.Type() == cty.String && secretscan.CredentialKey(k.AsString()) && hasCredentialLiteralValue(e) {
+		}
+		// {"password": "…"}, {"headers": [{"name": "Authorization",
+		// "value": "…"}]}: the rules for JSON, shared with what is read
+		// from an environment.
+		if raw, err := ctyjson.Marshal(v, v.Type()); err == nil {
+			d := json.NewDecoder(bytes.NewReader(raw))
+			d.UseNumber()
+			var x any
+			if d.Decode(&x) == nil && secretscan.CredentialInJSON(x) {
 				return secretscan.KindNamed
 			}
 		}
 	}
 	return ""
-}
-
-// hasCredentialLiteralValue retains a credential parent's context through
-// arrays and common value wrappers without treating arbitrary auth metadata
-// object properties as credentials.
-func hasCredentialLiteralValue(v cty.Value) bool {
-	if v.IsNull() || !v.IsKnown() {
-		return false
-	}
-	if v.Type() == cty.String {
-		s := strings.TrimSpace(v.AsString())
-		return s != "" && !secretscan.TemplateOnly.MatchString(s)
-	}
-	if !v.CanIterateElements() {
-		return false
-	}
-	for it := v.ElementIterator(); it.Next(); {
-		k, e := it.Element()
-		if v.Type().IsTupleType() || v.Type().IsListType() || v.Type().IsSetType() {
-			if hasCredentialLiteralValue(e) {
-				return true
-			}
-			continue
-		}
-		if k.Type() == cty.String && (secretscan.CredentialKey(k.AsString()) || strings.EqualFold(k.AsString(), "value")) && hasCredentialLiteralValue(e) {
-			return true
-		}
-	}
-	return false
 }
 
 // Values converts EnvValues to cty values (already validated).

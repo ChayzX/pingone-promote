@@ -118,3 +118,61 @@ func TestOpaqueCredentialsUnderCredentialKeys(t *testing.T) {
 		}
 	}
 }
+
+// A credential is recognised by its shape whatever it is named: a URL
+// with a password, name=secret, a connection string; and inside JSON a
+// name/value pair, a wrapped value and more key names.
+func TestCredentialShapesAndJSONPairs(t *testing.T) {
+	for _, v := range []string{
+		"https://user:hunter2secret@smtp.example.com",
+		"postgres://svc:hunter2secret@db.example.com/app",
+		"password=Sup3rS3cret!",
+		"client_secret: 9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+		"Server=db;User=sa;Password=Sup3rS3cret",
+		`{"headers":[{"name":"Authorization","value":"opaque-value-123"}]}`,
+		`{"headers":[{"key":"X-Api-Key","value":"opaque-value-123"}]}`,
+		`{"headers":[{"Name":"Cookie","Value":"session=abcdef0123456789"}]}`,
+		`{"password":{"current":"opaque-value-123"}}`,
+		`{"auth":{"user":"svc","pass":"opaque-value-123"}}`,
+		`{"auth":{"data":{"value":"opaque-value-123"}}}`,
+		`{"hmacKey":"opaque-value-123"}`,
+		`{"url":"https://svc:opaque-value-123@host.example.com/x"}`,
+		`{"connectionString":"Server=db;User=sa;Password=opaque-value-123"}`,
+	} {
+		if !CredentialValue(v) {
+			t.Errorf("not recognised as a credential: %s", v)
+		}
+	}
+	for _, v := range []string{
+		"https://hooks.example.com/in?source=promote",
+		"https://user@example.com/path",
+		"https://svc:{{global.variables.pw}}@host.example.com",
+		"noreply@example.com",
+		"user:name",
+		"password",
+		"token: {{flow.token}}",
+		"Reset your password = click the link",
+		`{"headers":[{"name":"Content-Type","value":"application/json"}]}`,
+		`{"headers":[{"name":"Authorization","value":"{{global.variables.auth}}"}]}`,
+		`{"auth":{"region":"us","mode":"regional"}}`,
+		`{"auth":{"type":"basic","url":"https://idp.example.com"}}`,
+	} {
+		if CredentialValue(v) {
+			t.Errorf("an ordinary value was recognised as a credential: %s", v)
+		}
+	}
+	for _, s := range []string{
+		"token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+		"see\nAuthorization: Bearer abcdef0123456789abcdef0123456789",
+		"use (glpat-abcdefghij0123456789).",
+	} {
+		if !CredentialInText(s) {
+			t.Errorf("no credential found in text: %q", s)
+		}
+	}
+	for _, s := range []string{"PingOne: Flow B from dev", "Adds the subflow.\nSee CIAM-77 for the token lifetime change.", "Bearer tokens are now refreshed"} {
+		if CredentialInText(s) {
+			t.Errorf("a credential was found in ordinary text: %q", s)
+		}
+	}
+}

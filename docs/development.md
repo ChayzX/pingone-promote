@@ -70,7 +70,7 @@ Every command takes `--help`; `--version` prints the version.
 
 ```sh
 bash scripts/fetch-tools.sh --dest ./tools --with-go
-export PATH="$PWD/tools:$PWD/tools/go/bin:$PATH"     # Terraform 1.16.7, Go 1.27.3
+export PATH="$PWD/tools:$PWD/tools/go/bin:$PATH"     # Terraform 1.16.7, Go 1.27.4
 export PINGONE_PROMOTE_TERRAFORM="$PWD/tools/terraform"
 
 gofmt -l .                       # must print nothing

@@ -62,8 +62,8 @@ func TestWholeEnvironmentCoreAndDaVinciValidates(t *testing.T) {
 	// what the operator enters) and an adoption ID for every built-in.
 	vals := map[string]map[string]cty.Value{}
 	ids := map[string]map[string]string{}
-	for _, env := range rollout {
-		vals[env] = map[string]cty.Value{neutralize.EnvironmentIDVariable: cty.StringVal("22222222-2222-4222-8222-222222222222")}
+	for i, env := range rollout {
+		vals[env] = map[string]cty.Value{neutralize.EnvironmentIDVariable: cty.StringVal("22222222-2222-4222-8222-00000000000" + string(rune('1'+i)))}
 		for name, v := range neu.Variables {
 			if v.PerEnvironment() {
 				if sv, ok := neu.SourceValues[name]; ok {

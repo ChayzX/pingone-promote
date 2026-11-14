@@ -7,6 +7,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/secretscan"
 )
@@ -48,6 +49,7 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 		managed[l.ModuleAddress(a)] = true
 	}
 	var out []Blocker
+	idOwner := map[string]string{}
 	for _, env := range names {
 		p, err := l.Overlay(env)
 		if err != nil {
@@ -69,6 +71,17 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 		for _, v := range required {
 			if _, ok := o.Values[v]; !ok {
 				out = append(out, Blocker{Env: env, Code: BlockMissingValue, Variable: v, Message: p + " must set " + v})
+			}
+		}
+		// Two environments never share a PingOne environment ID: the
+		// pipeline would apply one environment's changes to the other.
+		if id, ok := o.Values[neutralize.EnvironmentIDVariable]; ok && id.IsKnown() && !id.IsNull() && id.Type() == cty.String && strings.TrimSpace(id.AsString()) != "" {
+			key := strings.ToLower(strings.TrimSpace(id.AsString()))
+			if other, dup := idOwner[key]; dup {
+				out = append(out, Blocker{Env: env, Code: BlockSameEnvironment, Variable: neutralize.EnvironmentIDVariable,
+					Message: p + " sets the same " + neutralize.EnvironmentIDVariable + " as " + other + "; each environment has its own PingOne environment ID (with the same one, " + env + "'s changes would be applied to " + other + ")"})
+			} else {
+				idOwner[key] = env
 			}
 		}
 		for _, k := range o.Keys() {
@@ -120,7 +133,9 @@ func scanValue(name string, v cty.Value) []string {
 			if secretscan.SuspectLiteral(name, s) {
 				kinds = append(kinds, secretscan.KindNamed)
 			}
-			if secretscan.JSONText(s) && secretscan.CredentialValue(s) {
+			// A credential whatever the value is named: a token, base64 of
+			// "user:password", a URL with a password, JSON holding one.
+			if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialValue(s) {
 				kinds = append(kinds, secretscan.KindNamed)
 			}
 		case v.CanIterateElements():

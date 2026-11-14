@@ -107,6 +107,9 @@ const (
 	BlockSecretsFile     = "customer_secrets"
 	BlockModuleLayout    = "module_layout"
 	BlockSecretFinding   = "secret_finding"
+	// BlockSameEnvironment: two environments' overlays set the same
+	// PingOne environment ID.
+	BlockSameEnvironment = "same_environment_id"
 	BlockMissingDep      = "missing_dependency"
 	BlockAutoTfvars      = "auto_tfvars"
 	// BlockMissingImport: a built-in object (default population, default
@@ -135,6 +138,10 @@ type MergeRequest struct {
 	SourceEnv string
 	// Rollout lists the environments after the source, in order.
 	Rollout []string
+	// SharedEnvironmentIDs lets several environments have the same
+	// PingOne environment ID. Only a demonstration sets it (every rollout
+	// environment standing for the source); a real rollout never does.
+	SharedEnvironmentIDs bool
 	// EnvValues are operator-supplied environment values. They may set
 	// keys that already exist (an explicit operation).
 	EnvValues map[string]map[string]cty.Value
@@ -957,6 +964,15 @@ func (m *merger) finish() error {
 	all, err := ValidateOverlays(m.view, m.l, m.envs())
 	if err != nil {
 		return err
+	}
+	if m.req.SharedEnvironmentIDs {
+		kept := all[:0]
+		for _, b := range all {
+			if b.Code != BlockSameEnvironment {
+				kept = append(kept, b)
+			}
+		}
+		all = kept
 	}
 	// A value no variable declares only makes Terraform warn: it must not
 	// block a request.

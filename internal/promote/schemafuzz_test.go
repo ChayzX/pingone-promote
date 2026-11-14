@@ -132,8 +132,8 @@ func TestSchemaTenantWholeEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	vals := map[string]map[string]cty.Value{}
-	for _, env := range rollout {
-		vals[env] = map[string]cty.Value{neutralize.EnvironmentIDVariable: cty.StringVal("22222222-2222-4222-8222-222222222222")}
+	for i, env := range rollout {
+		vals[env] = map[string]cty.Value{neutralize.EnvironmentIDVariable: cty.StringVal("22222222-2222-4222-8222-00000000000" + string(rune('1'+i)))}
 		for name, v := range neu.Variables {
 			if v.PerEnvironment() {
 				if sv, ok := neu.SourceValues[name]; ok {

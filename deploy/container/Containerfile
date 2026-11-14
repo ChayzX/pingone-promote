@@ -4,13 +4,13 @@
 #
 # PIN BY DIGEST before any shared use. Look up the digest of the tag you
 # reviewed and pass it:
-#   podman pull docker.io/library/golang:1.27.3
-#   podman inspect --format '{{index .RepoDigests 0}}' docker.io/library/golang:1.27.3
-#   podman build --format docker --build-arg GO_IMAGE=docker.io/library/golang:1.27.3@sha256:<digest> \
+#   podman pull docker.io/library/golang:1.27.4
+#   podman inspect --format '{{index .RepoDigests 0}}' docker.io/library/golang:1.27.4
+#   podman build --format docker --build-arg GO_IMAGE=docker.io/library/golang:1.27.4@sha256:<digest> \
 #                --build-arg RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:<digest> ...
 # The defaults below use tags so the file builds out of the box; a tag can
 # move, a digest cannot.
-ARG GO_IMAGE=docker.io/library/golang:1.27.3
+ARG GO_IMAGE=docker.io/library/golang:1.27.4
 ARG RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 FROM ${GO_IMAGE} AS build

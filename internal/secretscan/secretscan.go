@@ -158,7 +158,10 @@ func CredentialValue(v string) bool {
 	if JSONText(v) {
 		return jsonCredential(v)
 	}
-	if JWT.MatchString(v) || PrivateKey.MatchString(v) || tokenRE.MatchString(v) || queryTokenRE.MatchString(v) {
+	if JWT.MatchString(v) || PrivateKey.MatchString(v) || tokenRE.MatchString(v) || queryTokenRE.MatchString(v) || urlPassword(v) || namedPairRE.MatchString(v) {
+		return true
+	}
+	if len(v) <= 512 && connectionPasswordRE.MatchString(v) {
 		return true
 	}
 	if len(v) < 8 || strings.ContainsAny(v, " {}<>") {
@@ -178,6 +181,49 @@ func CredentialValue(v string) bool {
 		}
 	}
 	return true
+}
+
+// userinfoRE matches a URL with a user and a password before the host
+// (https://user:password@host).
+var userinfoRE = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]*:([^/\s@]+)@`)
+
+// urlPassword reports whether v holds a URL with a literal password. A
+// password that is wholly a reference ({{...}} or ${...}) is not one.
+func urlPassword(v string) bool {
+	for _, m := range userinfoRE.FindAllStringSubmatch(v, -1) {
+		if !TemplateOnly.MatchString(m[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// namedPairRE matches a value that is wholly "name=secret" or
+// "name: secret" for a credential's name (password=..., client_secret: ...).
+var namedPairRE = regexp.MustCompile(`(?i)^(?:password|passwd|pwd|client[_-]?secret|api[_-]?key|secret|token)\s*[:=]\s*[^\s{}$]\S{5,}$`)
+
+// connectionPasswordRE matches the password of a connection string
+// (Server=db;User=sa;Password=...).
+var connectionPasswordRE = regexp.MustCompile(`(?i)(?:^|;)\s*(?:password|pwd)\s*=\s*[^;\s{}$][^;\s]{3,}`)
+
+// CredentialInText reports whether free text (a title or a note) holds a
+// credential: a private key, a JWT, or a word (or a "Bearer <token>"
+// pair of words) that CredentialValue recognises.
+func CredentialInText(s string) bool {
+	if PrivateKey.MatchString(s) || JWT.MatchString(s) {
+		return true
+	}
+	words := strings.Fields(s)
+	for i, w := range words {
+		w = strings.Trim(w, `"'()[]<>,;.:!?`)
+		if !JSONText(w) && CredentialValue(w) {
+			return true
+		}
+		if i+1 < len(words) && tokenRE.MatchString(w+" "+strings.Trim(words[i+1], `"'()[]<>,;.`)) {
+			return true
+		}
+	}
+	return false
 }
 
 // queryTokenRE matches a URL that carries a credential in its query.
@@ -234,8 +280,42 @@ func CredentialInJSON(x any) bool {
 				return true
 			}
 		}
+		// {"name": "Authorization", "value": "..."}: a header or setting
+		// given as a pair, whose name names a credential.
+		if val, ok := t[pairKey(t, "value")].(string); ok && literal(val) {
+			for _, nk := range []string{"name", "key", "header"} {
+				if n, ok := t[pairKey(t, nk)].(string); ok && pairName(n) {
+					return true
+				}
+			}
+		}
 	}
 	return false
+}
+
+// literal reports whether s is a value, not empty, a reference or masked.
+func literal(s string) bool {
+	return strings.TrimSpace(s) != "" && !TemplateOnly.MatchString(s) && !Masked.MatchString(s)
+}
+
+// pairKey finds the key of m that is want, whatever its case.
+func pairKey(m map[string]any, want string) string {
+	for k := range m {
+		if strings.EqualFold(k, want) {
+			return k
+		}
+	}
+	return want
+}
+
+// pairName reports whether the name of a name/value pair names a
+// credential (Authorization, X-Api-Key, Cookie, clientSecret).
+func pairName(n string) bool {
+	switch compact(n) {
+	case "cookie", "setcookie":
+		return true
+	}
+	return CredentialKey(n) || strings.Contains(compact(n), "authorization")
 }
 
 // hasCredentialLiteral checks a value already protected by a credential key.
@@ -252,14 +332,22 @@ func hasCredentialLiteral(x any) bool {
 			}
 		}
 	case map[string]any:
+		// A member counts when it names a credential itself or is a
+		// common wrapper ({"password": {"current": "..."}}, {"auth":
+		// {"data": {"value": "..."}}}); other members are settings
+		// ({"auth": {"region": "us", "mode": "regional"}}).
 		for k, e := range v {
-			if (CredentialKey(k) || compact(k) == "value") && hasCredentialLiteral(e) {
+			if (CredentialKey(k) || wrapperKeys[compact(k)]) && hasCredentialLiteral(e) {
 				return true
 			}
 		}
 	}
 	return false
 }
+
+// wrapperKeys are member names that hold the value of their parent.
+var wrapperKeys = map[string]bool{"value": true, "val": true, "current": true, "new": true, "old": true,
+	"plain": true, "plaintext": true, "raw": true, "data": true, "content": true, "string": true}
 
 // labelKeyRE matches keys that name a label, a text or a kind of
 // credential rather than one (forgotPasswordLabel, secretQuestion,
@@ -273,7 +361,8 @@ func CredentialKey(k string) bool {
 		return false
 	}
 	switch compact(k) {
-	case "auth", "authorization", "token", "accesstoken", "refreshtoken", "idtoken":
+	case "auth", "authorization", "token", "accesstoken", "refreshtoken", "idtoken",
+		"pass", "pwd", "passcode", "bearer", "jwt", "cookie", "hmackey", "encryptionkey", "connectionstring", "dsn":
 		return true
 	default:
 		return CredentialName(k) || HasSecretSuffix(k)

@@ -930,9 +930,31 @@ func (s *state) keep(name string, d decl) *Variable {
 		desc = "Environment value " + name
 	}
 	if v, ok := s.values[name]; ok && !s.noValue[name] {
+		if d.typ == "string" && credentialSource(v) && secretNameRE.MatchString(name) {
+			return s.secretInstead(name, name, name)
+		}
 		s.res.SourceValues[name] = v
 	}
 	return &Variable{Name: name, Type: d.typ, Description: desc, Kind: KindEnvLocal, Origin: name}
+}
+
+// credentialSource reports whether a source value is a credential whatever
+// it is named: a token, base64 of "user:password", a URL with a password,
+// or JSON text holding one.
+func credentialSource(v cty.Value) bool {
+	if v.IsNull() || !v.IsKnown() || v.Type() != cty.String {
+		return false
+	}
+	t := v.AsString()
+	return strings.TrimSpace(t) != "" && !secretscan.TemplateOnly.MatchString(t) && secretscan.CredentialValue(t)
+}
+
+// secretInstead makes a per-environment value a secret because its source
+// value is a credential: it is not shown, not filled in and not written
+// to Git; every environment's value comes from Vault.
+func (s *state) secretInstead(name, origin, what string) *Variable {
+	s.res.Warnings = append(s.res.Warnings, "The value of "+what+" in the source looks like a credential (for example a password inside a URL), so "+name+" is not written to Git: it is a secret (customer_secrets.yml, from Vault) in every environment")
+	return &Variable{Name: name, Type: "string", Description: "PingOne secret " + name + " (pipeline: TF_VAR_" + name + ").", Kind: KindSecret, Origin: origin}
 }
 
 // credentialValue reports whether a DaVinci variable's value variable holds

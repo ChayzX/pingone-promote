@@ -126,7 +126,8 @@ func (s *Server) env(project gitlab.Project, workspace, head, requestID string, 
 		Exporter: exp, Credentials: s.creds, TerraformBin: s.cfg.Tools.Terraform,
 		Committer: gitlab.HostedCommitter{S: &gitlab.Submitter{Client: s.gl, Formatter: s.cfg.Tools.Terraform}, DefaultBranch: project.DefaultBranch, BranchPrefix: s.cfg.BranchPrefix, BranchPattern: s.branchRE()},
 		Branch:    s.cfg.BranchPrefix + requestID, Head: head, DefaultBranch: project.DefaultBranch, ProjectURL: project.WebURL,
-		BranchPrefix: s.cfg.BranchPrefix, NoRequestFile: true, MRLabels: s.cfg.GitLab.MRLabels, SecretsConfig: s.secretsCfg}
+		BranchPrefix: s.cfg.BranchPrefix, NoRequestFile: true, MRLabels: s.cfg.GitLab.MRLabels, SecretsConfig: s.secretsCfg,
+		SharedEnvironmentIDs: s.sharedEnvironmentIDs()}
 }
 
 // runPreview exports, merges into a fresh snapshot of the default branch

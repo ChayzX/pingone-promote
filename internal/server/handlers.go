@@ -13,7 +13,9 @@ import (
 	"time"
 	"unicode"
 
+	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/request"
+	"pingone-promote/internal/secretscan"
 )
 
 // Handlers only translate between forms, drafts and the request engine;
@@ -362,6 +364,10 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 			d.problem = "The note for reviewers must be at most 64 KB; it was not saved."
 		case strings.IndexFunc(desc, func(r rune) bool { return r < 0x20 && r != '\n' && r != '\t' }) >= 0:
 			d.problem = "The note for reviewers contains a control character (other than line breaks and tabs); it was not saved."
+		case secretscan.CredentialInText(title):
+			d.problem = "The merge request title looks like it contains a password, key or token; it was not saved. Titles are stored in Git and GitLab: leave secrets out."
+		case secretscan.CredentialInText(desc):
+			d.problem = "The note for reviewers looks like it contains a password, key or token; it was not saved. Notes are stored in Git and GitLab: leave secrets out."
 		default:
 			d.Title, d.Description = title, desc
 		}
@@ -956,6 +962,20 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 				dst[env][name] = text
 			}
 		}
+		// An environment's ID is never another environment's (the
+		// configuration refuses that too): its changes would be applied
+		// to the other one.
+		for _, env := range envs {
+			id := strings.TrimSpace(values[env][neutralize.EnvironmentIDVariable])
+			if id == "" {
+				continue
+			}
+			if other := s.environmentWithID(id, env); other != "" {
+				d.problem = "Nothing was saved: " + id + " is the PingOne environment ID of " + other + ", not of " + env + ". Each environment has its own; with this one, " + env + "'s changes would be applied to " + other + "."
+				s.redirect(w, r, draftURL(d, "/preview"))
+				return
+			}
+		}
 		oldV, oldI := d.Values, d.ImportIDs
 		d.Values, d.ImportIDs = values, imports
 		if _, err := s.buildRequest(d, true); err != nil {
@@ -1344,4 +1364,38 @@ func readAt(d *Draft, env string) string {
 		return " had at " + t.Format("15:04 MST")
 	}
 	return " has"
+}
+
+// environmentWithID names the environment, other than env, that the
+// server configuration gives this PingOne environment ID ("" when none).
+func (s *Server) environmentWithID(id, env string) string {
+	if strings.EqualFold(s.cfg.EnvironmentIDs[env], id) {
+		return "" // its own ID, by the configuration
+	}
+	for _, m := range []map[string]string{s.cfg.EnvironmentIDs, s.cfg.SourceEnvironmentIDs} {
+		for _, name := range sortedNames(m) {
+			if name != env && strings.EqualFold(m[name], id) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// sharedEnvironmentIDs reports whether the configuration in use gives two
+// environments the same PingOne environment ID. A configuration file never
+// does (loading refuses it); only a demonstration built in code does, with
+// every rollout environment standing for the source.
+func (s *Server) sharedEnvironmentIDs() bool {
+	seen := map[string]string{}
+	for _, m := range []map[string]string{s.cfg.SourceEnvironmentIDs, s.cfg.EnvironmentIDs} {
+		for name, id := range m {
+			id = strings.ToLower(id)
+			if other, ok := seen[id]; ok && other != name {
+				return true
+			}
+			seen[id] = name
+		}
+	}
+	return false
 }

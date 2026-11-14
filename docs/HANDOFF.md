@@ -36,4 +36,4 @@ All core types are `Live: no`. The PingOne API paths and field names, worker rol
 
 ## How to verify
 
-With Go 1.27.3 and Terraform 1.16.7 on PATH (`scripts/fetch-tools.sh --with-go`): `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./...`, `terraform fmt -check -recursive terraform/`, plus `python3 -m unittest discover -s scripts -p test_release.py`. Fixture success is not live proof.
+With Go 1.27.4 and Terraform 1.16.7 on PATH (`scripts/fetch-tools.sh --with-go`): `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./...`, `terraform fmt -check -recursive terraform/`, plus `python3 -m unittest discover -s scripts -p test_release.py`. Fixture success is not live proof.

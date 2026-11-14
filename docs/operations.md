@@ -35,7 +35,7 @@ rejected. Secrets never go in this file.
 | `pingone.regionCode` | One of `NA`, `EU`, `CA`, `AP`, `AU`, `SG`. |
 | `pingone.workerEnvironmentId` | Environment holding the **read-only** source worker app. |
 | `sources` | Environments a request may export from (`development` means `development.tfvars`). |
-| `environmentIds` | Recommended: every environment's PingOne ID, sources and rollout, for example `{"dev": "<ID>", "qa": "<ID>", "stage": "<ID>", "prod": "<ID>"}`. The server then fills in `pingone_environment_id` where a `.tfvars` lacks it, and reads each rollout environment read-only (the same worker needs read roles there) to fill in the values a request needs that the environment already has: IDs of existing items, import IDs to adopt them, DaVinci variable values and environment-specific attributes. Filled values are marked on the page and stay editable; secrets are never filled in. |
+| `environmentIds` | Recommended: every environment's PingOne ID, sources and rollout, for example `{"dev": "<ID>", "qa": "<ID>", "stage": "<ID>", "prod": "<ID>"}`. The server then fills in `pingone_environment_id` where a `.tfvars` lacks it, and reads each rollout environment read-only (the same worker needs read roles there) to fill in the values a request needs that the environment already has: IDs of existing items, import IDs to adopt them, DaVinci variable values and environment-specific attributes. Filled values are marked on the page and stay editable; secrets are never filled in. A typed ID that this setting gives another environment is refused, and a request is blocked when two environments' `.tfvars` would have the same `pingone_environment_id` (one environment's changes would be applied to the other). |
 | `sourceEnvironmentIds` | Optional: `{"development": "<PingOne environment ID>"}`. Rarely needed: the source's ID is read from `pingone_environment_id` in its `.tfvars`. Use it only when that file cannot set it; if a GitLab CI variable supplies the ID, also list `pingone_environment_id` in `repository.ciVariables`. |
 | `rollout` | Environments the pipeline applies afterwards, in order. Must not overlap `sources`. |
 | `overlayPattern` | Where each environment's tfvars live, default `{env}.tfvars`. |
@@ -101,7 +101,7 @@ Run as root.
     bash scripts/fetch-tools.sh --dest /opt/pingone-promote/tools
     sha256sum /opt/pingone-promote/tools/terraform
 
-    # 3. The binary: build (Go 1.27.3, e.g. fetch-tools.sh --with-go) or copy a release build
+    # 3. The binary: build (Go 1.27.4, e.g. fetch-tools.sh --with-go) or copy a release build
     CGO_ENABLED=0 go build -trimpath -o /opt/pingone-promote/pingone-promote ./cmd/pingone-promote
     chmod 0755 /opt/pingone-promote/pingone-promote
 
@@ -182,7 +182,7 @@ ignores `X-Forwarded-Host`).
 
 ## macOS local test
 
-For trying it on your own laptop. Requires Go 1.27.3 (or `--with-go`).
+For trying it on your own laptop. Requires Go 1.27.4 (or `--with-go`).
 
     bash scripts/fetch-tools.sh --dest ./tools
     shasum -a 256 tools/terraform
