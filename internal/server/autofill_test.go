@@ -43,6 +43,8 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 	const dv = "davinci_variable_cfg_value"
 	const addr = "pingone_davinci_variable.pingcli__cfg_company"
 	for _, val := range []string{
+		`{"auth":"SYNTHETIC-opaque-auth-value-123456","region":"us"}`,
+		`{"token":["SYNTHETIC-opaque-token-value-123456"]}`,
 		`{"auth":"Bearer abcdefghijklmnopqrstuvwxyz0123"}`,
 		`{"k":"ghp_abcdefghijklmnopqrstuvwxyz0123456789"}`,
 		`{"basic":"dXNlcjpwYXNzd29yZDEyMw=="}`,
@@ -62,17 +64,29 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 			t.Errorf("the draft is refused after filling in: %v", err)
 		}
 	}
-	// An ordinary object is filled in.
-	val := `{"CSRauth":true,"region":"us"}`
-	e := factsServer(t, &fakeFacts{f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: val}, Raw: map[string]map[string]any{addr: {}}}}})
-	d := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
-	res := &request.Result{
+	// Authentication settings are metadata, not credentials.
+	metadata := `{"authMode":"passwordless","authType":"oidc","tokenType":"Bearer","authorizationEndpoint":"https://example.invalid/oauth2/authorize"}`
+	metadataEnv := factsServer(t, &fakeFacts{f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: metadata}, Raw: map[string]map[string]any{addr: {}}}}})
+	metadataDraft := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
+	metadataRes := &request.Result{
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 		Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
 	}
-	e.srv.autofill(context.Background(), d, res, func(string) {})
-	if d.Values["qa"][dv] != val {
-		t.Errorf("an ordinary object value was not filled in: %q", d.Values["qa"][dv])
+	metadataEnv.srv.autofill(context.Background(), metadataDraft, metadataRes, func(string) {})
+	if metadataDraft.Values["qa"][dv] != metadata {
+		t.Errorf("authentication metadata was not filled in: %q", metadataDraft.Values["qa"][dv])
+	}
+	// An ordinary object is filled in.
+	val := `{"CSRauth":true,"region":"us"}`
+	ordinaryEnv := factsServer(t, &fakeFacts{f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: val}, Raw: map[string]map[string]any{addr: {}}}}})
+	ordinaryDraft := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
+	ordinaryRes := &request.Result{
+		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
+		Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
+	}
+	ordinaryEnv.srv.autofill(context.Background(), ordinaryDraft, ordinaryRes, func(string) {})
+	if ordinaryDraft.Values["qa"][dv] != val {
+		t.Errorf("an ordinary object value was not filled in: %q", ordinaryDraft.Values["qa"][dv])
 	}
 }
 

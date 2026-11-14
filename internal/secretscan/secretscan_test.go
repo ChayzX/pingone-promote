@@ -88,3 +88,33 @@ func TestCredentialInsideJSONText(t *testing.T) {
 		}
 	}
 }
+
+func TestOpaqueCredentialsUnderCredentialKeys(t *testing.T) {
+	for _, v := range []string{
+		`{"auth":"SYNTHETIC-opaque-auth-value-123456","region":"us"}`,
+		`{"authorization":"SYNTHETIC-opaque-authorization-value-123456"}`,
+		`{"token":"SYNTHETIC-opaque-token-value-123456"}`,
+		`{"access_token":"SYNTHETIC-opaque-access-token-value-123456"}`,
+		`{"refreshToken":"SYNTHETIC-opaque-refresh-token-value-123456"}`,
+		`{"id_token":"SYNTHETIC-opaque-id-token-value-123456"}`,
+		`{"token":["SYNTHETIC-opaque-token-value-123456"]}`,
+		`{"token":{"value":"SYNTHETIC-opaque-token-value-123456"}}`,
+	} {
+		if !CredentialValue(v) {
+			t.Errorf("opaque credential was not found: %s", v)
+		}
+	}
+	for _, v := range []string{
+		`{"tokenEndpointUrl":"https://example.invalid/token"}`,
+		`{"passwordPolicyId":"policy-123456789"}`,
+		`{"secretQuestion":"What is your favorite color?"}`,
+		`{"apiKeyHeader":"X-API-Key"}`,
+		`{"authLabel":"Sign in"}`,
+		`{"authMode":"SYNTHETIC-mode-value","authType":"SYNTHETIC-type-value","tokenType":"Bearer","authorizationEndpoint":"https://example.invalid/oauth2/authorize"}`,
+		`{"auth":{"region":"us","mode":"regional"}}`,
+	} {
+		if CredentialValue(v) {
+			t.Errorf("metadata was classified as a credential: %s", v)
+		}
+	}
+}

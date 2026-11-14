@@ -585,14 +585,41 @@ func secretKind(name string, v cty.Value) string {
 			}
 			// {"password": "…"}: a non-empty string under a key named
 			// like a credential.
-			if (v.Type().IsObjectType() || v.Type().IsMapType()) && k.Type() == cty.String && e.Type() == cty.String && e.IsKnown() && !e.IsNull() {
-				if s := strings.TrimSpace(e.AsString()); s != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialKey(k.AsString()) {
-					return secretscan.KindNamed
-				}
+			if (v.Type().IsObjectType() || v.Type().IsMapType()) && k.Type() == cty.String && secretscan.CredentialKey(k.AsString()) && hasCredentialLiteralValue(e) {
+				return secretscan.KindNamed
 			}
 		}
 	}
 	return ""
+}
+
+// hasCredentialLiteralValue retains a credential parent's context through
+// arrays and common value wrappers without treating arbitrary auth metadata
+// object properties as credentials.
+func hasCredentialLiteralValue(v cty.Value) bool {
+	if v.IsNull() || !v.IsKnown() {
+		return false
+	}
+	if v.Type() == cty.String {
+		s := strings.TrimSpace(v.AsString())
+		return s != "" && !secretscan.TemplateOnly.MatchString(s)
+	}
+	if !v.CanIterateElements() {
+		return false
+	}
+	for it := v.ElementIterator(); it.Next(); {
+		k, e := it.Element()
+		if v.Type().IsTupleType() || v.Type().IsListType() || v.Type().IsSetType() {
+			if hasCredentialLiteralValue(e) {
+				return true
+			}
+			continue
+		}
+		if k.Type() == cty.String && (secretscan.CredentialKey(k.AsString()) || strings.EqualFold(k.AsString(), "value")) && hasCredentialLiteralValue(e) {
+			return true
+		}
+	}
+	return false
 }
 
 // Values converts EnvValues to cty values (already validated).

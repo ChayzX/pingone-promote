@@ -31,3 +31,21 @@ func TestSecretInsideJSONText(t *testing.T) {
 		}
 	}
 }
+
+func TestOpaqueJSONCredentialsAreRejectedAsValuesAndText(t *testing.T) {
+	for _, input := range []struct {
+		name       string
+		raw        string
+		wantSecret bool
+	}{
+		{"JSON value", `{"auth":"SYNTHETIC-opaque-auth-value-123456","region":"us"}`, true},
+		{"JSON text", `"{\"auth\":\"SYNTHETIC-opaque-auth-value-123456\",\"region\":\"us\"}"`, true},
+		{"nested array", `{"token":["SYNTHETIC-opaque-token-value-123456"]}`, true},
+		{"JSON value metadata", `{"authMode":"SYNTHETIC-mode-value","authType":"SYNTHETIC-type-value","tokenType":"Bearer","authorizationEndpoint":"https://example.invalid/oauth2/authorize"}`, false},
+		{"template reference", `{"token":"{{global.variables.apiToken}}"}`, false},
+	} {
+		if kind := SecretKind("davinci_variable_config_value", json.RawMessage(input.raw)); (kind != "") != input.wantSecret {
+			t.Errorf("SecretKind for %s = %q, want secret=%v", input.name, kind, input.wantSecret)
+		}
+	}
+}

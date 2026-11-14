@@ -227,10 +227,33 @@ func CredentialInJSON(x any) bool {
 		}
 	case map[string]any:
 		for k, e := range t {
-			if s, ok := e.(string); ok && CredentialKey(k) && strings.TrimSpace(s) != "" && !TemplateOnly.MatchString(s) && !Masked.MatchString(s) {
+			if CredentialKey(k) && hasCredentialLiteral(e) {
 				return true
 			}
 			if CredentialInJSON(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasCredentialLiteral checks a value already protected by a credential key.
+// Some DaVinci configs wrap credentials in arrays or objects; retain the key's
+// context while walking those containers so opaque leaves are not missed.
+func hasCredentialLiteral(x any) bool {
+	switch v := x.(type) {
+	case string:
+		return strings.TrimSpace(v) != "" && !TemplateOnly.MatchString(v) && !Masked.MatchString(v)
+	case []any:
+		for _, e := range v {
+			if hasCredentialLiteral(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for k, e := range v {
+			if (CredentialKey(k) || compact(k) == "value") && hasCredentialLiteral(e) {
 				return true
 			}
 		}
@@ -246,5 +269,13 @@ var labelKeyRE = regexp.MustCompile(`(?i)(label|text|question|type|header|name|l
 // CredentialKey reports whether a key inside a JSON value names a
 // credential (password, clientSecret, apiKey), not a label of one.
 func CredentialKey(k string) bool {
-	return CredentialName(k) && !labelKeyRE.MatchString(k)
+	if labelKeyRE.MatchString(k) {
+		return false
+	}
+	switch compact(k) {
+	case "auth", "authorization", "token", "accesstoken", "refreshtoken", "idtoken":
+		return true
+	default:
+		return CredentialName(k) || HasSecretSuffix(k)
+	}
 }
