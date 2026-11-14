@@ -1310,7 +1310,7 @@ func whyText(d *Draft, role string) string {
 // readAt says when env was read for filled-in values ("had at 15:04").
 func readAt(d *Draft, env string) string {
 	if t := d.FilledAt[env]; !t.IsZero() {
-		return " had at " + t.Format("15:04")
+		return " had at " + t.Format("15:04 MST")
 	}
 	return " has"
 }

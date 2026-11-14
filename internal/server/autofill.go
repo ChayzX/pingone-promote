@@ -156,6 +156,11 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 			report = append(report, fmt.Sprintf("%s: nothing could be read there (%d of %d filled in). The worker probably has no read role in %s, or its ID in environmentIds is wrong.", env, n, asked, env))
 			continue
 		}
+		if f == nil && r == nil {
+			// Only its environment ID was needed: nothing was read.
+			report = append(report, fmt.Sprintf("%s: %d of %d filled in (its environment ID, from environmentIds in the server configuration).", env, n, asked))
+			continue
+		}
 		line := fmt.Sprintf("%s: %d of %d filled in from what %s%s", env, n, asked, env, readAt(d, env))
 		if n < asked {
 			line += fmt.Sprintf("; %d not found there under the same name, cleared by you, or a secret (never filled in)", asked-n)
@@ -313,31 +318,31 @@ func looksSecret(name, v string) bool {
 	return secretscan.CredentialValue(v) || len(secretscan.ScanText("", []byte(v))) > 0 || request.SecretKind(name, encodeValue(v)) != ""
 }
 
-// fillSnapshot is what autofill may change, to take it back.
-type fillSnapshot struct {
-	values, imports map[string]map[string]string
-	filled          filled
-}
+// fillSnapshot is which values were marked filled before a fill.
+type fillSnapshot map[string]map[string]bool
 
-func copyNested[T any](m map[string]map[string]T) map[string]map[string]T {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]map[string]T, len(m))
-	for k, in := range m {
-		c := make(map[string]T, len(in))
-		for k2, v := range in {
-			c[k2] = v
+func (d *Draft) fillState() fillSnapshot {
+	out := fillSnapshot{}
+	for env, m := range d.Filled {
+		out[env] = map[string]bool{}
+		for k := range m {
+			out[env][k] = true
 		}
-		out[k] = c
 	}
 	return out
 }
 
-func (d *Draft) fillState() fillSnapshot {
-	return fillSnapshot{values: copyNested(d.Values), imports: copyNested(d.ImportIDs), filled: filled(copyNested(map[string]map[string]string(d.Filled)))}
-}
-
-func (d *Draft) restoreFill(s fillSnapshot) {
-	d.Values, d.ImportIDs, d.Filled = s.values, s.imports, s.filled
+// restoreFill takes back what the last fill entered. A value the person
+// typed meanwhile has lost its mark (saveValues), so it is kept.
+func (d *Draft) restoreFill(before fillSnapshot) {
+	for env, m := range d.Filled {
+		for k := range m {
+			if before[env][k] {
+				continue
+			}
+			delete(m, k)
+			delete(d.Values[env], k)
+			delete(d.ImportIDs[env], k)
+		}
+	}
 }

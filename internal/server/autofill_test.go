@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"strings"
@@ -120,6 +121,7 @@ func TestBranchSuggestionKeepsTheTicket(t *testing.T) {
 	for _, c := range []struct{ pattern, typed, taken, want, notWant string }{
 		{"CIAM-[0-9]+-[0-9]+", "CIAM-77-1", "CIAM-77-1", "CIAM-77-2 is free", ""},
 		{"CIAM-[0-9]+", "CIAM-77", "CIAM-77", "already exists", "is free"},
+		{"[A-Z][A-Z0-9]+-[0-9]+", "AB1-5", "AB1-5", "already exists", "is free"},
 	} {
 		t.Run(c.pattern, func(t *testing.T) {
 			e := newCoreEnvWith(t, func(cf *Config) { cf.BranchPattern = c.pattern; cf.BranchExample = "" })
@@ -133,5 +135,20 @@ func TestBranchSuggestionKeepsTheTicket(t *testing.T) {
 				t.Errorf("suggested a name: %s", regexp.MustCompile(`The Git branch [^<]*`).FindString(p.body))
 			}
 		})
+	}
+}
+
+// A string variable keeps its text exactly (key order, spacing, &), so a
+// filled-in DaVinci object is written as the environment has it.
+func TestStringVariablesKeepTheirText(t *testing.T) {
+	const dv = "davinci_variable_cfg_value"
+	text := `{ "z": "a&b",  "a": 1 }`
+	d := &Draft{preview: &preview{result: &request.Result{Variables: map[string]request.VariableOut{dv: {Type: "string"}, "urls": {Type: "list(string)"}}}}}
+	var got string
+	if err := json.Unmarshal(encodeFor(d, dv, text), &got); err != nil || got != text {
+		t.Fatalf("string variable: %q (%v)", got, err)
+	}
+	if got := string(encodeFor(d, "urls", `["https://a.example.com"]`)); got != `["https://a.example.com"]` {
+		t.Fatalf("list variable: %s", got)
 	}
 }

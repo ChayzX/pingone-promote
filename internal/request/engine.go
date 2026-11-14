@@ -1072,7 +1072,7 @@ func describeVariables(neu *neutralize.Result) map[string]VariableOut {
 		if !v.PerEnvironment() || name == neutralize.EnvironmentIDVariable {
 			continue
 		}
-		vo := VariableOut{Kind: string(v.Kind), Description: v.Description}
+		vo := VariableOut{Kind: string(v.Kind), Description: v.Description, Type: strings.TrimSpace(v.Type)}
 		switch {
 		case v.Kind == neutralize.KindExcludedRef:
 			vo.Resource = v.Excluded

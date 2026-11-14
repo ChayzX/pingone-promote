@@ -162,7 +162,7 @@ func TestValuesFilledInFromTheEnvironments(t *testing.T) {
 	}
 	mustContain(t, p.body, "filled in from what the environments already have", "Filled in from environmentIds in the server configuration", "Filled in from what qa had at ", `value="`+firstUseSourceID+`"`)
 	got := map[string]bool{}
-	for _, m := range regexp.MustCompile(`Filled in from (?:what (\w+) had at \d\d:\d\d|(environmentIds) in the server configuration); check it\.[^<]*<code class="small">([^<]+)</code>`).FindAllStringSubmatch(p.body, -1) {
+	for _, m := range regexp.MustCompile(`Filled in from (?:what (\w+) had at \d\d:\d\d \S+|(environmentIds) in the server configuration); check it\.[^<]*<code class="small">([^<]+)</code>`).FindAllStringSubmatch(p.body, -1) {
 		got[m[1]+m[2]+" "+m[3]] = true
 	}
 	for _, want := range []string{"environmentIds pingone_environment_id", "prod notification_settings_environment_from_email_address"} {

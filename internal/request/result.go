@@ -184,6 +184,8 @@ type VariableOut struct {
 	// SourceValue is the source environment's value, shown as an example
 	// (never a secret: secrets are not per-environment values).
 	SourceValue string `json:"sourceValue,omitempty"`
+	// Type is the variable's declared type ("string", "list(string)", ...).
+	Type string `json:"type,omitempty"`
 }
 
 // MaxDiff bounds result.diff. A whole-environment diff is cut at

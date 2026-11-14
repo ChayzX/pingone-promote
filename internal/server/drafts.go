@@ -298,6 +298,17 @@ func encodeValue(text string) json.RawMessage {
 	return b
 }
 
+// encodeFor encodes a value for the variable name: as the exact text where
+// the variable is a string (a DaVinci variable holding JSON keeps its
+// text, key order and spacing), else as encodeValue does.
+func encodeFor(d *Draft, name, text string) json.RawMessage {
+	if d.preview != nil && d.preview.result != nil && d.preview.result.Variables[name].Type == "string" {
+		b, _ := json.Marshal(text)
+		return b
+	}
+	return encodeValue(text)
+}
+
 // ImportIDRecorder puts per-environment import IDs (environment -> resource
 // address -> ID) on a request.
 type ImportIDRecorder interface {
@@ -360,7 +371,7 @@ func (s *Server) buildRequest(d *Draft, dryRun bool) (*request.Request, error) {
 			if req.EnvValues[env] == nil {
 				req.EnvValues[env] = map[string]json.RawMessage{}
 			}
-			req.EnvValues[env][k] = encodeValue(v)
+			req.EnvValues[env][k] = encodeFor(d, k, v)
 		}
 	}
 	if d.RequestedBy == "" {

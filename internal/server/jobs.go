@@ -498,7 +498,10 @@ type branchTakenError struct{ name, free string }
 func (e *branchTakenError) Error() string { return errBranchTaken.Error() + ": " + e.name }
 func (e *branchTakenError) Unwrap() error { return errBranchTaken }
 
-var branchSuffixRE = regexp.MustCompile(`^(.*)-([0-9]+)$`)
+var (
+	branchSuffixRE = regexp.MustCompile(`^(.*)-([0-9]+)$`)
+	ticketEndRE    = regexp.MustCompile(`-[0-9]+$`)
+)
 
 // freeBranch finds the first unused name after branch with a number
 // added (CIAM-1234 -> CIAM-1234-1, CIAM-1234-1 -> CIAM-1234-2) that the
@@ -506,10 +509,11 @@ var branchSuffixRE = regexp.MustCompile(`^(.*)-([0-9]+)$`)
 func (s *Server) freeBranch(ctx context.Context, branch string) string {
 	base, n := branch, 0
 	// The suffix is replaced when the name without it is allowed too, or
-	// when the pattern takes no further suffix and the name ends in a
-	// number before it (CIAM-77-1 under CIAM-[0-9]+-[0-9]+).
+	// when the pattern takes no further suffix and the suffix follows a
+	// ticket number (CIAM-77-1 under CIAM-[0-9]+-[0-9]+; never AB1-5, a
+	// ticket of its own).
 	if m := branchSuffixRE.FindStringSubmatch(branch); m != nil && (s.branchRE().MatchString(m[1]) ||
-		!s.branchRE().MatchString(branch+"-1") && m[1] != "" && m[1][len(m[1])-1] >= '0' && m[1][len(m[1])-1] <= '9') {
+		!s.branchRE().MatchString(branch+"-1") && ticketEndRE.MatchString(m[1])) {
 		base, n = m[1], atoiOr(m[2], 0)
 	}
 	for i := n + 1; i <= n+20; i++ {
