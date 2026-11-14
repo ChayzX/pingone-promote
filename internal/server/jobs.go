@@ -522,11 +522,26 @@ func (s *Server) freeBranch(ctx context.Context, branch string) string {
 		!s.branchRE().MatchString(branch+"-1") && ticketEndRE.MatchString(m[1])) {
 		base, n = m[1], atoiOr(m[2], 0)
 	}
-	for i := n + 1; i <= n+20; i++ {
+	// One listing of the names after base, instead of a lookup each.
+	taken := map[string]bool{}
+	if gitlab.ValidRequestBranchPrefix(base + "-") {
+		bs, err := s.gl.ListRequestBranches(ctx, base+"-")
+		if err != nil {
+			return ""
+		}
+		for _, b := range bs {
+			taken[b.Name] = true
+		}
+	}
+	for i := n + 1; i <= n+1000; i++ {
 		c := base + "-" + strconv.Itoa(i)
 		if !s.branchRE().MatchString(c) {
 			return ""
 		}
+		if taken[c] {
+			continue
+		}
+		// Checked once more (the listing is paged and can be cut short).
 		if _, exists, err := s.gl.GetBranch(ctx, c); err != nil {
 			return ""
 		} else if !exists {

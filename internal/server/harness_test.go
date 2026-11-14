@@ -277,6 +277,23 @@ func (b *browser) post(path string, form url.Values) page {
 		}
 		form.Set("csrf", b.csrf)
 	}
+	// A submit is sent from the preview page, which names its preview.
+	if strings.HasSuffix(path, "/submit") {
+		if _, ok := form["preview"]; !ok {
+			if m := previewTokenRE.FindStringSubmatch(b.get(strings.TrimSuffix(path, "/submit") + "/preview").body); m != nil {
+				form.Set("preview", m[1])
+			} else {
+				// No submit form on the page (blocked, stale, nothing to
+				// change): the post is made by hand, naming the preview.
+				id := strings.TrimSuffix(strings.TrimPrefix(path, "/drafts/"), "/submit")
+				b.e.srv.drafts.mu.Lock()
+				if d := b.e.srv.drafts.byID[id]; d != nil && d.preview != nil {
+					form.Set("preview", d.preview.token())
+				}
+				b.e.srv.drafts.mu.Unlock()
+			}
+		}
+	}
 	req, _ := http.NewRequest(http.MethodPost, b.e.ts.URL+path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -385,3 +402,5 @@ func (s slowList) CatalogAllIDs(ctx context.Context, _ exporter.Credentials) ([]
 	}
 	return []exporter.Resource{{Address: exporter.Address{Type: "pingone_population", Label: "pingcli__Customers"}, Name: "Customers", ID: "p1"}}, nil
 }
+
+var previewTokenRE = regexp.MustCompile(`name="preview" value="([^"]+)"`)

@@ -113,13 +113,26 @@ func (s *Server) requestRows(ctx context.Context, label string) ([]requestRow, e
 	}
 	base := strings.TrimRight(project.WebURL, "/")
 	branchURL := func(b string) string { return base + "/-/tree/" + url.PathEscape(b) }
-	mrs, err := s.gl.ListRequestMRs(ctx, label, s.cfg.BranchPrefix, 50)
+	// Request branches start with branchPrefix, or (named branches) match
+	// branchPattern; a named branch without a merge request is one this
+	// tool's commit is the newest on.
+	ours := func(b string) bool {
+		return strings.HasPrefix(b, s.cfg.BranchPrefix) || s.branchRE() != nil && s.branchRE().MatchString(b)
+	}
+	mrs, err := s.gl.ListLabelledMRs(ctx, label, ours, 50)
 	if err != nil {
 		return nil, err
 	}
 	branches, err := s.gl.ListRequestBranches(ctx, s.cfg.BranchPrefix)
 	if err != nil {
 		return nil, err
+	}
+	if re := s.branchRE(); re != nil {
+		named, err := s.gl.ListSubmittedBranches(ctx, func(b string) bool { return re.MatchString(b) && !strings.HasPrefix(b, s.cfg.BranchPrefix) })
+		if err != nil {
+			return nil, err
+		}
+		branches = append(branches, named...)
 	}
 	live := map[string]bool{}
 	for _, b := range branches {

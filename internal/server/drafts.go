@@ -10,6 +10,7 @@ import (
 	"os"
 	"pingone-promote/internal/neutralize"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,12 @@ type preview struct {
 	snapshot      string
 	frozen        *frozenExport
 	at            time.Time
+}
+
+// token names this preview on its page, so a submit from a page that
+// shows another (an older tab) is refused.
+func (p *preview) token() string {
+	return p.fingerprint[:16] + "-" + strconv.FormatInt(p.at.UnixNano(), 36)
 }
 
 // Draft is one request being prepared in one browser session.
@@ -305,7 +312,7 @@ func encodeValue(text string) json.RawMessage {
 // the variable is a string (a DaVinci variable holding JSON keeps its
 // text, key order and spacing), else as encodeValue does.
 func encodeFor(d *Draft, name, text string) json.RawMessage {
-	if d.varTypes[name] == "string" || d.preview != nil && d.preview.result != nil && d.preview.result.Variables[name].Type == "string" {
+	if varType(d, name) == "string" {
 		b, _ := json.Marshal(text)
 		return b
 	}

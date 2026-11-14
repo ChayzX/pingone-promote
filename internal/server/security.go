@@ -53,7 +53,7 @@ func (s *Server) hostAllowed(hostport string) bool {
 // terminates TLS or runs behind a TLS proxy, http otherwise.
 func (s *Server) origin(r *http.Request) string {
 	scheme := "http"
-	if s.tls || s.cfg.Exposure == ExposureBehindProxy {
+	if s.httpsFacing() {
 		scheme = "https"
 	}
 	return scheme + "://" + strings.ToLower(r.Host)
@@ -176,8 +176,12 @@ func sessionFrom(r *http.Request) *session {
 	return s
 }
 
+// httpsFacing reports whether browsers reach this server over HTTPS:
+// it terminates TLS, or runs behind a TLS-terminating proxy.
+func (s *Server) httpsFacing() bool { return s.tls || s.cfg.Exposure == ExposureBehindProxy }
+
 func (s *Server) cookieName() string {
-	if s.tls {
+	if s.httpsFacing() {
 		return "__Host-pingone-promote"
 	}
 	return "pingone-promote"
@@ -284,7 +288,7 @@ func (s *Server) protect(next http.Handler) http.Handler {
 				http.Error(w, "The server is busy. Try again in a minute.", http.StatusServiceUnavailable)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: sess.id, Path: "/", HttpOnly: true, Secure: s.tls,
+			http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: sess.id, Path: "/", HttpOnly: true, Secure: s.httpsFacing(),
 				SameSite: http.SameSiteStrictMode})
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey, sess)))

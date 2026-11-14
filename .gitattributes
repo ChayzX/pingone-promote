@@ -1,2 +1,5 @@
+# Text files are checked out with LF on every system (golden files and
+# deployment files are compared byte for byte).
+* text=auto eol=lf
 # Shell scripts must run unchanged after checkout on any operating system.
 *.sh text eol=lf

@@ -106,7 +106,16 @@ func (c *Client) ListRequestBranches(ctx context.Context, prefix string) ([]Bran
 // ListRequestMRs lists merge requests of every state that carry label and
 // come from a branch starting with prefix, most recently updated first.
 func (c *Client) ListRequestMRs(ctx context.Context, label, prefix string, limit int) ([]RequestMR, error) {
-	if label == "" || strings.ContainsAny(label, ",\n") || !ValidRequestBranchPrefix(prefix) {
+	if !ValidRequestBranchPrefix(prefix) {
+		return nil, errors.New("invalid merge request label or branch prefix")
+	}
+	return c.ListLabelledMRs(ctx, label, func(b string) bool { return strings.HasPrefix(b, prefix) }, limit)
+}
+
+// ListLabelledMRs lists merge requests of every state that carry label and
+// come from a branch match accepts, most recently updated first.
+func (c *Client) ListLabelledMRs(ctx context.Context, label string, match func(branch string) bool, limit int) ([]RequestMR, error) {
+	if label == "" || strings.ContainsAny(label, ",\n") {
 		return nil, errors.New("invalid merge request label or branch prefix")
 	}
 	if limit <= 0 || limit > 100 {
@@ -119,7 +128,7 @@ func (c *Client) ListRequestMRs(ctx context.Context, label, prefix string, limit
 	}
 	var out []RequestMR
 	for _, m := range items {
-		if !strings.HasPrefix(m.SourceBranch, prefix) || !c.inside(m.WebURL) {
+		if !match(m.SourceBranch) || !c.inside(m.WebURL) {
 			continue
 		}
 		out = append(out, m)
@@ -164,6 +173,29 @@ func (c *Client) PipelineJobs(ctx context.Context, pipelineID int64) ([]Job, err
 				j.WebURL = ""
 			}
 			out = append(out, j)
+		}
+		if len(items) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ListSubmittedBranches lists branches whose name match accepts and whose
+// newest commit is a submission of this tool (it carries the submission
+// trailer): named request branches (CIAM-1234) among people's own.
+func (c *Client) ListSubmittedBranches(ctx context.Context, match func(name string) bool) ([]Branch, error) {
+	var out []Branch
+	for page := 1; page <= maxStatusPages; page++ {
+		q := url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}}
+		var items []Branch
+		if err := c.DoQuery(ctx, http.MethodGet, c.project()+"/repository/branches", q, nil, &items); err != nil {
+			return nil, fmt.Errorf("list request branches: %w", err)
+		}
+		for _, b := range items {
+			if validBranchName(b.Name) && match(b.Name) && (strings.Contains(b.Commit.Message, SubmissionTrailer) || strings.Contains(b.Commit.Message, RequestTrailer)) {
+				out = append(out, b)
+			}
 		}
 		if len(items) < 100 {
 			break

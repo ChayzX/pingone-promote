@@ -57,3 +57,34 @@ func TestCredentialNamesAndValues(t *testing.T) {
 		}
 	}
 }
+
+// A credential inside JSON text is one; labels and kinds of credentials
+// are not.
+func TestCredentialInsideJSONText(t *testing.T) {
+	for _, v := range []string{
+		`{"auth":"Bearer abcdefghijklmnopqrstuvwxyz0123"}`,
+		`{"k":"ghp_abcdefghijklmnopqrstuvwxyz0123456789"}`,
+		`{"basic":"dXNlcjpwYXNzd29yZDEyMw=="}`,
+		`[{"clientSecret":"abc123def456"}]`,
+		`{"password":"hunter2hunter2"}`,
+	} {
+		if !CredentialValue(v) {
+			t.Errorf("not a credential: %s", v)
+		}
+	}
+	for _, v := range []string{
+		`{"forgotPasswordLabel":"Forgot your password?"}`,
+		`{"secretQuestion":"What is your pet's name?"}`,
+		`{"credentialType":"FIDO2"}`,
+		`{"apiKeyHeader":"X-API-Key"}`,
+		`{"passwordless":"true"}`,
+		`{"password":"{{global.variables.pw}}"}`,
+		`{"password":"********"}`,
+		`{"CSRauth":true,"region":"us"}`,
+		`[ "a", "b" ]`,
+	} {
+		if CredentialValue(v) {
+			t.Errorf("a credential: %s", v)
+		}
+	}
+}

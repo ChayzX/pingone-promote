@@ -354,12 +354,14 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 				d.Branch = b
 			}
 		}
-		title, desc := strings.TrimSpace(f.Get("title")), f.Get("description")
+		title, desc := strings.TrimSpace(f.Get("title")), strings.ReplaceAll(strings.ReplaceAll(f.Get("description"), "\r\n", "\n"), "\r", "\n")
 		switch {
 		case len(title) > 255 || strings.IndexFunc(title, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\u0085' }) >= 0:
 			d.problem = "The merge request title must be one line of at most 255 characters; it was not saved."
 		case len(desc) > 64<<10:
 			d.problem = "The note for reviewers must be at most 64 KB; it was not saved."
+		case strings.IndexFunc(desc, func(r rune) bool { return r < 0x20 && r != '\n' && r != '\t' }) >= 0:
+			d.problem = "The note for reviewers contains a control character (other than line breaks and tabs); it was not saved."
 		default:
 			d.Title, d.Description = title, desc
 		}
@@ -672,6 +674,8 @@ type previewView struct {
 	Problem   string
 	Fresh     bool
 	CanSubmit bool
+	// Token names the preview this page shows (sent back on submit).
+	Token string
 	// NoChanges: Git already has everything in the request. Kept counts
 	// items that differ from the source and keep their Git version.
 	NoChanges bool
@@ -710,7 +714,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res := p.result
-		v := previewView{D: d, R: res, Problem: d.problem, Running: d.job != nil && d.job.Running}
+		v := previewView{D: d, R: res, Problem: d.problem, Running: d.job != nil && d.job.Running, Token: p.token()}
 		d.problem = ""
 		if req, err := s.buildRequest(d, true); err == nil && fingerprint(*req) == p.fingerprint {
 			v.Fresh = true
@@ -938,6 +942,11 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 				dst[env] = map[string]string{}
 			}
 			text := strings.TrimSpace(vals[0])
+			if kind == "v" && isStringValue(d, name) && text != "" {
+				// A string keeps its exact text (leading and trailing
+				// spaces); only line endings are made Unix ones.
+				text = strings.ReplaceAll(vals[0], "\r\n", "\n")
+			}
 			if kind == "v" && isListValue(d, name) && text != "" && !strings.HasPrefix(text, "[") {
 				text = linesToJSON(text)
 			}
@@ -1019,6 +1028,11 @@ func (s *Server) startSubmit(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, back)
 			return
 		}
+		if r.PostForm.Get("preview") != p.token() {
+			d.problem = "That page showed an older preview (the request was previewed again, perhaps in another tab). Check this preview, then submit from here."
+			s.redirect(w, r, back)
+			return
+		}
 		if err := s.startJob(d, "submit", s.runSubmit(d, req, p)); err != nil {
 			d.problem = err.Error()
 			s.redirect(w, r, back)
@@ -1090,10 +1104,27 @@ func typeOptions(d *Draft) []typeOption {
 // isListValue reports a per-environment value that holds a list (its
 // source value is a JSON array), such as redirect URLs.
 func isListValue(d *Draft, name string) bool {
+	if t := varType(d, name); t != "" {
+		return strings.HasPrefix(t, "list(") || strings.HasPrefix(t, "set(") || strings.HasPrefix(t, "tuple(")
+	}
 	if d.preview == nil || d.preview.result == nil {
 		return false
 	}
 	return strings.HasPrefix(d.preview.result.Variables[name].SourceValue, "[")
+}
+
+// isStringValue reports a per-environment value declared as a string.
+func isStringValue(d *Draft, name string) bool { return varType(d, name) == "string" }
+
+// varType is a variable's declared type, from the previews ("" unknown).
+func varType(d *Draft, name string) string {
+	if t := d.varTypes[name]; t != "" {
+		return t
+	}
+	if d.preview != nil && d.preview.result != nil {
+		return d.preview.result.Variables[name].Type
+	}
+	return ""
 }
 
 // linesToJSON turns one value per line into a JSON array of strings.

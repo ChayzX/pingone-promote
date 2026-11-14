@@ -8,6 +8,7 @@ package secretscan
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
@@ -154,6 +155,9 @@ var credWordRE = regexp.MustCompile(`[Cc]red(?:s|entials?)?(?:$|[^a-z])`)
 // name: a JWT, a private key, or base64 of "user:password".
 func CredentialValue(v string) bool {
 	v = strings.TrimSpace(v)
+	if JSONText(v) {
+		return jsonCredential(v)
+	}
 	if JWT.MatchString(v) || PrivateKey.MatchString(v) || tokenRE.MatchString(v) || queryTokenRE.MatchString(v) {
 		return true
 	}
@@ -188,4 +192,59 @@ var variableContextRE = regexp.MustCompile(`_(company|flowInstance|flow|user)$`)
 func VariableBase(name string) string {
 	base := strings.TrimSuffix(strings.TrimPrefix(name, "davinci_variable_"), "_value")
 	return variableContextRE.ReplaceAllString(base, "")
+}
+
+// JSONText reports whether v is the text of a JSON object or list (a
+// DaVinci variable holding an object is kept as such text).
+func JSONText(v string) bool {
+	v = strings.TrimSpace(v)
+	return (strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[")) && json.Valid([]byte(v))
+}
+
+func jsonCredential(v string) bool {
+	d := json.NewDecoder(strings.NewReader(v))
+	d.UseNumber()
+	var x any
+	if d.Decode(&x) != nil {
+		return false
+	}
+	return CredentialInJSON(x)
+}
+
+// CredentialInJSON reports whether a decoded JSON value holds a
+// credential: a string that is one (CredentialValue or a ScanText
+// finding), or a non-empty, non-template string under a key named like a
+// credential (CredentialKey).
+func CredentialInJSON(x any) bool {
+	switch t := x.(type) {
+	case string:
+		return CredentialValue(t) || len(ScanText("", []byte(t))) > 0
+	case []any:
+		for _, e := range t {
+			if CredentialInJSON(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for k, e := range t {
+			if s, ok := e.(string); ok && CredentialKey(k) && strings.TrimSpace(s) != "" && !TemplateOnly.MatchString(s) && !Masked.MatchString(s) {
+				return true
+			}
+			if CredentialInJSON(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// labelKeyRE matches keys that name a label, a text or a kind of
+// credential rather than one (forgotPasswordLabel, secretQuestion,
+// credentialType, apiKeyHeader, passwordless).
+var labelKeyRE = regexp.MustCompile(`(?i)(label|text|question|type|header|name|less|message|title|hint|prompt|placeholder|description|policy|enabled|required|length|mode|format|field|rules?)s?$`)
+
+// CredentialKey reports whether a key inside a JSON value names a
+// credential (password, clientSecret, apiKey), not a label of one.
+func CredentialKey(k string) bool {
+	return CredentialName(k) && !labelKeyRE.MatchString(k)
 }

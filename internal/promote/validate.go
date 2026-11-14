@@ -120,6 +120,9 @@ func scanValue(name string, v cty.Value) []string {
 			if secretscan.SuspectLiteral(name, s) {
 				kinds = append(kinds, secretscan.KindNamed)
 			}
+			if secretscan.JSONText(s) && secretscan.CredentialValue(s) {
+				kinds = append(kinds, secretscan.KindNamed)
+			}
 		case v.CanIterateElements():
 			for it := v.ElementIterator(); it.Next(); {
 				_, e := it.Element()

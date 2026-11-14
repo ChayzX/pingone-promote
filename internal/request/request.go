@@ -389,13 +389,13 @@ func (r *Request) Validate() error {
 		return invalid("mode", "must be mr or branch")
 	}
 	if !printable(r.CommitMessage, 2000) {
-		return invalid("commitMessage", "must be at most 2000 characters")
+		return invalid("commitMessage", "must be at most 2000 characters of text, with no control characters other than line breaks (\n) and tabs")
 	}
 	if !printable(r.Title, 255) || strings.ContainsAny(r.Title, "\n") {
 		return invalid("title", "must be one line of at most 255 characters")
 	}
 	if !printable(r.Description, 64<<10) {
-		return invalid("description", "must be at most 64 KiB")
+		return invalid("description", "must be at most 64 KiB of text, with no control characters other than line breaks (\n) and tabs")
 	}
 	return nil
 }
@@ -586,7 +586,7 @@ func secretKind(name string, v cty.Value) string {
 			// {"password": "…"}: a non-empty string under a key named
 			// like a credential.
 			if (v.Type().IsObjectType() || v.Type().IsMapType()) && k.Type() == cty.String && e.Type() == cty.String && e.IsKnown() && !e.IsNull() {
-				if s := strings.TrimSpace(e.AsString()); s != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialName(k.AsString()) {
+				if s := strings.TrimSpace(e.AsString()); s != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialKey(k.AsString()) {
 					return secretscan.KindNamed
 				}
 			}

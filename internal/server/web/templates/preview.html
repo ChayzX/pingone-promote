@@ -129,6 +129,7 @@
 {{if .Data.CanSubmit}}
 <form method="post" action="/drafts/{{$d.ID}}/submit">
   <input type="hidden" name="csrf" value="{{$csrf}}">
+  <input type="hidden" name="preview" value="{{.Data.Token}}">
   <fieldset><legend>How to send it for review</legend>
   <label class="inline"><input type="radio" name="mode" value="mr"{{if eq $d.Mode "mr"}} checked{{end}}> Open a merge request (reviewers are asked to approve)</label>
   <label class="inline"><input type="radio" name="mode" value="branch"{{if eq $d.Mode "branch"}} checked{{end}}> Only save a Git branch (no merge request yet)</label></fieldset>

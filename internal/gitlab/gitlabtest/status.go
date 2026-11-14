@@ -120,7 +120,11 @@ func (s *Status) serve(w http.ResponseWriter, r *http.Request, rest string) bool
 		sort.Strings(names)
 		var out []map[string]any
 		for _, n := range names {
-			out = append(out, map[string]any{"name": n, "protected": s.f.Protected[n], "commit": map[string]string{"id": s.f.heads[n]}})
+			msg := ""
+			if head := s.f.Commits[s.f.heads[n]]; head != nil {
+				msg = head.Message
+			}
+			out = append(out, map[string]any{"name": n, "protected": s.f.Protected[n], "commit": map[string]string{"id": s.f.heads[n], "message": msg}})
 		}
 		s.f.mu.Unlock()
 		if q.Get("page") != "" && q.Get("page") != "1" {
