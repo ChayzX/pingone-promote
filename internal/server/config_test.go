@@ -539,3 +539,21 @@ func TestEnvironmentIDsExtraNameIsAWarning(t *testing.T) {
 		t.Fatal("a malformed ID was accepted")
 	}
 }
+
+// Two environments with one PingOne ID (a copy-paste mistake) stop the
+// server; IDs are kept in lower case.
+func TestEnvironmentIDsMustDiffer(t *testing.T) {
+	m := validConfig()
+	m["environmentIds"] = map[string]string{"testing": "22222222-2222-4222-8222-222222222222", "production": "22222222-2222-4222-8222-222222222222"}
+	if _, err := loadMap(t, m); err == nil || !strings.Contains(err.Error(), "same PingOne environment ID") {
+		t.Fatalf("a shared ID was accepted: %v", err)
+	}
+	m["environmentIds"] = map[string]string{"testing": "AAAAAAAA-2222-4222-8222-222222222222"}
+	c, err := loadMap(t, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.envID("testing") != "aaaaaaaa-2222-4222-8222-222222222222" {
+		t.Fatalf("id %q", c.envID("testing"))
+	}
+}

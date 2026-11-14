@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/neutralize"
@@ -847,6 +848,7 @@ func (m *merger) overlays() error {
 			if m.req.Export.Variables[k] != nil && m.req.Export.Variables[k].Kind == neutralize.KindSecret {
 				return fmt.Errorf("promote: %s is a secret; secrets come from customer_secrets.yml, never from environment values", k)
 			}
+			val = asDeclared(m.req.Export.Variables[k], val)
 			if old, ok := cur.Values[k]; ok && old.RawEquals(val) {
 				continue
 			}
@@ -1142,4 +1144,19 @@ func keysSorted(m map[string][]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// asDeclared keeps a value given as JSON (a list or object typed into the
+// form, or a DaVinci variable that holds an object) as text where the
+// variable is declared as a string, as Terraform requires; DaVinci
+// variable values are always strings.
+func asDeclared(v *neutralize.Variable, val cty.Value) cty.Value {
+	if v == nil || strings.TrimSpace(v.Type) != "string" || val.IsNull() || !val.IsKnown() || val.Type() == cty.String {
+		return val
+	}
+	b, err := ctyjson.Marshal(val, val.Type())
+	if err != nil {
+		return val
+	}
+	return cty.StringVal(string(b))
 }

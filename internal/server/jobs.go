@@ -175,9 +175,16 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		s.scrub(res)
 		// Values the environments already have are entered, then the
 		// request is previewed again with them (the export is reused).
+		s.drafts.mu.Lock()
+		before := d.fillState()
+		s.drafts.mu.Unlock()
 		if ctx.Err() == nil && s.autofill(ctx, d, res, stage) {
 			s.drafts.mu.Lock()
 			req2, err := s.buildRequest(d, true)
+			if err != nil {
+				d.restoreFill(before)
+				d.FillReport = append(d.FillReport, "The values found could not be used ("+s.redact(err.Error())+"), so none were filled in.")
+			}
 			s.drafts.mu.Unlock()
 			if err == nil {
 				stage("Merging again with the values filled in")
@@ -498,7 +505,11 @@ var branchSuffixRE = regexp.MustCompile(`^(.*)-([0-9]+)$`)
 // branch pattern accepts, or "".
 func (s *Server) freeBranch(ctx context.Context, branch string) string {
 	base, n := branch, 0
-	if m := branchSuffixRE.FindStringSubmatch(branch); m != nil && s.branchRE().MatchString(m[1]) {
+	// The suffix is replaced when the name without it is allowed too, or
+	// when the pattern takes no further suffix and the name ends in a
+	// number before it (CIAM-77-1 under CIAM-[0-9]+-[0-9]+).
+	if m := branchSuffixRE.FindStringSubmatch(branch); m != nil && (s.branchRE().MatchString(m[1]) ||
+		!s.branchRE().MatchString(branch+"-1") && m[1] != "" && m[1][len(m[1])-1] >= '0' && m[1][len(m[1])-1] <= '9') {
 		base, n = m[1], atoiOr(m[2], 0)
 	}
 	for i := n + 1; i <= n+20; i++ {

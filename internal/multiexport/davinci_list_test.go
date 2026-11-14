@@ -238,3 +238,21 @@ func TestConnectorPropertyIDs(t *testing.T) {
 		t.Errorf("warnings %v", out.Warnings)
 	}
 }
+
+// A DaVinci object value holding a secret-looking string is not read.
+func TestSecretInsideDaVinciValues(t *testing.T) {
+	for _, x := range []any{
+		map[string]any{"auth": "Bearer abcdefghijklmnopqrstuvwxyz0123"},
+		map[string]any{"password": "hunter2hunter2"},
+		[]any{map[string]any{"k": "ghp_abcdefghijklmnopqrstuvwxyz0123456789"}},
+	} {
+		if !secretInside(x) {
+			t.Errorf("not caught: %v", x)
+		}
+	}
+	for _, x := range []any{map[string]any{"CSRauth": true, "region": "us"}, 0.0, true, []any{"a", "b"}} {
+		if secretInside(x) {
+			t.Errorf("flagged: %v", x)
+		}
+	}
+}

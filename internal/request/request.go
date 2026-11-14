@@ -540,6 +540,16 @@ func jsonValue(raw json.RawMessage) (cty.Value, error) {
 	return v, nil
 }
 
+// SecretKind reports why a value given for the root variable name looks
+// like a secret ("" when it does not), by the rules Validate applies.
+func SecretKind(name string, raw json.RawMessage) string {
+	v, err := jsonValue(raw)
+	if err != nil {
+		return ""
+	}
+	return secretKind(name, v)
+}
+
 func secretKind(name string, v cty.Value) string {
 	switch {
 	case v.IsNull() || !v.IsKnown():

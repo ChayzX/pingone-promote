@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"pingone-promote/internal/coreexport"
 	"pingone-promote/internal/exporter"
@@ -34,6 +35,10 @@ func (p plainErrors) EnvironmentFacts(ctx context.Context, creds exporter.Creden
 // filled records a value the server entered from what an environment
 // already has (env -> name -> where it came from).
 type filled map[string]map[string]string
+
+// fromConfig marks a value taken from the server configuration
+// (environmentIds), not read from the environment.
+const fromConfig = "config"
 
 // autofill enters, for each environment with a known PingOne ID, the
 // values a preview asks for that the environment already has: its own
@@ -101,24 +106,37 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 		}
 		r := reads[env]
 		if r != nil && r.err != nil {
-			s.log.Warn("could not read an environment to fill in values", "env", env, "error", r.err.Error())
-			report = append(report, env+": could not be read, so only its environment ID was filled in: "+s.redact(r.err.Error())+". Check that the worker has read roles in "+env+".")
+			s.log.Warn("could not read an environment to fill in values", "env", env, "error", s.redact(r.err.Error()))
+			why := s.redact(r.err.Error())
+			if errors.Is(r.err, context.DeadlineExceeded) {
+				why = "the read took too long"
+			}
+			report = append(report, env+": could not be read ("+why+"), so nothing but its environment ID can be filled in. Check that the worker has read roles in "+env+".")
 		}
 		var f *multiexport.Facts
 		if r != nil && r.err == nil {
 			f = r.f
 		}
+		s.drafts.mu.Lock()
+		if d.FilledAt == nil {
+			d.FilledAt = map[string]time.Time{}
+		}
+		if f != nil {
+			d.FilledAt[env] = f.At
+		}
+		s.drafts.mu.Unlock()
 		n := 0
 		s.drafts.mu.Lock()
 		for _, b := range bs {
 			switch {
 			case b.Code == "missing_value" && b.Var == neutralize.EnvironmentIDVariable:
 				if d.setValue(env, b.Var, id) {
+					d.markFilled(env, b.Var, fromConfig)
 					n++
 				}
 			case b.Code == "missing_value" && b.Var != "" && f != nil:
 				v := factValue(f, res.Variables[b.Var])
-				if v != "" && !secretscan.CredentialValue(v) && len(secretscan.ScanText("", []byte(v))) == 0 && d.setValue(env, b.Var, v) {
+				if v != "" && !looksSecret(b.Var, v) && d.setValue(env, b.Var, v) {
 					n++
 				}
 			case b.Code == "missing_import" && b.Address != "" && f != nil:
@@ -138,9 +156,9 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 			report = append(report, fmt.Sprintf("%s: nothing could be read there (%d of %d filled in). The worker probably has no read role in %s, or its ID in environmentIds is wrong.", env, n, asked, env))
 			continue
 		}
-		line := fmt.Sprintf("%s: %d of %d filled in from what %s has now", env, n, asked, env)
+		line := fmt.Sprintf("%s: %d of %d filled in from what %s%s", env, n, asked, env, readAt(d, env))
 		if n < asked {
-			line += fmt.Sprintf("; %d not found there under the same name (or a secret, which is never filled in)", asked-n)
+			line += fmt.Sprintf("; %d not found there under the same name, cleared by you, or a secret (never filled in)", asked-n)
 		}
 		if f != nil && len(f.Skipped) > 0 {
 			line += fmt.Sprintf("; %d kinds of items could not be read there (not available in that environment, or no read role for them)", len(f.Skipped))
@@ -175,7 +193,7 @@ func (d *Draft) setValue(env, name, v string) bool {
 	if d.Values[env] == nil {
 		d.Values[env] = map[string]string{}
 	}
-	if d.Values[env][name] != "" {
+	if d.Values[env][name] != "" || d.Cleared[env][name] {
 		return false
 	}
 	d.Values[env][name] = v
@@ -190,7 +208,7 @@ func (d *Draft) setImportID(env, addr, v string) bool {
 	if d.ImportIDs[env] == nil {
 		d.ImportIDs[env] = map[string]string{}
 	}
-	if d.ImportIDs[env][addr] != "" {
+	if d.ImportIDs[env][addr] != "" || d.Cleared[env][addr] {
 		return false
 	}
 	d.ImportIDs[env][addr] = v
@@ -286,4 +304,40 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// looksSecret applies request validation's rules (each element of a JSON
+// list or object included), so a value is never filled in, shown, and
+// then refused.
+func looksSecret(name, v string) bool {
+	return secretscan.CredentialValue(v) || len(secretscan.ScanText("", []byte(v))) > 0 || request.SecretKind(name, encodeValue(v)) != ""
+}
+
+// fillSnapshot is what autofill may change, to take it back.
+type fillSnapshot struct {
+	values, imports map[string]map[string]string
+	filled          filled
+}
+
+func copyNested[T any](m map[string]map[string]T) map[string]map[string]T {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]map[string]T, len(m))
+	for k, in := range m {
+		c := make(map[string]T, len(in))
+		for k2, v := range in {
+			c[k2] = v
+		}
+		out[k] = c
+	}
+	return out
+}
+
+func (d *Draft) fillState() fillSnapshot {
+	return fillSnapshot{values: copyNested(d.Values), imports: copyNested(d.ImportIDs), filled: filled(copyNested(map[string]map[string]string(d.Filled)))}
+}
+
+func (d *Draft) restoreFill(s fillSnapshot) {
+	d.Values, d.ImportIDs, d.Filled = s.values, s.imports, s.filled
 }

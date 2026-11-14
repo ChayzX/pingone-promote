@@ -122,6 +122,11 @@ type Draft struct {
 	// Filled marks values the server entered from what an environment
 	// already has (env -> variable or address -> environment read).
 	Filled filled
+	// Cleared are values the person cleared (env -> variable or address):
+	// they are not filled in again.
+	Cleared map[string]map[string]bool
+	// FilledAt is when each environment was read for Filled.
+	FilledAt map[string]time.Time
 	// FillReport says, per environment, what was filled in or why not.
 	FillReport []string
 

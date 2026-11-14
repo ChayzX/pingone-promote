@@ -160,19 +160,19 @@ func TestValuesFilledInFromTheEnvironments(t *testing.T) {
 	if strings.Contains(p.body, `name="v:qa:pingone_environment_id" value=""`) {
 		t.Fatal("qa's environment ID is asked although it is configured")
 	}
-	mustContain(t, p.body, "filled in from what the environments already have", "Filled in from what qa has now", `value="`+firstUseSourceID+`"`)
+	mustContain(t, p.body, "filled in from what the environments already have", "Filled in from environmentIds in the server configuration", "Filled in from what qa had at ", `value="`+firstUseSourceID+`"`)
 	got := map[string]bool{}
-	for _, m := range regexp.MustCompile(`Filled in from what (\w+) has now; check it\.[^<]*<code class="small">([^<]+)</code>`).FindAllStringSubmatch(p.body, -1) {
-		got[m[1]+" "+m[2]] = true
+	for _, m := range regexp.MustCompile(`Filled in from (?:what (\w+) had at \d\d:\d\d|(environmentIds) in the server configuration); check it\.[^<]*<code class="small">([^<]+)</code>`).FindAllStringSubmatch(p.body, -1) {
+		got[m[1]+m[2]+" "+m[3]] = true
 	}
-	for _, want := range []string{"qa pingone_environment_id", "prod notification_settings_environment_from_email_address"} {
+	for _, want := range []string{"environmentIds pingone_environment_id", "prod notification_settings_environment_from_email_address"} {
 		if !got[want] {
 			t.Errorf("not filled in: %s (filled: %v)", want, got)
 		}
 	}
 	// Changing a filled value removes the mark.
 	p = b.wait(b.post(draft+"/values", url.Values{"v:qa:pingone_environment_id": {"22222222-2222-4222-8222-222222222222"}}))
-	if strings.Contains(p.body, "Filled in from what qa has now; check it. The PingOne environment ID") {
+	if strings.Contains(p.body, "Filled in from environmentIds in the server configuration; check it. The PingOne environment ID") {
 		t.Fatal("a value the person changed is still marked as filled in")
 	}
 }
@@ -187,7 +187,7 @@ func TestFillReportExplainsBlankValues(t *testing.T) {
 	draft := b.newDraft()
 	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
 	t.Log(regexp.MustCompile(`(?s)<strong>Values from the environments</strong>.*?</ul>`).FindString(p.body))
-	mustContain(t, p.body, "Values from the environments", "qa: ", "filled in from what qa has now",
+	mustContain(t, p.body, "Values from the environments", "qa: ", "filled in from what qa had at ",
 		"stage: nothing filled in, because its PingOne environment ID is not in environmentIds")
 	if !strings.Contains(p.body, "prod: nothing could be read there") {
 		t.Errorf("an unreadable prod is not explained")

@@ -33,10 +33,18 @@ type Facts struct {
 }
 
 type factsEntry struct {
-	ready chan struct{}
-	f     *Facts
-	err   error
+	ready  chan struct{}
+	f      *Facts
+	err    error
+	failed time.Time
 }
+
+// factsTimeout bounds a read of an environment for values (a few API
+// lists); failedFor is how long a failed read is reused.
+const (
+	factsTimeout = 3 * time.Minute
+	failedFor    = time.Minute
+)
 
 // EnvironmentFacts reads what the environment creds.ExportEnvironmentID
 // already has, read-only: the core items and the DaVinci list (no
@@ -57,7 +65,9 @@ func (e *Exporter) EnvironmentFacts(ctx context.Context, creds exporter.Credenti
 	if ent != nil {
 		select {
 		case <-ent.ready:
-			fresh = ent.err == nil && time.Since(ent.f.At) < ttl
+			// A failed read is kept for a minute, so a slow or unreadable
+			// environment does not hold up every preview.
+			fresh = ent.err == nil && time.Since(ent.f.At) < ttl || ent.err != nil && time.Since(ent.failed) < failedFor
 		default:
 			fresh = true // being read
 		}
@@ -68,6 +78,9 @@ func (e *Exporter) EnvironmentFacts(ctx context.Context, creds exporter.Credenti
 		go func() {
 			defer close(ent.ready)
 			ent.f, ent.err = e.readFacts(context.WithoutCancel(ctx), creds, env)
+			if ent.err != nil {
+				ent.failed = time.Now()
+			}
 		}()
 	}
 	e.mu.Unlock()
@@ -80,7 +93,7 @@ func (e *Exporter) EnvironmentFacts(ctx context.Context, creds exporter.Credenti
 }
 
 func (e *Exporter) readFacts(ctx context.Context, creds exporter.Credentials, env string) (*Facts, error) {
-	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	ctx, cancel := context.WithTimeout(ctx, factsTimeout)
 	defer cancel()
 	r, err := e.reader(creds)
 	if err != nil {

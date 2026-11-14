@@ -237,6 +237,17 @@ func (c *Config) check() error {
 		if other, ok := c.SourceEnvironmentIDs[name]; ok && !strings.EqualFold(other, id) {
 			return fmt.Errorf("environmentIds.%s differs from sourceEnvironmentIds.%s", name, name)
 		}
+		c.EnvironmentIDs[name] = strings.ToLower(id)
+	}
+	byID := map[string]string{}
+	for _, m := range []map[string]string{c.SourceEnvironmentIDs, c.EnvironmentIDs} {
+		for _, name := range sortedNames(m) {
+			m[name] = strings.ToLower(m[name])
+			if other, ok := byID[m[name]]; ok && other != name {
+				return fmt.Errorf("environmentIds: %s and %s have the same PingOne environment ID; each environment has its own (a copy-paste mistake here would point one at the other)", other, name)
+			}
+			byID[m[name]] = name
+		}
 	}
 
 	if c.BranchPrefix == "" {

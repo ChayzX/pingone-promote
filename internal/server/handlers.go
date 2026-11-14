@@ -785,7 +785,11 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 					f.Value, f.Hint = jsonToLines(f.Value), "One per line."
 				}
 				if from := d.Filled[env][name]; from != "" {
-					f.Hint = "Filled in from what " + from + " has now; check it. " + f.Hint
+					if from == fromConfig {
+						f.Hint = "Filled in from environmentIds in the server configuration; check it. " + f.Hint
+					} else {
+						f.Hint = "Filled in from what " + from + readAt(d, from) + "; check it. " + f.Hint
+					}
 					ev.Filled++
 				}
 				ev.Entered = append(ev.Entered, f)
@@ -794,7 +798,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 				if !hasField(ev.Imports, a) {
 					f := importField(d, env, a)
 					if from := d.Filled[env][a]; from != "" {
-						f.Hint = "Filled in from what " + from + " has now (the existing item with the same name); check it."
+						f.Hint = "Filled in from what " + from + readAt(d, from) + " (the existing item with the same name); check it."
 						ev.Filled++
 					}
 					ev.Entered = append(ev.Entered, f)
@@ -962,8 +966,24 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 		}
 		for env, m := range d.Filled {
 			for k := range m {
-				if d.Values[env][k] != oldV[env][k] || d.ImportIDs[env][k] != oldI[env][k] {
+				if strings.TrimSpace(d.Values[env][k]) != strings.TrimSpace(oldV[env][k]) || d.ImportIDs[env][k] != oldI[env][k] {
 					delete(m, k) // changed by the person
+				}
+			}
+		}
+		// What the person cleared stays clear (not filled in again).
+		for _, pair := range [][2]map[string]map[string]string{{oldV, d.Values}, {oldI, d.ImportIDs}} {
+			for env, m := range pair[0] {
+				for k, old := range m {
+					if old != "" && pair[1][env][k] == "" {
+						if d.Cleared == nil {
+							d.Cleared = map[string]map[string]bool{}
+						}
+						if d.Cleared[env] == nil {
+							d.Cleared[env] = map[string]bool{}
+						}
+						d.Cleared[env][k] = true
+					}
 				}
 			}
 		}
@@ -1285,4 +1305,12 @@ func whyText(d *Draft, role string) string {
 		return "excluded"
 	}
 	return role
+}
+
+// readAt says when env was read for filled-in values ("had at 15:04").
+func readAt(d *Draft, env string) string {
+	if t := d.FilledAt[env]; !t.IsZero() {
+		return " had at " + t.Format("15:04")
+	}
+	return " has"
 }

@@ -14,6 +14,7 @@ import (
 	"pingone-promote/internal/coreexport"
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/neutralize"
+	"pingone-promote/internal/secretscan"
 )
 
 // davinciList reads the DaVinci items straight from the API (flows,
@@ -116,7 +117,7 @@ func davinciListing(ctx context.Context, r coreexport.Reader, env string) (dvLis
 			case string:
 				values[str(v["id"])] = val
 			default:
-				if b, err := json.Marshal(val); err == nil {
+				if b, err := json.Marshal(val); err == nil && !secretInside(val) {
 					values[str(v["id"])] = string(b)
 				}
 			}
@@ -183,4 +184,29 @@ func toExport(addrs []string, fast, full []exporter.Resource) []string {
 		}
 	}
 	return out
+}
+
+// secretInside reports whether a JSON value holds a secret-looking string,
+// or a non-empty string under a key named like a credential.
+func secretInside(x any) bool {
+	switch t := x.(type) {
+	case string:
+		return secretscan.CredentialValue(t) || len(secretscan.ScanText("", []byte(t))) > 0
+	case []any:
+		for _, e := range t {
+			if secretInside(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for k, e := range t {
+			if s, ok := e.(string); ok && strings.TrimSpace(s) != "" && secretscan.CredentialName(k) {
+				return true
+			}
+			if secretInside(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
