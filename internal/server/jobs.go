@@ -175,10 +175,14 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		s.scrub(res)
 		// Values the environments already have are entered, then the
 		// request is previewed again with them (the export is reused).
+		// The variables' types are known from here on, so values are
+		// encoded as the page will encode them (a string variable keeps its
+		// text); a request that encodes differently is merged again.
 		s.drafts.mu.Lock()
 		before := d.fillState()
+		retyped := d.noteTypes(res)
 		s.drafts.mu.Unlock()
-		if ctx.Err() == nil && s.autofill(ctx, d, res, stage) {
+		if ctx.Err() == nil && (s.autofill(ctx, d, res, stage) || retyped) {
 			s.drafts.mu.Lock()
 			req2, err := s.buildRequest(d, true)
 			if err != nil {
@@ -186,7 +190,9 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 				d.FillReport = append(d.FillReport, "The values found could not be used ("+s.redact(err.Error())+"), so none were filled in.")
 			}
 			s.drafts.mu.Unlock()
-			if err == nil {
+			if err == nil && fingerprint(*req2) == fp {
+				// Nothing differs: the first merge stands.
+			} else if err == nil {
 				stage("Merging again with the values filled in")
 				req, fp = req2, fingerprint(*req2)
 				rec, frozen = newRecorder(s.exporter)

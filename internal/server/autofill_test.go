@@ -152,3 +152,21 @@ func TestStringVariablesKeepTheirText(t *testing.T) {
 		t.Fatalf("list variable: %s", got)
 	}
 }
+
+// Before the first preview is stored, the types noted from its result are
+// used, so the second pass encodes values as the page later does (the
+// preview is not out of date on arrival).
+func TestTypesKnownBeforeThePreviewIsStored(t *testing.T) {
+	const dv = "davinci_variable_cfg_value"
+	d := &Draft{}
+	if !d.noteTypes(&request.Result{Variables: map[string]request.VariableOut{dv: {Type: "string"}}}) {
+		t.Fatal("a new type is not reported")
+	}
+	var got string
+	if err := json.Unmarshal(encodeFor(d, dv, `{"a": 1}`), &got); err != nil || got != `{"a": 1}` {
+		t.Fatalf("encoded %q (%v)", got, err)
+	}
+	if d.noteTypes(&request.Result{Variables: map[string]request.VariableOut{dv: {Type: "string"}}}) {
+		t.Fatal("a known type is reported as new")
+	}
+}

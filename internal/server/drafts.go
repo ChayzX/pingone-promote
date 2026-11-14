@@ -159,6 +159,9 @@ type Draft struct {
 	Step    int
 	job     *Job
 	preview *preview
+	// varTypes are the declared types of the variables previews have
+	// shown, for encoding values (a variable's type does not change).
+	varTypes map[string]string
 	// submitted is the latest submit result; conflict marks a default
 	// branch that moved after the preview.
 	submitted *request.Result
@@ -302,7 +305,7 @@ func encodeValue(text string) json.RawMessage {
 // the variable is a string (a DaVinci variable holding JSON keeps its
 // text, key order and spacing), else as encodeValue does.
 func encodeFor(d *Draft, name, text string) json.RawMessage {
-	if d.preview != nil && d.preview.result != nil && d.preview.result.Variables[name].Type == "string" {
+	if d.varTypes[name] == "string" || d.preview != nil && d.preview.result != nil && d.preview.result.Variables[name].Type == "string" {
 		b, _ := json.Marshal(text)
 		return b
 	}
@@ -461,4 +464,23 @@ func (l *listLoad) finished() bool {
 	default:
 		return false
 	}
+}
+
+// noteTypes records the declared types of a preview's variables; it
+// reports whether one was new.
+func (d *Draft) noteTypes(res *request.Result) bool {
+	if res == nil {
+		return false
+	}
+	if d.varTypes == nil {
+		d.varTypes = map[string]string{}
+	}
+	added := false
+	for name, v := range res.Variables {
+		if v.Type != "" && d.varTypes[name] != v.Type {
+			d.varTypes[name] = v.Type
+			added = true
+		}
+	}
+	return added
 }
