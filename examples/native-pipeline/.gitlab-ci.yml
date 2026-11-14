@@ -1,0 +1,75 @@
+# Proof of concept: promotions through PingOne's native Configuration
+# Management API. Git holds the request, the reviewed plan and the
+# approval; PingOne does the promotion and the rollback.
+#
+# One merge request = one promotion (a file under promotions/). Its
+# pipeline plans the promotion and posts what would change. After review,
+# a person starts "apply" in the same pipeline, so the plan that runs is
+# the one that was shown. Merge the request once it is applied.
+#
+# CI/CD variables (masked, protected):
+#   PINGONE_CLIENT_ID, PINGONE_CLIENT_SECRET  a worker with the Promotion
+#                                             Admin role in source and target
+#   GITLAB_NOTE_TOKEN                         api scope, to post the plan
+# Make the "pingone-promotions" environment a protected environment with
+# required approvals, so apply and rollback need an approver.
+
+stages: [plan, apply, rollback]
+
+default:
+  image: golang:1.27.4
+  before_script:
+    - go build -o /usr/local/bin/p1-native-poc ./cmd/p1-native-poc
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [promotions/*.yml]
+
+# Nothing changes in PingOne.
+plan:
+  stage: plan
+  script:
+    - REQUEST="$(git diff --name-only --diff-filter=AM "$CI_MERGE_REQUEST_DIFF_BASE_SHA" HEAD -- 'promotions/*.yml')"
+    - 'test "$(echo "$REQUEST" | wc -l)" = 1 || { echo "One promotion file per merge request."; exit 1; }'
+    - p1-native-poc plan --config promote.yml --request "$REQUEST" --out plan
+    - |
+      curl --fail --silent --show-error --request POST \
+        --header "PRIVATE-TOKEN: $GITLAB_NOTE_TOKEN" \
+        --data-urlencode "body@plan/mr-note.md" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes" > /dev/null
+  artifacts:
+    paths: [plan/]
+    expose_as: Promotion plan
+    expire_in: 90 days
+
+# Runs the plan above. Refused if the promotion's operations, or what they
+# would change in the target, are no longer what the plan showed.
+apply:
+  stage: apply
+  needs: [plan]
+  when: manual
+  environment: { name: pingone-promotions }
+  script:
+    - p1-native-poc apply --plan plan
+
+# Undo it: plan the rollback, read it, then start the second job. PingOne
+# rolls back only the most recent promotion to a target, as a whole.
+rollback:plan:
+  stage: rollback
+  needs: [plan, apply]
+  when: manual
+  script:
+    - p1-native-poc rollback --plan plan --out rollback
+  artifacts:
+    paths: [rollback/]
+    expose_as: Rollback plan
+    expire_in: 90 days
+
+rollback:apply:
+  stage: rollback
+  needs: ["rollback:plan"]
+  when: manual
+  environment: { name: pingone-promotions }
+  script:
+    - p1-native-poc apply --plan rollback

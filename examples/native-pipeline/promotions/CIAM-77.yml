@@ -1,0 +1,9 @@
+# One promotion. Add or change this file in a merge request; the pipeline
+# plans it and shows what would change before anyone can apply it.
+ticket: CIAM-77
+description: Step-up MFA for risky sign-ons.
+source: dev
+target: qa
+resources:
+  - type: flow
+    name: CIAM Sign On
