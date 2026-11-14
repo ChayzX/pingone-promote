@@ -141,12 +141,64 @@ func configDecodeError(raw []byte, err error) error {
 	return errors.New("configuration file is malformed")
 }
 
+// repeatedSetting names a setting that one object of the file gives twice
+// (also when the two differ only in case, which the decoder would treat as
+// one and silently keep the last). It returns "" when there is none or the
+// file is not JSON; the decoder reports that.
+func repeatedSetting(raw []byte) string {
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	type frame struct {
+		object bool
+		keys   map[string]bool
+		isKey  bool
+	}
+	var stack []frame
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		top := len(stack) - 1
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, frame{object: true, keys: map[string]bool{}, isKey: true})
+				continue
+			case '[':
+				stack = append(stack, frame{})
+				continue
+			default:
+				stack = stack[:top]
+				top--
+			}
+		case string:
+			if top >= 0 && stack[top].object && stack[top].isKey {
+				k := strings.ToLower(t)
+				if stack[top].keys[k] {
+					return t
+				}
+				stack[top].keys[k], stack[top].isKey = true, false
+				continue
+			}
+		}
+		// A value (or a closed object or list) ends: the next token of an
+		// enclosing object is a key again.
+		if top >= 0 && stack[top].object {
+			stack[top].isKey = true
+		}
+	}
+}
+
 // LoadConfig reads and checks the configuration file.
 func LoadConfig(path string) (Config, error) {
 	var c Config
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return c, fmt.Errorf("cannot read the configuration file %s", path)
+	}
+	if name := repeatedSetting(raw); name != "" {
+		return c, fmt.Errorf("configuration file sets %q more than once in the same place; keep one", name)
 	}
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
@@ -201,10 +253,26 @@ func (c *Config) check() error {
 	if c.PingOne.RegionCode == "" || c.PingOne.WorkerEnvironmentID == "" {
 		return errors.New("pingone.regionCode and pingone.workerEnvironmentId are required")
 	}
+	switch c.PingOne.RegionCode {
+	case "AP", "AU", "CA", "EU", "NA", "SG":
+	default:
+		return errors.New("pingone.regionCode must be one of AP, AU, CA, EU, NA or SG")
+	}
+	if !envIDRE.MatchString(c.PingOne.WorkerEnvironmentID) {
+		return errors.New("pingone.workerEnvironmentId must be a PingOne environment ID (a UUID)")
+	}
+	switch c.Layout {
+	case "", "default", "terraformer":
+	default:
+		return errors.New(`layout must be "default" or "terraformer"`)
+	}
+	if c.OverlayPattern != "" && (strings.Count(c.OverlayPattern, "{env}") != 1 || strings.HasPrefix(c.OverlayPattern, "/") || strings.Contains(c.OverlayPattern, "..")) {
+		return errors.New("overlayPattern must be a path inside the repository that contains {env} once, such as {env}.tfvars")
+	}
 	if len(c.Sources) == 0 || len(c.Rollout) == 0 {
 		return errors.New("sources and rollout are required, for example [\"development\"] and [\"testing\", \"production\"]")
 	}
-	seen := map[string]bool{}
+	seen, folded := map[string]bool{}, map[string]string{}
 	for _, e := range append(append([]string{}, c.Sources...), c.Rollout...) {
 		if !envNameRE.MatchString(e) {
 			return fmt.Errorf("%q is not an environment name", e)
@@ -212,7 +280,11 @@ func (c *Config) check() error {
 		if seen[e] {
 			return fmt.Errorf("environment %q is listed twice; a source cannot also be in the rollout", e)
 		}
-		seen[e] = true
+		// QA and qa would share one qa.tfvars on a file system that ignores case.
+		if other, ok := folded[strings.ToLower(e)]; ok {
+			return fmt.Errorf("environments %q and %q differ only in upper and lower case; give each its own name", other, e)
+		}
+		seen[e], folded[strings.ToLower(e)] = true, e
 	}
 	for name, id := range c.SourceEnvironmentIDs {
 		if !seen[name] || !contains(c.Sources, name) {
@@ -268,6 +340,8 @@ func (c *Config) check() error {
 			return errors.New("branchExample does not match branchPattern")
 		}
 		c.branchRE = re
+	} else if c.BranchExample != "" {
+		return errors.New("branchExample is only used with branchPattern; set both or neither")
 	}
 	if c.ApplyJobPattern == "" {
 		c.ApplyJobPattern = "apply:{env}"

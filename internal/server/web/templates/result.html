@@ -8,13 +8,16 @@
 </form>
 {{else}}{{with .Data.R}}
 <p class="{{if .Error}}problem{{else}}notice{{end}}" role="status">{{$.Data.Message}}</p>
-{{with .Error}}<p class="problem">{{.Message}}</p>{{end}}
+{{with $.Data.Detail}}<p class="problem">{{.}}</p>{{end}}
 <ul class="links">
   {{with .MRUrl}}<li>Merge request: <a href="{{.}}">{{.}}</a></li>{{end}}
   {{if or .CommitID (not .Error)}}{{with .BranchURL}}<li>Branch: <a href="{{.}}">{{$.Data.R.Branch}}</a></li>{{end}}{{end}}
   {{if .CommitID}}<li>Commit: {{with .DiffURL}}<a href="{{.}}">{{short $.Data.R.CommitID}}</a>{{else}}{{short $.Data.R.CommitID}}{{end}}</li>{{end}}
 </ul>
-{{if .Error}}{{if not .CommitID}}
+{{if .Error}}{{if eq .Error.Code "partial"}}
+<h2>What to do</h2>
+<p>GitLab did not confirm the result, so the change may or may not be there. Open the branch in GitLab and look for the commit. If it is there, open the merge request from the branch yourself. If it is not, come back here, preview again and submit.</p>
+{{else if not .CommitID}}
 <h2>What to do</h2>
 <p>Nothing was committed to GitLab. Fix the problem above, then preview again and submit.</p>{{end}}
 {{else}}

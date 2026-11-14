@@ -139,11 +139,20 @@ func TestWholeEnvironmentFromTheFixtureTenant(t *testing.T) {
 	})
 	// The fixture forbids voice phrases (listed apart, as unlicensed);
 	// nothing needs checking.
-	// Only the note about built-in items, which are not copied.
+	// Only the note about built-in items, which are not copied, and the
+	// webhook whose Authorization header is not copied.
+	headerNote := false
 	for _, w := range wholeEnvironment(t, e) {
-		if !strings.Contains(w, "items that PingOne creates in every environment") {
+		switch {
+		case strings.Contains(w, "items that PingOne creates in every environment"):
+		case strings.Contains(w, `Webhook "Audit to SIEM" sends a header to its endpoint (Authorization)`):
+			headerNote = true
+		default:
 			t.Errorf("things to check: %q", w)
 		}
+	}
+	if !headerNote {
+		t.Error("no note about the webhook's header, which is not copied")
 	}
 	if core.Writes() != 0 {
 		t.Fatalf("%d writes reached PingOne", core.Writes())

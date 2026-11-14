@@ -277,31 +277,38 @@ func TestConfigExposure(t *testing.T) {
 
 func TestConfigRefusals(t *testing.T) {
 	cases := map[string]func(m map[string]any){
-		"signIn pingone":        func(m map[string]any) { m["signIn"] = "pingone" },
-		"signIn other":          func(m map[string]any) { m["signIn"] = "oidc" },
-		"unknown top field":     func(m map[string]any) { m["workerClientSecret"] = "fixture-private" },
-		"unknown nested field":  func(m map[string]any) { m["gitlab"].(map[string]any)["token"] = "fixture-private" },
-		"duplicate source":      func(m map[string]any) { m["sources"] = []string{"development", "development"} },
-		"duplicate rollout":     func(m map[string]any) { m["rollout"] = []string{"testing", "testing"} },
-		"source in rollout":     func(m map[string]any) { m["rollout"] = []string{"development", "production"} },
-		"bad env name":          func(m map[string]any) { m["rollout"] = []string{"../prod"} },
-		"no sources":            func(m map[string]any) { m["sources"] = []string{} },
-		"no rollout":            func(m map[string]any) { delete(m, "rollout") },
-		"allowedHosts port":     func(m map[string]any) { m["allowedHosts"] = []string{"promote.example.com:8443"} },
-		"allowedHosts scheme":   func(m map[string]any) { m["allowedHosts"] = []string{"https://promote.example.com"} },
-		"allowedHosts wildcard": func(m map[string]any) { m["allowedHosts"] = []string{"*.example.com"} },
-		"allowedHosts empty":    func(m map[string]any) { m["allowedHosts"] = []string{""} },
-		"tls cert only":         func(m map[string]any) { m["tlsCertFile"] = "/etc/tls/cert.pem" },
-		"tls key only":          func(m map[string]any) { m["tlsKeyFile"] = "/etc/tls/key.pem" },
-		"listen no port":        func(m map[string]any) { m["listen"] = "127.0.0.1" },
-		"no secretsFile":        func(m map[string]any) { delete(m, "secretsFile") },
-		"gitlab http":           func(m map[string]any) { m["gitlab"].(map[string]any)["baseUrl"] = "http://gitlab.example.com" },
-		"gitlab project":        func(m map[string]any) { m["gitlab"].(map[string]any)["projectId"] = "group/project" },
-		"pingone region":        func(m map[string]any) { delete(m["pingone"].(map[string]any), "regionCode") },
-		"branch prefix":         func(m map[string]any) { m["branchPrefix"] = "release" },
-		"job pattern":           func(m map[string]any) { m["applyJobPattern"] = "apply" },
-		"terraform version":     func(m map[string]any) { m["tools"].(map[string]any)["terraformVersion"] = "1.5.7" },
-		"terraform digest":      func(m map[string]any) { m["tools"].(map[string]any)["terraformSha256"] = "abc" },
+		"signIn pingone":          func(m map[string]any) { m["signIn"] = "pingone" },
+		"signIn other":            func(m map[string]any) { m["signIn"] = "oidc" },
+		"unknown top field":       func(m map[string]any) { m["workerClientSecret"] = "fixture-private" },
+		"unknown nested field":    func(m map[string]any) { m["gitlab"].(map[string]any)["token"] = "fixture-private" },
+		"duplicate source":        func(m map[string]any) { m["sources"] = []string{"development", "development"} },
+		"duplicate rollout":       func(m map[string]any) { m["rollout"] = []string{"testing", "testing"} },
+		"source in rollout":       func(m map[string]any) { m["rollout"] = []string{"development", "production"} },
+		"bad env name":            func(m map[string]any) { m["rollout"] = []string{"../prod"} },
+		"no sources":              func(m map[string]any) { m["sources"] = []string{} },
+		"no rollout":              func(m map[string]any) { delete(m, "rollout") },
+		"allowedHosts port":       func(m map[string]any) { m["allowedHosts"] = []string{"promote.example.com:8443"} },
+		"allowedHosts scheme":     func(m map[string]any) { m["allowedHosts"] = []string{"https://promote.example.com"} },
+		"allowedHosts wildcard":   func(m map[string]any) { m["allowedHosts"] = []string{"*.example.com"} },
+		"allowedHosts empty":      func(m map[string]any) { m["allowedHosts"] = []string{""} },
+		"tls cert only":           func(m map[string]any) { m["tlsCertFile"] = "/etc/tls/cert.pem" },
+		"tls key only":            func(m map[string]any) { m["tlsKeyFile"] = "/etc/tls/key.pem" },
+		"listen no port":          func(m map[string]any) { m["listen"] = "127.0.0.1" },
+		"no secretsFile":          func(m map[string]any) { delete(m, "secretsFile") },
+		"gitlab http":             func(m map[string]any) { m["gitlab"].(map[string]any)["baseUrl"] = "http://gitlab.example.com" },
+		"gitlab project":          func(m map[string]any) { m["gitlab"].(map[string]any)["projectId"] = "group/project" },
+		"pingone region":          func(m map[string]any) { delete(m["pingone"].(map[string]any), "regionCode") },
+		"unknown region":          func(m map[string]any) { m["pingone"].(map[string]any)["regionCode"] = "XX" },
+		"worker env not a UUID":   func(m map[string]any) { m["pingone"].(map[string]any)["workerEnvironmentId"] = "worker" },
+		"unknown layout":          func(m map[string]any) { m["layout"] = "flat" },
+		"overlay without env":     func(m map[string]any) { m["overlayPattern"] = "values.tfvars" },
+		"overlay outside repo":    func(m map[string]any) { m["overlayPattern"] = "../{env}.tfvars" },
+		"rollout differs by case": func(m map[string]any) { m["rollout"] = []string{"testing", "Testing"} },
+		"example without pattern": func(m map[string]any) { m["branchExample"] = "CIAM-1234" },
+		"branch prefix":           func(m map[string]any) { m["branchPrefix"] = "release" },
+		"job pattern":             func(m map[string]any) { m["applyJobPattern"] = "apply" },
+		"terraform version":       func(m map[string]any) { m["tools"].(map[string]any)["terraformVersion"] = "1.5.7" },
+		"terraform digest":        func(m map[string]any) { m["tools"].(map[string]any)["terraformSha256"] = "abc" },
 		"terraform digest uppercase": func(m map[string]any) {
 			m["tools"].(map[string]any)["terraformSha256"] = strings.Repeat("A", 64)
 		},
@@ -555,5 +562,28 @@ func TestEnvironmentIDsMustDiffer(t *testing.T) {
 	}
 	if c.envID("testing") != "aaaaaaaa-2222-4222-8222-222222222222" {
 		t.Fatalf("id %q", c.envID("testing"))
+	}
+}
+
+// A setting given twice in one object is refused (the decoder would keep
+// the last one silently), also when the two differ only in case.
+func TestConfigRefusesARepeatedSetting(t *testing.T) {
+	dir := t.TempDir()
+	for name, text := range map[string]string{
+		"same":   `{"listen": "127.0.0.1:8080", "listen": "0.0.0.0:8080"}`,
+		"case":   `{"branchPattern": "CIAM-[0-9]+", "branchpattern": ".*"}`,
+		"nested": `{"gitlab": {"projectId": "1", "projectId": "2"}}`,
+	} {
+		path := filepath.Join(dir, name+".json")
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "more than once") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// The same name in different objects, and a repeated value, are fine.
+	if got := repeatedSetting([]byte(`{"a": {"name": "x"}, "b": {"name": "x"}, "c": ["name", "name"], "d": "a"}`)); got != "" {
+		t.Errorf("repeatedSetting = %q", got)
 	}
 }

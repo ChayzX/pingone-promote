@@ -180,9 +180,16 @@ func sessionFrom(r *http.Request) *session {
 // it terminates TLS, or runs behind a TLS-terminating proxy.
 func (s *Server) httpsFacing() bool { return s.tls || s.cfg.Exposure == ExposureBehindProxy }
 
+// cookieName is the session cookie's name. Over plain HTTP it carries the
+// port: browsers ignore the port when they pick cookies, so two servers on
+// one host (localhost:8080 and localhost:8081) would otherwise replace
+// each other's session.
 func (s *Server) cookieName() string {
 	if s.httpsFacing() {
 		return "__Host-pingone-promote"
+	}
+	if _, port, err := net.SplitHostPort(s.cfg.Listen); err == nil && port != "" && port != "0" {
+		return "pingone-promote-" + port
 	}
 	return "pingone-promote"
 }

@@ -233,8 +233,10 @@ func invalid(field, msg string) error {
 	return &ValidationError{Code: CodeInvalid, Field: field, Msg: msg}
 }
 
+// printable reports whether s is valid text of at most max characters
+// with no control characters other than line breaks and tabs.
 func printable(s string, max int) bool {
-	if len(s) > max || !utf8.ValidString(s) {
+	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > max {
 		return false
 	}
 	for _, r := range s {
@@ -245,6 +247,21 @@ func printable(s string, max int) bool {
 	return true
 }
 
+// Invisible reports whether s holds a character that is not displayed or
+// that changes the direction of the text around it (zero-width spaces and
+// joiners, direction marks, embeddings and overrides, the byte order
+// mark). In a name or a title such a character makes the text show as
+// something other than what it is.
+func Invisible(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 0x200B && r <= 0x200F, r >= 0x202A && r <= 0x202E, r >= 0x2060 && r <= 0x2064, r >= 0x2066 && r <= 0x2069, r == 0xFEFF, r == 0x00AD:
+			return true
+		}
+	}
+	return false
+}
+
 // Validate checks field values.
 func (r *Request) Validate() error {
 	if !RequestIDRE.MatchString(r.RequestID) {
@@ -252,6 +269,9 @@ func (r *Request) Validate() error {
 	}
 	if !printable(r.RequestedBy, 128) || strings.ContainsAny(r.RequestedBy, "\n\t") {
 		return invalid("requestedBy", "must be at most 128 printable characters")
+	}
+	if Invisible(r.RequestedBy) {
+		return invalid("requestedBy", "must not contain invisible or text-direction characters")
 	}
 	if !envRE.MatchString(r.Source) {
 		return invalid("source", "must be an environment name")
@@ -393,6 +413,9 @@ func (r *Request) Validate() error {
 	}
 	if !printable(r.Title, 255) || strings.ContainsAny(r.Title, "\n") {
 		return invalid("title", "must be one line of at most 255 characters")
+	}
+	if Invisible(r.Title) {
+		return invalid("title", "must not contain invisible or text-direction characters")
 	}
 	if !printable(r.Description, 64<<10) {
 		return invalid("description", "must be at most 64 KiB of text, with no control characters other than line breaks (\n) and tabs")

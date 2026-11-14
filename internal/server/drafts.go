@@ -413,6 +413,21 @@ func plainValidation(err error) error {
 		if ve.Plain != "" {
 			return ve // the page words it (saveValues)
 		}
+		// What a person can run into from the pages, in the pages' words.
+		switch {
+		case ve.Field == "flows" && strings.Contains(ve.Msg, "at most"):
+			return errors.New("A request copies at most 20 items of each kind. Remove some, or copy a whole section instead (step 1).")
+		case ve.Field == "flows":
+			return errors.New("Choose at least one item to copy (step 2), or choose whole sections or the whole environment in step 1.")
+		case ve.Field == "confirmAll":
+			return errors.New("To copy the whole environment, tick the confirmation under it in step 1.")
+		case ve.Field == "requestedBy":
+			return fmt.Errorf("Your name must be one line of at most %d characters, with no invisible characters. Change it in step 1.", MaxNameLength)
+		case ve.Field == "title":
+			return errors.New("The merge request title must be one line of at most 255 characters, with no invisible characters. Change it in step 3.")
+		case ve.Field == "description" || ve.Field == "commitMessage":
+			return errors.New("The note for reviewers " + ve.Msg + ". Change it in step 3.")
+		}
 		if ve.Field != "" {
 			return fmt.Errorf("%s: %s", ve.Field, ve.Msg)
 		}

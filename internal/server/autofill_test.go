@@ -136,6 +136,9 @@ func TestBranchSuggestionKeepsTheTicket(t *testing.T) {
 		{"CIAM-[0-9]+-[0-9]+", "CIAM-77-1", "CIAM-77-1", "CIAM-77-2 is free", ""},
 		{"CIAM-[0-9]+", "CIAM-77", "CIAM-77", "already exists", "is free"},
 		{"[A-Z][A-Z0-9]+-[0-9]+", "AB1-5", "AB1-5", "already exists", "is free"},
+		// A pattern that would allow CIAM-78 too: the ticket number stays.
+		{"[A-Za-z0-9-]+", "CIAM-77", "CIAM-77", "CIAM-77-1 is free", "CIAM-78"},
+		{"[A-Za-z0-9-]+", "CIAM-77-1", "CIAM-77-1", "CIAM-77-2 is free", "CIAM-78"},
 	} {
 		t.Run(c.pattern, func(t *testing.T) {
 			e := newCoreEnvWith(t, func(cf *Config) { cf.BranchPattern = c.pattern; cf.BranchExample = "" })

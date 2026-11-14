@@ -52,7 +52,12 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 	if len(s.cfg.EnvironmentIDs) == 0 && len(s.cfg.SourceEnvironmentIDs) == 0 {
 		return false
 	}
-	envs := append([]string{d.Source}, s.cfg.Rollout...)
+	// The source as this preview read it (a save in another tab can
+	// change the draft's while this runs).
+	s.drafts.mu.Lock()
+	source := d.Source
+	s.drafts.mu.Unlock()
+	envs := append([]string{source}, s.cfg.Rollout...)
 	fr, canRead := s.exporter.(factsReader)
 	type read struct {
 		f   *multiexport.Facts
@@ -64,7 +69,7 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 	var reading []string
 	for _, env := range envs {
 		id := s.cfg.envID(env)
-		if env == d.Source || id == "" || !canRead || !needsFacts(res.Blockers[env]) {
+		if env == source || id == "" || !canRead || !needsFacts(res.Blockers[env]) {
 			continue
 		}
 		reading = append(reading, env)

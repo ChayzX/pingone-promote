@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"pingone-promote/internal/catalog"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -713,8 +714,36 @@ func (m *merger) declarations() error {
 		if _, ok, _ := m.view.Read("versions.tf"); !ok {
 			m.view.write("versions.tf", []byte(rootVersionsTF))
 		}
+	} else if b, ok, _ := m.view.Read("versions.tf"); ok {
+		if w := providerPinWarning(b); w != "" {
+			m.res.Warnings = append(m.res.Warnings, w)
+		}
 	}
 	return nil
+}
+
+// ProviderConstraint is the pingone provider constraint of a new
+// repository: patch releases of the release line the definitions are
+// written for.
+var ProviderConstraint = "~> " + catalog.ProviderVersion
+
+var providerVersionRE = regexp.MustCompile(`(?s)pingone\s*=\s*\{[^}]*?version\s*=\s*"([^"]*)"`)
+
+// providerPinWarning warns when an existing repository's versions.tf lets
+// Terraform pick a provider release other than the line the definitions
+// are written for.
+func providerPinWarning(versionsTF []byte) string {
+	m := providerVersionRE.FindSubmatch(versionsTF)
+	line := catalog.ProviderVersion[:strings.LastIndex(catalog.ProviderVersion, ".")] // 1.24
+	if m == nil {
+		return "versions.tf does not pin the pingone provider. The definitions are written for " + line + ".x; set version = \"" + ProviderConstraint + "\" so a later release cannot reject them"
+	}
+	switch got := strings.TrimSpace(string(m[1])); {
+	case got == ProviderConstraint, got == catalog.ProviderVersion, got == "= "+catalog.ProviderVersion, strings.HasPrefix(got, "~> "+line+"."):
+		return ""
+	default:
+		return "versions.tf allows pingone provider releases other than " + line + ".x (version = \"" + got + "\"). The definitions are written for " + line + ".x and a later release can reject them; set version = \"" + ProviderConstraint + "\""
+	}
 }
 
 // hclblocksFormatLines aligns a group of "  a = b" lines like terraform fmt.
@@ -724,13 +753,16 @@ func hclblocksFormatLines(lines string) []byte {
 	return inner
 }
 
-const rootVersionsTF = `terraform {
+// rootVersionsTF pins the provider to the release line the definitions are
+// written for (catalog.ProviderVersion): a later minor release can reject
+// an attribute this version accepts.
+var rootVersionsTF = `terraform {
   required_version = ">= 1.16.0" # conditional imports on static addresses (ADR 0016)
 
   required_providers {
     pingone = {
       source  = "pingidentity/pingone"
-      version = ">= 1.19.1, < 2.0.0"
+      version = "` + ProviderConstraint + `" # the release line the definitions are written for (docs/updating.md)
     }
   }
 }

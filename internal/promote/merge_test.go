@@ -11,6 +11,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/exporter/exportertest"
 	"pingone-promote/internal/hclblocks"
@@ -399,5 +400,23 @@ func TestGitDiffTouchesOnlyExpectedHunks(t *testing.T) {
 	hunks := strings.Count(run("diff", "-U0", "--", "definitions/pingone_davinci_flow.tf"), "\n@@ ")
 	if hunks > 3 {
 		t.Fatalf("flow file has %d hunks", hunks)
+	}
+}
+
+// A new repository pins the provider to the release line the definitions
+// are written for; an existing one that does not is told.
+func TestProviderPin(t *testing.T) {
+	if !strings.Contains(rootVersionsTF, `version = "~> `+catalog.ProviderVersion+`"`) {
+		t.Errorf("a new root does not pin %s:\n%s", catalog.ProviderVersion, rootVersionsTF)
+	}
+	for text, warn := range map[string]bool{
+		`pingone = { source = "pingidentity/pingone", version = "` + ProviderConstraint + `" }`:      false,
+		`pingone = { source = "pingidentity/pingone", version = "` + catalog.ProviderVersion + `" }`: false,
+		`pingone = { source = "pingidentity/pingone", version = ">= 1.19.1, < 2.0.0" }`:              true,
+		`pingone = { source = "pingidentity/pingone" }`:                                              true,
+	} {
+		if got := providerPinWarning([]byte("terraform {\n  required_providers {\n    " + text + "\n  }\n}\n")); (got != "") != warn {
+			t.Errorf("%s: warning = %q", text, got)
+		}
 	}
 }

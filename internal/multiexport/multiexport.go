@@ -758,6 +758,7 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 			out.Warnings = append(out.Warnings, w)
 		}
 	}
+	out.Warnings = append(out.Warnings, webhookHeaderWarnings(c.inv.Objects, exported)...)
 	if c.dvErr != nil {
 		why := "the DaVinci export failed"
 		var ex *exporter.ExecError
@@ -1031,4 +1032,37 @@ func tfvarsStrings(files map[string][]byte) map[string]string {
 		}
 	}
 	return out
+}
+
+// webhookHeaderWarnings names each copied webhook that sends headers.
+// Headers are a secret map (usually Authorization) and are never copied,
+// so without this note the webhook would reach the next environment
+// unable to sign in to its endpoint. Only header names are named.
+func webhookHeaderWarnings(objs []*coreexport.Object, exported map[string]bool) []string {
+	var out []string
+	for _, o := range objs {
+		if o.Type != "pingone_webhook" || !exported[o.Address()] {
+			continue
+		}
+		ep, _ := o.Raw["httpEndpoint"].(map[string]any)
+		headers, _ := ep["headers"].(map[string]any)
+		if len(headers) == 0 {
+			continue
+		}
+		names := make([]string, 0, len(headers))
+		for k := range headers {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		out = append(out, fmt.Sprintf("Webhook %q sends %s to its endpoint (%s). Header values are secrets and are not copied: add them to the webhook's definition from a Vault-backed variable before the rollout, or the endpoint will refuse its events",
+			o.Name, plural(len(names), "a header", "headers"), strings.Join(names, ", ")))
+	}
+	return out
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

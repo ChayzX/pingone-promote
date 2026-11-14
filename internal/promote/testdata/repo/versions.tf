@@ -4,7 +4,7 @@ terraform {
   required_providers {
     pingone = {
       source  = "pingidentity/pingone"
-      version = ">= 1.19.1, < 2.0.0"
+      version = "~> 1.24.0" # the release line the definitions are written for (docs/updating.md)
     }
   }
 }

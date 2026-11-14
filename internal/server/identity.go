@@ -2,7 +2,9 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"pingone-promote/internal/request"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -61,7 +63,10 @@ func checkName(name string) error {
 		return errors.New("Type your name.")
 	}
 	if utf8.RuneCountInString(name) > MaxNameLength || !utf8.ValidString(name) {
-		return errors.New("The name is too long.")
+		return fmt.Errorf("The name is too long: use at most %d characters.", MaxNameLength)
+	}
+	if request.Invisible(name) {
+		return errors.New("The name contains an invisible or text-direction character. Type it again without pasting.")
 	}
 	for _, r := range name {
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {

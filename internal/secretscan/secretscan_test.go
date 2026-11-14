@@ -176,3 +176,29 @@ func TestCredentialShapesAndJSONPairs(t *testing.T) {
 		}
 	}
 }
+
+// A setting about a credential is not one: an ordinary word or a small
+// number under a key such as auth or token, and keys that switch
+// something on or bound it. A real value under the same keys still is.
+func TestSettingsAboutCredentialsAreNotSecrets(t *testing.T) {
+	for _, v := range []string{
+		`{"auth":"none"}`, `{"auth":"basic"}`, `{"auth":"oauth2"}`, `{"authorization":"required"}`,
+		`{"token":"30"}`, `{"token":30}`, `{"idToken":"enabled"}`, `{"refreshToken":"rotate"}`, `{"mfaToken":"sms"}`,
+		`{"csrfToken":"on"}`, `{"credentials":"include"}`, `{"auth":{"value":"none"}}`,
+		`{"passwordExpiry":"90"}`, `{"passwordExpiry":90}`, `{"showPassword":"yes"}`, `{"forgotPassword":"Forgot your password?"}`,
+		`{"requireToken":"always"}`, `{"minPasswordLength":"12"}`, `{"tokenLifetime":"3600"}`,
+	} {
+		if CredentialValue(v) {
+			t.Errorf("a setting was taken for a credential: %s", v)
+		}
+	}
+	for _, v := range []string{
+		`{"auth":"SYNTHETIC-opaque-value-123456"}`, `{"token":"8f14e45fceea167a5a36dedd4bea2543"}`,
+		`{"token":["opaque-value-123"]}`, `{"password":"none"}`, `{"password":12345678}`, `{"pin":"8841"}`,
+		`{"clientSecret":"basic"}`, `{"auth":{"value":"opaque-value-123"}}`,
+	} {
+		if !CredentialValue(v) {
+			t.Errorf("a credential was taken for a setting: %s", v)
+		}
+	}
+}

@@ -117,19 +117,21 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "pingone-promote serve:", err)
 		return 1
 	}
-	if *check {
-		fmt.Fprintln(stdout, "configuration, secrets file and tools are usable")
-		return 0
-	}
 	level := slog.LevelInfo
 	if *debug {
 		level = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
+	// Built before the check answers, so the check refuses whatever the
+	// server itself would refuse at start (and prints its warnings).
 	s, err := server.New(server.Options{Config: cfg, Secrets: secrets, Exporter: exp, Logger: logger})
 	if err != nil {
 		fmt.Fprintln(stderr, "pingone-promote serve:", err)
 		return 1
+	}
+	if *check {
+		fmt.Fprintln(stdout, "configuration, secrets file and tools are usable")
+		return 0
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

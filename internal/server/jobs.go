@@ -461,7 +461,32 @@ func plainJobError(err error) string {
 	case errors.Is(err, errNoSourceID):
 		return noSourceIDText
 	}
-	return err.Error()
+	return plainUpstream(err.Error())
+}
+
+var gitlabStatusRE = regexp.MustCompile(`GitLab returned HTTP ([0-9]{3})`)
+
+// plainUpstream says what a GitLab failure means and who can fix it,
+// keeping the technical text for whoever runs the server.
+func plainUpstream(msg string) string {
+	m := gitlabStatusRE.FindStringSubmatch(msg)
+	if m == nil {
+		return msg
+	}
+	var what string
+	switch code := m[1]; {
+	case code == "401" || code == "403":
+		what = "GitLab refused this server's access token. Nothing is wrong with your request: ask whoever runs this server to check the GitLab token in its secrets file and that it may write to the project."
+	case code == "404":
+		what = "GitLab could not find the project. Ask whoever runs this server to check the project ID in its configuration and that its token can see the project."
+	case code == "429":
+		what = "GitLab is limiting requests right now. Wait a minute and try again."
+	case code[0] == '5':
+		what = "GitLab had a problem of its own. Wait a minute and try again; if it keeps happening, check GitLab's status."
+	default:
+		return msg
+	}
+	return what + " (Detail: " + msg + ")"
 }
 
 var localSourceRE = regexp.MustCompile(`(?m)^\s*source\s*=\s*"\./([A-Za-z0-9_./-]+)"`)
@@ -515,12 +540,13 @@ var (
 // branch pattern accepts, or "".
 func (s *Server) freeBranch(ctx context.Context, branch string) string {
 	base, n := branch, 0
-	// The suffix is replaced when the name without it is allowed too, or
-	// when the pattern takes no further suffix and the suffix follows a
-	// ticket number (CIAM-77-1 under CIAM-[0-9]+-[0-9]+; never AB1-5, a
-	// ticket of its own).
-	if m := branchSuffixRE.FindStringSubmatch(branch); m != nil && (s.branchRE().MatchString(m[1]) ||
-		!s.branchRE().MatchString(branch+"-1") && ticketEndRE.MatchString(m[1])) {
+	// A trailing number is a counter only when it follows a ticket number
+	// (CIAM-77-1): then it is replaced, when the name without it is allowed
+	// too or the pattern takes no further suffix. The number of CIAM-77 or
+	// AB1-5 is the ticket itself and is never changed, whatever the pattern
+	// allows.
+	if m := branchSuffixRE.FindStringSubmatch(branch); m != nil && ticketEndRE.MatchString(m[1]) &&
+		(s.branchRE().MatchString(m[1]) || !s.branchRE().MatchString(branch+"-1")) {
 		base, n = m[1], atoiOr(m[2], 0)
 	}
 	// One listing of the names after base, instead of a lookup each.

@@ -273,7 +273,7 @@ func CredentialInJSON(x any) bool {
 		}
 	case map[string]any:
 		for k, e := range t {
-			if CredentialKey(k) && hasCredentialLiteral(e) {
+			if CredentialKey(k) && hasCredentialLiteral(e, broadKey(k)) {
 				return true
 			}
 			if CredentialInJSON(e) {
@@ -321,13 +321,22 @@ func pairName(n string) bool {
 // hasCredentialLiteral checks a value already protected by a credential key.
 // Some DaVinci configs wrap credentials in arrays or objects; retain the key's
 // context while walking those containers so opaque leaves are not missed.
-func hasCredentialLiteral(x any) bool {
+func hasCredentialLiteral(x any, broad bool) bool {
 	switch v := x.(type) {
 	case string:
+		if broad && settingValue(v) {
+			return false
+		}
 		return strings.TrimSpace(v) != "" && !TemplateOnly.MatchString(v) && !Masked.MatchString(v)
+	case json.Number:
+		// A numeric password or PIN ({"password": 12345678}); a small
+		// number under a broad key is a setting ({"token": 30}).
+		return !broad && len(v.String()) >= 4
+	case float64:
+		return !broad && (v >= 1000 || v <= -1000)
 	case []any:
 		for _, e := range v {
-			if hasCredentialLiteral(e) {
+			if hasCredentialLiteral(e, broad) {
 				return true
 			}
 		}
@@ -337,32 +346,87 @@ func hasCredentialLiteral(x any) bool {
 		// {"data": {"value": "..."}}}); other members are settings
 		// ({"auth": {"region": "us", "mode": "regional"}}).
 		for k, e := range v {
-			if (CredentialKey(k) || wrapperKeys[compact(k)]) && hasCredentialLiteral(e) {
-				return true
+			switch {
+			case CredentialKey(k):
+				if hasCredentialLiteral(e, broadKey(k)) {
+					return true
+				}
+			case wrapperKeys[compact(k)]:
+				if hasCredentialLiteral(e, broad) {
+					return true
+				}
 			}
 		}
 	}
 	return false
 }
 
-// wrapperKeys are member names that hold the value of their parent.
-var wrapperKeys = map[string]bool{"value": true, "val": true, "current": true, "new": true, "old": true,
-	"plain": true, "plaintext": true, "raw": true, "data": true, "content": true, "string": true}
+// wrapperKeys are keys that only wrap the value of their parent.
+var wrapperKeys = map[string]bool{"value": true, "val": true, "current": true, "new": true, "old": true, "plain": true,
+	"plaintext": true, "raw": true, "data": true, "content": true, "string": true}
+
+// broadKey reports whether a key names a credential or, as often, a
+// setting about one ("auth": "basic", "token": "30", "mfaToken": "sms").
+// Under such a key an ordinary setting word is not a credential; under
+// "password" or "clientSecret" any value is.
+func broadKey(k string) bool {
+	c := compact(k)
+	switch c {
+	case "auth", "authorization", "credential", "credentials", "cookie", "bearer", "jwt":
+		return true
+	}
+	return strings.HasSuffix(c, "token")
+}
+
+// settingValue reports whether v is a word or a small number that
+// configures something rather than proving who someone is.
+func settingValue(v string) bool {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if settingWords[v] {
+		return true
+	}
+	if len(v) == 0 || len(v) > 6 {
+		return false
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+var settingWords = func() map[string]bool {
+	m := map[string]bool{}
+	for _, w := range strings.Fields(`none basic bearer digest oauth oauth1 oauth2 oidc saml ldap kerberos ntlm mtls
+		apikey api_key jwt opaque required optional enabled disabled true false yes no on off include omit
+		same-origin sameorigin header cookie query body form rotate reuse sms email totp push voice default
+		auto manual internal external public client user session id_token access_token refresh_token code
+		password client_credentials implicit`) {
+		m[w] = true
+	}
+	return m
+}()
 
 // labelKeyRE matches keys that name a label, a text or a kind of
 // credential rather than one (forgotPasswordLabel, secretQuestion,
 // credentialType, apiKeyHeader, passwordless).
-var labelKeyRE = regexp.MustCompile(`(?i)(label|text|question|type|header|name|less|message|title|hint|prompt|placeholder|description|policy|enabled|required|length|mode|format|field|rules?)s?$`)
+var labelKeyRE = regexp.MustCompile(`(?i)(label|text|question|type|header|name|less|message|title|hint|prompt|placeholder|description|policy|enabled|required|length|mode|format|field|rules?|expiry|expiration|lifetime|ttl|age|days|history|strength|complexity|attempts|count|reset|reuse|rotation|validity|timeout|duration)s?$`)
+
+// settingKeyRE matches keys that switch something about a credential on
+// or off, or bound it (showPassword, forgotPassword, requireToken,
+// minPasswordLength).
+var settingKeyRE = regexp.MustCompile(`^(?i:show|hide|forgot|forgotten|allow|require|enable|disable|is|has|use|min|max|can|should)[A-Z_-]`)
 
 // CredentialKey reports whether a key inside a JSON value names a
 // credential (password, clientSecret, apiKey), not a label of one.
 func CredentialKey(k string) bool {
-	if labelKeyRE.MatchString(k) {
+	if labelKeyRE.MatchString(k) || settingKeyRE.MatchString(k) {
 		return false
 	}
 	switch compact(k) {
 	case "auth", "authorization", "token", "accesstoken", "refreshtoken", "idtoken",
-		"pass", "pwd", "passcode", "bearer", "jwt", "cookie", "hmackey", "encryptionkey", "connectionstring", "dsn":
+		"pass", "pwd", "passcode", "pin", "bearer", "jwt", "cookie", "hmackey", "encryptionkey", "connectionstring", "dsn":
 		return true
 	default:
 		return CredentialName(k) || HasSecretSuffix(k)

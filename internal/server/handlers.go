@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/request"
@@ -358,8 +359,10 @@ func (s *Server) applyMain(w http.ResponseWriter, r *http.Request, d *Draft) (ok
 		}
 		title, desc := strings.TrimSpace(f.Get("title")), strings.ReplaceAll(strings.ReplaceAll(f.Get("description"), "\r\n", "\n"), "\r", "\n")
 		switch {
-		case len(title) > 255 || strings.IndexFunc(title, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\u0085' }) >= 0:
+		case utf8.RuneCountInString(title) > 255 || strings.IndexFunc(title, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\u0085' }) >= 0:
 			d.problem = "The merge request title must be one line of at most 255 characters; it was not saved."
+		case request.Invisible(title):
+			d.problem = "The merge request title contains an invisible or text-direction character; it was not saved. Type it again without pasting."
 		case len(desc) > 64<<10:
 			d.problem = "The note for reviewers must be at most 64 KB; it was not saved."
 		case strings.IndexFunc(desc, func(r rune) bool { return r < 0x20 && r != '\n' && r != '\t' }) >= 0:
@@ -880,6 +883,14 @@ func (s *Server) saveChoices(w http.ResponseWriter, r *http.Request) {
 		}
 		next := map[string]string{}
 		for a := range deps {
+			// A row the form does not carry keeps its choice: a page
+			// loaded before another tab changed that row does not undo it.
+			if _, posted := r.PostForm["c:"+a]; !posted {
+				if old, ok := d.Choices[a]; ok {
+					next[a] = old
+				}
+				continue
+			}
 			switch c := r.PostForm.Get("c:" + a); c {
 			case "exclude":
 				if !canExclude[a] {
@@ -929,8 +940,17 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			env, name, ok := strings.Cut(rest, ":")
-			if !ok || !contains(envs, env) || name == "" || len(name) > 512 || len(vals[0]) > 8<<10 {
+			if !ok || !contains(envs, env) || name == "" || len(name) > 512 {
 				continue
+			}
+			if len(vals[0]) > maxValueBytes {
+				label := name
+				if d.preview != nil && d.preview.result != nil {
+					label, _ = valueLabel(d, d.preview.result, name)
+				}
+				d.problem = fmt.Sprintf("Nothing was saved: the value of %s for %s is too long (at most %d bytes; accented and non-Latin letters take more than one).", label, env, maxValueBytes)
+				s.redirect(w, r, draftURL(d, "/preview"))
+				return
 			}
 			// Only what this request asks for: never the environment ID
 			// or a variable the request does not declare.
@@ -1021,6 +1041,9 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// maxValueBytes bounds one typed value (the page's fields say the same).
+const maxValueBytes = 8 << 10
+
 func (s *Server) startSubmit(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
 		back := draftURL(d, "/preview")
@@ -1067,6 +1090,8 @@ type resultView struct {
 	R        *request.Result
 	Conflict bool
 	Message  string
+	// Detail is what went wrong, in plain words, when the submit failed.
+	Detail string
 }
 
 func (s *Server) resultPage(w http.ResponseWriter, r *http.Request) {
@@ -1076,6 +1101,9 @@ func (s *Server) resultPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v := resultView{D: d, R: d.submitted, Conflict: d.conflict}
+		if d.submitted != nil && d.submitted.Error != nil {
+			v.Detail = plainUpstream(d.submitted.Error.Message)
+		}
 		switch {
 		case d.conflict:
 			v.Message = ConflictMessage
