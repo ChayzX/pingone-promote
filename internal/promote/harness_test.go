@@ -78,7 +78,7 @@ func neutralizedExcluding(t *testing.T, fixture string, excluded []neutralize.Ex
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName},
+	res, err := neutralize.Neutralize(exp.NeutralizeInput(),
 		neutralize.Options{SourceEnvironmentID: devEnv, SecretNames: testSecretNames, Excluded: excluded})
 	if err != nil {
 		t.Fatal(err)

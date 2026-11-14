@@ -59,8 +59,12 @@ type RepoFile struct {
 	Exists       bool
 }
 
-// maxFile bounds a decoded repository file.
-const maxFile = 16 << 20
+// maxFile bounds a decoded repository file. A whole environment's
+// DaVinci flows file passes 20 MB; it is hclblocks.MaxFileSize.
+const maxFile = MaxFileSize
+
+// MaxFileSize is the largest file read from or committed to GitLab.
+const MaxFileSize = 64 << 20
 
 // GetFile reads path at ref. A missing file returns Exists == false and no
 // error.
@@ -75,7 +79,7 @@ func (c *Client) GetFile(ctx context.Context, ref, path string) (RepoFile, error
 		BlobID       string `json:"blob_id"`
 		LastCommitID string `json:"last_commit_id"`
 	}
-	err := c.DoQuery(ctx, http.MethodGet, c.project()+"/repository/files/"+url.PathEscape(path), url.Values{"ref": {ref}}, nil, &raw)
+	err := c.doQuery(ctx, http.MethodGet, c.project()+"/repository/files/"+url.PathEscape(path), url.Values{"ref": {ref}}, nil, &raw, maxFile/3*4+(1<<20))
 	if IsNotFound(err) {
 		return RepoFile{Path: path}, nil
 	}

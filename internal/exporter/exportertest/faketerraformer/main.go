@@ -55,6 +55,12 @@ func main() {
 	if len(os.Args) < 2 || os.Args[1] != "export" {
 		fail("subcommand required")
 	}
+	// A client secret starting "stderr-flood-" makes the fake print it
+	// right across the 64 KiB stderr limit and fail (redaction test).
+	if s := os.Getenv("PINGCLI_PINGONE_CLIENT_CREDENTIALS_CLIENT_SECRET"); strings.HasPrefix(s, "stderr-flood-") {
+		fmt.Fprint(os.Stderr, strings.Repeat("x", 64<<10-8)+s+"\n")
+		os.Exit(1)
+	}
 	if err := export(os.Args[2:]); err != nil {
 		fail(err.Error())
 	}
@@ -139,7 +145,11 @@ func rewriteFallbacks(text []byte, byAddr map[string]block, sel map[string]bool,
 	for _, m := range idRefRE.FindAllSubmatchIndex(text, -1) {
 		addr := string(text[m[2]:m[3]]) + "." + string(text[m[4]:m[5]])
 		inTemplate := m[0] >= 2 && string(text[m[0]-2:m[0]]) == "${"
-		if _, exists := byAddr[addr]; !exists || sel[addr] || inTemplate {
+		// A flow graph value ("value" : <ref>, a subflow) is an embedded
+		// reference too (seen in v0.6.0 output).
+		lineStart := bytes.LastIndexByte(text[:m[0]], '\n') + 1
+		embedded := regexp.MustCompile(`"[^"]*"\s*:\s*$`).Match(text[lineStart:m[0]])
+		if _, exists := byAddr[addr]; !exists || sel[addr] || inTemplate || embedded {
 			continue
 		}
 		name := variableName(addr + "_id")

@@ -2,6 +2,7 @@ package promote
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,12 @@ func TestEndToEnd(t *testing.T) {
 // validate and a mock-provider plan with -var-file for every environment.
 func endToEnd(t *testing.T, repo MapRepo, secrets []string) {
 	t.Helper()
+	endToEndPlans(t, repo, secrets, []string{"dev", "qa", "stage", "prod"})
+}
+
+// endToEndPlans is endToEnd with the environments whose mock plan runs.
+func endToEndPlans(t *testing.T, repo MapRepo, secrets []string, planEnvs []string) {
+	t.Helper()
 	dir := t.TempDir()
 	writeTree(t, dir, repo)
 
@@ -64,8 +71,26 @@ func endToEnd(t *testing.T, repo MapRepo, secrets []string) {
 		tests.WriteString("  " + s + " = \"test-only\"\n")
 	}
 	tests.WriteString("}\n\nrun \"plan\" {\n  command = plan\n}\n")
-	for _, m := range regexp.MustCompile(`(?m)^  to       = (\S+)$`).FindAllStringSubmatch(string(repo["imports.tf"]), -1) {
-		tests.WriteString("\noverride_resource {\n  target = " + m[1] + "\n  values = { id = \"mock-imported-id\" }\n}\n")
+	// Every resource gets a fixed, valid ID: imports cannot run against a
+	// mock provider, and PingOne resources validate references as UUIDs.
+	n := 0
+	for p, src := range repo {
+		if !strings.HasPrefix(p, "definitions/") || !strings.HasSuffix(p, ".tf") {
+			continue
+		}
+		for _, m := range regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)" "([A-Za-z0-9_-]+)"`).FindAllStringSubmatch(string(src), -1) {
+			n++
+			id := fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
+			if strings.HasPrefix(m[1], "pingone_davinci_") {
+				id = fmt.Sprintf("%032d", n) // DaVinci IDs are 32 hex digits
+			}
+			values := "id = \"" + id + "\""
+			if m[1] == "pingone_branding_theme_default" {
+				// A mock import leaves this computed attribute unknown.
+				values += ", branding_theme_id = \"" + id + "\""
+			}
+			tests.WriteString("\noverride_resource {\n  target = module.davinci." + m[1] + "." + m[2] + "\n  values = { " + values + " }\n}\n")
+		}
 	}
 	writeTree(t, dir, map[string][]byte{"tests/e2e.tftest.hcl": []byte(tests.String())})
 	run := func(args ...string) string {
@@ -84,7 +109,7 @@ func endToEnd(t *testing.T, repo MapRepo, secrets []string) {
 	}
 	run(initArgs...)
 	run("validate", "-no-color")
-	for _, env := range []string{"dev", "qa", "stage", "prod"} {
+	for _, env := range planEnvs {
 		if out := run("test", "-no-color", "-var-file="+env+".tfvars"); !strings.Contains(out, "1 passed, 0 failed") {
 			t.Fatalf("%s: %s", env, out)
 		}

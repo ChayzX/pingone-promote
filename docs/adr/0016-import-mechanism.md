@@ -24,7 +24,7 @@ import {
 ## Spike S1 result: it works
 
 Run offline with `terraform_data` resources inside a child module
-(`terraform/spikes/s1-conditional-import`, `terraform test`), on Terraform
+(`terraform/spikes/s1-conditional-import`, `terraform test`; the spike is in Git history), on Terraform
 **1.16.7** (downloaded from releases.hashicorp.com, SHA-256 checked against
 `terraform_1.16.7_SHA256SUMS`) and **1.17.1**:
 

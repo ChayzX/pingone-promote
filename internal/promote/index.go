@@ -1,8 +1,10 @@
 package promote
 
 import (
+	"bytes"
 	"fmt"
 	"path"
+	"pingone-promote/internal/catalog"
 	"sort"
 	"strings"
 
@@ -28,6 +30,12 @@ type index struct {
 	rootVars     map[string]rootVar
 	moduleFile   string // file with module "<name>", "" if none
 	moduleInputs map[string]bool
+	// localModules are other root module calls with a local source
+	// ("name (source)"): the repository's own modules.
+	localModules []string
+	// otherModules are other local root module calls whose folder could
+	// not be read (not in the snapshot): they might hold PingOne resources.
+	otherModules []string
 	imports      map[string]bool // module addresses with an import block at the root
 	rootTF       []string
 	defFiles     []string
@@ -108,6 +116,23 @@ func loadIndex(r Repo, l Layout) (*index, error) {
 				for k := range b.Body.Attributes {
 					ix.moduleInputs[k] = true
 				}
+			case b.Type == "module" && len(b.Labels) == 1:
+				if a, ok := b.Body.Attributes["source"]; ok {
+					// Only a module that holds PingOne resources is the
+					// repository's own home for them.
+					if v, d := a.Expr.Value(nil); !d.HasErrors() && v.Type() == cty.String && strings.HasPrefix(v.AsString(), "./") {
+						kind := holdsPingOne(r, path.Clean(v.AsString()))
+						if _, takesEnv := b.Body.Attributes["pingone_environment_id"]; takesEnv {
+							kind = "yes" // prepared for PingOne, maybe still empty
+						}
+						switch kind {
+						case "yes":
+							ix.localModules = append(ix.localModules, b.Labels[0]+" ("+v.AsString()+")")
+						case "unknown":
+							ix.otherModules = append(ix.otherModules, b.Labels[0]+" ("+v.AsString()+")")
+						}
+					}
+				}
 			case b.Type == "import":
 				if to, ok := b.Body.Attributes["to"]; ok {
 					rg := to.Expr.Range()
@@ -171,9 +196,18 @@ func overlayFiles(r Repo, l Layout) (map[string]string, error) {
 
 // importable reports whether the provider supports importing a type
 // (every type terraformer exports has an import_id_format).
+// importable reports addresses adopted through var.import_ids: every
+// pingone type except singletons, whose import ID is the environment ID
+// (see singleton).
 func importable(addr string) bool {
 	typ, _, _ := strings.Cut(addr, ".")
-	return strings.HasPrefix(typ, "pingone_davinci_")
+	return strings.HasPrefix(typ, "pingone_") && !singleton(addr)
+}
+
+// singleton reports types with one object per environment.
+func singleton(addr string) bool {
+	typ, _, _ := strings.Cut(addr, ".")
+	return catalog.ImportFormat(typ) == catalog.ImportEnvironment
 }
 
 // ManagedAddresses lists the resource addresses the repository's shared
@@ -189,4 +223,19 @@ func ManagedAddresses(r Repo, l Layout) (map[string]bool, error) {
 		out[a] = true
 	}
 	return out, nil
+}
+
+// holdsPingOne reports whether a module folder declares PingOne resources:
+// "yes", "no", or "unknown" when the folder cannot be read.
+func holdsPingOne(r Repo, dir string) string {
+	files, err := listTF(r, dir)
+	if err != nil || len(files) == 0 {
+		return "unknown"
+	}
+	for _, f := range files {
+		if src, ok, err := r.Read(f); err == nil && ok && (bytes.Contains(src, []byte(`resource "pingone_`)) || bytes.Contains(src, []byte(`pingidentity/pingone`))) {
+			return "yes"
+		}
+	}
+	return "no"
 }

@@ -22,6 +22,10 @@ type Resource struct {
 	Name string `json:"name"`
 	// ID is the DaVinci ID, when the catalog was built with IDs.
 	ID string `json:"id,omitempty"`
+	// BuiltIn items exist in every environment (default policies, system
+	// applications); a section or the whole environment leaves them out
+	// unless they are picked.
+	BuiltIn bool `json:"builtIn,omitempty"`
 }
 
 // Catalog lists the source environment's resources. --list-resources
@@ -40,7 +44,35 @@ func (r *Runner) CatalogAllIDs(ctx context.Context, creds Credentials) ([]Resour
 	return r.catalog(ctx, creds, true, true)
 }
 
+// CatalogSource is CatalogAllIDs that also keeps the whole export (with
+// values) as a Source, so selections are cut from it without running
+// terraformer again.
+func (r *Runner) CatalogSource(ctx context.Context, creds Credentials) ([]Resource, *Source, error) {
+	exp, err := r.Export(ctx, creds, ExportOptions{All: true, Imports: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	src, err := NewSource(exp)
+	if err != nil {
+		return nil, nil, err
+	}
+	list, err := src.Resources()
+	if err != nil {
+		return nil, nil, err
+	}
+	return list, src, nil
+}
+
 func (r *Runner) catalog(ctx context.Context, creds Credentials, withIDs, allTypes bool) ([]Resource, error) {
+	if allTypes {
+		// The whole export lists every resource itself: no separate
+		// --list-resources run (a second full read of DaVinci).
+		exp, err := r.Export(ctx, creds, ExportOptions{All: true, Imports: true, SkipValues: true})
+		if err != nil {
+			return nil, err
+		}
+		return resourcesOf(exp)
+	}
 	list, err := r.ListResources(ctx, creds)
 	if err != nil {
 		return nil, err
@@ -77,13 +109,38 @@ func (r *Runner) catalog(ctx context.Context, creds Credentials, withIDs, allTyp
 	return out, nil
 }
 
+// resourcesOf lists an export's resources with their IDs and exact names.
+func resourcesOf(exp *Export) ([]Resource, error) {
+	addrs, err := Addresses(exp)
+	if err != nil {
+		return nil, err
+	}
+	ids, names, err := ExportIDs(exp)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Resource, 0, len(addrs))
+	for _, s := range addrs {
+		typ, label, _ := strings.Cut(s, ".")
+		a := Address{Type: typ, Label: label}
+		name, ok := names[s]
+		if !ok {
+			name, _ = neutralize.DecodeLabel(label)
+		}
+		out = append(out, Resource{Address: a, Name: name, ID: ids[s]})
+	}
+	return out, nil
+}
+
 // ExportIDs reads source IDs (without the environment prefix) from an
 // export's import blocks and names from its resource blocks.
 func ExportIDs(e *Export) (ids, names map[string]string, err error) {
 	ids, names = map[string]string{}, map[string]string{}
 	prefix := "module." + e.ModuleName + "."
 	for p, src := range e.Files {
-		if !strings.HasSuffix(p, ".tf") {
+		if !strings.HasSuffix(p, ".tf") || p == e.ModuleName+"-module.tf" {
+			// The module call only passes variables (terraformer can
+			// repeat an input there); nothing here is read from it.
 			continue
 		}
 		body, err := hclblocks.Parse(src, p)
@@ -193,6 +250,7 @@ func Addresses(e *Export) ([]string, error) {
 }
 
 var globalVarRE = regexp.MustCompile(`\{\{\s*global\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
+var companyVarRE = regexp.MustCompile(`\{\{\s*global\.company\.variables\.([A-Za-z0-9_\-]+)\s*\}\}`)
 
 // Companions are a flow's deploy and enable resources (same label).
 func Companions(flowAddr string) []string {
@@ -284,7 +342,13 @@ func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds, exc
 			if path.Base(p) != neutralize.TypeFlow+".tf" {
 				continue
 			}
+			// {{global.variables.x}} is a flow instance variable (terraformer
+			// already follows it through depends_on); company variables are
+			// {{global.company.variables.x}}.
 			for _, m := range globalVarRE.FindAllSubmatch(src, -1) {
+				want(neutralize.TypeVariable + "." + neutralize.Label(string(m[1]), "flowInstance"))
+			}
+			for _, m := range companyVarRE.FindAllSubmatch(src, -1) {
 				want(neutralize.TypeVariable + "." + neutralize.Label(string(m[1]), "company"))
 			}
 		}
@@ -302,4 +366,26 @@ func sortedSet(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SelectedExport exports exactly the selected items and flow companions, without expanding dependencies.
+func (r *Runner) SelectedExport(ctx context.Context, creds Credentials, seeds, exclude []string) (*Export, error) {
+	if len(seeds) == 0 {
+		return nil, errors.New("exporter: nothing selected")
+	}
+	include := map[string]bool{}
+	for _, a := range seeds {
+		if !addressRE.MatchString(a) || matchesAny(exclude, a) {
+			return nil, errors.New("exporter: invalid or excluded selection")
+		}
+		include[a] = true
+		if strings.HasPrefix(a, neutralize.TypeFlow+".") {
+			for _, c := range Companions(a) {
+				if !matchesAny(exclude, c) {
+					include[c] = true
+				}
+			}
+		}
+	}
+	return r.Export(ctx, creds, ExportOptions{Include: sortedSet(include), Exclude: exclude, Imports: true})
 }

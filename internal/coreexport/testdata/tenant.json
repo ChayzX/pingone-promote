@@ -1,0 +1,185 @@
+{
+  "environmentId": "11111111-1111-4111-8111-111111111111",
+  "forbidden": ["voicePhrases"],
+  "collections": {
+    "populations": {"embedded": "populations", "items": [
+      {"id": "20000000-0000-4000-8000-000000000001", "name": "Default", "default": true, "description": "Built-in default population"},
+      {"id": "20000000-0000-4000-8000-000000000002", "name": "Customers", "description": "Retail customers", "passwordPolicy": {"id": "21000000-0000-4000-8000-000000000002"}, "alternativeIdentifiers": ["customer"]}
+    ]},
+    "passwordPolicies": {"embedded": "passwordPolicies", "items": [
+      {"id": "21000000-0000-4000-8000-000000000001", "name": "Standard", "default": true, "excludesCommonlyUsedPasswords": true},
+      {"id": "21000000-0000-4000-8000-000000000002", "name": "Strict", "default": false, "excludesCommonlyUsedPasswords": true, "excludesProfileData": true, "maxRepeatedCharacters": 2}
+    ]},
+    "groups": {"embedded": "groups", "items": [
+      {"id": "22000000-0000-4000-8000-000000000001", "name": "Support Agents", "description": "Help desk", "population": {"id": "20000000-0000-4000-8000-000000000002"}},
+      {"id": "22000000-0000-4000-8000-000000000002", "name": "Staff", "description": "All staff"}
+    ]},
+    "groups/22000000-0000-4000-8000-000000000001/memberOfGroups": {"embedded": "groupMemberships", "items": [
+      {"id": "22000000-0000-4000-8000-000000000002", "name": "Staff", "type": "DIRECT"}
+    ]},
+    "groups/22000000-0000-4000-8000-000000000002/memberOfGroups": {"embedded": "groupMemberships", "items": []},
+    "groups/22000000-0000-4000-8000-000000000002/roleAssignments": {"embedded": "roleAssignments", "items": []},
+    "groups/22000000-0000-4000-8000-000000000001/roleAssignments": {"embedded": "roleAssignments", "items": []},
+    "schemas": {"embedded": "schemas", "items": [{"id": "23000000-0000-4000-8000-000000000001", "name": "User"}]},
+    "schemas/23000000-0000-4000-8000-000000000001/attributes": {"embedded": "attributes", "items": [
+      {"id": "23100000-0000-4000-8000-000000000001", "name": "email", "schemaType": "STANDARD", "type": "STRING", "enabled": true},
+      {"id": "23100000-0000-4000-8000-000000000002", "name": "loyaltyTier", "displayName": "Loyalty tier", "schemaType": "CUSTOM", "type": "STRING", "enabled": true, "unique": false, "multiValued": false}
+    ]},
+    "signOnPolicies": {"embedded": "signOnPolicies", "items": [
+      {"id": "24000000-0000-4000-8000-000000000001", "name": "Single_Factor", "default": true},
+      {"id": "24000000-0000-4000-8000-000000000002", "name": "Customer_Login", "description": "Login then MFA"}
+    ]},
+    "signOnPolicies/24000000-0000-4000-8000-000000000001/actions": {"embedded": "actions", "items": [
+      {"id": "24100000-0000-4000-8000-000000000001", "type": "LOGIN", "priority": 1, "recoveryEnabled": true}
+    ]},
+    "signOnPolicies/24000000-0000-4000-8000-000000000002/actions": {"embedded": "actions", "items": [
+      {"id": "24100000-0000-4000-8000-000000000002", "type": "LOGIN", "priority": 1, "recoveryEnabled": true, "registration": {"enabled": true, "population": {"id": "20000000-0000-4000-8000-000000000002"}}},
+      {"id": "24100000-0000-4000-8000-000000000003", "type": "MULTI_FACTOR_AUTHENTICATION", "priority": 2, "deviceAuthenticationPolicy": {"id": "25000000-0000-4000-8000-000000000002"}, "noDeviceMode": "BYPASS"},
+      {"id": "24100000-0000-4000-8000-000000000004", "type": "PINGID_AUTHENTICATION", "priority": 3}
+    ]},
+    "deviceAuthenticationPolicies": {"embedded": "deviceAuthenticationPolicies", "items": [
+      {"id": "25000000-0000-4000-8000-000000000001", "name": "Default MFA Policy", "default": true, "policyType": "PING_ONE_MFA", "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}},
+      {"id": "25000000-0000-4000-8000-000000000002", "name": "Strong MFA", "default": false, "sms": {"enabled": true, "otp": {"failure": {"count": 3, "coolDown": {"duration": 2, "timeUnit": "MINUTES"}}}}, "voice": {"enabled": false}, "email": {"enabled": true}, "mobile": {"enabled": false}, "totp": {"enabled": true}}
+    ]},
+    "fido2Policies": {"embedded": "fido2Policies", "items": [
+      {"id": "25100000-0000-4000-8000-000000000001", "name": "Passkeys", "relyingPartyId": "dev.example.com", "userVerification": {"enforceDuringAuthentication": true, "option": "REQUIRED"},
+        "attestationRequirements": "NONE", "authenticatorAttachment": "BOTH", "backupEligibility": {"allow": true, "enforceDuringAuthentication": true},
+        "deviceDisplayName": "fidoDeviceName", "discoverableCredentials": "REQUIRED", "mdsAuthenticatorsRequirements": {"enforceDuringAuthentication": false, "option": "NONE"},
+        "userDisplayNameAttributes": {"attributes": [{"name": "username"}, {"name": "email"}]}}
+    ]},
+    "applications": {"embedded": "applications", "items": [
+      {"id": "26000000-0000-4000-8000-000000000001", "name": "Web Portal", "protocol": "OPENID_CONNECT", "type": "WEB_APP", "enabled": true,
+        "grantTypes": ["AUTHORIZATION_CODE", "REFRESH_TOKEN"], "responseTypes": ["CODE"], "tokenEndpointAuthMethod": "CLIENT_SECRET_BASIC",
+        "redirectUris": ["https://portal.dev.example.com/callback"], "postLogoutRedirectUris": ["https://portal.dev.example.com/"],
+        "pkceEnforcement": "S256_REQUIRED", "description": "Customer portal"},
+      {"id": "26000000-0000-4000-8000-000000000002", "name": "Self-Service", "type": "PING_ONE_SELF_SERVICE", "protocol": "OPENID_CONNECT", "enabled": true}
+    ]},
+    "applications/26000000-0000-4000-8000-000000000001/attributes": {"embedded": "attributes", "items": [
+      {"id": "26100000-0000-4000-8000-000000000001", "name": "email", "value": "${user.email}", "required": false, "oidcScopes": ["27100000-0000-4000-8000-000000000001"]}
+    ]},
+    "applications/26000000-0000-4000-8000-000000000001/signOnPolicyAssignments": {"embedded": "signOnPolicyAssignments", "items": [
+      {"id": "26200000-0000-4000-8000-000000000001", "priority": 1, "signOnPolicy": {"id": "24000000-0000-4000-8000-000000000002"}}
+    ]},
+    "applications/26000000-0000-4000-8000-000000000001/flowPolicyAssignments": {"embedded": "flowPolicyAssignments", "items": [
+      {"id": "26300000-0000-4000-8000-000000000001", "priority": 1, "flowPolicy": {"id": "b0000000000000000000000000000001"}}
+    ]},
+    "applications/26000000-0000-4000-8000-000000000001/grants": {"embedded": "grants", "items": [
+      {"id": "26400000-0000-4000-8000-000000000001", "resource": {"id": "27000000-0000-4000-8000-000000000002"}, "resourceType": "CUSTOM", "scopes": [{"id": "27100000-0000-4000-8000-000000000002"}]}
+    ]},
+    "applications/26000000-0000-4000-8000-000000000001/roleAssignments": {"embedded": "roleAssignments", "items": []},
+    "applications/26000000-0000-4000-8000-000000000001/pushCredentials": {"embedded": "pushCredentials", "items": []},
+    "applications/26000000-0000-4000-8000-000000000002/attributes": {"embedded": "attributes", "items": []},
+    "applications/26000000-0000-4000-8000-000000000002/signOnPolicyAssignments": {"embedded": "signOnPolicyAssignments", "items": []},
+    "applications/26000000-0000-4000-8000-000000000002/flowPolicyAssignments": {"embedded": "flowPolicyAssignments", "items": []},
+    "applications/26000000-0000-4000-8000-000000000002/grants": {"embedded": "grants", "items": []},
+    "applications/26000000-0000-4000-8000-000000000002/roleAssignments": {"embedded": "roleAssignments", "items": []},
+    "applications/26000000-0000-4000-8000-000000000002/pushCredentials": {"embedded": "pushCredentials", "items": []},
+    "digitalWalletApplications": {"embedded": "digitalWalletApplications", "items": []},
+    "resources": {"embedded": "resources", "items": [
+      {"id": "27000000-0000-4000-8000-000000000001", "name": "openid", "type": "OPENID_CONNECT"},
+      {"id": "27000000-0000-4000-8000-000000000002", "name": "Orders API", "type": "CUSTOM", "audience": "https://api.dev.example.com/orders", "accessTokenValiditySeconds": 3600}
+    ]},
+    "resources/27000000-0000-4000-8000-000000000001/scopes": {"embedded": "scopes", "items": [
+      {"id": "27100000-0000-4000-8000-000000000001", "name": "email", "builtin": true}
+    ]},
+    "resources/27000000-0000-4000-8000-000000000002/scopes": {"embedded": "scopes", "items": [
+      {"id": "27100000-0000-4000-8000-000000000002", "name": "orders:read", "description": "Read orders"}
+    ]},
+    "resources/27000000-0000-4000-8000-000000000002/attributes": {"embedded": "attributes", "items": []},
+    "identityProviders": {"embedded": "identityProviders", "items": [
+      {"id": "28000000-0000-4000-8000-000000000001", "name": "Corporate OIDC", "type": "OPENID_CONNECT", "enabled": true,
+        "issuer": "https://idp.dev.example.com", "authorizationEndpoint": "https://idp.dev.example.com/authorize", "tokenEndpoint": "https://idp.dev.example.com/token",
+        "jwksEndpoint": "https://idp.dev.example.com/jwks", "clientId": "corp-client", "scopes": ["openid", "profile"],
+        "registration": {"population": {"id": "20000000-0000-4000-8000-000000000002"}}}
+    ]},
+    "identityProviders/28000000-0000-4000-8000-000000000001/attributes": {"embedded": "attributes", "items": [
+      {"id": "28100000-0000-4000-8000-000000000001", "name": "email", "value": "${providerAttributes.email}", "update": "EMPTY_ONLY"}
+    ]},
+    "gateways": {"embedded": "gateways", "items": [
+      {"id": "29000000-0000-4000-8000-000000000001", "name": "Corp LDAP", "type": "LDAP", "enabled": true, "bindDN": "cn=svc,dc=dev,dc=example,dc=com", "connectionSecurity": "TLS", "vendor": "Microsoft Active Directory", "serversHostAndPort": ["ldaps://ldap.dev.example.com:636"]}
+    ]},
+    "gateways/29000000-0000-4000-8000-000000000001/roleAssignments": {"embedded": "roleAssignments", "items": []},
+    "themes": {"embedded": "themes", "items": [
+      {"id": "30000000-0000-4000-8000-000000000001", "template": "split", "default": true, "configuration": {"name": "Corporate", "bodyTextColor": "#263956", "buttonColor": "#263956", "buttonTextColor": "#FFFFFF", "cardColor": "#FCFCFC", "headingTextColor": "#000000", "linkTextColor": "#263956"}}
+    ]},
+    "templates": {"embedded": "templates", "items": [{"id": "recovery_code_template"}, {"id": "email_verification_user"}]},
+    "templates/recovery_code_template/contents": {"embedded": "contents", "items": [
+      {"id": "31000000-0000-4000-8000-000000000001", "template": {"id": "recovery_code_template"}, "locale": "en", "deliveryMethod": "Email", "subject": "Your recovery code", "body": "Use ${code} to recover your account.", "from": {"name": "Example", "address": "noreply@dev.example.com"}},
+      {"id": "31000000-0000-4000-8000-000000000002", "template": {"id": "recovery_code_template"}, "locale": "en", "deliveryMethod": "SMS", "content": "Recovery code: ${code}"}
+    ]},
+    "templates/email_verification_user/contents": {"embedded": "contents", "items": []},
+    "notificationsPolicies": {"embedded": "notificationsPolicies", "items": [
+      {"id": "32000000-0000-4000-8000-000000000001", "name": "Default quotas", "quotas": [{"type": "ENVIRONMENT", "deliveryMethods": ["SMS"], "total": 100}]}
+    ]},
+    "forms": {"embedded": "forms", "items": [
+      {"id": "33000000-0000-4000-8000-000000000001", "name": "Customer signup", "category": "CUSTOM", "cols": 4, "markRequired": true, "markOptional": false, "components": {"fields": [{"type": "TEXT", "key": "user.email", "label": "Email", "position": {"row": 0, "col": 0}, "required": true, "validation": {"type": "NONE"}}]}}
+    ]},
+    "agreements": {"embedded": "agreements", "items": [
+      {"id": "34000000-0000-4000-8000-000000000001", "name": "Terms of Service", "enabled": true, "reconsentPeriodDays": 365}
+    ]},
+    "agreements/34000000-0000-4000-8000-000000000001/languages": {"embedded": "languages", "items": [
+      {"id": "34100000-0000-4000-8000-000000000001", "locale": "en", "displayName": "Terms", "enabled": true, "language": {"id": "35000000-0000-4000-8000-000000000001"}}
+    ]},
+    "agreements/34000000-0000-4000-8000-000000000001/languages/34100000-0000-4000-8000-000000000001/revisions": {"embedded": "revisions", "items": [
+      {"id": "34200000-0000-4000-8000-000000000001", "contentType": "text/html", "text": "<p>Terms</p>", "requireReconsent": true, "effectiveAt": "2026-01-01T00:00:00Z"}
+    ]},
+    "languages": {"embedded": "languages", "items": [
+      {"id": "35000000-0000-4000-8000-000000000001", "locale": "en", "enabled": true, "default": true, "customerAdded": false},
+      {"id": "35000000-0000-4000-8000-000000000002", "locale": "fr-BE", "enabled": true, "default": false, "customerAdded": true}
+    ]},
+    "languages/35000000-0000-4000-8000-000000000001/localizationStrings": {"embedded": "localizationStrings", "items": []},
+    "languages/35000000-0000-4000-8000-000000000002/localizationStrings": {"embedded": "localizationStrings", "items": []},
+    "riskPolicySets": {"embedded": "riskPolicySets", "items": [
+      {"id": "36000000-0000-4000-8000-000000000001", "name": "Default Risk Policy", "default": true}
+    ]},
+    "riskPredictors": {"embedded": "riskPredictors", "items": [
+      {"id": "36100000-0000-4000-8000-000000000001", "name": "Anonymous Network", "compactName": "anonymousNetwork", "type": "ANONYMOUS_NETWORK", "default": true, "allowedCidrList": ["10.0.0.0/8"]},
+      {"id": "36100000-0000-4000-8000-000000000002", "name": "VIP list", "compactName": "vipList", "type": "MAP", "default": false, "description": "Custom predictor", "contains": "${event.user.groups}", "betweenRanges": {"high": {"minValue": 75, "maxValue": 100}}},
+      {"id": "36100000-0000-4000-8000-000000000003", "name": "Email Reputation", "compactName": "emailReputation", "type": "EMAIL_REPUTATION", "default": true}
+    ]},
+    "apiServers": {"embedded": "apiServers", "items": [
+      {"id": "37000000-0000-4000-8000-000000000001", "name": "Orders gateway", "baseUrls": ["https://api.dev.example.com/orders"], "authorizationServer": {"type": "PINGONE_SSO", "resourceId": "27000000-0000-4000-8000-000000000002"}}
+    ]},
+    "apiServers/37000000-0000-4000-8000-000000000001/operations": {"embedded": "operations", "items": [
+      {"id": "37100000-0000-4000-8000-000000000001", "name": "List orders", "methods": ["GET"], "paths": [{"type": "EXACT", "pattern": "/orders"}]}
+    ]},
+    "applicationRoles": {"embedded": "applicationRoles", "items": []},
+    "resources/27000000-0000-4000-8000-000000000002/applicationResources": {"embedded": "resources", "items": [
+      {"id": "27200000-0000-4000-8000-000000000001", "name": "Orders", "description": "Order records", "parent": {"type": "CUSTOM", "id": "27000000-0000-4000-8000-000000000002"}}
+    ]},
+    "decisionEndpoints": {"embedded": "decisionEndpoints", "items": []},
+    "verifyPolicies": {"embedded": "verifyPolicies", "items": [
+      {"id": "37500000-0000-4000-8000-000000000001", "name": "Standard ID check", "description": "Government ID and liveness", "default": false, "governmentId": {"verify": "REQUIRED"}, "facialComparison": {"verify": "REQUIRED", "threshold": "MEDIUM"}, "liveness": {"verify": "REQUIRED", "threshold": "MEDIUM"}}
+    ]},
+    "credentialTypes": {"embedded": "items", "items": [
+      {"id": "38000000-0000-4000-8000-000000000001", "title": "Employee badge", "description": "Badge", "cardDesignTemplate": "<svg><text>${cardTitle}</text><text>${cardSubtitle}</text></svg>", "metadata": {"name": "Badge", "columns": 1, "fields": [{"id": "field-1", "type": "Directory Attribute", "title": "Name", "attribute": "name.formatted", "isVisible": true}]}}
+    ]},
+    "credentialTypes/38000000-0000-4000-8000-000000000001/issuanceRules": {"embedded": "issuanceRules", "items": []},
+    "alertChannels": {"embedded": "alertChannels", "items": [
+      {"id": "39000000-0000-4000-8000-000000000001", "alertName": "Ops", "channelType": "EMAIL", "addresses": ["ops@dev.example.com"], "includeSeverities": ["ERROR"], "includeAlertTypes": ["CERTIFICATE_EXPIRED"]}
+    ]},
+    "certificates": {"embedded": "certificates", "items": []},
+    "customDomains": {"embedded": "customDomains", "items": [
+      {"id": "39100000-0000-4000-8000-000000000001", "domainName": "auth.dev.example.com", "status": "ACTIVE"}
+    ]},
+    "roles": {"embedded": "roles", "items": []},
+    "propagation/plans": {"embedded": "plans", "items": []},
+    "keys": {"embedded": "keys", "items": [
+      {"id": "39200000-0000-4000-8000-000000000001", "name": "Default signing key", "usageType": "SIGNING", "algorithm": "RSA", "keyLength": 2048, "default": true, "subjectDN": "CN=dev", "issuerDN": "CN=dev", "validityPeriod": 365, "signatureAlgorithm": "SHA256withRSA", "serialNumber": "1"}
+    ]},
+    "keyRotationPolicies": {"embedded": "keyRotationPolicies", "items": []},
+    "rateLimitConfigurations": {"embedded": "rateLimitConfigurations", "items": []},
+    "emailDomains": {"embedded": "emailDomains", "items": []},
+    "subscriptions": {"embedded": "subscriptions", "items": [
+      {"id": "39300000-0000-4000-8000-000000000001", "name": "Audit to SIEM", "enabled": true, "format": "ACTIVITY", "httpEndpoint": {"url": "https://siem.dev.example.com/hook", "headers": {"Authorization": "Bearer hidden"}}, "filterOptions": {"includedActionTypes": ["USER.CREATED"]}}
+    ]}
+  },
+  "objects": {
+    "mfaSettings": {"pairing": {"maxAllowedDevices": 5, "pairingKeyFormat": "ALPHANUMERIC"}, "lockout": {"failureCount": 5, "durationSeconds": 600}},
+    "brandingSettings": {"companyName": "Example Corp"},
+    "applications/26000000-0000-4000-8000-000000000001/metadata": {"applicationId": "26000000-0000-4000-8000-000000000001", "metadata": {"costCenter": "42"}},
+    "notificationsSettings": {"deliveryMode": "ALL", "from": {"name": "Example", "address": "noreply@dev.example.com"}},
+    "adminConfig": {"mfaStatus": "ENFORCE", "recovery": true, "authenticationMethod": "PINGONE"},
+    "credentialIssuerProfile": {"name": "Example issuer"}
+  }
+}

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"pingone-promote/internal/catalog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -100,6 +101,17 @@ type Request struct {
 	ConfirmAll bool   `json:"confirmAll,omitempty"`
 	// Flows may be empty when Scope is all.
 	Flows []FlowRef `json:"flows"`
+	// Resources selects any supported configuration resource by type/name/ID or exact address.
+	Resources []ExcludeRef `json:"resources,omitempty"`
+	// Families selects every item of these catalog families (for example
+	// "davinci" or "applications"), as if each were listed in Resources.
+	Families []string `json:"families,omitempty"`
+	// ImportIDs adopt built-in objects (default population, default sign-on
+	// policy, predefined scopes, ...): env -> resource address -> that
+	// environment's ID. IDs are not secrets.
+	ImportIDs map[string]map[string]string `json:"importIds,omitempty"`
+	// IncludeUpstream defaults true for compatibility; false exports selected items only.
+	IncludeUpstream *bool `json:"includeUpstream,omitempty"`
 	// Applications and FlowPolicies are included only when listed, by
 	// name (or terraformer label).
 	Applications []FlowRef `json:"applications,omitempty"`
@@ -123,7 +135,10 @@ type Request struct {
 	Mode       string `json:"mode"` // "mr" (default) or "branch"
 	// BranchName must be <branch prefix><requestId> when set; the engine
 	// checks the prefix against its configuration.
-	BranchName    string `json:"branchName,omitempty"`
+	BranchName string `json:"branchName,omitempty"`
+	// NamedBranch is set only by the hosted server (never from JSON): the
+	// branch name was typed and the server's branch pattern checks it.
+	NamedBranch   bool   `json:"-"`
 	CommitMessage string `json:"commitMessage,omitempty"`
 	Title         string `json:"title,omitempty"`
 	Description   string `json:"description,omitempty"`
@@ -135,6 +150,8 @@ type ValidationError struct {
 	Code  string `json:"code"`
 	Field string `json:"field,omitempty"`
 	Msg   string `json:"message"`
+	// Plain is the message in the words a page shows, when it differs.
+	Plain string `json:"-"`
 }
 
 func (e *ValidationError) Error() string {
@@ -160,6 +177,7 @@ var (
 	addressRE    = regexp.MustCompile(`^pingone_[a-z0-9_]+\.[A-Za-z0-9_\-]{1,512}$`)
 	davinciIDRE  = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	shaRE        = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	envUUIDRE    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	labelRE      = regexp.MustCompile(`^[A-Za-z0-9_\-]{1,512}$`)
 )
 
@@ -250,8 +268,8 @@ func (r *Request) Validate() error {
 		return invalid("confirmAll", "a whole-environment request (scope all) requires confirmAll: true")
 	case !r.Whole() && r.ConfirmAll:
 		return invalid("confirmAll", "confirmAll only applies to scope all")
-	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies) == 0:
-		return invalid("flows", "select at least one flow, application or flow policy")
+	case !r.Whole() && len(r.Flows)+len(r.Applications)+len(r.FlowPolicies)+len(r.Resources)+len(r.Families) == 0:
+		return invalid("flows", "choose at least one item to copy (step 2), or another option in step 1")
 	case !r.Whole() && (len(r.Flows) > 20 || len(r.Applications) > 20 || len(r.FlowPolicies) > 20):
 		return invalid("flows", "at most 20 of each kind per request")
 	}
@@ -269,6 +287,16 @@ func (r *Request) Validate() error {
 		if err := checkRef(fmt.Sprintf("flowPolicies[%d]", i), f, false); err != nil {
 			return err
 		}
+	}
+	seenFamily := map[string]bool{}
+	for i, f := range r.Families {
+		if !catalog.ExportableFamily(f) || seenFamily[f] {
+			return invalid(fmt.Sprintf("families[%d]", i), "must be a configuration family, listed once")
+		}
+		seenFamily[f] = true
+	}
+	if err := r.checkResources(); err != nil {
+		return err
 	}
 	if err := r.checkExcludes(); err != nil {
 		return err
@@ -294,8 +322,29 @@ func (r *Request) Validate() error {
 			if err != nil {
 				return invalid(field, err.Error())
 			}
+			if k == "pingone_environment_id" && (v.Type() != cty.String || !envUUIDRE.MatchString(v.AsString())) {
+				return invalid(field, "must be the environment's PingOne ID, a UUID such as 01234567-89ab-cdef-0123-456789abcdef")
+			}
 			if kind := secretKind(k, v); kind != "" {
-				return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like a secret (" + kind + "); secrets come from customer_secrets.yml"}
+				return &ValidationError{Code: CodeSecretValue, Field: field, Msg: "looks like a secret (" + kind + "); secrets come from customer_secrets.yml", Plain: "looks like a password, key or token. Secrets come from Vault, never from this form"}
+			}
+		}
+	}
+	for env, ids := range r.ImportIDs {
+		if !envRE.MatchString(env) {
+			return invalid("importIds", env+" is not an environment name")
+		}
+		for a, id := range ids {
+			field := "importIds." + env + "." + a
+			typ, _, _ := strings.Cut(a, ".")
+			if !addressRE.MatchString(a) {
+				return invalid(field, "must be a resource address")
+			}
+			if _, ok := resourceType(typ); !ok {
+				return invalid(field, "is not an exportable resource type")
+			}
+			if !importIDRE.MatchString(id) {
+				return invalid(field, "must be a PingOne ID (or <parent ID>/<ID>)")
 			}
 		}
 	}
@@ -322,7 +371,14 @@ func (r *Request) Validate() error {
 	if r.BaseCommit != "" && !shaRE.MatchString(r.BaseCommit) {
 		return invalid("baseCommit", "must be a commit SHA")
 	}
-	if r.BranchName != "" && (!strings.HasSuffix(r.BranchName, r.RequestID) || !gitlab.ValidRequestBranchPrefix(strings.TrimSuffix(r.BranchName, r.RequestID))) {
+	switch {
+	case r.NamedBranch:
+		// Typed on the hosted server; the engine checks it against the
+		// configured pattern.
+		if !gitlab.ValidBranchName(r.BranchName) {
+			return invalid("branchName", "is not a valid branch name")
+		}
+	case r.BranchName != "" && (!strings.HasSuffix(r.BranchName, r.RequestID) || !gitlab.ValidRequestBranchPrefix(strings.TrimSuffix(r.BranchName, r.RequestID))):
 		return invalid("branchName", "must be <branch prefix>"+r.RequestID)
 	}
 	switch r.Mode {
@@ -333,19 +389,24 @@ func (r *Request) Validate() error {
 		return invalid("mode", "must be mr or branch")
 	}
 	if !printable(r.CommitMessage, 2000) {
-		return invalid("commitMessage", "must be at most 2000 characters")
+		return invalid("commitMessage", "must be at most 2000 characters of text, with no control characters other than line breaks (\n) and tabs")
 	}
 	if !printable(r.Title, 255) || strings.ContainsAny(r.Title, "\n") {
 		return invalid("title", "must be one line of at most 255 characters")
 	}
 	if !printable(r.Description, 64<<10) {
-		return invalid("description", "must be at most 64 KiB")
+		return invalid("description", "must be at most 64 KiB of text, with no control characters other than line breaks (\n) and tabs")
 	}
 	return nil
 }
 
 // Whole reports a whole-environment request.
 func (r *Request) Whole() bool { return r.Scope == ScopeAll }
+
+// Upstream reports whether to include transitive dependencies.
+func (r *Request) Upstream() bool { return r.IncludeUpstream == nil || *r.IncludeUpstream }
+
+var importIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_.\-]{0,127}(/[0-9A-Za-z][0-9A-Za-z_.\-]{0,127}){0,2}$`)
 
 var excludeIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_\-]{0,63}(/[0-9A-Za-z][0-9A-Za-z_\-]{0,63})?$`)
 
@@ -370,8 +431,8 @@ func (r *Request) checkExcludes() error {
 			}
 			continue
 		}
-		if _, ok := ExcludeTypes[e.Type]; !ok {
-			return invalid(f+".type", "must be flow, application, flowPolicy, connection or variable (or set address)")
+		if _, ok := resourceType(e.Type); !ok {
+			return invalid(f+".type", "must be a supported PingOne configuration resource type (or set address)")
 		}
 		switch {
 		case e.ID == "" && e.Name == "":
@@ -386,6 +447,59 @@ func (r *Request) checkExcludes() error {
 				(e.Name != "" && strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(in.Name)))
 			if same {
 				return invalid(f, fmt.Sprintf("excludes %s, which %s[%d] includes; a resource cannot be both included and excluded", describe(e.ID, e.Name), field[e.Type], j))
+			}
+		}
+	}
+	return nil
+}
+
+// resourceType accepts the short aliases and every exportable type of the
+// catalog (internal/catalog). Identity data and types that cannot be
+// exported are refused.
+func resourceType(kind string) (string, bool) {
+	if typ, ok := ExcludeTypes[kind]; ok {
+		return typ, true
+	}
+	return catalog.Resolve(kind)
+}
+
+func (r *Request) checkResources() error {
+	if len(r.Resources) > 200 {
+		return invalid("resources", "at most 200 resources per request")
+	}
+	for i, e := range r.Resources {
+		field := fmt.Sprintf("resources[%d]", i)
+		if e.Address != "" {
+			if e.Type != "" || e.ID != "" || e.Name != "" || !addressRE.MatchString(e.Address) {
+				return invalid(field, "set a valid address alone, or type with id/name")
+			}
+			typ, _, _ := strings.Cut(e.Address, ".")
+			if _, ok := resourceType(typ); !ok {
+				return invalid(field, "identity data cannot be exported")
+			}
+		} else {
+			if _, ok := resourceType(e.Type); !ok {
+				return invalid(field+".type", "must be a PingOne configuration resource type")
+			}
+			if e.ID == "" && strings.TrimSpace(e.Name) == "" {
+				return invalid(field, "set id or name")
+			}
+			if e.ID != "" && !excludeIDRE.MatchString(e.ID) {
+				return invalid(field+".id", "is not an ID")
+			}
+			if e.Name != "" && (!printable(e.Name, 200) || strings.TrimSpace(e.Name) == "") {
+				return invalid(field+".name", "must be at most 200 printable characters")
+			}
+		}
+		for j, x := range r.Exclude {
+			same := e.Address != "" && e.Address == x.Address
+			if e.Address == "" && x.Address == "" {
+				et, _ := resourceType(e.Type)
+				xt, _ := resourceType(x.Type)
+				same = et == xt && ((e.ID != "" && strings.EqualFold(e.ID, x.ID)) || (e.Name != "" && strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(x.Name))))
+			}
+			if same {
+				return invalid(field, fmt.Sprintf("also excluded by exclude[%d]", j))
 			}
 		}
 	}
@@ -426,6 +540,16 @@ func jsonValue(raw json.RawMessage) (cty.Value, error) {
 	return v, nil
 }
 
+// SecretKind reports why a value given for the root variable name looks
+// like a secret ("" when it does not), by the rules Validate applies.
+func SecretKind(name string, raw json.RawMessage) string {
+	v, err := jsonValue(raw)
+	if err != nil {
+		return ""
+	}
+	return secretKind(name, v)
+}
+
 func secretKind(name string, v cty.Value) string {
 	switch {
 	case v.IsNull() || !v.IsKnown():
@@ -438,11 +562,33 @@ func secretKind(name string, v cty.Value) string {
 		if secretscan.SuspectLiteral(name, s) {
 			return secretscan.KindNamed
 		}
+		// A DaVinci variable's value variable is named after the variable
+		// (davinci_variable_<name>_value).
+		if strings.HasPrefix(name, "davinci_variable_") {
+			base := secretscan.VariableBase(name)
+			if strings.TrimSpace(s) != "" && !secretscan.TemplateOnly.MatchString(s) && (secretscan.CredentialName(base) || secretscan.CredentialValue(s)) {
+				return secretscan.KindNamed
+			}
+		}
+		// Text that is a JSON list or object (a DaVinci variable holding
+		// an object, kept as text) is checked part by part too.
+		if t := strings.TrimSpace(s); (strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")) && json.Valid([]byte(t)) {
+			if inner, err := jsonValue(json.RawMessage(t)); err == nil {
+				return secretKind(name, inner)
+			}
+		}
 	case v.CanIterateElements():
 		for it := v.ElementIterator(); it.Next(); {
-			_, e := it.Element()
-			if k := secretKind(name, e); k != "" {
-				return k
+			k, e := it.Element()
+			if kind := secretKind(name, e); kind != "" {
+				return kind
+			}
+			// {"password": "…"}: a non-empty string under a key named
+			// like a credential.
+			if (v.Type().IsObjectType() || v.Type().IsMapType()) && k.Type() == cty.String && e.Type() == cty.String && e.IsKnown() && !e.IsNull() {
+				if s := strings.TrimSpace(e.AsString()); s != "" && !secretscan.TemplateOnly.MatchString(s) && secretscan.CredentialKey(k.AsString()) {
+					return secretscan.KindNamed
+				}
 			}
 		}
 	}

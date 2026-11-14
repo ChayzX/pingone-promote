@@ -50,6 +50,13 @@ type Input struct {
 	Files      map[string][]byte
 	ModuleDir  string // default ping-export-module
 	ModuleName string // default ping-export
+	// Shared are value variables terraformer declares for several
+	// resources of the whole source; each user gets its own even when the
+	// export has one (exporter.Export.SharedValues).
+	Shared []string
+	// Values are DaVinci variable values by resource address
+	// (exporter.Export.Values), for value variables split per resource.
+	Values map[string]string
 }
 
 func (in *Input) moduleDir() string {

@@ -1,14 +1,21 @@
 package request
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"net/url"
 	"os"
 	"path/filepath"
+	"pingone-promote/internal/catalog"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"unicode"
 
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/gitlab"
@@ -27,7 +34,13 @@ type Exporter interface {
 	WholeExport(ctx context.Context, creds exporter.Credentials, exclude []string) (*exporter.Export, error)
 }
 
-// Committer writes the request commit (GitLab in CI).
+// SelectedExporter supports a scoped export without upstream dependencies.
+// Exporters that cannot provide this must fail rather than silently widen selection.
+type SelectedExporter interface {
+	SelectedExport(context.Context, exporter.Credentials, []string, []string) (*exporter.Export, error)
+}
+
+// Committer writes the request commit (GitLab in CI or the hosted server).
 type Committer interface {
 	CommitToBranch(ctx context.Context, bc gitlab.BranchCommit) (gitlab.Result, error)
 	OpenMergeRequest(ctx context.Context, branch string) (*gitlab.MergeRequest, error)
@@ -72,6 +85,13 @@ type Env struct {
 	// pingone-promote/, PINGONE_PROMOTE_BRANCH_PREFIX). The job runs only on
 	// <BranchPrefix><requestId>.
 	BranchPrefix string
+	// BranchPattern, when set (hosted server), replaces the prefix rule:
+	// the request names its branch (BranchName), which must match it whole.
+	BranchPattern *regexp.Regexp
+	// NoRequestFile is set by the hosted server: there is no
+	// .pingone-promote/request.json on the branch, so the commit does not
+	// delete one, and a request that changes nothing commits nothing.
+	NoRequestFile bool
 	// MRLabels are added to merge requests (default pingone-promote).
 	MRLabels []string
 	// PriorCommit finds an earlier commit of this request on the branch
@@ -93,6 +113,8 @@ func Run(ctx context.Context, env Env, req *Request) *Result {
 	res.Branch = env.Branch
 	r := &runner{env: env, req: req, res: res, layout: env.Layout.WithDefaults()}
 	r.run(ctx)
+	// Every status, including blocked and failed, is redacted.
+	res.redact()
 	return res
 }
 
@@ -152,6 +174,13 @@ func (r *runner) run(ctx context.Context) {
 	var exp *exporter.Export
 	if req.Whole() {
 		exp, err = r.env.Exporter.WholeExport(ctx, creds, sel.patterns())
+	} else if !req.Upstream() {
+		selected, ok := r.env.Exporter.(SelectedExporter)
+		if !ok {
+			res.fail(ErrPreflight, "export", "this exporter cannot export without upstream dependencies", false)
+			return
+		}
+		exp, err = selected.SelectedExport(ctx, creds, sel.seeds, sel.patterns())
 	} else {
 		exp, err = r.env.Exporter.ScopedExport(ctx, creds, sel.seeds, sel.patterns())
 	}
@@ -164,9 +193,26 @@ func (r *runner) run(ctx context.Context) {
 		res.fail(code, "export", err.Error(), !errors.As(err, &lc))
 		return
 	}
-	neu, err := neutralize.Neutralize(&neutralize.Input{Files: exp.Files, ModuleDir: exp.ModuleDir, ModuleName: exp.ModuleName}, neutralize.Options{
+	// Resources the export refers to but does not contain (the combined
+	// exporter reports them) are treated like excluded ones: a Git-managed
+	// copy keeps its address, any other becomes a per-environment ID
+	// variable.
+	if len(exp.Referenced) > 0 {
+		managed, err := promote.ManagedAddresses(head, r.layout)
+		if err != nil {
+			res.fail(ErrPreflight, "internal", err.Error(), false)
+			return
+		}
+		for a, id := range exp.Referenced {
+			if _, ok := sel.excluded[a]; !ok {
+				sel.excluded[a] = &exclusion{id: id, managed: managed[a], referenced: true}
+			}
+		}
+	}
+	res.Warnings = append(res.Warnings, exp.Warnings...)
+	neu, err := neutralize.Neutralize(exp.NeutralizeInput(), neutralize.Options{
 		SourceEnvironmentID: sourceID, ConnectorEnvLocal: req.ConnectorEnvLocal, InlineVariables: set(req.InlineValues), SecretNames: req.SecretMappings,
-		Excluded: sel.neutralizeExcluded()})
+		Excluded: sel.neutralizeExcluded(), Lift: LiftRules()})
 	if err != nil {
 		res.fail(ErrBlocked, "merge", err.Error(), false)
 		return
@@ -177,19 +223,22 @@ func (r *runner) run(ctx context.Context) {
 			Message: fmt.Sprintf("the raw export looks like it contains a secret (%s) at %s:%d", f.Kind, f.File, f.Line)})
 	}
 	res.Warnings = append(res.Warnings, neu.Warnings...)
+	res.Variables = describeVariables(neu)
 	var selected []string
 	for _, s := range sel.seeds {
 		selected = append(selected, s)
 		if strings.HasPrefix(s, neutralize.TypeFlow+".") {
 			selected = append(selected, exporter.Companions(s)...)
 		}
+		selected = append(selected, ownedChildren(exp.Owners, s)...)
 	}
 	choices := map[string]promote.Choice{}
 	for a, c := range req.DependencyChoices {
 		choices[a] = promote.Choice(c)
 	}
 	mreq := promote.MergeRequest{Layout: r.layout, Export: neu, Head: head, Selected: selected, Choices: choices, WholeEnvironment: req.Whole(),
-		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig}
+		SourceEnv: req.Source, Rollout: r.env.Rollout, EnvValues: req.Values(), SecretsConfig: r.env.SecretsConfig,
+		Adopt: exp.Adopt, ImportIDs: req.ImportIDs}
 	if req.BaseCommit != "" {
 		if r.env.BaseRepo == nil {
 			res.fail(ErrPreflight, "validation", "baseCommit was given but this run cannot read history", false)
@@ -209,17 +258,58 @@ func (r *runner) run(ctx context.Context) {
 	res.setBlockers(m.Blockers)
 	res.Warnings = append(res.Warnings, m.Warnings...)
 	r.secrets(m)
-	// The fmt gate runs on every file, preview or not.
+	// The fmt gate runs on every file, preview or not; the formatter runs
+	// for several files at a time, and results are taken in path order.
+	var fmtPaths []string
 	for _, p := range m.ChangedPaths() {
-		if !strings.HasSuffix(p, ".tf") && !strings.HasSuffix(p, ".tfvars") {
-			continue
+		if strings.HasSuffix(p, ".tf") || strings.HasSuffix(p, ".tfvars") {
+			fmtPaths = append(fmtPaths, p)
 		}
-		out, err := tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, m.Files[p])
+	}
+	type fmtResult struct {
+		out []byte
+		err error
+	}
+	fmtResults := make([]fmtResult, len(fmtPaths))
+	var fmtWG sync.WaitGroup
+	fmtSem := make(chan struct{}, 4)
+	for i, p := range fmtPaths {
+		fmtWG.Add(1)
+		go func(i int, content []byte) {
+			defer fmtWG.Done()
+			fmtSem <- struct{}{}
+			defer func() { <-fmtSem }()
+			fmtResults[i].out, fmtResults[i].err = tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, content)
+		}(i, m.Files[p])
+	}
+	fmtWG.Wait()
+	for i, p := range fmtPaths {
+		out, err := fmtResults[i].out, fmtResults[i].err
+		var mismatch *tffmt.FormatMismatchError
+		if errors.As(err, &mismatch) {
+			// A file people edit (an environment's tfvars, ...) may not be
+			// fmt-clean already; the commit carries the formatted file,
+			// provided formatting it again changes nothing. Files this tool
+			// creates must be canonical as generated.
+			if _, existed, rerr := head.Read(p); rerr == nil && existed {
+				if again, ferr := tffmt.FormatWithTerraform(ctx, r.env.TerraformBin, out); ferr == nil && bytes.Equal(again, out) {
+					res.Warnings = append(res.Warnings, p+" is also reformatted with terraform fmt (it was not fmt-clean before)")
+					err = nil
+				}
+			}
+		}
 		if err != nil {
 			res.fail(ErrPreflight, "merge", p+": "+err.Error(), false)
 			return
 		}
 		m.Files[p] = out
+	}
+	// A file GitLab would refuse is a blocker now, not a failed submit.
+	for _, p := range m.ChangedPaths() {
+		if n := len(m.Files[p]); n > gitlab.MaxFileSize {
+			res.Blockers[RequestBlockers] = append(res.Blockers[RequestBlockers], BlockerOut{Code: "file_too_large", Address: p,
+				Message: fmt.Sprintf("%s would be %d MB, more than the %d MB GitLab accepts from this tool; copy fewer items at once (whole sections, or leave some out)", p, n>>20, gitlab.MaxFileSize>>20)})
+		}
 	}
 	diff, err := m.Diff(head)
 	if err != nil {
@@ -238,7 +328,7 @@ func (r *runner) run(ctx context.Context) {
 		}
 		res.Files = append(res.Files, FileOut{Path: p, Action: action})
 	}
-	if r.env.Committer != nil {
+	if r.env.Committer != nil && !r.env.NoRequestFile {
 		res.Files = append(res.Files, FileOut{Path: gitlab.RequestFile, Action: "delete"})
 	}
 	switch {
@@ -278,10 +368,17 @@ func (r *runner) checkContext() error {
 	if !gitlab.ValidRequestBranchPrefix(prefix) {
 		return fmt.Errorf("the request branch prefix %q is invalid: it must start with a letter or digit, end with / or -, and be at most 60 characters", prefix)
 	}
-	if req.BranchName != "" && req.BranchName != prefix+req.RequestID {
+	if env.BranchPattern != nil {
+		if !req.NamedBranch || !env.BranchPattern.MatchString(req.BranchName) {
+			return invalid("branchName", "does not match the branch pattern "+env.BranchPattern.String())
+		}
+		if env.Committer != nil && (env.Branch != req.BranchName || env.Branch == env.DefaultBranch || env.Head == "") {
+			return errors.New("the request branch does not match the branch the request names")
+		}
+	} else if req.BranchName != "" && req.BranchName != prefix+req.RequestID {
 		return invalid("branchName", fmt.Sprintf("must be %s%s (the job's branch prefix is %s)", prefix, req.RequestID, prefix))
 	}
-	if env.Committer != nil {
+	if env.Committer != nil && env.BranchPattern == nil {
 		switch {
 		case env.Branch == "" || env.Head == "":
 			return errors.New("the request branch and commit are unknown (CI_COMMIT_BRANCH, CI_COMMIT_SHA)")
@@ -333,7 +430,7 @@ func (r *runner) sourceEnvironmentID() (string, error) {
 	}
 	v, ok := o.Values[neutralize.EnvironmentIDVariable]
 	if !ok || v.Type().FriendlyName() != "string" {
-		return "", fmt.Errorf("%s does not set pingone_environment_id", p)
+		return "", fmt.Errorf("the PingOne environment ID of %s is not known: %s does not set pingone_environment_id, and the server configuration has no sourceEnvironmentIds entry for it", r.req.Source, p)
 	}
 	return v.AsString(), nil
 }
@@ -353,6 +450,9 @@ type exclusion struct {
 	// derived marks a flow's deploy and enable: they follow their flow and
 	// are not reported on their own.
 	derived bool
+	// referenced marks a resource the export refers to without containing
+	// it (not chosen by the request).
+	referenced bool
 }
 
 func (s *selection) patterns() []string {
@@ -398,10 +498,18 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		}
 	}
 	sort.Strings(depExcluded)
-	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies)
+	items := len(req.Flows) + len(req.Applications) + len(req.FlowPolicies) + len(req.Resources) + len(req.Families)
 	var cat []exporter.Resource
-	if items+len(req.Exclude)+len(depExcluded) > 0 {
+	if items+len(req.Exclude)+len(depExcluded) > 0 || req.Whole() {
 		withIDs, allIDs := false, false
+		if !req.Whole() && !req.Upstream() {
+			withIDs, allIDs = true, true
+		}
+		for _, resource := range req.Resources {
+			if resource.ID != "" {
+				withIDs, allIDs = true, true
+			}
+		}
 		for _, f := range req.Flows {
 			withIDs = withIDs || f.ID != ""
 		}
@@ -491,10 +599,104 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			return nil, err
 		}
 	}
+	for i, ref := range req.Resources {
+		field := fmt.Sprintf("resources[%d]", i)
+		query := ref.ID
+		if query == "" {
+			query = ref.Name
+		}
+		var matches []exporter.Resource
+		if ref.Address != "" {
+			query = ref.Address
+			for _, candidate := range cat {
+				if candidate.String() == ref.Address {
+					matches = append(matches, candidate)
+				}
+			}
+		} else {
+			typ, _ := resourceType(ref.Type)
+			matches = exporter.SearchType(cat, typ, query)
+		}
+		if err := include(field, "resource", FlowRef{ID: ref.ID, Name: query}, matches); err != nil {
+			return nil, err
+		}
+	}
+	if len(req.Families) > 0 && !req.Whole() {
+		want := set(req.Families)
+		requestExcluded := map[string]bool{}
+		for _, e := range req.Exclude {
+			requestExcluded[e.Address] = e.Address != ""
+		}
+		found, builtIn, builtInOf := map[string]int{}, 0, map[string]int{}
+		for _, c := range cat {
+			d, ok := catalog.Get(c.Type)
+			// Owned children (a flow's deploy and enable, ...) travel with
+			// their parent, so an excluded parent takes them along.
+			if !ok || !want[d.Family] || d.Owned || requestExcluded[c.String()] || includedBy[c.String()] != "" || req.DependencyChoices[c.String()] == string(promote.ChoiceExclude) {
+				continue
+			}
+			// As for the whole environment: items that exist in every
+			// environment are copied only when picked.
+			if c.BuiltIn {
+				builtIn++
+				builtInOf[d.Family]++
+				continue
+			}
+			found[d.Family]++
+			includedBy[c.String()] = "families"
+			sel.seeds = append(sel.seeds, c.String())
+			r.res.Selected = append(r.res.Selected, Selected{Query: d.Family, Address: c.String(), Name: c.Name, ID: c.ID})
+		}
+		if builtIn > 0 {
+			r.res.Warnings = append(r.res.Warnings, builtInNote(builtIn))
+		}
+		for _, f := range req.Families {
+			if found[f] == 0 && builtInOf[f] > 0 {
+				r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s: %s has only items PingOne creates in every environment, so none are copied", catalog.FamilyLabels[f], req.Source))
+			} else if found[f] == 0 {
+				r.res.Warnings = append(r.res.Warnings, fmt.Sprintf("%s: nothing of this kind was found in %s", catalog.FamilyLabels[f], req.Source))
+			}
+		}
+		if len(sel.seeds) == 0 && builtIn > 0 {
+			return nil, fail("families", "the chosen sections hold only items PingOne creates in every environment, which are not copied; pick one of them to copy it", nil, "")
+		}
+		if len(sel.seeds) == 0 {
+			return nil, fail("families", "nothing in the chosen sections was found in "+req.Source, nil, "")
+		}
+	}
+	// "update" on an item the export only refers to (an ID variable) copies
+	// it, as if it were picked.
+	if !req.Whole() {
+		byAddr := map[string]exporter.Resource{}
+		for _, c := range cat {
+			byAddr[c.String()] = c
+		}
+		for _, a := range sortedKeysOf(req.DependencyChoices) {
+			if req.DependencyChoices[a] != string(promote.ChoiceUpdate) || includedBy[a] != "" {
+				continue
+			}
+			c, ok := byAddr[a]
+			if !ok {
+				continue // not an item of the source (a Git-only address)
+			}
+			includedBy[a] = "choice"
+			sel.seeds = append(sel.seeds, a)
+			r.res.Selected = append(r.res.Selected, Selected{Query: "update", Address: a, Name: c.Name, ID: c.ID})
+		}
+	}
 	if req.Whole() {
 		// A whole-environment request has no selected item: the listed
 		// items were only resolved so that a conflicting exclude is caught.
 		sel.seeds = nil
+		builtIn := 0
+		for _, c := range cat {
+			if d, ok := catalog.Get(c.Type); c.BuiltIn && ok && !d.Owned {
+				builtIn++
+			}
+		}
+		if builtIn > 0 {
+			r.res.Warnings = append(r.res.Warnings, builtInNote(builtIn))
+		}
 		if items > 0 {
 			r.res.Warnings = append(r.res.Warnings, "flows, applications and flowPolicies are ignored when scope is all; the whole environment is exported")
 		}
@@ -535,7 +737,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			}
 			m = &found[0]
 		} else {
-			typ := ExcludeTypes[e.Type]
+			typ, _ := resourceType(e.Type)
 			ref := FlowRef{ID: e.ID, Name: e.Name}
 			query := e.ID
 			if query == "" {
@@ -570,6 +772,15 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 			return nil, fail("dependencyChoices."+a, fmt.Sprintf("dependencyChoices.%s is exclude, but %s is the selected item (%s) itself; it cannot be excluded", a, a, includedBy[a]), nil, a)
 		}
 		exclude(a, "dependencyChoices."+a)
+	}
+	// Without upstream dependencies, every non-selected catalog item is an
+	// explicit omission. This repairs embedded references just like an exclude.
+	if !req.Whole() && !req.Upstream() {
+		for _, c := range cat {
+			if !selected[c.String()] && strings.HasPrefix(c.Type, "pingone_davinci_") {
+				exclude(c.String(), "includeUpstream")
+			}
+		}
 	}
 	// Which of them Git already manages: references to those keep pointing
 	// at the Git address.
@@ -629,7 +840,9 @@ func (r *runner) commitMessage() string {
 	if msg == "" {
 		var names []string
 		for _, s := range r.res.Selected {
-			names = append(names, s.Name)
+			// Names come from the tenant: keep them on one line so they
+			// cannot add trailers or a second paragraph.
+			names = append(names, oneLine(s.Name))
 		}
 		msg = "PingOne: " + strings.Join(names, ", ") + " from " + req.Source
 	}
@@ -643,6 +856,26 @@ func (r *runner) commitMessage() string {
 	}
 	msg = strings.TrimRight(strings.Join(keep, "\n"), "\n")
 	return msg + "\n\n" + r.footer()
+}
+
+// oneLine replaces control characters (newlines included) and Unicode
+// line separators with spaces.
+func oneLine(s string) string {
+	return strings.Map(func(c rune) rune {
+		if unicode.IsControl(c) || c == '\u2028' || c == '\u2029' || c == '\u0085' {
+			return ' '
+		}
+		return c
+	}, s)
+}
+
+// fencedNote quotes free text from the requester as a code block whose
+// fence the text cannot close, so it cannot hide or imitate the generated
+// summary.
+func fencedNote(text string) string {
+	text = strings.ReplaceAll(text, "`", "'")
+	text = strings.ReplaceAll(text, "~~~", "~ ~ ~")
+	return "```text\n" + text + "\n```\n"
 }
 
 func (r *runner) footer() string {
@@ -659,9 +892,8 @@ const maxDescriptionRows = 300
 
 func (r *runner) description() string {
 	var b strings.Builder
-	if d := strings.TrimSpace(r.req.Description); d != "" {
-		b.WriteString(d + "\n\n")
-	}
+	// The generated summary comes first; the requester's text follows,
+	// fenced, under its own heading.
 	b.WriteString("Source environment: `" + r.req.Source + "`\n\n")
 	if r.req.Whole() {
 		b.WriteString("Scope: the whole environment. Nothing is deleted; a resource that differs from Git keeps its Git version unless it is listed as updated.\n\n")
@@ -700,6 +932,9 @@ func (r *runner) description() string {
 	if len(newSecrets) > 0 {
 		b.WriteString("\nNew Vault entries to create for every environment:\n\n" + strings.Join(newSecrets, "\n") + "\n")
 	}
+	if d := strings.TrimSpace(r.req.Description); d != "" {
+		b.WriteString("\n### Requester's note\n\n" + fencedNote(d))
+	}
 	b.WriteString("\n" + r.footer() + "\n")
 	return b.String()
 }
@@ -729,6 +964,10 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 		}
 		return
 	}
+	if len(files) == 0 && r.env.NoRequestFile {
+		res.Status = StatusNoChanges
+		return
+	}
 	mode := gitlab.Mode(req.Mode)
 	if len(files) == 0 {
 		// Only the request file goes; there is nothing to review.
@@ -752,8 +991,8 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 	policy := gitlab.LayoutPolicy{ModuleDir: r.layout.ModuleDir, OverlayPattern: r.layout.OverlayPattern, CustomerSecretsPath: r.layout.CustomerSecretsFile,
 		RootFiles: []string{r.layout.ModuleFile, r.layout.VariablesFile, r.layout.SecretsFile, r.layout.ImportsFile, "versions.tf"}}
 	out, err := r.env.Committer.CommitToBranch(ctx, gitlab.BranchCommit{RequestID: req.RequestID, Branch: r.env.Branch, ExpectedHead: r.env.Head,
-		Mode: mode, CommitMessage: r.commitMessage(), Title: title, Description: r.description(), Files: files, DeleteRequestFile: true,
-		Policy: policy, Labels: labels, BranchPrefix: r.branchPrefix()})
+		Mode: mode, CommitMessage: r.commitMessage(), Title: title, Description: r.description(), Files: files, DeleteRequestFile: !r.env.NoRequestFile,
+		Policy: policy, Labels: labels, BranchPrefix: r.branchPrefix(), BranchPattern: r.env.BranchPattern})
 	var done *gitlab.AlreadyCommittedError
 	var conflict *gitlab.ConflictError
 	var pre *gitlab.PreflightError
@@ -787,4 +1026,88 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 	if out.MR != nil {
 		res.MRUrl, res.MRIid = out.MR.WebURL, out.MR.IID
 	}
+}
+
+// LiftRules are the neutralizer's per-environment attributes: the default
+// rules plus every catalog type's environment-specific attributes.
+func LiftRules() []neutralize.LiftRule {
+	rules := append([]neutralize.LiftRule(nil), neutralize.DefaultLiftRules...)
+	for _, d := range catalog.All() {
+		for _, a := range d.EnvLocal {
+			rules = append(rules, neutralize.LiftRule{ResourceType: d.Type, Attribute: a})
+		}
+	}
+	return rules
+}
+
+// ownedChildren lists the exported children that belong to a selected core
+// item (a sign-on policy's actions, an application's attribute mappings),
+// transitively: they are part of the selection, not dependencies. The
+// combined exporter reports the parent links.
+func ownedChildren(owners map[string]string, seed string) []string {
+	var out []string
+	for child, parent := range owners {
+		if parent == seed {
+			out = append(out, child)
+			out = append(out, ownedChildren(owners, child)...)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// describeVariables explains each per-environment value of a neutralized
+// export for screens.
+func describeVariables(neu *neutralize.Result) map[string]VariableOut {
+	out := map[string]VariableOut{}
+	// The one resource a value variable belongs to (a DaVinci variable's
+	// value, a connector property), for looking it up elsewhere.
+	usedBy := map[string][]string{}
+	for _, b := range neu.Blocks {
+		for _, v := range b.Vars {
+			usedBy[v] = append(usedBy[v], b.Address)
+		}
+	}
+	for name, v := range neu.Variables {
+		if !v.PerEnvironment() || name == neutralize.EnvironmentIDVariable {
+			continue
+		}
+		vo := VariableOut{Kind: string(v.Kind), Description: v.Description, Type: strings.TrimSpace(v.Type)}
+		switch {
+		case v.Kind == neutralize.KindExcludedRef:
+			vo.Resource = v.Excluded
+		case strings.HasPrefix(v.Origin, "lift:"):
+			rest := strings.TrimPrefix(v.Origin, "lift:")
+			typ, after, _ := strings.Cut(rest, ".")
+			label, attr, _ := strings.Cut(after, ".")
+			vo.Resource, vo.Attribute = typ+"."+label, attr
+		case len(usedBy[name]) == 1 && strings.HasPrefix(usedBy[name][0], neutralize.TypeVariable+"."):
+			vo.Resource, vo.Attribute = usedBy[name][0], "value"
+		}
+		if sv, ok := neu.SourceValues[name]; ok && sv.IsKnown() && !sv.IsNull() {
+			if sv.Type() == cty.String {
+				vo.SourceValue = sv.AsString()
+			} else if b, err := ctyjson.Marshal(sv, sv.Type()); err == nil {
+				vo.SourceValue = string(b)
+			}
+		}
+		if len(vo.SourceValue) > 300 {
+			vo.SourceValue = vo.SourceValue[:300] + "..."
+		}
+		out[name] = vo
+	}
+	return out
+}
+
+func builtInNote(n int) string {
+	return fmt.Sprintf("%d items that PingOne creates in every environment (default policies, system applications, predefined attributes and templates) are not copied; each environment keeps its own. To copy one, pick it", n)
+}
+
+func sortedKeysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -1,0 +1,451 @@
+package server
+
+import (
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+
+	"pingone-promote/internal/coreexport"
+	"pingone-promote/internal/exporter"
+	"pingone-promote/internal/exporter/exportertest"
+	"pingone-promote/internal/gitlab/gitlabtest"
+	"pingone-promote/internal/multiexport"
+	"pingone-promote/internal/pingone"
+	"pingone-promote/internal/pingone/pingonetest"
+)
+
+var (
+	crossOnce sync.Once
+	crossBin  exportertest.Fake
+)
+
+// crossTerraformer builds the fake terraformer for the cross fixture once.
+func crossTerraformer(t *testing.T) exportertest.Fake {
+	t.Helper()
+	crossOnce.Do(func() {
+		fakeTerraformer(t) // makes fakeDir, removed by TestMain
+		dir := filepath.Join(fakeDir, "cross")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		crossBin = exportertest.Build(t, dir, exportertest.FixtureDir("cross"))
+	})
+	if crossBin.Path == "" {
+		t.Fatal("cross fake terraformer was not built")
+	}
+	return crossBin
+}
+
+// newCoreEnv serves DaVinci through the fake terraformer and every other
+// PingOne type through the native exporter against a fake PingOne API.
+func newCoreEnv(t *testing.T) *env { return newCoreEnvWith(t, nil) }
+
+func newCoreEnvWith(t *testing.T, mut func(*Config)) *env {
+	t.Helper()
+	f := crossTerraformer(t)
+	core := pingonetest.Start(t, pingonetest.LoadTenant(t, filepath.Join("..", "coreexport", "testdata", "tenant.json")))
+	core.ClientID, core.ClientSecret = sentinelClientID, sentinelClientSecret
+	exp := &multiexport.Exporter{
+		DaVinci: &exporter.Runner{Config: exporter.Config{Path: f.Path, SHA256: f.SHA256, Version: f.Version}},
+		NewReader: func(c exporter.Credentials) (coreexport.Reader, error) {
+			cl, err := pingone.New(pingone.Credentials{ClientID: c.ClientID, ClientSecret: c.ClientSecret, WorkerEnvironmentID: c.WorkerEnvironmentID, RegionCode: c.RegionCode})
+			if err != nil {
+				return nil, err
+			}
+			cl.AuthBase, cl.APIBase = core.AuthBase(), core.APIBase()
+			return cl, nil
+		},
+	}
+	e := newEnvWith(t, exp, func(c *Config) {
+		c.PingOne.WorkerEnvironmentID = core.WorkerEnvID
+		if mut != nil {
+			mut(c)
+		}
+	})
+	t.Cleanup(func() {
+		if core.Writes() != 0 {
+			t.Errorf("the server wrote to PingOne %d times", core.Writes())
+		}
+	})
+	return e
+}
+
+// changedFiles lists the files a branch changed against main.
+func changedFiles(gl *gitlabtest.Fake, branch string) []string {
+	base, head := gl.Files("main"), gl.Files(branch)
+	var out []string
+	for p, c := range head {
+		if base[p] != c {
+			out = append(out, p)
+		}
+	}
+	for p := range base {
+		if _, ok := head[p]; !ok {
+			out = append(out, p+" (deleted)")
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// coreDraft starts a draft, finds addr by query and adds it.
+func coreDraft(t *testing.T, e *env, query, addr string) (*browser, string) {
+	t.Helper()
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", nil))
+	p := b.wait(b.post(draft+"/search", url.Values{"q": {query}}))
+	mustContain(t, p.body, addr)
+	if p = b.post(draft+"/pick", url.Values{"address": {addr}, "op": {"select"}}); p.status != 200 {
+		t.Fatalf("pick %s: %d", addr, p.status)
+	}
+	return b, draft
+}
+
+func noUpstream(v url.Values) { v.Del("upstream") }
+
+func TestCoreNotificationTemplateAloneAsMergeRequest(t *testing.T) {
+	const addr = "pingone_notification_template_content.pingcli__recovery_code_template_en_Email"
+	e := newCoreEnv(t)
+	b, draft := coreDraft(t, e, "recovery_code_template", addr)
+	p := previewDraft(t, b, draft, mainForm("Core Tester", noUpstream))
+	mustContain(t, p.body, "notification template", addr)
+	// The sender address is a per-environment value: every rollout
+	// environment needs its own before the request can be submitted.
+	const from = "notification_template_content_recovery_code_template_en_Email_email_from_address"
+	form := url.Values{}
+	for _, env := range e.cfg.Rollout {
+		mustContain(t, p.body, `name="v:`+env+`:`+from+`"`)
+		form.Set("v:"+env+":"+from, "noreply@"+env+".example.com")
+	}
+	p = b.wait(b.post(draft+"/values", form))
+	mustContain(t, p.body, "Submit to GitLab")
+	if strings.Contains(p.body, "</span>not ready<") {
+		t.Fatalf("still blocked after the values:\n%s", p.body)
+	}
+	id := requestID(t, p.body)
+	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"mr"}}))
+	mustContain(t, p.body, "Submitted. A merge request is open for review.")
+	branch := "pingone-promote/" + id
+	got := changedFiles(e.gl, branch)
+	want := []string{"definitions/pingone_notification_template_content.tf", "definitions/variables.tf", "dev.tfvars", "imports.tf", "main.tf", "prod.tfvars", "qa.tfvars", "stage.tfvars", "variables.tf"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("changed files %v, want %v", got, want)
+	}
+	files, base := e.gl.Files(branch), e.gl.Files("main")
+	def := files["definitions/pingone_notification_template_content.tf"]
+	if strings.Count(def, "resource \"") != 1 || !strings.Contains(def, `"pingcli__recovery_code_template_en_Email"`) {
+		t.Fatalf("only the selected block may be added:\n%s", def)
+	}
+	added := strings.TrimPrefix(files["imports.tf"], base["imports.tf"])
+	if strings.Count(added, "import {") != 1 || !strings.Contains(added, "module.davinci."+addr) {
+		t.Fatalf("only its conditional import may be added:\n%s", added)
+	}
+	if !strings.Contains(files["dev.tfvars"], `"module.davinci.`+addr+`"`) || strings.Contains(files["qa.tfvars"], addr) {
+		t.Fatal("only the source overlay's import_ids gain the ID")
+	}
+	if !strings.Contains(files["qa.tfvars"], "noreply@qa.example.com") || !strings.Contains(files["dev.tfvars"], "noreply@dev.example.com") {
+		t.Fatal("each environment's sender address belongs in its own overlay")
+	}
+	if len(e.gl.MRs) != 1 {
+		t.Fatalf("MRs: %d", len(e.gl.MRs))
+	}
+}
+
+func TestCoreDefaultSignOnPolicyNeedsImportIDs(t *testing.T) {
+	const addr = "pingone_sign_on_policy.pingcli__Single_Factor"
+	e := newCoreEnv(t)
+	b, draft := coreDraft(t, e, "Single_Factor", addr)
+	p := previewDraft(t, b, draft, mainForm("Core Tester", noUpstream))
+	// The policy and its built-in action are adopted in every environment.
+	const action = "pingone_sign_on_policy_action.pingcli__Single_Factor_1"
+	for _, env := range e.cfg.Rollout {
+		mustContain(t, p.body, `name="i:`+env+`:`+addr+`"`, `name="i:`+env+`:`+action+`"`)
+	}
+	if strings.Count(p.body, "</span>not ready<") != len(e.cfg.Rollout) || strings.Contains(p.body, "Submit to GitLab") {
+		t.Fatalf("every rollout environment must be blocked until adopted:\n%s", p.body)
+	}
+	ids := map[string]string{"qa": "51000000-0000-4000-8000-0000000000a1", "stage": "51000000-0000-4000-8000-0000000000b1", "prod": "51000000-0000-4000-8000-0000000000c1"}
+	form := url.Values{}
+	for env, id := range ids {
+		form.Set("i:"+env+":"+addr, id)
+		form.Set("i:"+env+":"+action, id+"/52000000-0000-4000-8000-000000000001")
+	}
+	p = b.wait(b.post(draft+"/values", form))
+	mustContain(t, p.body, "Submit to GitLab")
+	if strings.Contains(p.body, "</span>not ready<") {
+		t.Fatalf("still blocked after the import IDs:\n%s", p.body)
+	}
+	id := requestID(t, p.body)
+	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"branch"}}))
+	mustContain(t, p.body, "Submitted to a branch.")
+	if len(e.gl.MRs) != 0 {
+		t.Fatal("branch only opened a merge request")
+	}
+	files := e.gl.Files("pingone-promote/" + id)
+	for env, want := range ids {
+		overlay := files[env+".tfvars"]
+		if !strings.Contains(overlay, "import_ids") || !strings.Contains(overlay, `"module.davinci.`+addr+`"`) || !strings.Contains(overlay, want) {
+			t.Fatalf("%s.tfvars lacks the import ID:\n%s", env, overlay)
+		}
+	}
+}
+
+func TestCoreApplicationWithUpstreamListsFlowPolicyAndMissingValues(t *testing.T) {
+	const addr = "pingone_application.pingcli__Web-0020-Portal"
+	e := newCoreEnv(t)
+	b, draft := coreDraft(t, e, "Web Portal", addr)
+	p := previewDraft(t, b, draft, mainForm("Core Tester", nil))
+	mustContain(t, p.body, "pingone_davinci_application_flow_policy.pingcli__Web-0020-Policy", "DaVinci flow policy")
+	for _, env := range e.cfg.Rollout {
+		mustContain(t, p.body, `name="v:`+env+`:application_Web_0020_Portal_oidc_options_redirect_uris"`)
+	}
+	if strings.Contains(p.body, "Submit to GitLab") {
+		t.Fatal("missing redirect URIs must block submit")
+	}
+}
+
+// A repository whose tfvars do not set pingone_environment_id (it comes
+// from a CI variable) works when the configuration names the source's ID;
+// without it, the page says exactly what the operator must add. Whole
+// sections are copied without picking items.
+func TestSourceIDFromConfigurationAndWholeSections(t *testing.T) {
+	dropID := func(e *env) {
+		src, _, _ := e.gl.File("main", "dev.tfvars")
+		var kept []string
+		for _, l := range strings.Split(src, "\n") {
+			if !strings.HasPrefix(l, "pingone_environment_id") {
+				kept = append(kept, l)
+			}
+		}
+		e.gl.Edit("main", "dev.tfvars", strings.Join(kept, "\n"))
+	}
+	sections := func(v url.Values) {
+		v.Set("scope", "sections")
+		v["family"] = []string{"notifications"}
+		v.Del("upstream")
+	}
+
+	e := newCoreEnv(t)
+	dropID(e)
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", nil))
+	p := b.wait(b.post(draft+"/search", url.Values{"q": {"recovery"}}))
+	mustContain(t, p.body, "sourceEnvironmentIds")
+
+	e = newCoreEnvWith(t, func(c *Config) {
+		c.SourceEnvironmentIDs = map[string]string{"dev": "11111111-1111-4111-8111-111111111111"}
+	})
+	dropID(e)
+	b = e.browser()
+	draft = b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", sections))
+	p = b.get(draft + "?step=2")
+	mustContain(t, p.body, "Leave items out", "all Notifications and templates")
+	p = b.get(draft + "?step=3")
+	mustContain(t, p.body, "Git branch:")
+	p = previewDraft(t, b, draft, mainForm("Core Tester", sections))
+	mustContain(t, p.body, "pingone_notification_template_content.pingcli__recovery_code_template_en_Email", "Submitting creates the Git branch")
+	if strings.Contains(p.body, "is not known") {
+		t.Fatalf("the configured source ID was not used:\n%s", p.body)
+	}
+	if strings.Contains(p.body, "pingone_population.") {
+		t.Fatal("a section that was not chosen was copied")
+	}
+}
+
+// With a branch pattern, the person types the branch (a Jira key). Nothing
+// is added to the name, a name that does not match or already exists is
+// refused before submit, and the commit lands on exactly the typed branch.
+func TestTypedJiraBranch(t *testing.T) {
+	const addr = "pingone_notification_template_content.pingcli__recovery_code_template_en_Email"
+	e := newCoreEnvWith(t, func(c *Config) { c.BranchPattern, c.BranchExample = "CIAM-[0-9]+", "CIAM-1234" })
+	b, draft := coreDraft(t, e, "recovery_code_template", addr)
+	with := func(branch string) func(url.Values) {
+		return func(v url.Values) { v.Del("upstream"); v.Set("branch", branch) }
+	}
+	p := b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { v.Del("upstream"); v.Set("action", "preview") }))
+	mustContain(t, p.body, "Type the Git branch name", "CIAM-1234")
+	p = b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { with("feature/CIAM-12")(v); v.Set("action", "preview") }))
+	mustContain(t, p.body, "is not allowed")
+	e.gl.CreateBranch("CIAM-7", "main", nil)
+	p = b.wait(b.post(draft+"/save", mainForm("Core Tester", func(v url.Values) { with("CIAM-7")(v); v.Set("action", "preview") })))
+	mustContain(t, p.body, "already exists")
+
+	p = previewDraft(t, b, draft, mainForm("Core Tester", with("CIAM-42")))
+	mustContain(t, p.body, "<code>CIAM-42</code>")
+	form := url.Values{}
+	const from = "notification_template_content_recovery_code_template_en_Email_email_from_address"
+	for _, env := range e.cfg.Rollout {
+		form.Set("v:"+env+":"+from, "noreply@"+env+".example.com")
+	}
+	p = b.wait(b.post(draft+"/values", form))
+	p = b.wait(b.post(draft+"/submit", url.Values{"mode": {"mr"}}))
+	mustContain(t, p.body, "Submitted.")
+	if !e.gl.HasBranch("CIAM-42") || len(changedFiles(e.gl, "CIAM-42")) == 0 {
+		t.Fatal("the commit is not on the typed branch CIAM-42")
+	}
+	for name := range e.gl.Branches() {
+		if strings.Contains(name, "pingone-promote/") || (strings.HasPrefix(name, "CIAM-") && name != "CIAM-42" && name != "CIAM-7") {
+			t.Fatalf("an unexpected branch was created: %s", name)
+		}
+	}
+}
+
+// Search results appear on the request page itself, never on a separate
+// progress page.
+func TestSearchShowsResultsOnThePage(t *testing.T) {
+	e := newCoreEnv(t)
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", mainForm("Core Tester", nil))
+	p := b.post(draft+"/search", url.Values{"q": {"Customers"}})
+	if p.path != draft+"/items" {
+		t.Fatalf("search ended at %s, want the items page", p.path)
+	}
+	mustContain(t, p.body, "pingone_population.pingcli__Customers")
+	p = b.post(draft+"/search", url.Values{"q": {"no-such-item-anywhere"}})
+	mustContain(t, p.body, "Nothing matches")
+	// An empty name lists everything, with a count.
+	p = b.post(draft+"/search", url.Values{"q": {""}})
+	mustContain(t, p.body, "pingone_population.pingcli__Customers", " matches")
+	if strings.Contains(p.body, "Nothing matches") {
+		t.Fatal("an empty search showed nothing")
+	}
+}
+
+// A search's outcome is shown next to the results (where the page scrolls
+// to), not only at the top of the page.
+func TestSearchMessagesShowWithTheResults(t *testing.T) {
+	e := newCoreEnv(t)
+	dropLines(e, "dev.tfvars", "pingone_environment_id")
+	b := e.browser()
+	draft := b.newDraft()
+	p := b.post(draft+"/search", url.Values{"q": {"x"}})
+	i := strings.Index(p.body, `id="results"`)
+	if i < 0 || !strings.Contains(p.body[i:], "could not be read") {
+		t.Fatalf("the search problem is not with the results:\n%s", p.body)
+	}
+}
+
+// The item list is read when the server starts and shared by every draft:
+// a later search uses it without reading the source again.
+func TestItemListIsReadAtStartAndShared(t *testing.T) {
+	e := newCoreEnv(t)
+	e.srv.warm()
+	e.srv.drafts.mu.Lock()
+	l := e.srv.drafts.loads["dev"]
+	e.srv.drafts.mu.Unlock()
+	if l == nil {
+		t.Fatal("no read started at launch")
+	}
+	<-l.done
+	if l.err != "" {
+		t.Fatal(l.err)
+	}
+	for i := 0; i < 2; i++ {
+		b := e.browser()
+		draft := b.newDraft()
+		p := b.post(draft+"/search", url.Values{"q": {"Customers"}})
+		mustContain(t, p.body, "pingone_population.pingcli__Customers")
+	}
+	e.srv.drafts.mu.Lock()
+	again := e.srv.drafts.loads["dev"]
+	e.srv.drafts.mu.Unlock()
+	if again != l {
+		t.Fatal("a search read the source again although the list was fresh")
+	}
+}
+
+// The request form is three pages: what to copy, choose items, send for
+// review. Each page posts only its own fields, so moving between them
+// keeps what was entered on the others.
+func TestThreeStepForm(t *testing.T) {
+	e := newCoreEnvWith(t, func(c *Config) { c.BranchPattern = "CIAM-[0-9]+" })
+	b := e.browser()
+	draft := b.newDraft()
+	p := b.get(draft)
+	mustContain(t, p.body, `aria-current="step"><strong>1. What to copy`, `name="step" value="1"`)
+	if strings.Contains(p.body, `id="f-q"`) || strings.Contains(p.body, `id="f-branch"`) {
+		t.Fatal("step 1 shows the search or the branch")
+	}
+	// Next without a name stays on step 1 and says why.
+	p = b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"next"}, "source": {"dev"}, "scope": {"selected"}})
+	mustContain(t, p.body, "Type your name.", `name="step" value="1"`)
+	p = b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"next"}, "name": {"Step Tester"}, "source": {"dev"}, "scope": {"selected"}, "upstream": {"yes"}})
+	mustContain(t, p.body, `name="step" value="2"`, `id="f-q"`, "the items you add below")
+	// Search and pick stay on step 2.
+	p = b.post(draft+"/search", url.Values{"step": {"2"}, "q": {"Customers"}})
+	mustContain(t, p.body, `name="step" value="2"`, "pingone_population.pingcli__Customers")
+	p = b.post(draft+"/pick", url.Values{"address": {"pingone_population.pingcli__Customers"}, "op": {"select"}})
+	mustContain(t, p.body, `name="step" value="2"`, `value="unselect"`)
+	p = b.post(draft+"/save", url.Values{"step": {"2"}, "action": {"next"}})
+	mustContain(t, p.body, `name="step" value="3"`, `id="f-branch"`, "1 item")
+	// Step 3 fields do not clear step 1's.
+	p = b.post(draft+"/save", url.Values{"step": {"3"}, "action": {"back"}, "branch": {"CIAM-7"}, "mode": {"mr"}})
+	mustContain(t, p.body, `name="step" value="2"`)
+	p = b.get(draft + "?step=1")
+	mustContain(t, p.body, `value="Step Tester"`, `name="upstream" value="yes" form="main" checked`)
+	p = b.get(draft + "?step=3")
+	mustContain(t, p.body, `value="CIAM-7"`)
+	// Preview from step 3.
+	p = b.wait(b.post(draft+"/save", url.Values{"step": {"3"}, "action": {"preview"}, "branch": {"CIAM-7"}, "mode": {"mr"}}))
+	mustContain(t, p.body, "CIAM-7")
+	if strings.Contains(p.body, "Type your name") {
+		t.Fatal("the name was lost between steps")
+	}
+}
+
+// While the item list is being read, the items page says so and refreshes
+// by itself; once the list is in, it shows the results of the search that
+// waited, without pressing Search again.
+func TestItemsPageWaitsForTheList(t *testing.T) {
+	release := make(chan struct{})
+	e := newEnv(t, slowList{release: release})
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"save"}, "name": {"Slow"}, "source": {"dev"}, "scope": {"selected"}})
+	// The settle loop of the test browser is bypassed to see the page.
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+draft+"/search", strings.NewReader(url.Values{"csrf": {b.csrf}, "q": {"Cust"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Origin", "null")
+	p := b.do(req)
+	if p.path != draft+"/items" {
+		t.Fatalf("search ended at %s", p.path)
+	}
+	mustContain(t, p.body, `http-equiv="refresh"`, "Reading the items of dev", "the results for &ldquo;Cust&rdquo;")
+	close(release)
+	p = b.get(draft + "/items")
+	mustContain(t, p.body, "pingone_population.pingcli__Customers", "1 match")
+	if strings.Contains(p.body, `http-equiv="refresh"`) {
+		t.Fatal("the page keeps refreshing after the list is in")
+	}
+}
+
+// noDaVinci reads core items only: its DaVinci read failed.
+type noDaVinci struct{ slowList }
+
+func (noDaVinci) DaVinciProblem(exporter.Credentials) error {
+	return &exporter.ExecError{ExitCode: 1, Stderr: "secret-tenant-text"}
+}
+
+func TestMissingDaVinciItemsAreExplained(t *testing.T) {
+	release := make(chan struct{})
+	close(release)
+	e := newEnv(t, noDaVinci{slowList{release: release}})
+	b := e.browser()
+	draft := b.newDraft()
+	b.post(draft+"/save", url.Values{"step": {"1"}, "action": {"save"}, "name": {"Dv"}, "source": {"dev"}, "scope": {"selected"}})
+	p := b.post(draft+"/search", url.Values{"q": {"Cust"}})
+	mustContain(t, p.body, "DaVinci flows and other DaVinci items are missing", "The DaVinci export tool failed", "pingone_population.pingcli__Customers")
+	if strings.Contains(p.body, "secret-tenant-text") {
+		t.Fatal("the tool's output reached the page")
+	}
+}

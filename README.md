@@ -1,160 +1,100 @@
 # PingOne Promote
 
-Moves DaVinci configuration from your **dev** environment into Git, so your existing Terraform pipeline can roll it out to the other environments.
+## What it does
 
-```
-DaVinci app ──▶ GitLab branch + merge request ──▶ your pipeline: testing ▶ stage ▶ production
-(pick a flow)    (the change, as Terraform)        (same commit, manual jobs, prod approval)
-```
+PingOne Promote lets you pick a SOURCE PingOne environment and export any of its configuration (one notification template, one application, one flow, or the whole environment) as Terraform into your configuration repository. It then opens a merge request in GitLab with the generated files and the values each later environment still needs. Your existing pipeline rolls the merged change out; PingOne Promote never changes PingOne and never runs Terraform plans or applies.
 
-- You choose **only the source** (dev) and what to bring. You never pick a destination: after the merge, your pipeline's environment jobs apply the same commit to each environment in order.
-- Nothing is ever deleted automatically, and the tool never applies anything itself.
+Phase 1 has no sign-in: anyone who can reach the web page can use it, and a typed name is recorded as `NAME (unverified)`. Keep it on your own machine or behind an authenticating proxy (see [docs/operations.md](docs/operations.md)).
 
----
+## Before you start
 
-## Setup: what you do by hand
+You need:
 
-Do these once, in order. Each step says where to do it.
+1. **A read-only PingOne worker.** A worker application in the source environment whose roles can only read configuration. Its client ID and secret go in the secrets file. Never give it a write role.
+2. **A GitLab token** that can only create branches, commits and merge requests on the one config project. Protect the project's default branch.
+3. **The config repository layout** the pipeline already uses: `definitions/`, one `<env>.tfvars` per environment at the root (for example `development.tfvars`, `testing.tfvars`), and `customer_secrets.yml`.
+4. **Your environment names**: the source environment(s) people may export from, and the rollout list (the environments the pipeline applies afterwards, in order). They must not overlap.
+5. **Pinned tools**, downloaded and checksum-verified by `scripts/fetch-tools.sh` (Terraform 1.16.7 and pingcli-terraformer 0.6.0).
 
-### Keep these values the same everywhere
+The hosted server needs no CI job, CI variable or special branch in the config repository.
 
-Three settings live in two or three places. If they differ, requests fail or never start.
+## Checklist: macOS (local test)
 
-| What | DaVinci company variable | `.gitlab/pingone-promote.yml` | Example |
-| --- | --- | --- | --- |
-| Source env name and ID | `ppSourceEnvs` | `PINGONE_PROMOTE_SOURCES` (name only) | `development=<env-id>` / `development` |
-| Rollout envs, in order | `ppRolloutEnvs` | `PINGONE_PROMOTE_ROLLOUT` | `testing,production` |
-| Branch prefix | `ppBranchPrefix` | `PINGONE_PROMOTE_BRANCH_PREFIX` **and** the rule `=~ /^CIAM-/` | `CIAM-` |
+**Recommended: test with Podman** so the Mac runs the same container a server does. Follow [docs/podman-mac.md](docs/podman-mac.md) step by step (about 20 minutes). The steps below run the binary directly instead.
 
-Env names must also match your tfvars file names (`testing` means `testing.tfvars`).
+Full detail: [docs/operations.md](docs/operations.md#macos-local-test).
 
-### 1. PingOne: a read-only worker
+1. `bash scripts/fetch-tools.sh --dest ./tools`
+2. `shasum -a 256 tools/terraform` (copy the result into `terraformSha256`).
+3. `go build -o pingone-promote ./cmd/pingone-promote`
+4. `cp deploy/config.example.json config.json` and edit it (GitLab, PingOne region and worker environment, `sources`, `rollout`, absolute tool paths, both digests).
+5. `cp deploy/secrets.example.env secrets.env && chmod 600 secrets.env`, then fill in the three values.
+6. `./pingone-promote serve --config config.json --check-config`
+7. `./pingone-promote serve --config config.json`, then open http://127.0.0.1:8080/
 
-In the PingOne environment where you keep admin apps:
-1. Create a **Worker** application.
-2. Give it the role **DaVinci Admin Read Only** on the dev environment only.
-3. Set its **Token Endpoint Authentication Method** to **Client Secret Basic**.
-4. Write down the client ID, the secret, and the ID of the environment that holds the worker.
+## Checklist: container or pod
 
-### 2. GitLab: tokens
+Full detail: [docs/operations.md](docs/operations.md#container-and-kubernetes).
 
-On the config repo, under **Settings → Access tokens**, create project access tokens with role **Developer**, scope **`api`**, and a short expiry. Use two tokens: one for the CI job and one for DaVinci.
+1. Pin both base images by digest in `deploy/container/Containerfile`.
+2. `podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .`
+3. Get the Terraform digest: `podman run --rm --entrypoint sha256sum pingone-promote:dev /opt/pingone-promote/tools/terraform`
+4. Edit the ConfigMap in `deploy/kubernetes/deployment.yaml`: `gitlab`, `pingone`, `sources`, `rollout`, `terraformSha256`, and `allowedHosts` (your Ingress host name).
+5. `kubectl create namespace pingone-promote`
+6. `kubectl -n pingone-promote create secret generic pingone-promote-secrets --from-file=secrets.env=./secrets.env`
+7. `kubectl apply -f deploy/kubernetes/deployment.yaml`, then replace the CIDRs in `deploy/kubernetes/networkpolicy.yaml` and apply it.
+8. Put an authenticating proxy or private network in front and list its host name in `allowedHosts`. Inside a pod the server listens on `0.0.0.0:8080` with `"exposure": "behind-proxy"` (the example ConfigMap sets both); without `exposure` the server refuses any address other than loopback. Run exactly one replica.
 
-### 3. Config repo: files
+## Checklist: RHEL 9 (systemd)
 
-1. Make sure each environment's tfvars sets its environment ID:
-   ```hcl
-   # development.tfvars, testing.tfvars, production.tfvars
-   pingone_environment_id = "<that environment's ID>"
-   ```
-2. Copy [`examples/gitlab-ci/pingone-promote.yml`](examples/gitlab-ci/pingone-promote.yml) to `.gitlab/pingone-promote.yml`.
-3. In `.gitlab-ci.yml`, add one line after the enterprise include:
-   ```yaml
-   include:
-     - project: '<group>/<terraform-pipeline-templates>'   # your existing include
-       file: '/<template>.yml'
-     - local: '/.gitlab/pingone-promote.yml'               # add this
-   ```
-4. In `.gitlab/pingone-promote.yml`, set these values:
+Full detail: [docs/operations.md](docs/operations.md#rhel-9-install-systemd). Run as root.
 
-   | Variable | Set to |
-   | --- | --- |
-   | `PINGONE_PROMOTE_REPO_URL` | where this tool's source is cloned from |
-   | `PINGONE_PROMOTE_REF` | the tool's commit, currently `e3a4b29390f23572a5e5b6373ab48711a8d5727e` |
-   | `PINGONE_PROMOTE_RUNNER_TAG` and the `tags:` list | your runner tag |
-   | `PINGONE_PROMOTE_SOURCES` | `development` |
-   | `PINGONE_PROMOTE_ROLLOUT` | `testing,production` (add `stage` once you have a stage job) |
-   | `PINGONE_PROMOTE_BRANCH_PREFIX` | `CIAM-` |
-   | the `pingone-promote:request` rule | `$CI_COMMIT_BRANCH =~ /^CIAM-/` |
+1. `useradd --system --home-dir /nonexistent --shell /sbin/nologin pingone-promote`
+2. `bash scripts/fetch-tools.sh --dest /opt/pingone-promote/tools`, then `sha256sum /opt/pingone-promote/tools/terraform`
+3. `CGO_ENABLED=0 go build -trimpath -o /opt/pingone-promote/pingone-promote ./cmd/pingone-promote`
+4. Install `deploy/config.example.json` as `/etc/pingone-promote/config.json` (mode 0640) and `deploy/secrets.example.env` as `/etc/pingone-promote/secrets.env` (mode 0600); edit both.
+5. Label the files: `semanage fcontext -a -t bin_t '/opt/pingone-promote(/.*)?' && restorecon -Rv /opt/pingone-promote`
+6. `install -m 0644 deploy/systemd/pingone-promote.service /etc/systemd/system/`
+7. `systemctl daemon-reload && systemctl enable --now pingone-promote`
+8. `journalctl -u pingone-promote -f` and check for a clean start.
+9. Keep `listen` on `127.0.0.1:8080` and publish through an authenticating reverse proxy on 443 with its name in `allowedHosts`. Only if the server itself must listen on another address, set `"exposure": "tls"` (with a certificate) or `"behind-proxy"`; see [operations](docs/operations.md).
 
-### 4. GitLab: CI/CD variables
+## Daily use
 
-Under **Settings → CI/CD → Variables**, add:
-
-| Variable | Value | Protected | Masked |
-| --- | --- | --- | --- |
-| `PINGONE_PROMOTE_WORKER_CLIENT_ID` | worker client ID | yes | yes |
-| `PINGONE_PROMOTE_WORKER_CLIENT_SECRET` | worker secret | yes | yes |
-| `PINGONE_PROMOTE_WORKER_ENVIRONMENT_ID` | env that holds the worker | yes | no |
-| `PINGONE_PROMOTE_REGION_CODE` | `NA`, `EU`, `CA`, `AP`, `AU` or `SG` | no | no |
-| `PINGONE_PROMOTE_GITLAB_TOKEN` | the CI token from step 2 | yes | yes |
-
-### 5. GitLab: protection
-
-These settings are the real safety controls. Don't skip them.
-
-1. **Request branches** (**Settings → Repository → Protected branches**). Protect the wildcard `CIAM-*`, or `<your prefix>*`. Protected variables only reach protected branches, so the job needs this.
-   - **Allowed to push and merge:** only the two token bot users, if your GitLab tier lets you pick users. Otherwise Developers + Maintainers.
-   - Why it matters: whoever can push a request branch can change its CI file, and that pipeline sees the protected variables.
-2. **`main`:**
-   - allow nobody to push;
-   - require MR approval;
-   - turn on **Prevent approval by author** and **Prevent approvals by users who add commits**;
-   - add a `CODEOWNERS` entry for `.gitlab-ci.yml` and `.gitlab/`.
-3. **Environments** (**Settings → CI/CD → Protected environments**). Protect each environment. **production** needs an approval.
-4. **Settings → CI/CD → General pipelines:** turn on **Prevent outdated deployment jobs**. This stops an older pipeline from rolling prod back.
-5. **Label:** create the label `pingone-promote`.
-
-### 6. DaVinci: import the app
-
-1. **DaVinci → Flows → Add Flow → Import from JSON:** [`davinci-app/flow/pingone-promote-app.flow.json`](davinci-app/flow/pingone-promote-app.flow.json).
-2. Open the flow and point the nodes at your own **Http**, **Functions** and **Variables** connections.
-3. **Flow → Settings:**
-   - Flow Timeout **1800 s**;
-   - HTTP Response Timeout **15 s**;
-   - Logging **Info**. Never use Debug, because it logs tokens.
-4. **DaVinci → Variables** (company variables; they survive re-imports). Set these:
-
-   | Variable | Value |
-   | --- | --- |
-   | `ppWorkerBasicAuth` | `printf '%s:%s' "$ID" "$SECRET" \| base64 \| tr -d '\n'`. One line, with no `Basic ` in front. |
-   | `ppGitlabToken` | the DaVinci token from step 2 |
-   | `ppWorkerEnvironmentId` | env that holds the worker |
-   | `ppSourceEnvs` | `development=<dev env ID>` |
-   | `ppRolloutEnvs` | `testing,production` |
-   | `ppGitlabApi` | `https://<your gitlab>/api/v4` |
-   | `ppGitlabProjectId` | the config repo's numeric ID |
-   | `ppBranchPrefix` | `CIAM-` |
-   | `ppApplyJobPattern` | the name of your apply jobs with `{env}`, for example `apply:{env}` |
-   | `ppEnvironmentPattern` | your GitLab environment names with `{env}`, usually `{env}` |
-   | `ppApiOrigin` / `ppAuthOrigin` | only if you are not in North America, for example `https://api.pingone.eu` |
-
-   Everything else has a working default. The full list is in the [DaVinci app reference](davinci-app/README.md#configure-after-import).
-5. **Publish** the flow. Publish again after you change any variable.
-6. **Launch link:** add a DaVinci **Application** with a **Flow Policy** that runs the flow at 100%. Share its launch link only with the people who should use it, because the app has no sign-in.
-
-### 7. First test
-
-Follow the test cases in [`docs/acceptance/live-acceptance.md`](docs/acceptance/live-acceptance.md). Start with S-1 to S-4, then D-01 to D-03b. D-03b (25 searches in one session) decides whether DaVinci can host the app, so run it early.
-
----
-
-## Everyday use
-
-1. Open the launch link and type your name.
-2. Pick **development**. Search for a flow, or choose **Whole environment**.
-3. Choose **Preview**. Fill in anything it asks for: values for each environment, and the secret names that map to Vault.
-4. Choose **Submit**. You get a merge request on a `CIAM-…` branch.
-5. Get the MR approved and merged.
-6. In the merged pipeline, run each environment's apply job in order: **testing**, then **stage** (if you have one), then **production** (with approval). The app's **Rollout** screen shows where the change is live.
+1. **New request.** Open the page, type your name, choose the source environment and what to promote (one item, a group, or the whole environment, with or without what it depends on).
+2. **Preview.** Wait for the search and preview. Read the list of changes, the diff and the warnings.
+3. **Fill in missing values.** For every rollout environment, enter the values the preview asks for (redirect URIs, domains, IDs of built-in objects). Submission stays blocked until none are missing.
+4. **Submit.** Submit the preview you reviewed. A merge request opens in GitLab and the Requests page tracks it.
+5. **Watch the rollout.** Review and merge the request; the Requests page shows each environment's apply job as the pipeline runs.
+6. **Never revert; fix forward.** If something is wrong after merging, make a new request that corrects it. Do not use Git revert. See [docs/recovery.md](docs/recovery.md).
 
 ## Troubleshooting
 
-| You see | Fix |
-| --- | --- |
-| The flow times out as soon as it opens | You imported a sign-in build. Import the file from `davinci-app/flow/`. |
-| Search: `HTTP 400 … invalid authorization header` | Regenerate `ppWorkerBasicAuth` on one line (step 6.4). Check that the worker uses Client Secret Basic. |
-| "PingOne Promote is not set up yet" | Set the variables it names, then publish. |
-| Preview waits and says "no pipeline yet" | Check that the branch prefix matches in all three places, that `CIAM-*` is protected, and that the runner tag is right. |
-| Job error `must run on branch …` | `ppBranchPrefix` and `PINGONE_PROMOTE_BRANCH_PREFIX` differ. |
-| Job error about the terraformer version | `TERRAFORMER_VERSION` in the CI file doesn't match what was built. |
-| The app stops with an error after about 20 clicks or checks | DaVinci's limit on how often a node can run in one session (test case D-03b). Reopen the launch link to continue, and report it: this decides whether the app stays in DaVinci. |
-| Rollout screen shows no environments | `ppApplyJobPattern` / `ppEnvironmentPattern` don't match your job and environment names. |
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Start fails: "the secrets file must be readable by its owner only (mode 0600 or 0400...)" | The secrets file has group or other access (0440 and 0640 are refused too). | `chmod 600` the file. In Kubernetes the init container does this; see operations. |
+| Start fails: "the secrets file must be owned by the user the server runs as" or "must not be a symbolic link" | Wrong owner, or the path is a symlink. | `chown` it to the service user; point `secretsFile` at the real file. |
+| Start fails: "secrets file line N: unknown name" | A line is not one of the three known names, or has no `=`. | Use only `PINGONE_PROMOTE_WORKER_CLIENT_ID`, `..._WORKER_CLIENT_SECRET`, `..._GITLAB_TOKEN`. |
+| Start fails: "tools.terraform does not match tools.terraformSha256" | Digest still the placeholder, or the tool changed. | Recompute with `sha256sum` and update the config. |
+| Start fails: "terraformer binary does not report the pinned version" (or checksum does not match) | Wrong pingcli-terraformer build. | Re-run `scripts/fetch-tools.sh`; keep `terraformerVersion` 0.6.0 and its digest. |
+| Browser: "This server does not answer for that host name." (421) | The URL's name is not in `allowedHosts`. | Add it to `allowedHosts`, restart; the proxy must pass the original `Host` header. |
+| "This form did not come from this site's own page", "session expired or cookies are blocked" or "The form is out of date" | CSRF or same-origin refusal: stale page, blocked cookies, or a proxy rewriting origin. | Reload the page and try again; allow cookies for the site. |
+| "the default branch changed after this request was previewed; preview again" | Someone merged to the default branch after your preview. | Preview again, then submit. |
+| Preview blocked: `missing_value` ("must set ...") | A rollout environment has no value for a per-environment variable. | Enter the value in the preview form for each environment. |
+| Preview blocked: "already exists in every environment (a built-in object); enter its ID for ..." | A built-in object (default population, default policy) must be adopted, not created. | Enter that environment's existing object ID in the import ID field. If the form refuses IDs, see open items in [docs/HANDOFF.md](docs/HANDOFF.md). |
+| "the worker cannot read it (HTTP 403: service not licensed or no read role)" | The type is unlicensed in the source, or the worker lacks a read role. | Add the read role, or ignore it for services you do not use; the export continues. |
+| "pingone: the worker token request returned HTTP 401/400; check the worker client ID, secret, environment and region" | Wrong worker credentials, environment ID or `regionCode`. | Fix `secrets.env` and `pingone` in the config. |
+| "GitLab token is required", or GitLab "...request failed; verify the server URL and network" | Empty token, wrong `baseUrl`, or blocked egress. | Fill `PINGONE_PROMOTE_GITLAB_TOKEN`; check the URL and firewall. |
+| "GitLab default branch must be protected" or "GitLab project must be private, active, and have a default branch" | Project settings do not meet the server's checks. | Protect the default branch; use the right `projectId`. |
+| Unfinished drafts disappeared | The server restarted; drafts are memory-only. | Start the request again. History is in GitLab. |
 
-## More detail
+More failures: [docs/operations.md](docs/operations.md#troubleshooting).
 
-- [DaVinci app reference](davinci-app/README.md): every setting, the security model, rebuild and checks.
-- [GitLab CI reference](docs/gitlab-ci-integration.md): the request file, the job and every variable.
-- [Live test cases](docs/acceptance/live-acceptance.md).
-- [Architecture decisions](docs/adr/README.md). Start with 0014 to 0017.
-- [Developer guide](docs/development.md): build, test, release.
+## More
+
+- Developers: [docs/development.md](docs/development.md).
+- Operating details and every config field: [docs/operations.md](docs/operations.md).
+- Rolling forward after a bad change: [docs/recovery.md](docs/recovery.md).
+- What can be exported: [docs/coverage.md](docs/coverage.md). Design: [docs/adr/README.md](docs/adr/README.md).
+- Updating to a newer build: [docs/updating.md](docs/updating.md).
+- Current state and open items: [docs/HANDOFF.md](docs/HANDOFF.md).

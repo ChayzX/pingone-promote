@@ -13,7 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/pipelinesecrets"
 	"pingone-promote/internal/secretscan"
 	"pingone-promote/internal/tffmt"
@@ -105,7 +108,7 @@ func CheckRoot(ctx context.Context, o CheckOptions) (*CheckReport, error) {
 			if b.Type != "import" {
 				continue
 			}
-			if _, ok := b.Body.Attributes["for_each"]; !ok {
+			if _, ok := b.Body.Attributes["for_each"]; !ok && !singletonImport(src, b) {
 				add("literal_import", p, "", fmt.Sprintf("line %d: import blocks must be driven by var.import_ids (for_each); literal IDs are per environment", b.TypeRange.Start.Line))
 			}
 		}
@@ -333,4 +336,21 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// singletonImport accepts the one unconditional import form: a settings
+// resource imported by the environment ID variable.
+func singletonImport(src []byte, b *hclsyntax.Block) bool {
+	id, ok := b.Body.Attributes["id"]
+	to, ok2 := b.Body.Attributes["to"]
+	if !ok || !ok2 || len(b.Body.Attributes) != 2 {
+		return false
+	}
+	r := id.Expr.Range()
+	if strings.TrimSpace(string(src[r.Start.Byte:r.End.Byte])) != "var."+neutralize.EnvironmentIDVariable {
+		return false
+	}
+	tr := to.Expr.Range()
+	parts := strings.SplitN(string(src[tr.Start.Byte:tr.End.Byte]), ".", 3)
+	return len(parts) == 3 && singleton(parts[2])
 }

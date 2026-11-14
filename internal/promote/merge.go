@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"pingone-promote/internal/catalog"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"pingone-promote/internal/hclblocks"
 	"pingone-promote/internal/neutralize"
@@ -103,9 +105,14 @@ const (
 	BlockImportKey       = "invalid_import_key"
 	BlockConflict        = "changed_in_both"
 	BlockSecretsFile     = "customer_secrets"
+	BlockModuleLayout    = "module_layout"
 	BlockSecretFinding   = "secret_finding"
 	BlockMissingDep      = "missing_dependency"
 	BlockAutoTfvars      = "auto_tfvars"
+	// BlockMissingImport: a built-in object (default population, default
+	// sign-on policy, predefined scope, ...) exists in every environment
+	// and must be adopted by its ID there, never created.
+	BlockMissingImport = "missing_import"
 )
 
 // MergeRequest is one additive merge.
@@ -134,6 +141,13 @@ type MergeRequest struct {
 	// SecretsConfig is the Vault path convention (default
 	// pipelinesecrets.DefaultConfig).
 	SecretsConfig *pipelinesecrets.Config
+	// Adopt lists built-in addresses of the export that every environment
+	// must adopt by import ID; one without an import_ids entry in an
+	// environment is a missing_import blocker there.
+	Adopt []string
+	// ImportIDs are operator-supplied adoption IDs: env -> address -> ID
+	// (without the environment prefix). Existing entries are replaced.
+	ImportIDs map[string]map[string]string
 }
 
 // MergeResult is the change set and its report.
@@ -171,8 +185,11 @@ type merger struct {
 	files map[string]*hclblocks.File
 	res   *MergeResult
 
-	written  map[string]bool // addresses added or updated
-	selected map[string]bool
+	written map[string]bool // addresses added or updated
+	// adoptedByID lists, per added address, the environments that adopt
+	// it by the ID an earlier request stored for it.
+	adoptedByID map[string][]string
+	selected    map[string]bool
 	// movedFrom maps a relabelled address to its old address in Git.
 	movedFrom map[string]string
 }
@@ -191,7 +208,7 @@ func Merge(req MergeRequest) (*MergeResult, error) {
 	}
 	m := &merger{req: req, l: l, view: newView(req.Head), files: map[string]*hclblocks.File{},
 		res:     &MergeResult{Files: map[string][]byte{}, Changes: []Change{}, Blockers: []Blocker{}, RequiredSecrets: []string{}},
-		written: map[string]bool{}, selected: map[string]bool{}}
+		written: map[string]bool{}, selected: map[string]bool{}, adoptedByID: map[string][]string{}}
 	var err error
 	if m.head, err = loadIndex(req.Head, l); err != nil {
 		return nil, err
@@ -342,8 +359,16 @@ func (m *merger) blocks() error {
 			m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockMissingDep, Address: a, Message: "selected resource is not in the export"})
 		}
 	}
-	for _, a := range m.req.Export.MissingDependencies {
-		if _, ok := m.head.defs[a]; !ok && !m.inExport(a) {
+	for _, alts := range m.req.Export.MissingDependencies {
+		// "a|b": any of the addresses satisfies the reference.
+		found := false
+		for _, a := range strings.Split(alts, "|") {
+			if _, ok := m.head.defs[a]; ok || m.inExport(a) {
+				found = true
+			}
+		}
+		if !found {
+			a, _, _ := strings.Cut(alts, "|")
 			m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockMissingDep, Address: a,
 				Message: "referenced by the export but neither exported nor managed in Git"})
 		}
@@ -635,7 +660,17 @@ func (m *merger) declarations() error {
 			m.res.RequiredSecrets = append(m.res.RequiredSecrets, v.Name)
 		}
 	}
-	// Module call.
+	// Module call. A repository that already keeps its resources in a
+	// module of another name must be configured, not given a second one.
+	if m.head.moduleFile == "" && len(m.head.localModules) > 0 {
+		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockModuleLayout, Message: "The repository already calls module " +
+			strings.Join(m.head.localModules, ", ") + " but no module \"" + m.l.ModuleName + "\". If the PingOne resources belong in that module, set repository.moduleName and repository.moduleDir in the server configuration (for example \"pingone\" and \"modules/pingone\"). Nothing is added until then"})
+		return nil
+	}
+	if m.head.moduleFile == "" && len(m.head.otherModules) > 0 {
+		m.res.Warnings = append(m.res.Warnings, "This adds module \""+m.l.ModuleName+"\" ("+m.l.ModuleDir+"/) next to the repository's module "+
+			strings.Join(m.head.otherModules, ", ")+". If the PingOne resources belong in that module instead, set repository.moduleName and repository.moduleDir in the server configuration and preview again")
+	}
 	if m.head.moduleFile == "" {
 		var inputs []string
 		for _, v := range vars {
@@ -709,7 +744,7 @@ func (m *merger) imports() error {
 	}
 	sort.Strings(addrs)
 	if len(addrs) == 0 {
-		return nil
+		return m.singletonImports()
 	}
 	f, err := m.file(m.l.ImportsFile)
 	if err != nil {
@@ -721,7 +756,7 @@ func (m *merger) imports() error {
 		}
 	}
 	m.save(f)
-	return nil
+	return m.singletonImports()
 }
 
 // --- overlays ---
@@ -739,6 +774,12 @@ func (m *merger) envs() []string {
 }
 
 func (m *merger) overlays() error {
+	defer func() {
+		for _, a := range keysSorted(m.adoptedByID) {
+			m.res.Warnings = append(m.res.Warnings, a+" already exists in "+strings.Join(m.adoptedByID[a], ", ")+
+				" (Git has its ID from an earlier request): it is imported there, not created")
+		}
+	}()
 	needed := []*neutralize.Variable{m.req.Export.Variables[neutralize.EnvironmentIDVariable]}
 	for _, v := range m.neededVars() {
 		if v.PerEnvironment() {
@@ -762,6 +803,9 @@ func (m *merger) overlays() error {
 		}
 		set := map[string]cty.Value{}
 		for _, v := range needed {
+			if v == nil || m.l.FromCI(v.Name) {
+				continue
+			}
 			if _, ok := cur.Values[v.Name]; ok {
 				continue
 			}
@@ -771,15 +815,40 @@ func (m *merger) overlays() error {
 				}
 			}
 		}
+		ids := cur.Values["import_ids"]
+		changed := false
 		if env == m.req.SourceEnv {
-			if ids, changed := m.sourceImportIDs(cur.Values["import_ids"]); changed {
-				set["import_ids"] = ids
+			ids, changed = m.sourceImportIDs(ids)
+		}
+		extra := map[string]string{}
+		if env != m.req.SourceEnv {
+			// An item an earlier request referred to by ID variable already
+			// exists here (Git holds its ID): adopt it by import instead
+			// of creating it again.
+			for a, id := range m.knownIDs(cur) {
+				extra[a] = id
+				m.adoptedByID[a] = append(m.adoptedByID[a], env)
 			}
 		}
+		for a, id := range m.req.ImportIDs[env] {
+			extra[a] = id
+		}
+		if len(extra) > 0 {
+			var more bool
+			ids, more = m.withImportIDs(ids, extra)
+			changed = changed || more
+		}
+		if changed {
+			set["import_ids"] = ids
+		}
 		for k, val := range m.req.EnvValues[env] {
+			if m.l.FromCI(k) {
+				return fmt.Errorf("promote: %s comes from the pipeline (ciVariables); it is never written to %s", k, p)
+			}
 			if m.req.Export.Variables[k] != nil && m.req.Export.Variables[k].Kind == neutralize.KindSecret {
 				return fmt.Errorf("promote: %s is a secret; secrets come from customer_secrets.yml, never from environment values", k)
 			}
+			val = asDeclared(m.req.Export.Variables[k], val)
 			if old, ok := cur.Values[k]; ok && old.RawEquals(val) {
 				continue
 			}
@@ -840,12 +909,14 @@ func (m *merger) customerSecrets() error {
 		return err
 	}
 	if !ok {
-		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretsFile, Message: m.l.CustomerSecretsFile + " is missing; it must declare " + strings.Join(m.res.RequiredSecrets, ", ")})
-		return nil
+		// A repository without the file yet gets one with the documented
+		// shape; the merge request shows it for review.
+		src, ok = []byte("# GitLab CI secret declarations: each TF_VAR_ variable is read from Vault.\n.customer-secrets:\n  secrets:\n"), true
 	}
 	pf, err := pipelinesecrets.Parse(src)
 	if err != nil {
-		return err
+		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretsFile, Message: m.l.CustomerSecretsFile + " cannot be updated (" + err.Error() + "). This request needs the secrets " + strings.Join(m.res.RequiredSecrets, ", ") + " declared there. The expected shape is: .customer-secrets: / secrets: / TF_VAR_<name>: { vault: <path>/<name>@<mount>, file: false }. If your repository declares secrets elsewhere, set customerSecretsFile in the server configuration's repository settings"})
+		return nil
 	}
 	cfg := pipelinesecrets.DefaultConfig
 	if m.req.SecretsConfig != nil {
@@ -883,11 +954,26 @@ func (m *merger) finish() error {
 		}
 		m.res.Files[p] = b
 	}
-	blockers, err := ValidateOverlays(m.view, m.l, m.envs())
+	all, err := ValidateOverlays(m.view, m.l, m.envs())
 	if err != nil {
 		return err
 	}
+	// A value no variable declares only makes Terraform warn: it must not
+	// block a request.
+	var blockers []Blocker
+	for _, b := range all {
+		if b.Code == BlockUndeclaredKey && b.Variable != "" {
+			m.res.Warnings = append(m.res.Warnings, b.Env+": "+b.Message+"; Terraform ignores it with a warning")
+			continue
+		}
+		blockers = append(blockers, b)
+	}
 	m.res.Blockers = append(m.res.Blockers, m.nameExcluded(blockers)...)
+	adoptBlockers, err := m.adoption()
+	if err != nil {
+		return err
+	}
+	m.res.Blockers = append(m.res.Blockers, adoptBlockers...)
 	for _, f := range m.req.Export.Findings {
 		m.res.Blockers = append(m.res.Blockers, Blocker{Code: BlockSecretFinding, Address: f.Name,
 			Message: "suspected secret (" + f.Kind + ") in the export at " + f.File + lineSuffix(f.Line) + "; secrets must come from customer_secrets.yml"})
@@ -934,4 +1020,143 @@ func sortBlockers(b []Blocker) {
 		}
 		return b[i].Variable+b[i].Address < b[j].Variable+b[j].Address
 	})
+}
+
+// singletonImports adopts written settings resources by environment ID.
+func (m *merger) singletonImports() error {
+	var addrs []string
+	for a := range m.written {
+		if singleton(a) && !m.head.imports[m.l.ModuleAddress(a)] {
+			addrs = append(addrs, a)
+		}
+	}
+	if len(addrs) == 0 {
+		return nil
+	}
+	sort.Strings(addrs)
+	f, err := m.file(m.l.ImportsFile)
+	if err != nil {
+		return err
+	}
+	for _, a := range addrs {
+		if err := f.AppendText(neutralize.SingletonImportBlock(m.l.ModuleName, a)); err != nil {
+			return err
+		}
+	}
+	m.save(f)
+	return nil
+}
+
+// withImportIDs sets operator-supplied adoption IDs on import_ids.
+func (m *merger) withImportIDs(cur cty.Value, extra map[string]string) (cty.Value, bool) {
+	mp := map[string]cty.Value{}
+	if !cur.IsNull() && cur.CanIterateElements() {
+		for it := cur.ElementIterator(); it.Next(); {
+			k, v := it.Element()
+			mp[k.AsString()] = v
+		}
+	}
+	changed := false
+	for a, id := range extra {
+		key := m.l.ModuleAddress(a)
+		if old, ok := mp[key]; ok && old.Type() == cty.String && old.AsString() == id {
+			continue
+		}
+		mp[key] = cty.StringVal(id)
+		changed = true
+	}
+	if !changed {
+		return cur, false
+	}
+	return cty.ObjectVal(mp), true
+}
+
+// adoption reports built-in objects that an environment has no import ID
+// for. The source environment's IDs come from the export.
+func (m *merger) adoption() ([]Blocker, error) {
+	var out []Blocker
+	for _, a := range m.req.Adopt {
+		if !importable(a) || !m.written[a] {
+			continue
+		}
+		key := m.l.ModuleAddress(a)
+		for _, env := range m.envs() {
+			p, err := m.l.Overlay(env)
+			if err != nil {
+				return nil, err
+			}
+			src, ok, err := m.view.Read(p)
+			if err != nil {
+				return nil, err
+			}
+			has := false
+			if ok {
+				o, err := overlay.ParseOverlay(src, p)
+				if err != nil {
+					return nil, err
+				}
+				if ids, ok := o.Values["import_ids"]; ok && !ids.IsNull() && ids.CanIterateElements() {
+					for it := ids.ElementIterator(); it.Next(); {
+						k, v := it.Element()
+						if k.AsString() == key && v.Type() == cty.String && v.AsString() != "" {
+							has = true
+						}
+					}
+				}
+			}
+			if !has {
+				out = append(out, Blocker{Env: env, Code: BlockMissingImport, Address: a, Variable: "import_ids",
+					Message: a + " already exists in every environment (a built-in object); enter its ID for " + env + " so it is adopted, not created"})
+			}
+		}
+	}
+	return out, nil
+}
+
+// knownIDs lists newly added addresses whose ID the environment's settings
+// already hold in the ID variable an earlier request used for them, for
+// types imported by that ID alone.
+func (m *merger) knownIDs(cur *overlay.Overlay) map[string]string {
+	out := map[string]string{}
+	for a := range m.written {
+		if _, inHead := m.head.texts[a]; inHead || !importable(a) {
+			continue
+		}
+		typ, _, _ := strings.Cut(a, ".")
+		if f := catalog.ImportFormat(typ); f != catalog.ImportID && f != "" {
+			continue
+		}
+		if typ == neutralize.TypeFlowPolicy {
+			continue // imported by application and policy ID
+		}
+		v, ok := cur.Values[neutralize.ExcludedVariableName(a)]
+		if ok && !v.IsNull() && v.Type() == cty.String && v.AsString() != "" {
+			out[a] = v.AsString()
+		}
+	}
+	return out
+}
+
+func keysSorted(m map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// asDeclared keeps a value given as JSON (a list or object typed into the
+// form, or a DaVinci variable that holds an object) as text where the
+// variable is declared as a string, as Terraform requires; DaVinci
+// variable values are always strings.
+func asDeclared(v *neutralize.Variable, val cty.Value) cty.Value {
+	if v == nil || strings.TrimSpace(v.Type) != "string" || val.IsNull() || !val.IsKnown() || val.Type() == cty.String {
+		return val
+	}
+	b, err := ctyjson.Marshal(val, val.Type())
+	if err != nil {
+		return val
+	}
+	return cty.StringVal(string(b))
 }

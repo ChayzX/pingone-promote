@@ -52,7 +52,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"pingone-promote/internal/neutralize"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +94,10 @@ type Runner struct {
 	// MaxOutput bounds the total size of the export (default 256 MiB).
 	MaxOutput int64
 }
+
+// exeSuffix keeps the staged copy executable on a Windows development
+// machine. Windows is not a supported platform.
+var exeSuffix = map[bool]string{true: ".exe"}[runtime.GOOS == "windows"]
 
 // Errors.
 var (
@@ -213,7 +219,7 @@ func newWorkspace() (*workspace, error) {
 	if err != nil {
 		return nil, errors.New("exporter: could not create a private working directory")
 	}
-	w := &workspace{root: root, home: filepath.Join(root, "home"), out: filepath.Join(root, "out"), bin: filepath.Join(root, "bin", "pingcli-terraformer")}
+	w := &workspace{root: root, home: filepath.Join(root, "home"), out: filepath.Join(root, "out"), bin: filepath.Join(root, "bin", "pingcli-terraformer"+exeSuffix)}
 	for _, d := range []string{w.home, w.out, filepath.Dir(w.bin)} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			os.RemoveAll(root)
@@ -306,7 +312,9 @@ func (r *Runner) exec(ctx context.Context, w *workspace, args []string, creds *C
 	cmd.Dir = w.root
 	cmd.Env = r.childEnv(w.home, creds)
 	stdout := &capped{max: stdoutMax}
-	stderr := &capped{max: 64 << 10}
+	// stderr is read up to 1 MiB, the client secret removed, and only then
+	// cut to 64 KiB, so a cut cannot split the secret and leave a prefix.
+	stderr := &capped{max: 1 << 20}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
@@ -317,6 +325,9 @@ func (r *Runner) exec(ctx context.Context, w *workspace, args []string, creds *C
 		msg := stderr.String()
 		if creds != nil && creds.ClientSecret != "" {
 			msg = strings.ReplaceAll(msg, creds.ClientSecret, "[redacted]")
+		}
+		if len(msg) > stderrMax {
+			msg = strings.ToValidUTF8(msg[:stderrMax], "")
 		}
 		if strings.Contains(msg, "duplicate resource labels") {
 			return nil, &LabelCollisionError{Detail: lastLines(msg, 20)}
@@ -330,6 +341,9 @@ func (r *Runner) exec(ctx context.Context, w *workspace, args []string, creds *C
 	}
 	return stdout.Bytes(), nil
 }
+
+// stderrMax bounds the stderr kept for an error.
+const stderrMax = 64 << 10
 
 func lastLines(s string, n int) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
@@ -445,6 +459,26 @@ type Export struct {
 	ModuleName    string
 	Files         map[string][]byte
 	Findings      []secretscan.Finding
+	// Referenced are resources the export refers to by ID but does not
+	// contain (address -> source ID). Their references are ID variables
+	// named neutralize.ExcludedVariableName(address), like excluded
+	// resources. Only the combined exporter sets it.
+	Referenced map[string]string
+	// Adopt lists exported built-in objects that every environment must
+	// adopt by import ID (they exist there already and must not be created).
+	Adopt    []string
+	Warnings []string
+	// Owners maps an exported owned child (a sign-on policy action, an
+	// application's attribute mapping) to its parent's address.
+	Owners map[string]string
+	// SharedValues are value variables terraformer declares for several
+	// resources of the whole source (one DaVinci variable name in several
+	// contexts). Each user gets a variable of its own even when this
+	// export has only one of them, so names never depend on the selection.
+	SharedValues []string
+	// Values are DaVinci variable values read from the API (address ->
+	// value), for value variables terraformer cannot tell apart.
+	Values map[string]string
 }
 
 // Module directory and name we pass explicitly (terraformer's defaults).
@@ -549,4 +583,10 @@ func readTree(dir string, max int64) (map[string][]byte, error) {
 		return nil
 	})
 	return files, err
+}
+
+// NeutralizeInput is the neutralizer's input for the export, with what it
+// knows about the whole source (shared value variables, variable values).
+func (e *Export) NeutralizeInput() *neutralize.Input {
+	return &neutralize.Input{Files: e.Files, ModuleDir: e.ModuleDir, ModuleName: e.ModuleName, Shared: e.SharedValues, Values: e.Values}
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"pingone-promote/internal/netcause"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,6 +101,12 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 // DoQuery is Do with query parameters, which apiURL never accepts inside the
 // path itself.
 func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	return c.doQuery(ctx, method, path, query, body, out, maxResponse)
+}
+
+// doQuery is DoQuery reading at most limit bytes of response (a file read
+// carries the file base64-encoded in JSON).
+func (c *Client) doQuery(ctx context.Context, method, path string, query url.Values, body, out any, limit int) error {
 	u, err := c.apiURL(path)
 	if err != nil {
 		return err
@@ -132,7 +139,13 @@ func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Val
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("GitLab redirects are not allowed") }
 	res, err := clone.Do(req)
 	if err != nil {
-		return errors.New("GitLab request failed; verify the server URL and network")
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if strings.Contains(err.Error(), "GitLab redirects are not allowed") {
+			return errors.New("GitLab answered with a redirect; set gitlab.baseUrl to the exact https address of GitLab")
+		}
+		return errors.New("GitLab could not be reached: " + netcause.Describe(err, u.Host))
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
@@ -141,8 +154,8 @@ func (c *Client) DoQuery(ctx context.Context, method, path string, query url.Val
 		raw, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 		return &HTTPError{Status: res.StatusCode, Conflict: isConflict(res.StatusCode, raw)}
 	}
-	data, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
-	if err != nil || len(data) > maxResponse {
+	data, err := io.ReadAll(io.LimitReader(res.Body, int64(limit)+1))
+	if err != nil || len(data) > limit {
 		return errors.New("GitLab response was invalid or too large")
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
@@ -271,6 +284,9 @@ func (c *Client) SubmitWithOptions(ctx context.Context, id string, files map[str
 
 // validBranchName enforces the unsafe-name rules from git check-ref-format for
 // a complete branch ref, without invoking Git or contacting GitLab.
+// ValidBranchName reports whether s is a branch name Git and GitLab accept.
+func ValidBranchName(s string) bool { return validBranchName(s) }
+
 func validBranchName(s string) bool {
 	if s == "" || len(s) > 255 || s == "@" || strings.HasPrefix(s, "-") || strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") || strings.HasSuffix(s, ".") || strings.Contains(s, "..") || strings.Contains(s, "@{") || strings.Contains(s, "//") {
 		return false

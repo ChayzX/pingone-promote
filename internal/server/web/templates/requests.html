@@ -1,0 +1,21 @@
+{{define "content"}}
+<p class="hint">Every request made here, newest first: Git branches named {{.Data.Prefix}}&hellip; and merge requests labelled {{.Data.Label}}. After a merge, each environment column shows how far the rollout has got, in the order the pipeline applies them.</p>
+{{with .Data.Problem}}<p class="problem">{{.}}</p>{{end}}
+{{if .Data.Rows}}{{$n := len .Data.Rollout}}
+<table>
+  <caption class="sr-only">Requests and their rollout per environment</caption>
+  <thead><tr><th scope="col">Request</th><th scope="col">Review</th>{{range .Data.Rollout}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
+  <tbody>{{range .Data.Rows}}
+  <tr>
+    <td>{{with .MR}}<strong>{{.Title}}</strong><br>{{end}}{{if .BranchURL}}<a href="{{.BranchURL}}"><code class="small">{{.Branch}}</code></a>{{else}}<code class="small">{{.Branch}}</code>{{end}}{{with .MR}}{{with .UpdatedAt}}<div class="hint">Updated {{slice . 0 10}}</div>{{end}}{{end}}{{with .Note}}<div class="hint">{{.}}</div>{{end}}</td>
+    <td>{{with .MR}}<a href="{{.WebURL}}">merge request !{{.IID}}</a><br><span class="tag">{{if eq .State "opened"}}waiting for review{{else if eq .State "merged"}}merged{{else if eq .State "closed"}}closed without merging{{else}}{{.State}}{{end}}</span>{{else}}<span class="hint">branch only, no merge request</span>{{end}}</td>
+    {{if and .MR (eq .MR.State "merged")}}
+    {{range .Rollout}}<td><span class="state state-{{.State}}">{{if .URL}}<a href="{{.URL}}">{{.State}}</a>{{else}}{{.State}}{{end}}</span>{{with .Detail}}<div class="hint">{{.}}</div>{{end}}</td>{{end}}
+    {{else if and .MR (eq .MR.State "closed")}}<td colspan="{{$n}}"><span class="hint">Not rolled out: the merge request was closed.</span></td>
+    {{else if .MR}}<td colspan="{{$n}}"><span class="hint">Rolls out after the merge request is reviewed and merged.</span></td>
+    {{else}}<td colspan="{{$n}}"><span class="hint">Open a merge request from this branch to roll it out.</span></td>{{end}}
+  </tr>
+  {{end}}</tbody>
+</table>
+{{else}}{{if not .Data.Problem}}<p>No requests yet. Start one from <a href="/">Drafts</a>.</p>{{end}}{{end}}
+{{end}}

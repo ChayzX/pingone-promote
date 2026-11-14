@@ -19,14 +19,11 @@ import (
 //   - import_ids keys are module.<name>.<address> of managed resources;
 //   - no value looks like a secret.
 //
-// envs is the source followed by the rollout; overlays for other
-// environments found in the snapshot are validated too.
+// envs is the source followed by the rollout. Overlays of other
+// environments (a disaster-recovery copy, ...) are not this request's
+// business and are not checked: a problem there must not block it.
 func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 	ix, err := loadIndex(r, l)
-	if err != nil {
-		return nil, err
-	}
-	found, err := overlayFiles(r, l)
 	if err != nil {
 		return nil, err
 	}
@@ -34,15 +31,17 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 	for _, e := range envs {
 		all[e] = true
 	}
-	for e := range found {
-		all[e] = true
-	}
 	names := make([]string, 0, len(all))
 	for e := range all {
 		names = append(names, e)
 	}
 	sort.Strings(names)
-	required := ix.requiredOverlayVars()
+	var required []string
+	for _, v := range ix.requiredOverlayVars() {
+		if !l.FromCI(v) {
+			required = append(required, v)
+		}
+	}
 	secrets := ix.secretVars()
 	managed := map[string]bool{}
 	for a := range ix.defs {
@@ -59,7 +58,7 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 			return nil, err
 		}
 		if !ok {
-			out = append(out, Blocker{Env: env, Code: BlockMissingOverlay, Message: p + " does not exist; it must set " + strings.Join(required, ", ")})
+			out = append(out, Blocker{Env: env, Code: BlockMissingOverlay, Message: p + " does not exist in the repository; create it (it must set " + strings.Join(required, ", ") + "). If the environments' settings files are elsewhere, set overlayPattern in the server configuration, for example envs/{env}.tfvars"})
 			continue
 		}
 		o, err := overlay.ParseOverlay(src, p)
@@ -79,6 +78,8 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 				out = append(out, Blocker{Env: env, Code: BlockSecretInOverlay, Variable: k, Message: k + " is a secret; set it through customer_secrets.yml, never in " + p})
 				continue
 			case !declared:
+				// Terraform only warns about this; a merge reports it as a
+				// warning (Merge filters the code), check --root fails on it.
 				out = append(out, Blocker{Env: env, Code: BlockUndeclaredKey, Variable: k, Message: k + " is not a root variable (" + p + fmt.Sprintf(":%d)", o.Lines[k])})
 				continue
 			}
@@ -117,6 +118,9 @@ func scanValue(name string, v cty.Value) []string {
 				kinds = append(kinds, f.Kind)
 			}
 			if secretscan.SuspectLiteral(name, s) {
+				kinds = append(kinds, secretscan.KindNamed)
+			}
+			if secretscan.JSONText(s) && secretscan.CredentialValue(s) {
 				kinds = append(kinds, secretscan.KindNamed)
 			}
 		case v.CanIterateElements():

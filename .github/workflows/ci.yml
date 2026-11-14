@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Fetch the pinned tools (checksums verified)
+        run: |
+          bash scripts/fetch-tools.sh --dest "$RUNNER_TEMP/tools" --with-go
+          echo "$RUNNER_TEMP/tools/go/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+
+      - name: Versions
+        run: |
+          go version
+          terraform version
+          "$RUNNER_TEMP/tools/pingcli-terraformer" --version
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+
+      - name: go build and vet
+        env:
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: go test
+        env:
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
+        # Engine tests run terraform fmt, validate and test (the provider is
+        # downloaded by terraform init) and the release terraformer binary's
+        # version contract, so none of them skip here.
+        run: |
+          export PINGONE_PROMOTE_TERRAFORM="$RUNNER_TEMP/tools/terraform"
+          export PINGONE_PROMOTE_REAL_TERRAFORMER="$RUNNER_TEMP/tools/pingcli-terraformer"
+          # Failures are also written as annotations, readable without
+          # signing in to GitHub (job logs are not).
+          annotate() {
+            body="$(cat | head -c 3500 | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+            echo "::error title=$1::$body"
+          }
+          if ! go test -count=1 -v ./... > "$RUNNER_TEMP/test.log" 2>&1; then
+            grep -E -B2 -A12 -- '--- FAIL' "$RUNNER_TEMP/test.log" | grep -v -E '^\s+--- PASS' | annotate "go test failures"
+            grep -E '^(FAIL|panic|.*\[build failed\])' "$RUNNER_TEMP/test.log" | annotate "failing packages"
+            grep -E -A20 -- '^panic' "$RUNNER_TEMP/test.log" | annotate "panic" || true
+            exit 1
+          fi
+          grep -E '^(ok|FAIL|\?)' "$RUNNER_TEMP/test.log"
+          # Only these tests may skip here: fixture regeneration (manual) and
+          # tests that exist for Windows development machines.
+          allowed='TestLiveTenant|TestLiveQuickList|TestSlicesMatchTheRealTerraformer|TestLiveBrowserServer|TestRegenerateRepoFixture|TestSecretsWindowsRefusesUnverifiable|TestDemoServer|TestPageSnapshots'
+          if grep -E -- '--- SKIP' "$RUNNER_TEMP/test.log" | grep -v -E "($allowed) " > "$RUNNER_TEMP/skips.txt"; then
+            cat "$RUNNER_TEMP/skips.txt" | annotate "unexpected skips"
+            echo "unexpected skipped tests:"; cat "$RUNNER_TEMP/skips.txt"; exit 1
+          fi
+
+      - name: go test -race (server, engine, exporters)
+        if: runner.os == 'Linux'
+        env:
+          GOFLAGS: -mod=readonly
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "1"
+        run: |
+          export PINGONE_PROMOTE_TERRAFORM="$RUNNER_TEMP/tools/terraform"
+          go test -race -count=1 ./internal/server/... ./internal/request/... ./internal/multiexport/... ./internal/coreexport/... ./internal/pingone/...
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Release script checks
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s scripts -p test_release.py
+
+  container:
+    name: Container image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build -f deploy/container/Containerfile -t pingone-promote:ci .
+
+      # The entrypoint is `serve --config ...`; override it to run the binary
+      # directly.
+      - name: Run the image (version, user, tools)
+        run: |
+          docker run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:ci --version
+          test "$(docker run --rm --entrypoint id pingone-promote:ci -u)" = 10001
+          docker run --rm --read-only --tmpfs /tmp --entrypoint /opt/pingone-promote/tools/terraform pingone-promote:ci version
+          docker run --rm --entrypoint /opt/pingone-promote/tools/pingcli-terraformer pingone-promote:ci --version
+
+      # --check-config against a test config whose tool digests are computed
+      # from the image itself, then the real server answering /healthz for
+      # the Host header the probes send (localhost). Nothing here contacts
+      # GitLab or PingOne; the secrets are dummies.
+      - name: Check the configuration and serve /healthz
+        run: |
+          set -eu
+          work="$(mktemp -d)"
+          cid="$(docker create pingone-promote:ci)"
+          docker cp "$cid:/opt/pingone-promote/tools/terraform" "$work/terraform"
+          docker cp "$cid:/opt/pingone-promote/tools/pingcli-terraformer" "$work/pingcli-terraformer"
+          docker rm "$cid" >/dev/null
+          tf_sum="$(sha256sum "$work/terraform" | cut -d' ' -f1)"
+          ptf_sum="$(sha256sum "$work/pingcli-terraformer" | cut -d' ' -f1)"
+          jq --arg tf "$tf_sum" --arg ptf "$ptf_sum" '
+            .listen = "0.0.0.0:8080" | .exposure = "behind-proxy" | .allowedHosts = ["promote.example.com"]
+            | .secretsFile = "/run/pingone-promote/secrets.env"
+            | .tools.terraformSha256 = $tf | .tools.terraformerSha256 = $ptf' deploy/config.example.json > "$work/config.json"
+          printf 'PINGONE_PROMOTE_WORKER_CLIENT_ID=ci-dummy-id\nPINGONE_PROMOTE_WORKER_CLIENT_SECRET=ci-dummy-secret\nPINGONE_PROMOTE_GITLAB_TOKEN=ci-dummy-token\n' > "$work/secrets.env"
+          sudo chown 10001:10001 "$work/secrets.env"
+          sudo chmod 0400 "$work/secrets.env"
+          chmod 0644 "$work/config.json"
+          run_args="--read-only --tmpfs /tmp:rw,exec,nosuid,nodev,size=512m -v $work/config.json:/etc/pingone-promote/config.json:ro -v $work/secrets.env:/run/pingone-promote/secrets.env:ro"
+          docker run --rm $run_args pingone-promote:ci --check-config || { echo "check-config failed"; exit 1; }
+          docker run -d --name promote-ci -p 127.0.0.1:18080:8080 $run_args pingone-promote:ci
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -fsS -H 'Host: localhost' http://127.0.0.1:18080/healthz; then ok=1; break; fi
+            sleep 1
+          done
+          code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://127.0.0.1:18080/healthz)"
+          docker logs promote-ci 2>&1 | tail -20
+          docker rm -f promote-ci >/dev/null
+          test -n "$ok"
+          test "$code" = 421
+
+  rhel9-systemd:
+    name: systemd unit (UBI 9)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: systemd-analyze verify
+        run: |
+          docker run --rm -v "$PWD/deploy/systemd:/u:ro" registry.access.redhat.com/ubi9/ubi-init sh -ec '
+            useradd --system --shell /sbin/nologin pingone-promote
+            mkdir -p /opt/pingone-promote /etc/pingone-promote
+            printf "#!/bin/sh\nexit 0\n" > /opt/pingone-promote/pingone-promote
+            chmod 0755 /opt/pingone-promote/pingone-promote
+            cp /u/pingone-promote.service /etc/systemd/system/
+            systemd-analyze verify /etc/systemd/system/pingone-promote.service
+          '

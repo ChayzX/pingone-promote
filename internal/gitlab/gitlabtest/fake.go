@@ -75,7 +75,18 @@ type Fake struct {
 	// before the next Commits API call is processed: a concurrent edit
 	// between pingone-promote's read and its commit.
 	RaceBeforeCommit map[string]string
-	seq              int
+	// RaceOnRequest commits files to the default branch just before the
+	// first request whose path matches a key is processed (key format as
+	// in Fail), then forgets the key: a concurrent push between reads.
+	RaceOnRequest map[string]map[string]string
+	// FailAfter makes a matching request (key format as in Fail) take
+	// effect normally but answer with the status: a write GitLab applied
+	// whose response was lost (for example a gateway timeout).
+	FailAfter map[string]int
+	seq       int
+	// snapshots holds every commit's files, so reads with ref=<sha> see
+	// that commit, as GitLab does.
+	snapshots map[string]map[string]fileState
 }
 
 // New starts a fake with a protected, private "main" holding files.
@@ -202,6 +213,10 @@ func (f *Fake) commit(branch, message string, actions []map[string]string) (stri
 		c.After[p] = &content
 	}
 	f.branches[branch] = next
+	if f.snapshots == nil {
+		f.snapshots = map[string]map[string]fileState{}
+	}
+	f.snapshots[c.ID] = next
 	f.heads[branch] = c.ID
 	f.Commits[c.ID] = c
 	f.CommitOrder = append(f.CommitOrder, c.ID)
@@ -229,16 +244,68 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for key, status := range f.Fail {
-		// A key is "<path suffix>" or "<METHOD> <path suffix>".
-		method, suffix, scoped := strings.Cut(key, " ")
-		if !scoped {
-			method, suffix = r.Method, key
-		}
-		if method == r.Method && strings.HasSuffix(r.URL.Path, suffix) {
+		if matches(key, r) {
 			f.reply(w, status, map[string]string{"message": "injected failure"})
 			return
 		}
 	}
+	for key, files := range f.RaceOnRequest {
+		if matches(key, r) {
+			delete(f.RaceOnRequest, key)
+			paths := make([]string, 0, len(files))
+			for p := range files {
+				paths = append(paths, p)
+			}
+			sort.Strings(paths)
+			var actions []map[string]string
+			for _, p := range paths {
+				action := "update"
+				if _, ok := f.branches[f.DefaultBranch][p]; !ok {
+					action = "create"
+				}
+				actions = append(actions, map[string]string{"action": action, "file_path": p, "content": files[p]})
+			}
+			f.commit(f.DefaultBranch, "Concurrent push", actions)
+		}
+	}
+	for key, status := range f.FailAfter {
+		if matches(key, r) {
+			f.serve(httptest.NewRecorder(), r)
+			f.reply(w, status, map[string]string{"message": "injected failure after the change was applied"})
+			return
+		}
+	}
+	f.serve(w, r)
+}
+
+// matches reports whether a Fail-style key ("<path suffix>" or
+// "<METHOD> <path suffix>") matches the request.
+func matches(key string, r *http.Request) bool {
+	method, suffix, scoped := strings.Cut(key, " ")
+	if !scoped {
+		method, suffix = r.Method, key
+	}
+	return method == r.Method && strings.HasSuffix(r.URL.Path, suffix)
+}
+
+// refFiles resolves ref as a branch name, then as a commit SHA.
+func (f *Fake) refFiles(ref string) map[string]fileState {
+	if files, ok := f.branches[ref]; ok {
+		return files
+	}
+	return f.snapshots[ref]
+}
+
+// refHead is the commit a ref names.
+func (f *Fake) refHead(ref string) string {
+	if _, ok := f.branches[ref]; ok {
+		return f.heads[ref]
+	}
+	return ref
+}
+
+// serve routes one request; the caller holds f.mu.
+func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	prefix := "/api/v4/projects/" + ProjectID
 	rest, ok := strings.CutPrefix(r.URL.EscapedPath(), prefix)
 	if !ok {
@@ -266,13 +333,23 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			msg = head.Message
 		}
 		f.reply(w, 200, map[string]any{"name": name, "protected": f.Protected[name], "commit": map[string]string{"id": f.heads[name], "message": msg}})
+	case strings.HasPrefix(rest, "/repository/branches/") && r.Method == http.MethodDelete:
+		name, _ := url.PathUnescape(strings.TrimPrefix(rest, "/repository/branches/"))
+		if _, ok := f.branches[name]; !ok {
+			f.reply(w, 404, map[string]string{"message": "404 Branch Not Found"})
+			return
+		}
+		delete(f.branches, name)
+		delete(f.heads, name)
+		w.WriteHeader(http.StatusNoContent)
 	case rest == "/repository/branches" && r.Method == http.MethodPost:
 		name, ref := str("branch"), str("ref")
 		if _, exists := f.branches[name]; exists {
 			f.reply(w, 400, map[string]string{"message": "Branch already exists"})
 			return
 		}
-		src, ok := f.branches[ref]
+		src := f.refFiles(ref)
+		ok := src != nil
 		if !ok {
 			f.reply(w, 404, map[string]string{"message": "Invalid reference name"})
 			return
@@ -281,11 +358,11 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		for k, v := range src {
 			cp[k] = v
 		}
-		f.branches[name], f.heads[name] = cp, f.heads[ref]
+		f.branches[name], f.heads[name] = cp, f.refHead(ref)
 		f.reply(w, 201, map[string]any{"name": name})
 	case strings.HasPrefix(rest, "/repository/files/") && r.Method == http.MethodGet:
 		p, _ := url.PathUnescape(strings.TrimPrefix(rest, "/repository/files/"))
-		st, ok := f.branches[r.URL.Query().Get("ref")][p]
+		st, ok := f.refFiles(r.URL.Query().Get("ref"))[p]
 		if !ok {
 			f.reply(w, 404, map[string]string{"message": "404 File Not Found"})
 			return
@@ -297,7 +374,7 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		var entries []map[string]string
 		seen := map[string]bool{}
-		for p := range f.branches[r.URL.Query().Get("ref")] {
+		for p := range f.refFiles(r.URL.Query().Get("ref")) {
 			rel, ok := strings.CutPrefix(p, dir+"/")
 			if dir == "" {
 				rel, ok = p, true
@@ -462,4 +539,23 @@ func (f *Fake) Files(branch string) map[string]string {
 		out[p] = s.Content
 	}
 	return out
+}
+
+// Branches lists the branch names.
+func (f *Fake) Branches() map[string]bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]bool{}
+	for name := range f.branches {
+		out[name] = true
+	}
+	return out
+}
+
+// Delete removes path from branch in a new commit.
+func (f *Fake) Delete(branch, path string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, _ := f.commit(branch, "Manual delete", []map[string]string{{"action": "delete", "file_path": path}})
+	return id
 }

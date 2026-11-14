@@ -61,7 +61,7 @@ func FixtureDir(name string) string { return filepath.Join(here(), "fixtures", n
 // Build compiles the fake for a fixture directory into dir.
 func Build(t testing.TB, dir, fixture string) Fake {
 	t.Helper()
-	bin := filepath.Join(dir, "pingcli-terraformer")
+	bin := filepath.Join(dir, "pingcli-terraformer"+exeSuffix())
 	rec := filepath.Join(dir, "record.jsonl")
 	ld := "-X main.fixtureDir=" + fixture + " -X main.recordPath=" + rec + " -X main.version=" + Version
 	cmd := exec.Command("go", "build", "-o", bin, "-ldflags", ld, "./faketerraformer")
@@ -76,4 +76,13 @@ func Build(t testing.TB, dir, fixture string) Fake {
 	}
 	sum := sha256.Sum256(b)
 	return Fake{Path: bin, SHA256: hex.EncodeToString(sum[:]), Version: Version, RecordPath: rec}
+}
+
+// exeSuffix lets the fake run on a Windows development machine. Windows is
+// not a supported platform for the tool itself.
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }

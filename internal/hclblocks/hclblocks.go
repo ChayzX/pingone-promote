@@ -161,6 +161,73 @@ func (f *File) Find(key string) (int, error) {
 	return found, nil
 }
 
+// splice replaces f.Src[start:end] with ins, whose own blocks (parsed
+// alone) are at offset at within ins. Blocks outside [start, end) keep
+// their text and only move, so the file is not parsed again: inserting or
+// replacing whole top-level blocks between others cannot change how the
+// others parse. ok is false when ins is not made of whole blocks (the
+// caller then parses the whole file).
+func (f *File) splice(start, end int, ins []byte) (bool, error) {
+	if len(f.Src)-(end-start)+len(ins) > MaxFileSize {
+		return false, &ParseError{File: f.Name, Msg: "file exceeds the size limit"}
+	}
+	inner, err := Scan(ins, f.Name)
+	if err != nil {
+		return false, fmt.Errorf("hclblocks: edit produced invalid HCL in %s: %w", f.Name, err)
+	}
+	// Only blocks and whitespace: nothing else whose meaning could depend
+	// on its neighbours.
+	rest := ins
+	for i := len(inner) - 1; i >= 0; i-- {
+		rest = append(append([]byte(nil), rest[:inner[i].Start]...), rest[inner[i].End:]...)
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return false, nil
+	}
+	for _, b := range f.Blocks {
+		if b.Start < end && b.End > start {
+			if b.Start < start || b.End > end {
+				return false, nil // the edit cuts a block: parse everything
+			}
+		}
+	}
+	src := make([]byte, 0, len(f.Src)-(end-start)+len(ins))
+	src = append(src, f.Src[:start]...)
+	src = append(src, ins...)
+	src = append(src, f.Src[end:]...)
+	shift := len(ins) - (end - start)
+	blocks := make([]Block, 0, len(f.Blocks)+len(inner))
+	for _, b := range f.Blocks {
+		if b.End <= start {
+			blocks = append(blocks, b)
+		}
+	}
+	for _, b := range inner {
+		b.Start += start
+		b.End += start
+		blocks = append(blocks, b)
+	}
+	for _, b := range f.Blocks {
+		if b.Start >= end {
+			b.Start += shift
+			b.End += shift
+			blocks = append(blocks, b)
+		}
+	}
+	f.Src, f.Blocks = src, blocks
+	return true, nil
+}
+
+// edit applies a splice, falling back to parsing the whole file.
+func (f *File) edit(start, end int, ins []byte) error {
+	ok, err := f.splice(start, end, ins)
+	if err != nil || ok {
+		return err
+	}
+	src := append(append(append([]byte(nil), f.Src[:start]...), ins...), f.Src[end:]...)
+	return f.reload(src)
+}
+
 func (f *File) reload(src []byte) error {
 	blocks, err := Scan(src, f.Name)
 	if err != nil {
@@ -181,11 +248,7 @@ func (f *File) Replace(key string, text []byte) error {
 		return fmt.Errorf("%s: %s not found", f.Name, key)
 	}
 	b := f.Blocks[i]
-	src, err := Apply(f.Src, []Edit{{Start: b.Start, End: b.End, Text: bytes.TrimSpace(text)}})
-	if err != nil {
-		return err
-	}
-	return f.reload(src)
+	return f.edit(b.Start, b.End, bytes.TrimSpace(text))
 }
 
 // Insert adds a block. When sortWithin is true the block goes before the
@@ -204,26 +267,27 @@ func (f *File) Insert(key string, text []byte, sortWithin bool) error {
 	if sortWithin {
 		for _, b := range f.Blocks {
 			if b.Type == typ && b.Key() > key {
-				src, err := Apply(f.Src, []Edit{{Start: b.Start, End: b.Start, Text: append(append([]byte(nil), text...), "\n\n"...)}})
-				if err != nil {
-					return err
-				}
-				return f.reload(src)
+				return f.edit(b.Start, b.Start, append(append([]byte(nil), text...), "\n\n"...))
 			}
 		}
 	}
-	src := append([]byte(nil), f.Src...)
-	if len(bytes.TrimSpace(src)) == 0 {
-		src = nil
-	} else {
-		if !bytes.HasSuffix(src, []byte("\n")) {
-			src = append(src, '\n')
-		}
-		src = append(src, '\n')
+	return f.appendGroup(text)
+}
+
+// appendGroup appends text after a blank line (alone when the file is
+// empty), ending with a newline.
+func (f *File) appendGroup(text []byte) error {
+	if len(bytes.TrimSpace(f.Src)) == 0 {
+		return f.edit(0, len(f.Src), append(append([]byte(nil), text...), '\n'))
 	}
-	src = append(src, text...)
-	src = append(src, '\n')
-	return f.reload(src)
+	var ins []byte
+	if !bytes.HasSuffix(f.Src, []byte("\n")) {
+		ins = append(ins, '\n')
+	}
+	ins = append(ins, '\n')
+	ins = append(ins, text...)
+	ins = append(ins, '\n')
+	return f.edit(len(f.Src), len(f.Src), ins)
 }
 
 // Remove deletes a block and the blank lines that follow it.
@@ -296,16 +360,5 @@ func (f *File) AppendToBlock(key string, lines []byte) error {
 // AppendText appends a group of top-level lines (attributes, for a tfvars
 // file) after a blank line.
 func (f *File) AppendText(text []byte) error {
-	src := append([]byte(nil), f.Src...)
-	if len(bytes.TrimSpace(src)) > 0 {
-		if !bytes.HasSuffix(src, []byte("\n")) {
-			src = append(src, '\n')
-		}
-		src = append(src, '\n')
-	} else {
-		src = nil
-	}
-	src = append(src, bytes.TrimSpace(text)...)
-	src = append(src, '\n')
-	return f.reload(src)
+	return f.appendGroup(bytes.TrimSpace(text))
 }

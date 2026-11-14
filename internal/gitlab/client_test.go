@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -324,14 +325,14 @@ func TestConfigPersistenceIsPrivateAndMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0700 {
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0700 {
 		t.Errorf("dir mode %o", st.Mode().Perm())
 	}
 	st, err = os.Stat(filepath.Join(dir, "gitlab.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0600 {
 		t.Errorf("file mode %o", st.Mode().Perm())
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "gitlab.json"))

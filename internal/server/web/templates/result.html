@@ -1,0 +1,27 @@
+{{define "content"}}{{$d := .Data.D}}
+<p class="meta">Request {{$d.RequestID}} from {{$d.Source}}</p>
+{{if .Data.Conflict}}
+<p class="problem" role="alert">{{.Data.Message}}</p>
+<form method="post" action="/drafts/{{$d.ID}}/preview">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button type="submit" class="primary">Preview again</button>
+</form>
+{{else}}{{with .Data.R}}
+<p class="{{if .Error}}problem{{else}}notice{{end}}" role="status">{{$.Data.Message}}</p>
+{{with .Error}}<p class="problem">{{.Message}}</p>{{end}}
+<ul class="links">
+  {{with .MRUrl}}<li>Merge request: <a href="{{.}}">{{.}}</a></li>{{end}}
+  {{if or .CommitID (not .Error)}}{{with .BranchURL}}<li>Branch: <a href="{{.}}">{{$.Data.R.Branch}}</a></li>{{end}}{{end}}
+  {{if .CommitID}}<li>Commit: {{with .DiffURL}}<a href="{{.}}">{{short $.Data.R.CommitID}}</a>{{else}}{{short $.Data.R.CommitID}}{{end}}</li>{{end}}
+</ul>
+{{if .Error}}{{if not .CommitID}}
+<h2>What to do</h2>
+<p>Nothing was committed to GitLab. Fix the problem above, then preview again and submit.</p>{{end}}
+{{else}}
+<h2>What happens next</h2>
+{{if .MRUrl}}<p>Someone reviews and merges the change in GitLab. After the merge the pipeline rolls it out one environment at a time. Follow each environment on the <a href="/requests">Requests</a> page.</p>
+{{else}}<p>Only the Git branch was saved. When it is ready, open a merge request from it in GitLab; once that is reviewed and merged, the pipeline rolls it out one environment at a time.</p>{{end}}
+{{end}}
+{{end}}{{end}}
+<p><a href="/drafts/{{$d.ID}}/preview">Back to the preview</a> &middot; <a href="/">Your drafts</a></p>
+{{end}}

@@ -1,0 +1,54 @@
+# pingone-promote hosted server image.
+#
+#   podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .
+#
+# PIN BY DIGEST before any shared use. Look up the digest of the tag you
+# reviewed and pass it:
+#   podman pull docker.io/library/golang:1.27.3
+#   podman inspect --format '{{index .RepoDigests 0}}' docker.io/library/golang:1.27.3
+#   podman build --format docker --build-arg GO_IMAGE=docker.io/library/golang:1.27.3@sha256:<digest> \
+#                --build-arg RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:<digest> ...
+# The defaults below use tags so the file builds out of the box; a tag can
+# move, a digest cannot.
+ARG GO_IMAGE=docker.io/library/golang:1.27.3
+ARG RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+FROM ${GO_IMAGE} AS build
+ARG VERSION=dev
+# Company root certificates (HTTPS inspection), if any: see
+# deploy/container/extra-ca/README.md. Without them this changes nothing.
+COPY deploy/container/extra-ca/ /usr/local/share/ca-certificates/extra/
+RUN update-ca-certificates >/dev/null
+RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates curl \
+    && update-ca-certificates >/dev/null \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+# Pinned, checksum-verified terraform and pingcli-terraformer (the script
+# aborts on a mismatch).
+RUN bash scripts/fetch-tools.sh --dest /opt/pingone-promote/tools
+RUN CGO_ENABLED=0 GOFLAGS=-mod=readonly GOTOOLCHAIN=local \
+    go build -trimpath -ldflags "-X pingone-promote/internal/buildinfo.Version=${VERSION}" \
+    -o /opt/pingone-promote/pingone-promote ./cmd/pingone-promote
+
+FROM ${RUN_IMAGE}
+# The same company root certificates, for the server's own calls to PingOne
+# and GitLab and for the exporter it runs. Only *.crt files are added.
+COPY deploy/container/extra-ca/ /tmp/extra-ca/
+RUN for f in /tmp/extra-ca/*.crt; do if [ -f "$f" ]; then cp "$f" /etc/pki/ca-trust/source/anchors/; fi; done \
+    && update-ca-trust extract && rm -rf /tmp/extra-ca
+# No account is created: a numeric uid needs no /etc/passwd entry.
+COPY --from=build --chown=root:root /opt/pingone-promote /opt/pingone-promote
+# Config and secrets are mounted at run time; nothing sensitive is baked in.
+USER 10001:10001
+ENV TMPDIR=/tmp HOME=/tmp
+EXPOSE 8080
+# The server writes only private temp files under $TMPDIR (export staging,
+# Git snapshots): run with --read-only and a writable, exec-allowed /tmp (emptyDir, or
+# --tmpfs). Probes expect GET /healthz -> 200 (the server must answer it for
+# the configured Host; send "Host: localhost"). Verify it exists in the
+# server build you ship. Kubernetes ignores HEALTHCHECK and uses its own
+# probes; podman honours it only with --format docker.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD ["curl", "-fsS", "-H", "Host: localhost", "http://127.0.0.1:8080/healthz"]
+ENTRYPOINT ["/opt/pingone-promote/pingone-promote", "serve", "--config", "/etc/pingone-promote/config.json"]
