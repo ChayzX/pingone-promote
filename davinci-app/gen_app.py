@@ -258,7 +258,7 @@ class Flow:
 CSS = """
 .pp{--pp-bg:#f8f8f9;--pp-card:#fff;--pp-ink:#16202c;--pp-muted:#4f5b69;--pp-line:#cdd4dc;--pp-bar:#061a41;--pp-accent:#061a41;--pp-brand-red:#e53122;--pp-link:#3e65b2;--pp-field:#f8f8f9;
 --pp-ok:#11603a;--pp-ok-soft:#eaf6ef;--pp-warn:#7a4f00;--pp-warn-soft:#fff4d9;--pp-bad:#9b1419;--pp-bad-soft:#fcefef;
-font:15px/1.55 proxima-nova,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--pp-ink);background:var(--pp-bg);min-height:100vh;box-sizing:border-box;text-align:left}
+font:15px/1.55 proxima-nova,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--pp-ink);background:var(--pp-bg) url("{PATTERN}") 0 0/320px 191px;min-height:100vh;box-sizing:border-box;text-align:left}
 .pp *{box-sizing:border-box}
 .pp a{color:var(--pp-link)}
 .pp-bar{background:var(--pp-bar);color:#fff;padding:0 24px;height:64px;display:flex;align-items:center;gap:16px;font-weight:600;border-bottom:4px solid var(--pp-brand-red)}
@@ -305,9 +305,14 @@ font:15px/1.55 proxima-nova,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans
 .pp-sr{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pp-list li{margin:4px 0}
 """
-# The brand logo (assets/brand-logo.png, white on transparent) is embedded as a CSS background: no external image host,
-# and no <img> in the screen HTML (test_app.js treats any <img as injected markup).
-CSS = CSS.replace("{LOGO}", "data:image/png;base64," + base64.b64encode((HERE / "assets" / "brand-logo.png").read_bytes()).decode("ascii"))
+# Brand images are embedded as CSS backgrounds: no external image host, and no <img> in the screen HTML (test_app.js
+# treats any <img as injected markup). brand-logo.png is white on transparent; brand-pattern.png is the seamless
+# 640x382 line pattern behind the page (shown at half size, so it stays sharp on high-density screens).
+def _data_uri(name):
+    return "data:image/png;base64," + base64.b64encode((HERE / "assets" / name).read_bytes()).decode("ascii")
+
+
+CSS = CSS.replace("{LOGO}", _data_uri("brand-logo.png")).replace("{PATTERN}", _data_uri("brand-pattern.png"))
 
 
 def shell(body):
