@@ -138,7 +138,9 @@ Keep the two long values for the next step.
 mkdir -p ~/pingone-promote-test && cp deploy/container/config.podman.json ~/pingone-promote-test/config.json && open -e ~/pingone-promote-test/config.json
 ```
 
-Change these values and save:
+Change these values and save. The table covers what a first test needs;
+every setting is described in
+[operations.md](operations.md#configuration-fields).
 
 | Field | Put |
 | --- | --- |
@@ -218,17 +220,17 @@ request has three pages (`/drafts/<id>/scope`, `/items`, `/send`):
 
 1. **What to copy**: type your name, choose the source environment, then
    items you pick, whole sections (for example all of DaVinci, or all
-   applications), or the whole environment. Press **Next**.
+   applications), or the whole environment. Press **Next: choose items**.
 2. **Choose items**: search by name or ID, or leave the name empty to list
    everything; the results show on the same page. **Add** copies an item;
    **Leave out** keeps one out. Your choices are listed at the top. Press
-   **Next**.
+   **Next: send for review**.
 3. **Send for review**: type the branch name (your Jira key, used exactly
    as typed), optionally a title and a note, and press **Preview the
    change**. The first preview reads the whole source environment and can
    take a minute.
 4. **Fill in what each environment needs** (URLs, IDs) on the preview and
-   preview again until it says **Ready to submit**.
+   press **Save and preview again** until the page says **Ready to submit**.
 5. **Submit to GitLab** as a merge request or a branch only.
 6. Follow the rollout on the **Requests** page after the merge.
 
@@ -265,4 +267,4 @@ drafts. Submitted requests are in GitLab.
 | GitLab errors on preview | wrong address, project ID or token, or GitLab is only reachable on a VPN the Podman machine does not use | check the values; `podman machine ssh curl -sI https://your-gitlab` tests the route |
 | "does not know the PingOne environment ID of the source" | the server did not find `pingone_environment_id` in the source's `.tfvars` on the default branch | check that the file is named after the source exactly as in `sources` and sits where `overlayPattern` says (default: the repository root), and that it sets `pingone_environment_id = "<ID>"` |
 | preview says a value or ID is needed | another environment needs its own value | fill it in on the preview page; it is saved in that environment's `.tfvars` |
-| "The default branch changed after the preview" | someone merged in between | press **Preview again**, then submit |
+| "The default branch changed after the preview. Preview again." | someone merged in between | press **Preview again**, then submit |

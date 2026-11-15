@@ -120,10 +120,14 @@ recreate it: the configuration file is read at every start).
 | Message | Fix |
 | --- | --- |
 | `configuration file contains the unknown setting "X"` | `X` is misspelled, no longer used, or in the wrong section. Compare with `deploy/container/config.podman.json`. |
+| `configuration file sets "X" more than once in the same place` | Delete one of the two lines. Names that differ only by upper and lower case count as the same setting. |
 | `configuration file is not valid JSON near line N` | Usually a missing comma at the end of the line before N, or a comma after the last item of a list or section. |
 | `configuration setting "X" ... has the wrong kind of value` | For example a list written as text: `"sources": ["development"]`, not `"sources": "development"`. |
 | "does not know the PingOne environment ID of the source" (on preview) | The source's `.tfvars` must set `pingone_environment_id` on the default branch, be named after the source exactly as in `sources`, and sit where `overlayPattern` says (default: the repository root). |
-| `environmentIds: "X" is neither a source nor a rollout environment` | Use the exact names from `sources` and `rollout` as the keys. |
+| `environmentIds: "X" is neither in sources nor in rollout, so it is not used` (a warning in the log; the server still starts) | Use the exact names from `sources` and `rollout` as the keys, or remove the entry. |
+| `environmentIds: X and Y have the same PingOne environment ID` | Each environment has its own ID; one of the two was pasted twice. |
+| `environments "X" and "x" differ only in upper and lower case` | Give each environment one spelling, the one its `.tfvars` file uses. |
+| `environment "X" is listed twice` | An environment is either a source or in the rollout, not both. |
 | `environmentIds.X must be a PingOne environment ID` | Paste the environment's ID (a UUID) from the PingOne admin console. |
 | `sourceEnvironmentIds: "X" is not one of the sources` | Use the exact names from `sources` as the keys. |
 | `sourceEnvironmentIds.X must be a PingOne environment ID` | Paste the environment's ID (a UUID) from the PingOne admin console. |

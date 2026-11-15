@@ -57,14 +57,16 @@ Full detail: [docs/operations.md](docs/operations.md#container-and-kubernetes).
 Full detail: [docs/operations.md](docs/operations.md#rhel-9-install-systemd). Run as root.
 
 1. `useradd --system --home-dir /nonexistent --shell /sbin/nologin pingone-promote`
-2. `bash scripts/fetch-tools.sh --dest /opt/pingone-promote/tools`, then `sha256sum /opt/pingone-promote/tools/terraform`
-3. `CGO_ENABLED=0 go build -trimpath -o /opt/pingone-promote/pingone-promote ./cmd/pingone-promote`
-4. Install `deploy/config.example.json` as `/etc/pingone-promote/config.json` (mode 0640) and `deploy/secrets.example.env` as `/etc/pingone-promote/secrets.env` (mode 0600); edit both.
-5. Label the files: `semanage fcontext -a -t bin_t '/opt/pingone-promote(/.*)?' && restorecon -Rv /opt/pingone-promote`
-6. `install -m 0644 deploy/systemd/pingone-promote.service /etc/systemd/system/`
-7. `systemctl daemon-reload && systemctl enable --now pingone-promote`
-8. `journalctl -u pingone-promote -f` and check for a clean start.
-9. Keep `listen` on `127.0.0.1:8080` and publish through an authenticating reverse proxy on 443 with its name in `allowedHosts`. Only if the server itself must listen on another address, set `"exposure": "tls"` (with a certificate) or `"behind-proxy"`; see [operations](docs/operations.md).
+2. `install -d -m 0755 /opt/pingone-promote /opt/pingone-promote/tools && install -d -m 0750 -g pingone-promote /etc/pingone-promote`
+3. `bash scripts/fetch-tools.sh --dest /opt/pingone-promote/tools`, then `sha256sum /opt/pingone-promote/tools/terraform`
+4. `CGO_ENABLED=0 go build -trimpath -o /opt/pingone-promote/pingone-promote ./cmd/pingone-promote`
+5. Install `deploy/config.example.json` as `/etc/pingone-promote/config.json` (mode 0640, group `pingone-promote`) and `deploy/secrets.example.env` as `/etc/pingone-promote/secrets.env` (mode 0400, owned by `pingone-promote`); edit both.
+6. Label the files: `semanage fcontext -a -t bin_t '/opt/pingone-promote(/.*)?' && restorecon -Rv /opt/pingone-promote`
+7. Check everything as the service user: `runuser -u pingone-promote -- /opt/pingone-promote/pingone-promote serve --config /etc/pingone-promote/config.json --check-config`
+8. `install -m 0644 deploy/systemd/pingone-promote.service /etc/systemd/system/`
+9. `systemctl daemon-reload && systemctl enable --now pingone-promote`
+10. `journalctl -u pingone-promote -f` and check for a clean start.
+11. Keep `listen` on `127.0.0.1:8080` and publish through an authenticating reverse proxy on 443 with its name in `allowedHosts`. Only if the server itself must listen on another address, set `"exposure": "tls"` (with a certificate) or `"behind-proxy"`; see [operations](docs/operations.md).
 
 ## Daily use
 
@@ -86,12 +88,12 @@ Full detail: [docs/operations.md](docs/operations.md#rhel-9-install-systemd). Ru
 | Start fails: "terraformer binary does not report the pinned version" (or checksum does not match) | Wrong pingcli-terraformer build. | Re-run `scripts/fetch-tools.sh`; keep `terraformerVersion` 0.6.0 and its digest. |
 | Browser: "This server does not answer for that host name." (421) | The URL's name is not in `allowedHosts`. | Add it to `allowedHosts`, restart; the proxy must pass the original `Host` header. |
 | "This form did not come from this site's own page", "session expired or cookies are blocked" or "The form is out of date" | CSRF or same-origin refusal: stale page, blocked cookies, or a proxy rewriting origin. | Reload the page and try again; allow cookies for the site. |
-| "the default branch changed after this request was previewed; preview again" | Someone merged to the default branch after your preview. | Preview again, then submit. |
+| "The default branch changed after the preview. Preview again." | Someone merged to the default branch after your preview. | Preview again, then submit. |
 | Preview blocked: `missing_value` ("must set ...") | A rollout environment has no value for a per-environment variable. | Enter the value in the preview form for each environment. |
 | Preview blocked: "already exists in every environment (a built-in object); enter its ID for ..." | A built-in object (default population, default policy) must be adopted, not created. | Enter that environment's existing object ID in the import ID field. Find the ID in the PingOne console of that environment. |
 | "the worker cannot read it (HTTP 403: service not licensed or no read role)" | The type is unlicensed in the source, or the worker lacks a read role. | Add the read role, or ignore it for services you do not use; the export continues. |
 | "pingone: the worker token request returned HTTP 401/400; check the worker client ID, secret, environment and region" | Wrong worker credentials, environment ID or `regionCode`. | Fix `secrets.env` and `pingone` in the config. |
-| "GitLab token is required", or GitLab "...request failed; verify the server URL and network" | Empty token, wrong `baseUrl`, or blocked egress. | Fill `PINGONE_PROMOTE_GITLAB_TOKEN`; check the URL and firewall. |
+| "GitLab token is required", or the GitLab host "could not be found (DNS)", "refused the connection" or "did not answer in time" | Empty token, wrong `baseUrl`, or blocked egress. | Fill `PINGONE_PROMOTE_GITLAB_TOKEN`; check the URL, VPN and firewall. |
 | "GitLab default branch must be protected" or "GitLab project must be private, active, and have a default branch" | Project settings do not meet the server's checks. | Protect the default branch; use the right `projectId`. |
 | Unfinished drafts disappeared | The server restarted; drafts are memory-only. | Start the request again. History is in GitLab. |
 

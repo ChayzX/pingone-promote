@@ -117,7 +117,10 @@ Run as root.
     install -m 0400 -o pingone-promote -g pingone-promote deploy/secrets.example.env /etc/pingone-promote/secrets.env
     $EDITOR /etc/pingone-promote/config.json /etc/pingone-promote/secrets.env
 
-    # 5. Service
+    # 5. Check the configuration, secrets file and tools as the service user
+    runuser -u pingone-promote -- /opt/pingone-promote/pingone-promote serve --config /etc/pingone-promote/config.json --check-config
+
+    # 6. Service
     install -m 0644 deploy/systemd/pingone-promote.service /etc/systemd/system/
     systemctl daemon-reload
     systemctl enable --now pingone-promote
@@ -151,10 +154,10 @@ still untested; see `docs/acceptance/hosted-server.md`.
 program (`CGO_ENABLED=0`) and terraform and pingcli-terraformer are Go too. If
 you add a tool that JITs, relax it.
 
-Check the configuration, secrets file and tools before starting the service
-(run it as the service user, who owns the secrets file):
-
-    runuser -u pingone-promote -- /opt/pingone-promote/pingone-promote serve --config /etc/pingone-promote/config.json --check-config
+Step 5 runs as the service user because that user owns the secrets file. It
+prints `configuration, secrets file and tools are usable` and contacts
+neither PingOne nor GitLab. Repeat it after every change to the
+configuration.
 
 ### SELinux
 
@@ -202,6 +205,7 @@ of `secrets.env`; `tools.terraform`/`tools.terraformer` the absolute paths
 under `./tools`; `terraformSha256` and the darwin `terraformerSha256` (the
 script prints it); your GitLab and PingOne values. Fill `secrets.env`. Then:
 
+    ./pingone-promote serve --config config.json --check-config
     ./pingone-promote serve --config config.json
     open http://127.0.0.1:8080/
 
@@ -220,11 +224,15 @@ tmpfs (the Docker and Podman `--tmpfs` default) fails with "permission
 denied". Pass `--tmpfs /tmp:rw,exec,nosuid,nodev`; a Kubernetes `emptyDir`
 allows it.
 
-Run locally (config must say `"listen": "0.0.0.0:8080"` with
-`"exposure": "behind-proxy"` and your host name in `allowedHosts` inside the
-container, and `secretsFile` `/run/secrets/secrets.env`; the secrets file on the host must
-be `chmod 600` and owned by uid 10001 or be mapped, e.g. with
-`--userns=keep-id:uid=10001,gid=10001`):
+Run locally. Start from `deploy/container/config.podman.json`: inside the
+container the server listens on `0.0.0.0:8080` with `"exposure": "container"`
+and answers only `localhost`, and `secretsFile` is
+`/run/secrets/secrets.env`. The secrets file on the host must be `chmod 600`
+and owned by uid 10001, or be mapped with
+`--userns=keep-id:uid=10001,gid=10001`. [podman-mac.md](podman-mac.md) has
+the same run with a Podman secret instead of a mounted file. To serve a host
+name through a proxy, use `"exposure": "behind-proxy"` with `allowedHosts`
+instead.
 
     podman run --rm -p 127.0.0.1:8080:8080 --read-only --tmpfs /tmp:rw,exec,nosuid,nodev \
       --userns=keep-id:uid=10001,gid=10001 \
