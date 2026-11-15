@@ -18,6 +18,7 @@ the sign-in subflow ID and non-identifying presets. Environment IDs, the
 GitLab project and all secrets are never baked in: they are set in DaVinci.
 """
 import argparse
+import base64
 import json
 import pathlib
 import re
@@ -255,31 +256,34 @@ class Flow:
 
 # ---------------- screens ------------------------------------------------------
 CSS = """
-.pp{--pp-bg:#f2f4f7;--pp-card:#fff;--pp-ink:#16202c;--pp-muted:#4f5b69;--pp-line:#cdd4dc;--pp-bar:#0f2744;--pp-accent:#0a58a8;
+.pp{--pp-bg:#f8f8f9;--pp-card:#fff;--pp-ink:#16202c;--pp-muted:#4f5b69;--pp-line:#cdd4dc;--pp-bar:#061a41;--pp-accent:#061a41;--pp-brand-red:#e53122;--pp-link:#3e65b2;--pp-field:#f8f8f9;
 --pp-ok:#11603a;--pp-ok-soft:#eaf6ef;--pp-warn:#7a4f00;--pp-warn-soft:#fff4d9;--pp-bad:#9b1419;--pp-bad-soft:#fcefef;
-font:15px/1.55 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--pp-ink);background:var(--pp-bg);min-height:100vh;box-sizing:border-box;text-align:left}
+font:15px/1.55 proxima-nova,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--pp-ink);background:var(--pp-bg);min-height:100vh;box-sizing:border-box;text-align:left}
 .pp *{box-sizing:border-box}
-.pp-bar{background:var(--pp-bar);color:#fff;padding:0 24px;height:48px;display:flex;align-items:center;font-weight:600}
+.pp a{color:var(--pp-link)}
+.pp-bar{background:var(--pp-bar);color:#fff;padding:0 24px;height:64px;display:flex;align-items:center;gap:16px;font-weight:600;border-bottom:4px solid var(--pp-brand-red)}
+.pp-logo{display:block;width:97px;height:34px;background:no-repeat center/contain url("{LOGO}")}
+.pp-bar-name{font-size:16px;font-weight:600;letter-spacing:.2px;padding-left:16px;border-left:1px solid rgba(255,255,255,.45)}
 .pp-nav{max-width:1080px;margin:16px auto 0;padding:0 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .pp-user{margin-left:auto;color:var(--pp-muted);font-size:13px}
-.pp-main{max-width:1080px;margin:12px auto 32px;padding:22px 24px;background:var(--pp-card);border:1px solid var(--pp-line);border-radius:6px}
-.pp h1{font-size:22px;margin:0 0 6px}.pp h2{font-size:16px;margin:24px 0 8px}.pp h3{font-size:14px;margin:12px 0 6px}
+.pp-main{max-width:1080px;margin:12px auto 32px;padding:22px 24px;background:var(--pp-card);border:1px solid var(--pp-line);border-radius:28px 4px 28px 4px;box-shadow:0 2px 8px rgba(6,26,65,.08)}
+.pp h1{font-size:22px;font-weight:800;margin:0 0 6px}.pp h2{font-size:16px;margin:24px 0 8px}.pp h3{font-size:14px;margin:12px 0 6px}
 .pp h1:focus{outline:none}
 .pp-lead{color:var(--pp-muted);margin:0 0 14px}.pp-hint{color:var(--pp-muted);font-size:13px;margin:4px 0}
 .pp-sum{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px;margin:8px 0 14px;font-size:14px}.pp-sum dt{color:var(--pp-muted)}.pp-sum dd{margin:0}
 .pp-field{margin:12px 0}.pp label,.pp legend{display:block;font-weight:600;font-size:14px;margin:0 0 4px}
-.pp input[type=text],.pp select,.pp textarea{width:100%;max-width:640px;border:1px solid #8a96a3;border-radius:4px;padding:7px 10px;font:14px system-ui,sans-serif;color:var(--pp-ink);background:#fff}
+.pp input[type=text],.pp select,.pp textarea{width:100%;max-width:640px;border:1px solid #8a96a3;border-radius:4px;padding:7px 10px;font:14px system-ui,sans-serif;color:var(--pp-ink);background:var(--pp-field)}
 .pp-field.has-err input{border:2px solid var(--pp-bad)}.pp-err{color:var(--pp-bad);font-weight:600;font-size:13px;margin:2px 0}
 .pp fieldset{border:1px solid var(--pp-line);border-radius:4px;margin:10px 0;padding:8px 12px}
 .pp-radios label,.pp-check{font-weight:400;display:flex;gap:8px;align-items:center;margin:4px 0}
 .pp-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 4px}
 .pp-btn{appearance:none;border:1px solid var(--pp-accent);background:var(--pp-accent);color:#fff;border-radius:4px;padding:8px 16px;font:600 14px system-ui,sans-serif;cursor:pointer;min-height:36px}
 .pp-btn.ghost{background:#fff;color:var(--pp-accent)}.pp-btn.danger{color:var(--pp-bad);border-color:var(--pp-bad)}
-.pp-btn[disabled]{background:#e4e8ec;color:#5b6672;border-color:#b5bec8;cursor:not-allowed}
+.pp-btn[disabled]{background:#e4e4e8;color:#5b6672;border-color:#b8b8c0;cursor:not-allowed}
 .pp-btn:focus-visible,.pp a:focus-visible,.pp input:focus-visible,.pp select:focus-visible,.pp textarea:focus-visible{outline:3px solid #f2b705;outline-offset:2px}
 .pp-why{font-size:13px;color:var(--pp-muted);max-width:420px}
 .pp-table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
-.pp-table th{background:#f5f7f9;text-align:left;font-size:12px;color:var(--pp-muted);padding:8px 10px;border-bottom:1px solid var(--pp-line)}
+.pp-table th{background:#eeeef1;text-align:left;font-size:12px;color:var(--pp-muted);padding:8px 10px;border-bottom:1px solid var(--pp-line)}
 .pp-table td{padding:7px 10px;border-bottom:1px solid #e6eaee;vertical-align:top}
 .pp code{font:12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#eef2f6;border-radius:3px;padding:0 4px;word-break:break-all}
 .pp .add{color:var(--pp-ok)}.pp .chg{color:var(--pp-accent)}.pp .warn{color:var(--pp-warn)}.pp .bad{color:var(--pp-bad)}.pp .same{color:var(--pp-muted)}
@@ -301,10 +305,14 @@ font:15px/1.55 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;color:
 .pp-sr{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .pp-list li{margin:4px 0}
 """
+# The brand logo (assets/brand-logo.png, white on transparent) is embedded as a CSS background: no external image host,
+# and no <img> in the screen HTML (test_app.js treats any <img as injected markup).
+CSS = CSS.replace("{LOGO}", "data:image/png;base64," + base64.b64encode((HERE / "assets" / "brand-logo.png").read_bytes()).decode("ascii"))
 
 
 def shell(body):
-    return '<div class="pp"><div class="pp-bar">PingOne Promote</div>' + body + "</div>"
+    return ('<div class="pp"><header class="pp-bar"><span class="pp-logo" role="img" aria-label="Arvest"></span>'
+            '<span class="pp-bar-name">PingOne Promote</span></header>' + body + "</div>")
 
 
 def app_html(render_node):
