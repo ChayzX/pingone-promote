@@ -51,7 +51,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 		`["Bearer abcdefghijklmnopqrstuvwxyz0123"]`,
 	} {
 		e := factsServer(t, &fakeFacts{f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: val}, Raw: map[string]map[string]any{addr: {}}}}})
-		d := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
+		d := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "Sam Lee", Source: "dev", Whole: true, ConfirmAll: true}
 		res := &request.Result{
 			Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 			Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
@@ -67,7 +67,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 	// Authentication settings are metadata, not credentials.
 	metadata := `{"authMode":"passwordless","authType":"oidc","tokenType":"Bearer","authorizationEndpoint":"https://example.invalid/oauth2/authorize"}`
 	metadataEnv := factsServer(t, &fakeFacts{f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: metadata}, Raw: map[string]map[string]any{addr: {}}}}})
-	metadataDraft := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
+	metadataDraft := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "Sam Lee", Source: "dev", Whole: true, ConfirmAll: true}
 	metadataRes := &request.Result{
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 		Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
@@ -79,7 +79,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 	// An ordinary object is filled in.
 	val := `{"CSRauth":true,"region":"us"}`
 	ordinaryEnv := factsServer(t, &fakeFacts{f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: val}, Raw: map[string]map[string]any{addr: {}}}}})
-	ordinaryDraft := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
+	ordinaryDraft := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "Sam Lee", Source: "dev", Whole: true, ConfirmAll: true}
 	ordinaryRes := &request.Result{
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 		Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
@@ -94,7 +94,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 func TestAutofillReadErrorReport(t *testing.T) {
 	const v = "notification_settings_environment_from_email_address"
 	e := factsServer(t, &fakeFacts{err: context.DeadlineExceeded})
-	d := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "QE", Source: "dev", Whole: true, ConfirmAll: true}
+	d := &Draft{ID: "x", RequestID: "20261113-000000-abcdef", RequestedBy: "Sam Lee", Source: "dev", Whole: true, ConfirmAll: true}
 	res := &request.Result{
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: v}}},
 		Variables: map[string]request.VariableOut{v: {Kind: "env_local", Resource: "pingone_notification_settings.pingcli__notification_settings", Attribute: "from.address"}},

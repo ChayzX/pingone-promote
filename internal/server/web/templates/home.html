@@ -1,20 +1,24 @@
 {{define "content"}}
-<form method="post" action="/drafts">
+<p class="meta">Copy configuration from a source environment into Git, review what changes, and send it for approval.</p>
+<form method="post" action="/drafts" class="page-actions">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <button type="submit" class="primary">Start a new request</button>
 </form>
-{{with .Data.Drafts}}
+<section>
 <h2>Your drafts in this browser</h2>
+{{with .Data.Drafts}}
 <table>
   <thead><tr><th scope="col">Request</th><th scope="col">Source</th><th scope="col">Title</th><th scope="col">State</th></tr></thead>
   <tbody>
   {{range .}}
-    <tr><td><a href="/drafts/{{.ID}}">{{.RequestID}}</a></td><td>{{.Source}}</td><td>{{.Title}}</td><td>{{.State}}</td></tr>
+    <tr><td><a href="/drafts/{{.ID}}">{{.RequestID}}</a></td><td>{{.Source}}</td><td>{{.Title}}</td><td><span class="tag">{{.State}}</span></td></tr>
   {{end}}
   </tbody>
 </table>
+<p class="hint">Drafts are kept for this browser only and are removed after some hours without use.</p>
 {{else}}
-<p>You have no drafts yet. Drafts are kept for this browser only and are removed after some hours without use. Submitted requests are kept in GitLab.</p>
+<p class="empty">You have no drafts yet. Drafts are kept for this browser only and are removed after some hours without use. Submitted requests are kept in GitLab.</p>
 {{end}}
+</section>
 <p><a href="/requests">See submitted requests and how far each has rolled out</a></p>
 {{end}}

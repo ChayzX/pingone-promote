@@ -46,7 +46,7 @@ func TestSubmitFromAnOlderTabIsRefused(t *testing.T) {
 	dropLines(e, "qa.tfvars", "davinci_variable_companyName_value")
 	b := e.browser()
 	draft := b.newDraft()
-	whole := mainForm("QE", func(v url.Values) { v.Set("scope", "all"); v.Set("confirm_all", "yes") })
+	whole := mainForm("Sam Lee", func(v url.Values) { v.Set("scope", "all"); v.Set("confirm_all", "yes") })
 	previewDraft(t, b, draft, whole)
 	tab1 := b.wait(b.post(draft+"/values", url.Values{"v:qa:davinci_variable_companyName_value": {"reviewed in tab 1"}}))
 	mustContain(t, tab1.body, "Submit to GitLab")
@@ -72,7 +72,7 @@ func TestStringSpacesAndNoteLineEndings(t *testing.T) {
 	dropLines(e, "qa.tfvars", "davinci_variable_companyName_value")
 	b := e.browser()
 	draft := b.newDraft()
-	whole := mainForm("QE", func(v url.Values) {
+	whole := mainForm("Sam Lee", func(v url.Values) {
 		v.Set("scope", "all")
 		v.Set("confirm_all", "yes")
 		v.Set("description", "first line\r\nsecond line")
@@ -146,7 +146,7 @@ func TestJSONListTextIsNotAList(t *testing.T) {
 	dropLines(e, "qa.tfvars", "davinci_application_Web_oauth_redirect_uris")
 	b := e.browser()
 	draft := b.newDraft()
-	p := previewDraft(t, b, draft, mainForm("QE", func(v url.Values) { v.Set("scope", "all"); v.Set("confirm_all", "yes") }))
+	p := previewDraft(t, b, draft, mainForm("Sam Lee", func(v url.Values) { v.Set("scope", "all"); v.Set("confirm_all", "yes") }))
 	if strings.Contains(p.body, `<textarea id="v:qa:davinci_variable_companyName_value"`) {
 		t.Error("a string holding JSON-list text is shown one per line")
 	}

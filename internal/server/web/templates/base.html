@@ -6,12 +6,13 @@
 {{if .Refresh}}<meta http-equiv="refresh" content="2">{{end}}{{if .RefreshNow}}<meta http-equiv="refresh" content="0">{{end}}
 <title>{{.Title}} - PingOne Promote</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#main-content">Skip to the main content</a>
 <header class="top">
-  <a class="brand" href="/">PingOne Promote</a>
-  <nav aria-label="Main"><a href="/">Drafts</a><a href="/requests">Requests</a></nav>
+  <a class="brand" href="/"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><rect width="22" height="22" rx="5" fill="currentColor" opacity="0.16"/><path d="M5 15.5h4v-4h4v-4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>PingOne Promote</a>
+  <nav aria-label="Main"><a href="/"{{if ne .Title "Requests"}} aria-current="page"{{end}}>Drafts</a><a href="/requests"{{if eq .Title "Requests"}} aria-current="page"{{end}}>Requests</a></nav>
 </header>
 <main id="main-content" tabindex="-1">
 <h1>{{.Title}}</h1>

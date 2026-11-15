@@ -5,6 +5,16 @@
 {{if not .Data.Fresh}}<div class="problem" role="alert"><p>The request changed after this preview. Preview again before submitting.</p>
 <form method="post" action="/drafts/{{$d.ID}}/preview"><input type="hidden" name="csrf" value="{{$csrf}}"><button type="submit" class="primary">Preview again</button></form></div>{{end}}
 
+<nav class="onpage" aria-label="On this page">
+  {{if .Data.Types}}<a href="#summary">Summary</a>{{end}}
+  <a href="#readiness">Readiness</a>
+  {{if .Data.Changes}}<a href="#changes">Items</a>{{end}}
+  {{if $r.RequiredSecrets}}<a href="#secrets">Secrets</a>{{end}}
+  {{if .Data.Warnings}}<a href="#check">Things to check</a>{{end}}
+  <a href="#submit">Submit</a>
+  {{if or $r.Files $r.Diff .Data.Skipped}}<a href="#details">Technical details</a>{{end}}
+</nav>
+
 {{if .Data.NoChanges}}
 <div class="ready" role="status"><p><strong>Nothing to submit.</strong> {{if .Data.Kept}}Git already has everything this request would change. {{.Data.Kept}} {{if eq .Data.Kept 1}}item differs{{else}}items differ{{end}} from {{$d.Source}} and {{if eq .Data.Kept 1}}keeps its{{else}}keep their{{end}} Git version; choose update for one below to copy it.{{else}}Git already has everything in this request as it is in {{$d.Source}}.{{end}}</p></div>
 {{else if .Data.CanSubmit}}
@@ -20,32 +30,45 @@
 {{end}}{{end}}
 
 {{with .Data.Types}}
-<section>
+<section id="summary">
 <h2>What this request changes</h2>
+{{$total := 0}}{{$added := 0}}{{$updated := 0}}{{$kept := 0}}{{$unchanged := 0}}{{$moved := 0}}{{$excluded := 0}}
+{{range .}}{{$total = add $total .Total}}{{$added = add $added .Added}}{{$updated = add $updated .Updated}}{{$kept = add $kept .KeptDiffers}}{{$unchanged = add $unchanged .Unchanged}}{{$moved = add $moved .Moved}}{{$excluded = add $excluded .Excluded}}{{end}}
+<ul class="tally">
+  <li><strong>{{$added}}</strong>added</li>
+  <li><strong>{{$updated}}</strong>updated</li>
+  {{if $kept}}<li><strong>{{$kept}}</strong>kept (Git differs)</li>{{end}}
+  <li><strong>{{$unchanged}}</strong>unchanged</li>
+  {{if $moved}}<li><strong>{{$moved}}</strong>moved</li>{{end}}
+  {{if $excluded}}<li><strong>{{$excluded}}</strong>excluded</li>{{end}}
+</ul>
+<details{{if le (len .) 8}} open{{end}}><summary>By type ({{len .}})</summary>
 <table>
   <caption class="sr-only">How many items of each type are affected</caption>
   <thead><tr><th scope="col">Type</th><th scope="col" class="num">Total</th><th scope="col" class="num">Added</th><th scope="col" class="num">Updated</th><th scope="col" class="num">Kept (Git differs)</th><th scope="col" class="num">Unchanged</th><th scope="col" class="num">Moved</th><th scope="col" class="num">Excluded</th></tr></thead>
   <tbody>{{range .}}
-  <tr><td>{{.Kind}}</td><td class="num">{{.Total}}</td><td class="num">{{.Added}}</td><td class="num">{{.Updated}}</td><td class="num">{{.KeptDiffers}}</td><td class="num">{{.Unchanged}}</td><td class="num">{{.Moved}}</td><td class="num">{{.Excluded}}</td></tr>
+  <tr><td>{{.Kind}}</td><td class="num">{{.Total}}</td>{{template "count" .Added}}{{template "count" .Updated}}{{template "count" .KeptDiffers}}{{template "count" .Unchanged}}{{template "count" .Moved}}{{template "count" .Excluded}}</tr>
   {{end}}</tbody>
+  <tfoot><tr><td>All types</td><td class="num">{{$total}}</td><td class="num">{{$added}}</td><td class="num">{{$updated}}</td><td class="num">{{$kept}}</td><td class="num">{{$unchanged}}</td><td class="num">{{$moved}}</td><td class="num">{{$excluded}}</td></tr></tfoot>
 </table>
+</details>
 </section>
 {{end}}
 
 {{if .Data.Failed}}
-<section>
+<section id="readiness">
 <h2>Readiness by environment</h2>
 <p>Not checked: the preview stopped before the environments could be checked (see the message at the top).</p>
 </section>
 {{else}}
-<section>
+<section id="readiness">
 <h2>Readiness by environment</h2>
 <p class="hint">The change rolls out to these environments in this order after it is merged. An environment that is not ready blocks the request.</p>
 <table>
   <caption class="sr-only">Readiness of each environment</caption>
   <thead><tr><th scope="col">Environment</th><th scope="col">State</th><th scope="col">What it still needs</th></tr></thead>
   <tbody>{{range .Data.Envs}}
-  <tr><td>{{.Label}}{{if eq .Env $d.Source}} <span class="hint">(source)</span>{{end}}</td><td>{{if .Ready}}<span class="ok"><span aria-hidden="true">&#10003; </span>ready</span>{{else}}<span class="bad"><span aria-hidden="true">&#10007; </span>not ready</span>{{end}}</td>
+  <tr><td>{{.Label}}{{if eq .Env $d.Source}} <span class="hint">(source)</span>{{end}}</td><td>{{if .Ready}}<span class="tag ok"><span aria-hidden="true">&#10003; </span>ready</span>{{else}}<span class="tag bad"><span aria-hidden="true">&#10007; </span>not ready</span>{{end}}</td>
   <td>{{if .Ready}}<span class="hint">Nothing</span>{{else if .Summary}}<a href="#env-{{.Env}}">{{.Summary}}</a>{{else}}{{range .Blockers}}<div>{{.Text}}{{with .Tech}}<br><code class="small">{{.}}</code>{{end}}</div>{{end}}{{end}}</td></tr>
   {{end}}</tbody>
 </table>
@@ -102,7 +125,7 @@
 {{end}}
 
 {{with $r.RequiredSecrets}}
-<section>
+<section id="secrets">
 <h2>Secrets this change needs</h2>
 <p class="hint">Only names and Vault paths are shown. Secret values are never stored in Git or on this server. A new secret must be put into Vault for every environment before the rollout.</p>
 <table>
@@ -116,7 +139,7 @@
 {{end}}
 
 {{with .Data.Warnings}}
-<section>
+<section id="check">
 <h2>Things to check</h2>
 <ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
 </section>
@@ -143,7 +166,7 @@
 </section>
 
 {{if or $r.Files $r.Diff .Data.Skipped}}
-<section>
+<section id="details">
 <h2>Technical details</h2>
 {{with .Data.Skipped}}<details><summary>{{len .}} item types were not read from {{$d.Source}}</summary>
 <p class="hint">Usually a service that is not licensed in this environment, or a read permission the worker does not have. Items of these types cannot be in this request.</p>
@@ -152,7 +175,8 @@
 <ul>{{range .}}<li><code>{{.Path}}</code> ({{.Action}})</li>{{end}}</ul></details>{{end}}
 {{if $r.Diff}}<details><summary>The full change (diff)</summary>
 {{if $r.DiffTruncated}}<p class="hint">The diff is long and was cut; the complete change is in GitLab after you submit.</p>{{end}}
-<pre class="diff" tabindex="0" aria-label="Diff of the Git changes">{{$r.Diff}}</pre></details>{{end}}
+<pre class="diff" tabindex="0" aria-label="Diff of the Git changes">{{range difflines $r.Diff}}<span class="d-{{.Kind}}">{{.Text}}
+</span>{{end}}</pre></details>{{end}}
 </section>
 {{end}}
 {{end}}
@@ -162,7 +186,7 @@
       <td><strong>{{.Name}}</strong><br><span class="hint">{{.Kind}}</span><br><code class="small">{{.Address}}</code>{{with .Reason}}<div class="hint">{{.}}</div>{{end}}</td>
       <td>{{.Why}}</td>
       <td>{{.StatusText}}</td>
-      <td>{{.ActionText}}</td>
+      <td><span class="tag {{.Action}}">{{.ActionText}}</span></td>
       <td>{{if .Choosable}}
         <select name="c:{{.Address}}" aria-label="Choice for {{.Name}}">
           <option value=""{{if eq .Choice ""}} selected{{end}}>default</option>
@@ -172,3 +196,5 @@
         </select>{{end}}</td>
     </tr>
 {{end}}
+
+{{define "count"}}<td class="num">{{if .}}{{.}}{{else}}<span class="zero">0</span>{{end}}</td>{{end}}

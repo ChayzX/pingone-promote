@@ -136,7 +136,7 @@ func configDecodeError(raw []byte, err error) error {
 		return errors.New("configuration file ends early (a missing closing brace or bracket?)")
 	}
 	if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
-		return fmt.Errorf("configuration file contains the unknown setting %s; check its spelling and where it sits (docs/podman-mac.md, step 5, lists every setting)", name)
+		return fmt.Errorf("configuration file contains the unknown setting %s; check its spelling and where it sits (docs/operations.md, Configuration fields, lists every setting)", name)
 	}
 	return errors.New("configuration file is malformed")
 }

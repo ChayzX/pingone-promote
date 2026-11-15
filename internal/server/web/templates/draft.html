@@ -54,7 +54,7 @@ step's main action, not Back. --><button type="submit" name="action" value="{{if
 <h2>Your choices</h2>
 {{if ne $scope "all"}}<h3>Added</h3>
 {{with .Data.Selected}}
-<table>
+<table class="stack">
   <caption class="sr-only">Items added</caption>
   <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
   <tbody>{{range .}}
@@ -66,7 +66,7 @@ step's main action, not Back. --><button type="submit" name="action" value="{{if
 
 <h3>Left out</h3>
 {{with .Data.Excluded}}
-<table>
+<table class="stack">
   <caption class="sr-only">Items left out</caption>
   <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
   <tbody>{{range .}}
@@ -124,7 +124,7 @@ step's main action, not Back. --><button type="submit" name="action" value="{{if
 {{with .Data.SearchNotice}}<p class="notice" role="status">{{.}}</p>{{end}}
 {{if .Data.Results}}
 <p role="status">{{if gt .Data.ResultsTotal (len .Data.Results)}}Showing the first {{len .Data.Results}} of {{.Data.ResultsTotal}} matches; type part of a name or pick a type to narrow them.{{else}}{{len .Data.Results}} {{if eq (len .Data.Results) 1}}match{{else}}matches{{end}}.{{end}}</p>
-<table>
+<table class="stack">
   <caption class="sr-only">Search results</caption>
   <thead><tr><th scope="col">Item</th><th scope="col">Type</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
   <tbody>

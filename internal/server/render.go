@@ -35,6 +35,7 @@ func loadPages() (*pages, error) {
 			}
 			return t.UTC().Format("2006-01-02 15:04 UTC")
 		},
+		"difflines": diffLines,
 		"short": func(s string) string {
 			if len(s) > 12 {
 				return s[:12]
@@ -129,4 +130,32 @@ func (b *bufferedWriter) flushTo(w http.ResponseWriter) {
 	}
 	w.WriteHeader(b.status)
 	w.Write(b.body.Bytes())
+}
+
+// diffLine is one line of a unified diff with what kind of line it is,
+// so the page can mark additions and removals.
+type diffLine struct{ Kind, Text string }
+
+func diffLines(diff string) []diffLine {
+	lines := strings.Split(strings.TrimSuffix(diff, "\n"), "\n")
+	out := make([]diffLine, len(lines))
+	for i, l := range lines {
+		kind := "ctx"
+		switch {
+		case strings.HasPrefix(l, "diff "), strings.HasPrefix(l, "+++ "), strings.HasPrefix(l, "--- "), strings.HasPrefix(l, "index "),
+			strings.HasPrefix(l, "new file"), strings.HasPrefix(l, "deleted file"), strings.HasPrefix(l, "rename "), strings.HasPrefix(l, "similarity "):
+			kind = "meta"
+			if strings.HasPrefix(l, "diff ") {
+				kind = "file"
+			}
+		case strings.HasPrefix(l, "@@"):
+			kind = "hunk"
+		case strings.HasPrefix(l, "+"):
+			kind = "add"
+		case strings.HasPrefix(l, "-"):
+			kind = "del"
+		}
+		out[i] = diffLine{Kind: kind, Text: l}
+	}
+	return out
 }
