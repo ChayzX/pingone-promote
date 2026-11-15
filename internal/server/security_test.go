@@ -130,6 +130,15 @@ func TestCookieAndHeadersOnEveryPage(t *testing.T) {
 	if p := b.get("/static/style.css"); p.status != 200 {
 		t.Fatalf("stylesheet: %d", p.status)
 	}
+	// The brand images must come from /static: the policy has img-src 'self', so a data: URI would be blocked.
+	for _, p := range []string{"/static/brand-logo.png", "/static/brand-pattern.png", "/static/favicon.png"} {
+		if r := b.get(p); r.status != 200 || !strings.HasPrefix(r.body, "\x89PNG") {
+			t.Fatalf("%s: status %d, not a PNG", p, r.status)
+		}
+	}
+	if css := b.get("/static/style.css").body; strings.Contains(css, `url(data:`) || strings.Contains(css, `url("data:`) || strings.Contains(css, `url('data:`) {
+		t.Fatal("the stylesheet must not use data: URIs (img-src 'self' blocks them)")
+	}
 	req, _ := http.NewRequest(http.MethodPut, e.ts.URL+"/", nil)
 	if p := b.do(req); p.status != http.StatusMethodNotAllowed {
 		t.Fatalf("PUT: %d", p.status)
