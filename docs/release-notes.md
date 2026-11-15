@@ -1,4 +1,25 @@
-# PingOne Promote preview
+# PingOne Promote release notes
+
+## Hosted server
+
+The hosted server (`pingone-promote serve`) is developed on the
+`release/hosted-v1` line and is installed from source or as a container; see
+the [README](../README.md). Changes in the current build:
+
+- The generated definitions pin the `pingidentity/pingone` provider to the
+  1.24.x release line. Existing configuration repositories should pin it too;
+  see [updating.md](updating.md#provider-version-in-the-configuration-repository).
+- Credentials are recognised in copied JSON settings whatever the field is
+  called, and a request is blocked when two environments are given the same
+  PingOne ID.
+- The configuration file is checked more strictly at start-up (repeated
+  settings, environment names that differ only by case, region codes), and
+  `serve --check-config` runs the same checks as a real start.
+- The preview page has a summary with totals, a coloured diff, links to each
+  part of the page, and layouts for narrow screens and dark mode.
+- Go 1.27.4.
+
+## Command-line preview
 
 This preview is the v2 tool: a DaVinci request app, the `pingone-promote` command-line tool and a GitLab CI request job. The DaVinci app files a request on a branch of the config repository; the CI job exports the source environment with a pinned pingcli-terraformer, neutralizes it, merges it additively into shared definitions plus one overlay per environment, and commits the result for review. Deployment stays in the enterprise Terraform pipeline; pingone-promote never plans or applies.
 

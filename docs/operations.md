@@ -20,13 +20,20 @@ format or lose their hardening.
 
 ## Configuration fields
 
-JSON has no comments, so the example is described here. Unknown fields are
-rejected. Secrets never go in this file.
+JSON has no comments, so the example is described here. Secrets never go in this file.
+
+The server checks the whole file before it starts and names the first
+problem it finds. It refuses a setting it does not know, a setting that
+appears twice in one object, environment names that differ only by case, an
+environment listed in both `sources` and `rollout`, and a PingOne ID given
+to two environments. `serve --check-config` runs the same checks as a real
+start (including the secrets file and both tool digests), prints the result
+and exits without listening.
 
 | Field | Meaning |
 | --- | --- |
 | `listen` | `host:port`. Default `127.0.0.1:8080` (this machine only). Any non-loopback address (including `0.0.0.0` and `:8080`) is refused unless `exposure` is set. |
-| `exposure` | Empty (loopback only), `tls` (the server terminates TLS; requires `tlsCertFile`/`tlsKeyFile`) or `behind-proxy` (a TLS-terminating proxy in front; requires `allowedHosts`). Either value logs a startup warning: there is no sign-in, so anyone who can reach the port can file requests under any name. With `behind-proxy` the server expects browsers to use `https://` (form origins are checked against it). |
+| `exposure` | Empty (loopback only), `tls` (the server terminates TLS; requires `tlsCertFile`/`tlsKeyFile`), `behind-proxy` (a TLS-terminating proxy in front; requires `allowedHosts`) or `container` (plain HTTP inside a container whose port is published only to the host's `127.0.0.1`; answers `localhost` only, so `allowedHosts` and the TLS files must be empty). `tls` and `behind-proxy` log a startup warning: there is no sign-in, so anyone who can reach the port can file requests under any name. With `behind-proxy` the server expects browsers to use `https://` (form origins are checked against it). |
 | `tlsCertFile`, `tlsKeyFile` | Both or neither. Leave empty behind a TLS-terminating proxy or on localhost. |
 | `allowedHosts` | Exact `Host` header names (no port) the server answers, besides localhost and loopback. Required when reached under any other name (proxy, Service, Ingress). Forwarded-host headers are not trusted. |
 | `signIn` | `none` (the only working value). |
@@ -41,7 +48,7 @@ rejected. Secrets never go in this file.
 | `overlayPattern` | Where each environment's tfvars live, default `{env}.tfvars`. |
 | `repository` | Optional overrides: `moduleName`, `moduleDir`, `moduleFile`, `variablesFile`, `secretsFile`, `importsFile`, `customerSecretsFile`; `ciVariables` (root variables the pipeline supplies, never asked for or written to tfvars); `vaultPathPrefix`, `vaultMount` (Vault location of new secrets). |
 | `branchPrefix` | Request branch prefix, e.g. `CIAM-` (ends in `-` or `/`). |
-| `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+(-[0-9]+)?` (CIAM-1234, or CIAM-1234-1 for a second branch of one ticket); nothing is added to it, and an existing branch is refused. Without it, branches are `branchPrefix` + request ID. |
+| `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+(-[0-9]+)?` (CIAM-1234, or CIAM-1234-1 for a second branch of one ticket); nothing is added to it. A name that already exists in GitLab is refused and the page suggests the next free one (CIAM-1234-1, CIAM-1234-2, and so on). Without it, branches are `branchPrefix` + request ID. |
 | `applyJobPattern` | Apply job name in the default-branch pipeline; must contain `{env}`. |
 | `layout` | `default` or `terraformer`. |
 | `tools.terraform`, `terraformVersion`, `terraformSha256` | Terraform path, version (must be `1.16.7`), and the SHA-256 of the **extracted binary**. |

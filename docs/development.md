@@ -1,6 +1,6 @@
 # Development
 
-For operators, start at the [README](../README.md). Design background: [ADR 0018](adr/0018-hosted-source-only-server.md) (hosted server), [ADR 0019](adr/0019-core-pingone-exporter.md) (native core exporter), ADRs 0014-0016. Current state: [HANDOFF.md](HANDOFF.md).
+For operators, start at the [README](../README.md). Design background: [ADR 0018](adr/0018-hosted-source-only-server.md) (hosted server), [ADR 0019](adr/0019-core-pingone-exporter.md) (native core exporter), ADRs 0014-0016. Status and known limitations: [status.md](status.md).
 
 Platforms: macOS and Linux only. Windows is not supported; a few tests carry small Windows allowances (POSIX mode and owner checks skip) so development there is possible, but it proves nothing about the server.
 

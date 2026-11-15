@@ -35,8 +35,10 @@ These lines in its output are expected and harmless:
 
 Compare `~/pingone-promote-test/config.json` with
 `deploy/container/config.podman.json` and the settings table in
-[podman-mac.md](podman-mac.md), step 5. The server refuses to start with a
-setting it does not know, so a misspelled or misplaced name stops it.
+[podman-mac.md](podman-mac.md), step 5. Every setting is described in
+[operations.md](operations.md#configuration-fields). The server refuses to
+start with a setting it does not know or one that appears twice, so a
+misspelled, misplaced or repeated name stops it.
 
 Settings added by recent builds:
 
@@ -49,6 +51,27 @@ Settings added by recent builds:
 When the Terraform or pingcli-terraformer version in the Containerfile
 changed, also read the new checksums (podman-mac.md, step 4) and copy both
 into `tools`. The build prints the pingcli-terraformer one.
+
+### Provider version in the configuration repository
+
+The generated definitions are written for one release line of the
+`pingidentity/pingone` provider, currently 1.24.x. A later minor release can
+rename or drop attributes, and a plan then fails on definitions that were
+valid when they were merged. In the configuration repository's `versions.tf`,
+pin the provider to that line:
+
+```hcl
+pingone = {
+  source  = "pingidentity/pingone"
+  version = "~> 1.24.0"
+}
+```
+
+Run `terraform init -upgrade` once and commit the updated
+`.terraform.lock.hcl`. Until the pin is in place, every preview lists it
+under "Things to check". A new build that moves to another release line
+says so in its release notes; change the pin in the same merge request as
+the first request made with that build.
 
 ## 4. Check the configuration with the new image
 

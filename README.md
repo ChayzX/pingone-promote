@@ -1,10 +1,17 @@
 # PingOne Promote
 
+PingOne Promote copies configuration from one PingOne environment into the Terraform repository that your pipeline already deploys from. It is a small web server: you choose what to copy, review exactly what will change, and it opens a GitLab merge request. Promotion to each later environment stays where it is today, in the pipeline.
+
 ## What it does
 
-PingOne Promote lets you pick a SOURCE PingOne environment and export any of its configuration (one notification template, one application, one flow, or the whole environment) as Terraform into your configuration repository. It then opens a merge request in GitLab with the generated files and the values each later environment still needs. Your existing pipeline rolls the merged change out; PingOne Promote never changes PingOne and never runs Terraform plans or applies.
+- **Export.** Reads a source environment with a read-only worker and writes Terraform for what you chose: one application, one flow, one notification template, a whole section, or the whole environment, with or without what those items depend on.
+- **Preview.** Shows every item that is added, updated or left alone, the diff against Git, and the values each rollout environment still needs (redirect URIs, domains, IDs of built-in objects). A request cannot be submitted while a value is missing.
+- **Submit.** Commits the change to a branch and opens a merge request. Per-environment values go in that environment's `.tfvars`; secrets are declared as Vault references and never written to Git.
+- **Track.** Lists each request with its merge request and the apply job of every environment.
 
-Phase 1 has no sign-in: anyone who can reach the web page can use it, and a typed name is recorded as `NAME (unverified)`. Keep it on your own machine or behind an authenticating proxy (see [docs/operations.md](docs/operations.md)).
+PingOne Promote never changes PingOne and never runs `terraform plan` or `apply`.
+
+This release has no sign-in: anyone who can reach the page can use it, and a typed name is recorded as `NAME (unverified)`. Keep it on your own machine or behind an authenticating proxy (see [docs/operations.md](docs/operations.md)).
 
 ## Before you start
 
@@ -62,7 +69,7 @@ Full detail: [docs/operations.md](docs/operations.md#rhel-9-install-systemd). Ru
 ## Daily use
 
 1. **New request.** Open the page, type your name, choose the source environment and what to promote (one item, a group, or the whole environment, with or without what it depends on).
-2. **Preview.** Wait for the search and preview. Read the list of changes, the diff and the warnings.
+2. **Preview.** Wait for the preview. Read the summary, the item list, the diff and anything under "Things to check".
 3. **Fill in missing values.** For every rollout environment, enter the values the preview asks for (redirect URIs, domains, IDs of built-in objects). Submission stays blocked until none are missing.
 4. **Submit.** Submit the preview you reviewed. A merge request opens in GitLab and the Requests page tracks it.
 5. **Watch the rollout.** Review and merge the request; the Requests page shows each environment's apply job as the pipeline runs.
@@ -81,7 +88,7 @@ Full detail: [docs/operations.md](docs/operations.md#rhel-9-install-systemd). Ru
 | "This form did not come from this site's own page", "session expired or cookies are blocked" or "The form is out of date" | CSRF or same-origin refusal: stale page, blocked cookies, or a proxy rewriting origin. | Reload the page and try again; allow cookies for the site. |
 | "the default branch changed after this request was previewed; preview again" | Someone merged to the default branch after your preview. | Preview again, then submit. |
 | Preview blocked: `missing_value` ("must set ...") | A rollout environment has no value for a per-environment variable. | Enter the value in the preview form for each environment. |
-| Preview blocked: "already exists in every environment (a built-in object); enter its ID for ..." | A built-in object (default population, default policy) must be adopted, not created. | Enter that environment's existing object ID in the import ID field. If the form refuses IDs, see open items in [docs/HANDOFF.md](docs/HANDOFF.md). |
+| Preview blocked: "already exists in every environment (a built-in object); enter its ID for ..." | A built-in object (default population, default policy) must be adopted, not created. | Enter that environment's existing object ID in the import ID field. Find the ID in the PingOne console of that environment. |
 | "the worker cannot read it (HTTP 403: service not licensed or no read role)" | The type is unlicensed in the source, or the worker lacks a read role. | Add the read role, or ignore it for services you do not use; the export continues. |
 | "pingone: the worker token request returned HTTP 401/400; check the worker client ID, secret, environment and region" | Wrong worker credentials, environment ID or `regionCode`. | Fix `secrets.env` and `pingone` in the config. |
 | "GitLab token is required", or GitLab "...request failed; verify the server URL and network" | Empty token, wrong `baseUrl`, or blocked egress. | Fill `PINGONE_PROMOTE_GITLAB_TOKEN`; check the URL and firewall. |
@@ -97,4 +104,4 @@ More failures: [docs/operations.md](docs/operations.md#troubleshooting).
 - Rolling forward after a bad change: [docs/recovery.md](docs/recovery.md).
 - What can be exported: [docs/coverage.md](docs/coverage.md). Design: [docs/adr/README.md](docs/adr/README.md).
 - Updating to a newer build: [docs/updating.md](docs/updating.md).
-- Current state and open items: [docs/HANDOFF.md](docs/HANDOFF.md).
+- Status and known limitations: [docs/status.md](docs/status.md).
