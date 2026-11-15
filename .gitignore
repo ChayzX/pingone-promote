@@ -1,0 +1,8 @@
+/pingone-promote
+.DS_Store
+secrets.env
+*.local.json
+
+# Company root certificates for image builds (deploy/container/extra-ca/README.md)
+/deploy/container/extra-ca/*.crt
+/deploy/container/extra-ca/*.pem

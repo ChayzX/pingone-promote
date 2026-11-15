@@ -1,0 +1,171 @@
+# pingone-promote on Kubernetes: ConfigMap + Deployment (1 replica) + Service.
+#
+# PHASE 1 HAS NO SIGN-IN. Put this behind an authenticating proxy / private
+# network only; do not expose the Service publicly.
+#
+# Create the secret first (never commit it):
+#   kubectl -n pingone-promote create secret generic pingone-promote-secrets \
+#     --from-file=secrets.env=./secrets.env
+#
+# Why an init container copies the secret (verify on your cluster): a Secret
+# volume is root-owned. Without fsGroup, defaultMode 0400 makes it unreadable
+# to uid 10001. With fsGroup the kubelet sets group = fsGroup and ORs in group
+# read, so the file becomes 0440 root:10001 -- readable, but the server only
+# accepts exactly 0600 or 0400 and rejects 0440. The init container (uid
+# 10001, no capabilities) reads the group-readable source and writes an
+# owner-only 0400 copy owned by 10001 into a memory-backed emptyDir that only
+# the server container mounts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pingone-promote-config
+  namespace: pingone-promote
+data:
+  config.json: |
+    {
+      "listen": "0.0.0.0:8080",
+      "exposure": "behind-proxy",
+      "allowedHosts": ["promote.example.com"],
+      "signIn": "none",
+      "secretsFile": "/run/pingone-promote/secrets.env",
+      "gitlab": {
+        "baseUrl": "https://gitlab.example.com",
+        "projectId": "1234",
+        "mrLabels": ["pingone-promote"]
+      },
+      "pingone": {
+        "regionCode": "NA",
+        "workerEnvironmentId": "00000000-0000-0000-0000-000000000000"
+      },
+      "sources": ["development"],
+      "rollout": ["testing", "stage", "production"],
+      "branchPrefix": "CIAM-",
+      "applyJobPattern": "apply:{env}",
+      "layout": "default",
+      "tools": {
+        "terraform": "/opt/pingone-promote/tools/terraform",
+        "terraformVersion": "1.16.7",
+        "terraformSha256": "REPLACE_WITH_sha256sum_OF_tools/terraform",
+        "terraformer": "/opt/pingone-promote/tools/pingcli-terraformer",
+        "terraformerVersion": "0.6.0",
+        "terraformerSha256": "be0bea0f4f7ecb4e33a95f9894793ae9c70bb3480665d9d303c06021b8ae4a98"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pingone-promote
+  namespace: pingone-promote
+  labels:
+    app.kubernetes.io/name: pingone-promote
+spec:
+  replicas: 1 # drafts live in memory: run exactly one replica (ADR 0018)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pingone-promote
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pingone-promote
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: install-secrets
+          image: pingone-promote:REPLACE_WITH_TAG_OR_DIGEST
+          command: ["/bin/sh", "-c"]
+          args:
+            - umask 077 && cp /secrets-src/secrets.env /run/pingone-promote/secrets.env && chmod 0400 /run/pingone-promote/secrets.env
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: secrets-src
+              mountPath: /secrets-src
+              readOnly: true
+            - name: secrets-run
+              mountPath: /run/pingone-promote
+      containers:
+        - name: pingone-promote
+          image: pingone-promote:REPLACE_WITH_TAG_OR_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          # The server checks the Host header; probes must send an allowed one.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pingone-promote
+              readOnly: true
+            - name: secrets-run
+              mountPath: /run/pingone-promote
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: pingone-promote-config
+        - name: secrets-src
+          secret:
+            secretName: pingone-promote-secrets
+            defaultMode: 0400
+        - name: secrets-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pingone-promote
+  namespace: pingone-promote
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pingone-promote
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

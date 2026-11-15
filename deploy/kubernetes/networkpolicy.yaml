@@ -1,0 +1,41 @@
+# Egress limit for pingone-promote. Core NetworkPolicy cannot match hostnames,
+# so PingOne and GitLab are expressed as CIDRs: resolve and review them, or
+# route egress through a gateway/proxy with a stable IP and allow only that
+# (Cilium toFQDNs, Calico DNS policy, Istio egress gateway or a corporate
+# egress proxy can match hostnames directly). Needed hostnames (verify for your
+# region; tld is com NA, eu EU, ca CA, asia AP, com.au AU, sg SG):
+#   api.pingone.<tld>, auth.pingone.<tld>, and your GitLab host.
+# Replace the example CIDRs below; they are documentation addresses.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pingone-promote
+  namespace: pingone-promote
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pingone-promote
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-system # your authenticating proxy
+      ports:
+        - {protocol: TCP, port: 8080}
+  egress:
+    - to: # DNS
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to: # PingOne API/auth for the configured region (placeholder CIDR)
+        - ipBlock: {cidr: 203.0.113.0/24}
+      ports:
+        - {protocol: TCP, port: 443}
+    - to: # GitLab (placeholder CIDR)
+        - ipBlock: {cidr: 198.51.100.10/32}
+      ports:
+        - {protocol: TCP, port: 443}
