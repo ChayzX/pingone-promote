@@ -6,12 +6,12 @@
 {{if .Refresh}}<meta http-equiv="refresh" content="2">{{end}}{{if .RefreshNow}}<meta http-equiv="refresh" content="0">{{end}}
 <title>{{.Title}} - PingOne Promote</title>
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAASPSURBVHgBxVdrTFxFFP5mdpfHPgrLli0tpSsPeQSwCCaUR2qwTZEmEppaozYmxhj5Idb4x9po6g9MjNa0xlhpa30kplGjsX/apCrGGKXBIjE2aoVagYS1lYVQ2V2Wfc313NktwrrQu3djepKbOzOZc+a735zXBfSLMf424ZZJ52sD8RGDTuHQJxzFd7pgzW9Gdftm6LejW1GgpKMPnlF6b/+I5lHoFD0ASKc6A/aiDmKewWCqRM2OIlo3QIfoAaCgte0AvFfVMYPfI7Bhy8fQyUKqAJgE4Ch9AUKI+BKHZW0TNrbnQQcLqQOo270TkQCFoKKAS/UofH8pqGl6DzpYSBWAgKvpLYT8AoYMA0KBozCaDJIYi6MT6+6wpGozlc0MtzVVkopLHmh1hvD1oR6YHXNQr8U7paDynjckyP8JgIKqjpOYn6GvN3JMXOiVq5M/9sCYyeWV5Jc/hmqKkBTsat3IkVe2Btm5LarP0dcDQxdfgep037/zAcz2MMED5q4qsLcdlGA1G9YmAuXbe+Gnr1dtz0ycBYbDiDkdw/SVQ5QSmGTBWb4/DkCTba55T2HtPgg6z+zgGPumB//mf4aJ073ECqPzGeavG9D0+JPQyII2Buoe3ov5WTIpGIH4FeOD40sOEBgfXyD6P5OzaFDBhvpXoZGFm21g8oCSxiOILAhk5dDXDnQn0eOY7H8CtgIm03Ng1oy6XXuggYWbA6hqr0c4mC9nRpMPP53+Lolhgd8uzBBLQ3QNCsIBgeK7T8T3sXQACGza8jYW/hbgBo6pyy/GdZSktsbOPwJLHpfjUCAXmx9oSwcAR2mzE+a8ehl6lrXA+b7DWA3syLkRRIJu1VkQ8tHVtZxCLDExPQAECu86Av+0kCE2NXp0cX01mRjsQqaNyyIVDa1HceuqDQtbBZjA/X0K5twEgOgPzL4LRu0fU1YGoGqFw1PE1n5EwwbyB3Jc6yjOHKhKHUDjo0/BXvw6GYJMMIxr7/sUochoUMVCVfr3c5vw8xd/Ikm15CuAElhf20uHC3mfJjODMQuaH7k/QyKBj7JnUeuHWKFUG5MCaHioBZGQTbVA+Z9hbLAbwTkbNAsxkLPRhfzb9yG8AGTbW1C4zQH3V9cTgSSndedLlyiMKqjhUCAiA+h/eSv0yO43vZi7Zo4fdRZf9nYmbvlvRitudpEXV0rPz86lsjvUDX19P4P74rPUtHI5tjnvQ0lDDhLatkQAAqVtx+DzCDkGm8Tl/ktIobwuAzB44jjlESH1vdS2lXW8j4Qr4MvH1EzkFNwrlY1ZHO7hZ5DOv4P6zIwfW4wIa0EXyhrXLLXJlyls3XYQ3plY/s6k9u6HU58iPeH45cxzsK1j0qaXGpaSHcexJJndABCLBmfl80BEkal3+soni8D0i8D0iBfea8Nyxsiprc4H4y288QYAhoqKbHQd9tA90Qr1e5z8xF7UmABSjxikfWt+FfWRkAXN56Efmz0eFDW4JCY0NJjAa56Gf3aCmg07rcSchLMcSqtDGP38W6Qjtbv2Uk5RvT8o5wrRy6OzyHKUw/3HyX8ANuR9LN5i5rEAAAAASUVORK5CYII=" type="image/png">
 </head>
 <body>
 <a class="skip" href="#main-content">Skip to the main content</a>
 <header class="top">
-  <a class="brand" href="/"><svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><rect width="22" height="22" rx="5" fill="currentColor" opacity="0.16"/><path d="M5 15.5h4v-4h4v-4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>PingOne Promote</a>
+  <a class="brand" href="/"><span class="logo" role="img" aria-label="Arvest"></span><span class="product">PingOne Promote</span></a>
   <nav aria-label="Main"><a href="/"{{if ne .Title "Requests"}} aria-current="page"{{end}}>Drafts</a><a href="/requests"{{if eq .Title "Requests"}} aria-current="page"{{end}}>Requests</a></nav>
 </header>
 <main id="main-content" tabindex="-1">
