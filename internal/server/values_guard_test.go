@@ -26,8 +26,8 @@ func alertText(body string) string {
 }
 
 // An environment's ID typed on the preview is never the ID the server
-// configuration gives another environment (the source included): qa's
-// pipeline would apply to prod.
+// configuration gives another rollout environment: qa's pipeline would
+// apply to prod. The source's ID is accepted (it is only exported).
 func TestValuesRefuseAnotherEnvironmentsID(t *testing.T) {
 	ids := map[string]string{"dev": firstUseSourceID, "qa": "22222222-2222-4222-8222-222222222222", "stage": "33333333-3333-4333-8333-333333333333", "prod": "44444444-4444-4444-8444-444444444444"}
 	e := newCoreEnvWith(t, func(c *Config) { c.EnvironmentIDs = ids })
@@ -36,7 +36,7 @@ func TestValuesRefuseAnotherEnvironmentsID(t *testing.T) {
 	draft := b.newDraft()
 	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
 	mustContain(t, p.body, `name="v:qa:pingone_environment_id"`)
-	for _, other := range []string{"prod", "stage", "dev"} {
+	for _, other := range []string{"prod", "stage"} {
 		p = b.wait(b.post(draft+"/values", url.Values{"v:qa:pingone_environment_id": {strings.ToUpper(ids[other])}}))
 		got := alertText(p.body)
 		if !strings.Contains(got, "Nothing was saved") || !strings.Contains(got, "PingOne environment ID of "+other) {
@@ -46,11 +46,38 @@ func TestValuesRefuseAnotherEnvironmentsID(t *testing.T) {
 			t.Errorf("%s's ID was kept for qa", other)
 		}
 	}
-	// Its own ID is fine.
-	p = b.wait(b.post(draft+"/values", url.Values{"v:qa:pingone_environment_id": {ids["qa"]}}))
-	if got := alertText(p.body); got != "" {
-		t.Errorf("qa's own ID: alert = %q", got)
+	// Its own ID is fine, and so is the source's.
+	for _, own := range []string{"qa", "dev"} {
+		p = b.wait(b.post(draft+"/values", url.Values{"v:qa:pingone_environment_id": {ids[own]}}))
+		if got := alertText(p.body); got != "" {
+			t.Errorf("%s's ID for qa: alert = %q", own, got)
+		}
 	}
+}
+
+// Without environmentIds in the configuration, the source's ID in a
+// rollout environment's tfvars does not block the request.
+func TestSourceIDInRolloutTfvarsAllowed(t *testing.T) {
+	e := newCoreEnv(t)
+	dev, _, _ := e.gl.File("main", "dev.tfvars")
+	m := regexp.MustCompile(`(?m)^pingone_environment_id\s*=\s*"([^"]+)"`).FindStringSubmatch(dev)
+	if m == nil {
+		t.Fatal("the fixture's dev.tfvars sets no pingone_environment_id")
+	}
+	dropLines(e, "qa.tfvars", "pingone_environment_id")
+	b := e.browser()
+	draft := b.newDraft()
+	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
+	form := url.Values{}
+	for _, f := range valueFieldRE.FindAllStringSubmatch(p.body, -1) {
+		form.Set(f[1], "noreply@"+f[2]+".example.com")
+	}
+	form.Set("v:qa:pingone_environment_id", m[1])
+	p = b.wait(b.post(draft+"/values", form))
+	if strings.Contains(p.body, "same pingone_environment_id") {
+		t.Fatalf("qa was given the source's ID and the request is blocked:\n%s", alertText(p.body))
+	}
+	mustContain(t, p.body, "Submit to GitLab")
 }
 
 // Without environmentIds in the configuration, an ID that another

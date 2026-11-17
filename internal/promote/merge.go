@@ -108,8 +108,8 @@ const (
 	BlockSecretsFile     = "customer_secrets"
 	BlockModuleLayout    = "module_layout"
 	BlockSecretFinding   = "secret_finding"
-	// BlockSameEnvironment: two environments' overlays set the same
-	// PingOne environment ID.
+	// BlockSameEnvironment: two rollout environments' overlays set the
+	// same PingOne environment ID.
 	BlockSameEnvironment = "same_environment_id"
 	BlockMissingDep      = "missing_dependency"
 	BlockAutoTfvars      = "auto_tfvars"
@@ -993,7 +993,7 @@ func (m *merger) finish() error {
 		}
 		m.res.Files[p] = b
 	}
-	all, err := ValidateOverlays(m.view, m.l, m.envs())
+	all, err := ValidateOverlays(m.view, m.l, m.envs(), []string{m.req.SourceEnv})
 	if err != nil {
 		return err
 	}

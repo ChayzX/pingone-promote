@@ -311,15 +311,22 @@ func (c *Config) check() error {
 		}
 		c.EnvironmentIDs[name] = strings.ToLower(id)
 	}
+	for name, id := range c.SourceEnvironmentIDs {
+		c.SourceEnvironmentIDs[name] = strings.ToLower(id)
+	}
+	// Two rollout environments never share a PingOne environment ID. A
+	// source may share one with a rollout environment: it is only
+	// exported, never applied to.
 	byID := map[string]string{}
-	for _, m := range []map[string]string{c.SourceEnvironmentIDs, c.EnvironmentIDs} {
-		for _, name := range sortedNames(m) {
-			m[name] = strings.ToLower(m[name])
-			if other, ok := byID[m[name]]; ok && other != name {
-				return fmt.Errorf("environmentIds: %s and %s have the same PingOne environment ID; each environment has its own (a copy-paste mistake here would point one at the other)", other, name)
-			}
-			byID[m[name]] = name
+	for _, name := range sortedNames(c.EnvironmentIDs) {
+		if !contains(c.Rollout, name) {
+			continue
 		}
+		id := c.EnvironmentIDs[name]
+		if other, ok := byID[id]; ok {
+			return fmt.Errorf("environmentIds: %s and %s have the same PingOne environment ID; each rollout environment has its own (a copy-paste mistake here would point one at the other)", other, name)
+		}
+		byID[id] = name
 	}
 
 	if c.BranchPrefix == "" {
