@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,7 +136,11 @@ func (s *Server) env(project gitlab.Project, workspace, head, requestID string, 
 // runPreview exports, merges into a fresh snapshot of the default branch
 // and keeps the result, the snapshot and the export for submit.
 func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context, func(string)) error {
-	fp := fingerprint(*req)
+	// Called under the draft lock. The worker owns these inputs until it
+	// publishes a preview that still matches the live draft.
+	original := fingerprint(*req)
+	staged := d.previewInputs()
+	fp := original
 	return func(ctx context.Context, stage func(string)) error {
 		stage("Checking the GitLab project")
 		project, err := s.gl.VerifyProject(ctx)
@@ -171,6 +178,17 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		} else {
 			stage("Exporting the source environment and merging")
 		}
+		targets := s.fillTargets(&staged, snap)
+		// Previously accepted automatic values are tied to the configured
+		// tenant. Operator edits have already lost their automatic mark.
+		if staged.discardMismatchedFills(targets) {
+			req, err = s.buildRequest(&staged, true)
+			if err != nil {
+				os.RemoveAll(snap)
+				return err
+			}
+			fp = fingerprint(*req)
+		}
 		rec, frozen := newRecorder(s.exporter)
 		res := request.Run(ctx, s.envFor(project, snap, head, req, rec), req)
 		s.scrub(res)
@@ -179,35 +197,18 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		// The variables' types are known from here on, so values are
 		// encoded as the page will encode them (a string variable keeps its
 		// text); a request that encodes differently is merged again.
-		s.drafts.mu.Lock()
-		before := d.fillState()
-		retyped := d.noteTypes(res)
-		s.drafts.mu.Unlock()
-		if ctx.Err() == nil && (s.autofill(ctx, d, res, stage) || retyped) {
-			s.drafts.mu.Lock()
-			req2, err := s.buildRequest(d, true)
+		before := staged.fillState()
+		retyped := staged.noteTypes(res)
+		if ctx.Err() == nil && (s.autofill(ctx, &staged, res, stage, targets) || retyped) {
+			req2, err := s.buildRequest(&staged, true)
 			if err != nil {
-				d.restoreFill(before)
-				d.FillReport = append(d.FillReport, "The values found could not be used ("+s.redact(err.Error())+"), so none were filled in.")
-			}
-			s.drafts.mu.Unlock()
-			if err == nil && fingerprint(*req2) == fp {
-				// Nothing differs: the first merge stands.
-			} else if err == nil {
-				// Autofill only changes values and import IDs. A concurrent edit to
-				// the selection needs a new preview with its own export.
-				filled := *req
-				filled.EnvValues, filled.ImportIDs = req2.EnvValues, req2.ImportIDs
-				if fingerprint(filled) != fingerprint(*req2) {
-					os.RemoveAll(snap)
-					return errors.New("The draft changed during preview. Preview again to export the current selection.")
-				}
+				staged.restoreFill(before)
+				staged.FillReport = append(staged.FillReport, "The values found could not be used ("+s.redact(err.Error())+"), so none were filled in.")
+			} else if fingerprint(*req2) != fp {
 				stage("Merging again with the values filled in")
 				req, fp = req2, fingerprint(*req2)
 				res = request.Run(ctx, s.envFor(project, snap, head, req, replayer{f: frozen}), req)
 				s.scrub(res)
-			} else {
-				s.log.Warn("filled-in values were refused", "error", err.Error())
 			}
 		}
 		if ctx.Err() != nil {
@@ -216,18 +217,52 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 		}
 		s.drafts.mu.Lock()
 		defer s.drafts.mu.Unlock()
+		if s.drafts.byID[d.ID] != d {
+			os.RemoveAll(snap)
+			return nil
+		}
+		if !s.publishFill(d, &staged, original) {
+			os.RemoveAll(snap)
+			return errors.New("The draft changed during preview. Preview again to use its current selection and environment values.")
+		}
 		if old := d.preview; old != nil {
 			os.RemoveAll(old.snapshot)
-		}
-		if s.drafts.byID[d.ID] != d {
-			os.RemoveAll(snap) // the draft expired meanwhile
-			return nil
 		}
 		d.preview = &preview{result: res, fingerprint: fp, head: head, defaultBranch: project.DefaultBranch, snapshot: snap, frozen: frozen, at: s.now()}
 		d.submitted, d.conflict = nil, false
 		d.Updated = s.now()
 		return nil
 	}
+}
+
+// previewInputs isolates the fields used by buildRequest and autofill.
+func (d *Draft) previewInputs() Draft {
+	v := *d
+	v.Selected, v.Excluded, v.Families = slices.Clone(d.Selected), slices.Clone(d.Excluded), slices.Clone(d.Families)
+	v.Choices, v.varTypes = maps.Clone(d.Choices), maps.Clone(d.varTypes)
+	v.Values, v.ImportIDs = cloneNested(d.Values), cloneNested(d.ImportIDs)
+	v.Cleared, v.Filled = cloneNested(d.Cleared), cloneNested(d.Filled)
+	v.FilledAt, v.FillReport = maps.Clone(d.FilledAt), slices.Clone(d.FillReport)
+	return v
+}
+
+func cloneNested[T any](src map[string]map[string]T) map[string]map[string]T {
+	out := maps.Clone(src)
+	for k, values := range src {
+		out[k] = maps.Clone(values)
+	}
+	return out
+}
+
+// publishFill runs under the draft lock after all external calls finish.
+func (s *Server) publishFill(d, staged *Draft, original string) bool {
+	current, err := s.buildRequest(d, true)
+	if err != nil || fingerprint(*current) != original || !reflect.DeepEqual(d.Cleared, staged.Cleared) {
+		return false
+	}
+	d.Values, d.ImportIDs, d.varTypes = staged.Values, staged.ImportIDs, staged.varTypes
+	d.Filled, d.FilledAt, d.FillReport = staged.Filled, staged.FilledAt, staged.FillReport
+	return true
 }
 
 // runSubmit commits the previewed request: the same snapshot head as the

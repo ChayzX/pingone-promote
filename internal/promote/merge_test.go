@@ -83,6 +83,50 @@ func TestRetargetRolloutDiscardsSavedIDHint(t *testing.T) {
 	if id == "" || !bytes.Contains(res.Files["qa.tfvars"], []byte(id)) {
 		t.Fatal("rollout did not adopt the exported object")
 	}
+	if bytes.Contains(res.Files["qa.tfvars"], []byte("old-tenant-object")) {
+		t.Fatal("retarget left a previous tenant hint for subsequent promotions")
+	}
+	next := mergeFlowB(t, apply(head, res), nil)
+	if bytes.Contains(next.Files["qa.tfvars"], []byte("old-tenant-object")) {
+		t.Fatal("subsequent request reused an old tenant hint")
+	}
+
+}
+
+func TestUnknownTargetRequiresAnAdoptionID(t *testing.T) {
+	head := readTree(t, filepath.Join("testdata", "repo"))
+	addr := flowB + "-0020-Subflow"
+	hint := neutralize.ExcludedVariableName(addr)
+	head["qa.tfvars"] = []byte(hint + " = \"unverified-object\"\n")
+	exp := neutralized(t, exportertest.FixtureDir("dev"), flowB)
+	res, err := Merge(MergeRequest{Export: exp, Head: head, Selected: selectedFor(flowB),
+		SourceEnv: "dev", Rollout: []string{"qa"}, EnvValues: map[string]map[string]cty.Value{
+			"qa": {neutralize.EnvironmentIDVariable: cty.StringVal("22222222-2222-4222-8222-222222222222")},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range res.Blockers {
+		if b.Env == "qa" && b.Address == addr && b.Variable == hint {
+			return
+		}
+	}
+	t.Fatal("missing previous target did not block ambiguous adoption")
+}
+
+func TestSharedTargetConflictNamesRequestOverride(t *testing.T) {
+	head := readTree(t, filepath.Join("testdata", "repo"))
+	exp := neutralized(t, exportertest.FixtureDir("dev"), flowB)
+	res, err := Merge(MergeRequest{Export: exp, Head: head, Selected: selectedFor(flowB), SourceEnv: "dev", Rollout: []string{"qa"}, EnvValues: map[string]map[string]cty.Value{"qa": {neutralize.EnvironmentIDVariable: exp.SourceValues[neutralize.EnvironmentIDVariable]}}, ImportIDs: map[string]map[string]string{"qa": {flowB: "different-object"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range res.Blockers {
+		if b.Code == BlockConflict && b.Address == flowB && strings.Contains(b.Message, "supplied in this request") {
+			return
+		}
+	}
+	t.Fatal("missing actionable conflict for request-supplied ID")
 }
 
 func goldenFile(t *testing.T, name string, got []byte) {

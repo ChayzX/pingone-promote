@@ -56,7 +56,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 			Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 			Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
 		}
-		e.srv.autofill(context.Background(), d, res, func(string) {})
+		e.srv.autofill(context.Background(), d, res, func(string) {}, map[string]string{"qa": fillQAID, "prod": fillProdID})
 		if d.Values["qa"][dv] != "" {
 			t.Errorf("a secret-looking value was filled in: %.14s…", val)
 		}
@@ -72,7 +72,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 		Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
 	}
-	metadataEnv.srv.autofill(context.Background(), metadataDraft, metadataRes, func(string) {})
+	metadataEnv.srv.autofill(context.Background(), metadataDraft, metadataRes, func(string) {}, map[string]string{"qa": fillQAID, "prod": fillProdID})
 	if metadataDraft.Values["qa"][dv] != metadata {
 		t.Errorf("authentication metadata was not filled in: %q", metadataDraft.Values["qa"][dv])
 	}
@@ -84,7 +84,7 @@ func TestAutofillSkipsSecretsInsideJSON(t *testing.T) {
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: dv}}},
 		Variables: map[string]request.VariableOut{dv: {Kind: "env_local", Resource: addr, Attribute: "value"}},
 	}
-	ordinaryEnv.srv.autofill(context.Background(), ordinaryDraft, ordinaryRes, func(string) {})
+	ordinaryEnv.srv.autofill(context.Background(), ordinaryDraft, ordinaryRes, func(string) {}, map[string]string{"qa": fillQAID, "prod": fillProdID})
 	if ordinaryDraft.Values["qa"][dv] != val {
 		t.Errorf("an ordinary object value was not filled in: %q", ordinaryDraft.Values["qa"][dv])
 	}
@@ -99,7 +99,7 @@ func TestAutofillReadErrorReport(t *testing.T) {
 		Blockers:  map[string][]request.BlockerOut{"qa": {{Code: "missing_value", Var: v}}},
 		Variables: map[string]request.VariableOut{v: {Kind: "env_local", Resource: "pingone_notification_settings.pingcli__notification_settings", Attribute: "from.address"}},
 	}
-	e.srv.autofill(context.Background(), d, res, func(string) {})
+	e.srv.autofill(context.Background(), d, res, func(string) {}, map[string]string{"qa": fillQAID, "prod": fillProdID})
 	r := strings.Join(d.FillReport, " | ")
 	if !strings.Contains(r, "qa: could not be read (the read took too long)") || strings.Contains(r, "was filled in") || strings.Contains(r, "deadline") {
 		t.Errorf("report: %s", r)
@@ -112,6 +112,8 @@ func TestClearedFilledValueStaysClear(t *testing.T) {
 	e := newCoreEnvWith(t, func(c *Config) {
 		c.EnvironmentIDs = map[string]string{"dev": firstUseSourceID, "qa": firstUseSourceID, "stage": firstUseSourceID, "prod": firstUseSourceID}
 	})
+	prod, _, _ := e.gl.File("main", "prod.tfvars")
+	e.gl.Edit("main", "prod.tfvars", strings.ReplaceAll(string(prod), "44444444-4444-4444-8444-444444444444", e.srv.cfg.envID("prod")))
 	b := e.browser()
 	draft := b.newDraft()
 	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
@@ -185,5 +187,34 @@ func TestTypesKnownBeforeThePreviewIsStored(t *testing.T) {
 	}
 	if d.noteTypes(&request.Result{Variables: map[string]request.VariableOut{dv: {Type: "string"}}}) {
 		t.Fatal("a known type is reported as new")
+	}
+}
+
+func TestPreviewFillPublishedOnlyForOriginalDraft(t *testing.T) {
+	e := factsServer(t, &fakeFacts{})
+	for _, edit := range []string{"selection", "target", "unchanged"} {
+		t.Run(edit, func(t *testing.T) {
+			d := &Draft{Source: "dev", RequestID: "20261113-000000-abcdef", RequestedBy: "Sam Lee", Whole: true, ConfirmAll: true}
+			req, err := e.srv.buildRequest(d, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			staged := d.previewInputs()
+			staged.setImportID("qa", "some.resource", "qa-object")
+			switch edit {
+			case "target":
+				d.Values = map[string]map[string]string{"qa": {"pingone_environment_id": fillProdID}}
+			case "selection":
+				d.Whole = false
+				d.Selected = []Item{{Address: "pingone_application.some_app"}}
+			}
+			published := e.srv.publishFill(d, &staged, fingerprint(*req))
+			if published != (edit == "unchanged") || (d.ImportIDs["qa"]["some.resource"] != "") != published {
+				t.Fatalf("published=%v, import IDs=%v", published, d.ImportIDs)
+			}
+			if edit == "target" && e.srv.fillTargets(d, t.TempDir())["qa"] != "" {
+				t.Fatal("changed target permitted reads from configured tenant")
+			}
+		})
 	}
 }

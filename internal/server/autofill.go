@@ -10,10 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
 	"pingone-promote/internal/coreexport"
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/multiexport"
 	"pingone-promote/internal/neutralize"
+	"pingone-promote/internal/overlay"
+	"pingone-promote/internal/promote"
 	"pingone-promote/internal/request"
 	"pingone-promote/internal/secretscan"
 )
@@ -40,6 +43,63 @@ type filled map[string]map[string]string
 // (environmentIds), not read from the environment.
 const fromConfig = "config"
 
+// fillTargets permits reads only for configured tenants whose IDs agree
+// with the request override or, without an override, its Git snapshot.
+func (s *Server) fillTargets(d *Draft, snap string) map[string]string {
+	targets := map[string]string{}
+	for _, env := range append([]string{d.Source}, s.cfg.Rollout...) {
+		configured := s.cfg.envID(env)
+		if configured == "" {
+			continue
+		}
+		override := d.Values[env][neutralize.EnvironmentIDVariable]
+		if override == "" && !s.layout.FromCI(neutralize.EnvironmentIDVariable) {
+			path, err := s.layout.Overlay(env)
+			if err != nil {
+				continue
+			}
+			data, found, err := promote.DirRepo(snap).Read(path)
+			if err != nil {
+				continue
+			}
+			if found {
+				o, err := overlay.ParseOverlay(data, path)
+				if err != nil {
+					continue
+				}
+				if v, ok := o.Values[neutralize.EnvironmentIDVariable]; ok {
+					if v.IsNull() || !v.IsKnown() || v.Type() != cty.String {
+						continue
+					}
+					override = v.AsString()
+				}
+			}
+		}
+		if override == "" || strings.EqualFold(override, configured) {
+			targets[env] = configured
+		}
+	}
+	return targets
+}
+
+// All automatic values originate from the configured tenant for that role.
+func (d *Draft) discardMismatchedFills(targets map[string]string) bool {
+	changed := false
+	for env, keys := range d.Filled {
+		if targets[env] != "" {
+			continue
+		}
+		for key := range keys {
+			delete(d.Values[env], key)
+			delete(d.ImportIDs[env], key)
+			changed = true
+		}
+		delete(d.Filled, env)
+		delete(d.FilledAt, env)
+	}
+	return changed
+}
+
 // autofill enters, for each environment with a known PingOne ID, the
 // values a preview asks for that the environment already has: its own
 // environment ID, the ID of an existing item, the import ID of one to
@@ -48,15 +108,13 @@ const fromConfig = "config"
 // is marked. The environments are read at the same time. What happened
 // per environment is kept for the page (d.FillReport). It reports whether
 // anything was entered.
-func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, stage func(string)) bool {
+func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, stage func(string), targets map[string]string) bool {
 	if len(s.cfg.EnvironmentIDs) == 0 && len(s.cfg.SourceEnvironmentIDs) == 0 {
 		return false
 	}
 	// The source as this preview read it (a save in another tab can
 	// change the draft's while this runs).
-	s.drafts.mu.Lock()
 	source := d.Source
-	s.drafts.mu.Unlock()
 	envs := append([]string{source}, s.cfg.Rollout...)
 	fr, canRead := s.exporter.(factsReader)
 	type read struct {
@@ -68,7 +126,7 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 	var wg sync.WaitGroup
 	var reading []string
 	for _, env := range envs {
-		id := s.cfg.envID(env)
+		id := targets[env]
 		if env == source || id == "" || !canRead || !needsFacts(res.Blockers[env]) {
 			continue
 		}
@@ -104,9 +162,13 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 		if asked == 0 {
 			continue
 		}
-		id := s.cfg.envID(env)
+		id := targets[env]
 		if id == "" {
-			report = append(report, env+": nothing filled in, because its PingOne environment ID is not in environmentIds in the server configuration (the name must be exactly "+env+").")
+			if s.cfg.envID(env) == "" {
+				report = append(report, env+": nothing filled in, because its PingOne environment ID is not in environmentIds in the server configuration.")
+			} else {
+				report = append(report, env+": nothing filled in: the effective target is unknown or differs from the configured environment ID.")
+			}
 			continue
 		}
 		r := reads[env]
@@ -122,16 +184,13 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 		if r != nil && r.err == nil {
 			f = r.f
 		}
-		s.drafts.mu.Lock()
 		if d.FilledAt == nil {
 			d.FilledAt = map[string]time.Time{}
 		}
 		if f != nil {
 			d.FilledAt[env] = f.At
 		}
-		s.drafts.mu.Unlock()
 		n := 0
-		s.drafts.mu.Lock()
 		for _, b := range bs {
 			switch {
 			case b.Code == "missing_value" && b.Var == neutralize.EnvironmentIDVariable:
@@ -150,7 +209,6 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 				}
 			}
 		}
-		s.drafts.mu.Unlock()
 		if n > 0 {
 			changed = true
 		}
@@ -178,9 +236,7 @@ func (s *Server) autofill(ctx context.Context, d *Draft, res *request.Result, st
 		}
 		report = append(report, line+".")
 	}
-	s.drafts.mu.Lock()
 	d.FillReport = report
-	s.drafts.mu.Unlock()
 	return changed
 }
 

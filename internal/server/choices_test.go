@@ -154,6 +154,8 @@ func TestValuesFilledInFromTheEnvironments(t *testing.T) {
 		c.EnvironmentIDs = map[string]string{"dev": firstUseSourceID, "qa": firstUseSourceID, "stage": firstUseSourceID, "prod": firstUseSourceID}
 	})
 	dropLines(e, "qa.tfvars", "pingone_environment_id")
+	prod, _, _ := e.gl.File("main", "prod.tfvars")
+	e.gl.Edit("main", "prod.tfvars", strings.ReplaceAll(string(prod), "44444444-4444-4444-8444-444444444444", e.srv.cfg.envID("prod")))
 	b := e.browser()
 	draft := b.newDraft()
 	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))
@@ -183,6 +185,9 @@ func TestFillReportExplainsBlankValues(t *testing.T) {
 	e := newCoreEnvWith(t, func(c *Config) {
 		c.EnvironmentIDs = map[string]string{"dev": firstUseSourceID, "qa": firstUseSourceID, "prod": "99999999-9999-4999-8999-999999999999"}
 	})
+	prod, _, _ := e.gl.File("main", "prod.tfvars")
+	e.gl.Edit("main", "prod.tfvars", strings.ReplaceAll(string(prod), "44444444-4444-4444-8444-444444444444", e.srv.cfg.envID("prod")))
+	dropLines(e, "qa.tfvars", "pingone_environment_id")
 	b := e.browser()
 	draft := b.newDraft()
 	p := previewDraft(t, b, draft, mainForm("Core Tester", notificationsOnly("")))

@@ -862,6 +862,15 @@ func (m *merger) overlays() error {
 		savedTarget := cur.Values[neutralize.EnvironmentIDVariable]
 		sameTarget := !overridden || sameEnvironmentID(savedTarget, target)
 		sharesSource := env != m.req.SourceEnv && m.targetsExportedEnvironment(env, cur.Values)
+		if env != m.req.SourceEnv && !sameTarget {
+			m.retargetHints(env, cur, set, sharesSource)
+			for addr := range m.knownIDs(cur) {
+				value := m.req.EnvValues[env][neutralize.ExcludedVariableName(addr)]
+				if value.Type() == cty.String && !value.IsNull() && value.AsString() != "" {
+					extra[addr] = value.AsString()
+				}
+			}
+		}
 		if env != m.req.SourceEnv && sameTarget {
 			// An item an earlier request referred to by ID variable already
 			// exists here (Git holds its ID): adopt it by import instead
@@ -923,6 +932,57 @@ func (m *merger) overlays() error {
 	return nil
 }
 
+// A target edit must not leave an old tenant's adoption hints in Git for
+// a later request. Resolve them from verified source IDs for a shared
+// tenant, or block until the operator supplies target-specific values.
+func (m *merger) retargetHints(env string, cur *overlay.Overlay, set map[string]cty.Value, sharesSource bool) {
+	hints := map[string]string{}
+	if sharesSource {
+		for addr, id := range m.req.Export.SourceIDs {
+			if simpleAdoptionID(addr) {
+				hints[neutralize.ExcludedVariableName(addr)] = id
+			}
+		}
+	}
+	known := m.knownIDs(cur)
+	addresses := map[string]string{}
+	for addr := range known {
+		addresses[neutralize.ExcludedVariableName(addr)] = addr
+	}
+	for name, old := range cur.Values {
+		if name == neutralize.EnvironmentIDVariable || !strings.HasPrefix(name, "pingone_") || !strings.HasSuffix(name, "_id") ||
+			old.Type() != cty.String || old.IsNull() || old.AsString() == "" {
+			continue
+		}
+		addr := addresses[name]
+		supplied, confirmed := m.req.EnvValues[env][name]
+		if confirmed && supplied.Type() == cty.String && !supplied.IsNull() && supplied.AsString() != "" {
+			continue
+		}
+		if id := hints[name]; id != "" {
+			set[name] = cty.StringVal(id)
+			continue
+		}
+		if addr != "" {
+			if id := m.req.ImportIDs[env][addr]; id != "" {
+				set[name] = cty.StringVal(id)
+				continue
+			}
+			if cur.Values[neutralize.EnvironmentIDVariable].IsNull() {
+				ids := cur.Values["import_ids"]
+				if !ids.IsNull() && (ids.Type().IsObjectType() || ids.Type().IsMapType()) {
+					if id, ok := ids.AsValueMap()[m.l.ModuleAddress(addr)]; ok && !id.IsNull() && id.Type() == cty.String && id.AsString() != "" {
+						set[name] = id
+						continue
+					}
+				}
+			}
+		}
+		m.res.Blockers = append(m.res.Blockers, Blocker{Env: env, Code: BlockMissingValue, Address: addr, Variable: name,
+			Message: "Confirm the target-specific ID for " + name + " in " + env + " before changing the rollout target. Remove an obsolete hint from the overlay in Git."})
+	}
+}
+
 // targetsExportedEnvironment compares the effective rollout overlay with the
 // environment actually exported. Pipeline-supplied IDs are unknown here.
 func (m *merger) targetsExportedEnvironment(env string, values map[string]cty.Value) bool {
@@ -964,8 +1024,12 @@ func (m *merger) sourceImportIDs(cur cty.Value, rollout string) (cty.Value, bool
 		}
 		if old, exists := mp[key]; exists {
 			if rollout != "" && !old.RawEquals(cty.StringVal(id)) {
+				fix := "Correct import_ids in the rollout overlay in Git and preview again."
+				if m.req.ImportIDs[rollout][a] != "" {
+					fix = "Correct or clear the import ID supplied in this request and preview again."
+				}
 				m.res.Blockers = append(m.res.Blockers, Blocker{Env: rollout, Code: BlockConflict, Address: a,
-					Message: "The rollout targets the exported environment, but its import ID for " + a + " differs from the exported ID. Correct import_ids in the rollout overlay in Git and preview again."})
+					Message: "The rollout targets the exported environment, but its import ID for " + a + " differs from the exported ID. " + fix})
 			}
 		} else {
 			mp[key] = cty.StringVal(id)
@@ -1202,6 +1266,13 @@ func (m *merger) adoption() ([]Blocker, error) {
 	return out, nil
 }
 
+// A scalar reference can supply an import ID only for single-ID resources.
+func simpleAdoptionID(addr string) bool {
+	typ, _, _ := strings.Cut(addr, ".")
+	format := catalog.ImportFormat(typ)
+	return typ != neutralize.TypeFlowPolicy && (format == catalog.ImportID || format == "")
+}
+
 // knownIDs lists newly added addresses whose ID the environment's settings
 // already hold in the ID variable an earlier request used for them, for
 // types imported by that ID alone.
@@ -1211,12 +1282,8 @@ func (m *merger) knownIDs(cur *overlay.Overlay) map[string]string {
 		if _, inHead := m.head.texts[a]; inHead || !importable(a) {
 			continue
 		}
-		typ, _, _ := strings.Cut(a, ".")
-		if f := catalog.ImportFormat(typ); f != catalog.ImportID && f != "" {
+		if !simpleAdoptionID(a) {
 			continue
-		}
-		if typ == neutralize.TypeFlowPolicy {
-			continue // imported by application and policy ID
 		}
 		v, ok := cur.Values[neutralize.ExcludedVariableName(a)]
 		if ok && !v.IsNull() && v.Type() == cty.String && v.AsString() != "" {
