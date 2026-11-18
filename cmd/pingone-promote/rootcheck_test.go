@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -125,6 +126,37 @@ func TestRootCheckFindsProblems(t *testing.T) {
 				t.Fatalf("code %d, problems %s", code, codes(rep))
 			}
 		})
+	}
+}
+
+// A source may share its PingOne environment ID with a rollout
+// environment (it is only exported); two rollout environments may not.
+func TestRootCheckSharedEnvironmentID(t *testing.T) {
+	setID := func(t *testing.T, dir, env, id string) {
+		t.Helper()
+		p := filepath.Join(dir, env+".tfvars")
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		re := regexp.MustCompile(`(?m)^pingone_environment_id\s*=\s*"[^"]*"`)
+		if !re.Match(b) {
+			t.Fatalf("%s sets no pingone_environment_id", p)
+		}
+		os.WriteFile(p, re.ReplaceAll(b, []byte(`pingone_environment_id = "`+id+`"`)), 0o644)
+	}
+	const shared = "abababab-abab-4bab-8bab-abababababab"
+	dir := copyRepo(t)
+	setID(t, dir, "dev", shared)
+	setID(t, dir, "qa", shared)
+	code, rep := rootCheck(t, "--root", dir, "--envs", "dev,qa,stage,prod", "--sources", "dev")
+	if code != checkOK || !rep.OK {
+		t.Fatalf("source sharing an ID with a rollout environment: code %d, problems %+v", code, rep.Problems)
+	}
+	setID(t, dir, "prod", shared)
+	code, rep = rootCheck(t, "--root", dir, "--envs", "dev,qa,stage,prod", "--sources", "dev")
+	if code != checkProblems || !strings.Contains(codes(rep), promote.BlockSameEnvironment) {
+		t.Fatalf("two rollout environments sharing an ID: code %d, problems %s", code, codes(rep))
 	}
 }
 

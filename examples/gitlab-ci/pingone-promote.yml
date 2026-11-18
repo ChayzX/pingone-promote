@@ -122,4 +122,4 @@ pingone-promote:check:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   script:
-    - pingone-promote check --root . --customer-secrets customer_secrets.yml --terraform-fmt="$PINGONE_PROMOTE_TERRAFORM_BIN" --envs "${PINGONE_PROMOTE_SOURCES},${PINGONE_PROMOTE_ROLLOUT}"
+    - pingone-promote check --root . --customer-secrets customer_secrets.yml --terraform-fmt="$PINGONE_PROMOTE_TERRAFORM_BIN" --envs "${PINGONE_PROMOTE_SOURCES},${PINGONE_PROMOTE_ROLLOUT}" --sources "${PINGONE_PROMOTE_SOURCES}"

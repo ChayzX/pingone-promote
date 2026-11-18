@@ -125,7 +125,7 @@ recreate it: the configuration file is read at every start).
 | `configuration setting "X" ... has the wrong kind of value` | For example a list written as text: `"sources": ["development"]`, not `"sources": "development"`. |
 | "does not know the PingOne environment ID of the source" (on preview) | The source's `.tfvars` must set `pingone_environment_id` on the default branch, be named after the source exactly as in `sources`, and sit where `overlayPattern` says (default: the repository root). |
 | `environmentIds: "X" is neither in sources nor in rollout, so it is not used` (a warning in the log; the server still starts) | Use the exact names from `sources` and `rollout` as the keys, or remove the entry. |
-| `environmentIds: X and Y have the same PingOne environment ID` | Each environment has its own ID; one of the two was pasted twice. |
+| `environmentIds: X and Y have the same PingOne environment ID` | Each rollout environment has its own ID; one of the two was pasted twice. A source may share its ID with a rollout environment. |
 | `environments "X" and "x" differ only in upper and lower case` | Give each environment one spelling, the one its `.tfvars` file uses. |
 | `environment "X" is listed twice` | An environment is either a source or in the rollout, not both. |
 | `environmentIds.X must be a PingOne environment ID` | Paste the environment's ID (a UUID) from the PingOne admin console. |

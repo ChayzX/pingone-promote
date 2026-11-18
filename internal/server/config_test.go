@@ -547,14 +547,26 @@ func TestEnvironmentIDsExtraNameIsAWarning(t *testing.T) {
 	}
 }
 
-// Two environments with one PingOne ID (a copy-paste mistake) stop the
-// server; IDs are kept in lower case.
+// Two rollout environments with one PingOne ID (a copy-paste mistake) stop
+// the server; a source may share its ID with a rollout environment. IDs
+// are kept in lower case.
 func TestEnvironmentIDsMustDiffer(t *testing.T) {
 	m := validConfig()
 	m["environmentIds"] = map[string]string{"testing": "22222222-2222-4222-8222-222222222222", "production": "22222222-2222-4222-8222-222222222222"}
 	if _, err := loadMap(t, m); err == nil || !strings.Contains(err.Error(), "same PingOne environment ID") {
 		t.Fatalf("a shared ID was accepted: %v", err)
 	}
+	m["environmentIds"] = map[string]string{"development": "22222222-2222-4222-8222-222222222222", "testing": "22222222-2222-4222-8222-222222222222"}
+	if _, err := loadMap(t, m); err != nil {
+		t.Fatalf("the source sharing its ID with a rollout environment was refused: %v", err)
+	}
+	delete(m, "environmentIds")
+	m["sourceEnvironmentIds"] = map[string]string{"development": "22222222-2222-4222-8222-222222222222"}
+	m["environmentIds"] = map[string]string{"production": "22222222-2222-4222-8222-222222222222"}
+	if _, err := loadMap(t, m); err != nil {
+		t.Fatalf("sourceEnvironmentIds shared with a rollout environment was refused: %v", err)
+	}
+	delete(m, "sourceEnvironmentIds")
 	m["environmentIds"] = map[string]string{"testing": "AAAAAAAA-2222-4222-8222-222222222222"}
 	c, err := loadMap(t, m)
 	if err != nil {

@@ -18,15 +18,23 @@ import (
 //     (missing ones are blockers for that environment);
 //   - no key is undeclared, and no key is a secret;
 //   - import_ids keys are module.<name>.<address> of managed resources;
-//   - no value looks like a secret.
+//   - no value looks like a secret;
+//   - no two rollout environments share a PingOne environment ID. A
+//     source may share one with a rollout environment: it is only
+//     exported, never applied to.
 //
-// envs is the source followed by the rollout. Overlays of other
+// envs is the source followed by the rollout; sources names the ones of
+// them (or of the overlays found) that are sources. Overlays of other
 // environments (a disaster-recovery copy, ...) are not this request's
 // business and are not checked: a problem there must not block it.
-func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
+func ValidateOverlays(r Repo, l Layout, envs, sources []string) ([]Blocker, error) {
 	ix, err := loadIndex(r, l)
 	if err != nil {
 		return nil, err
+	}
+	source := map[string]bool{}
+	for _, e := range sources {
+		source[e] = true
 	}
 	all := map[string]bool{}
 	for _, e := range envs {
@@ -73,9 +81,11 @@ func ValidateOverlays(r Repo, l Layout, envs []string) ([]Blocker, error) {
 				out = append(out, Blocker{Env: env, Code: BlockMissingValue, Variable: v, Message: p + " must set " + v})
 			}
 		}
-		// Two environments never share a PingOne environment ID: the
-		// pipeline would apply one environment's changes to the other.
-		if id, ok := o.Values[neutralize.EnvironmentIDVariable]; ok && id.IsKnown() && !id.IsNull() && id.Type() == cty.String && strings.TrimSpace(id.AsString()) != "" {
+		// Two rollout environments never share a PingOne environment ID:
+		// the pipeline would apply one environment's changes to the other.
+		// A source is only exported, so it may share one with a rollout
+		// environment.
+		if id, ok := o.Values[neutralize.EnvironmentIDVariable]; ok && id.IsKnown() && !id.IsNull() && id.Type() == cty.String && strings.TrimSpace(id.AsString()) != "" && !source[env] {
 			key := strings.ToLower(strings.TrimSpace(id.AsString()))
 			if other, dup := idOwner[key]; dup {
 				out = append(out, Blocker{Env: env, Code: BlockSameEnvironment, Variable: neutralize.EnvironmentIDVariable,

@@ -32,7 +32,9 @@ per environment) offline:
     offline provider mirror).
 
 --envs lists environments that must have overlays (source and rollout);
-overlays found on disk are always checked.
+overlays found on disk are always checked. --sources names the source
+environments: a source may share its pingone_environment_id with a rollout
+environment, while two other environments may not.
 
 Exit status: 0 valid, 1 problems found, 2 usage or environment error.
 `
@@ -62,6 +64,7 @@ func runRootCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	root := fs.String("root", "", "")
 	customer := fs.String("customer-secrets", "", "")
 	envs := fs.String("envs", "", "")
+	sources := fs.String("sources", "", "")
 	pattern := fs.String("overlay-pattern", "", "")
 	layoutName := fs.String("layout", "", "")
 	format := fs.String("format", "text", "")
@@ -101,6 +104,9 @@ func runRootCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	if *envs != "" {
 		o.Envs = strings.Split(*envs, ",")
+	}
+	if *sources != "" {
+		o.Sources = strings.Split(*sources, ",")
 	}
 	if *customer != "" {
 		raw, err := readBounded(*customer)

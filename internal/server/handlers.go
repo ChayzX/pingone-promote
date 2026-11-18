@@ -982,9 +982,9 @@ func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 				dst[env][name] = text
 			}
 		}
-		// An environment's ID is never another environment's (the
-		// configuration refuses that too): its changes would be applied
-		// to the other one.
+		// A rollout environment's ID is never another rollout
+		// environment's (the configuration refuses that too): its changes
+		// would be applied to the other one. A source may share its ID.
 		for _, env := range envs {
 			id := strings.TrimSpace(values[env][neutralize.EnvironmentIDVariable])
 			if id == "" {
@@ -1394,36 +1394,37 @@ func readAt(d *Draft, env string) string {
 	return " has"
 }
 
-// environmentWithID names the environment, other than env, that the
-// server configuration gives this PingOne environment ID ("" when none).
+// environmentWithID names the rollout environment, other than env, that
+// the server configuration gives this PingOne environment ID ("" when
+// none). A source may share its ID with a rollout environment (it is only
+// exported, never applied to), so sources are left out on both sides.
 func (s *Server) environmentWithID(id, env string) string {
-	if strings.EqualFold(s.cfg.EnvironmentIDs[env], id) {
-		return "" // its own ID, by the configuration
+	if strings.EqualFold(s.cfg.EnvironmentIDs[env], id) || contains(s.cfg.Sources, env) {
+		return "" // its own ID, by the configuration, or a source
 	}
-	for _, m := range []map[string]string{s.cfg.EnvironmentIDs, s.cfg.SourceEnvironmentIDs} {
-		for _, name := range sortedNames(m) {
-			if name != env && strings.EqualFold(m[name], id) {
-				return name
-			}
+	for _, name := range sortedNames(s.cfg.EnvironmentIDs) {
+		if name != env && contains(s.cfg.Rollout, name) && strings.EqualFold(s.cfg.EnvironmentIDs[name], id) {
+			return name
 		}
 	}
 	return ""
 }
 
 // sharedEnvironmentIDs reports whether the configuration in use gives two
-// environments the same PingOne environment ID. A configuration file never
-// does (loading refuses it); only a demonstration built in code does, with
-// every rollout environment standing for the source.
+// rollout environments the same PingOne environment ID. A configuration
+// file never does (loading refuses it); only a demonstration built in code
+// does, with every rollout environment standing for the source.
 func (s *Server) sharedEnvironmentIDs() bool {
 	seen := map[string]string{}
-	for _, m := range []map[string]string{s.cfg.SourceEnvironmentIDs, s.cfg.EnvironmentIDs} {
-		for name, id := range m {
-			id = strings.ToLower(id)
-			if other, ok := seen[id]; ok && other != name {
-				return true
-			}
-			seen[id] = name
+	for name, id := range s.cfg.EnvironmentIDs {
+		if !contains(s.cfg.Rollout, name) {
+			continue
 		}
+		id = strings.ToLower(id)
+		if other, ok := seen[id]; ok && other != name {
+			return true
+		}
+		seen[id] = name
 	}
 	return false
 }

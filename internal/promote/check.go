@@ -29,6 +29,10 @@ type CheckOptions struct {
 	// Envs are the environments that must have complete overlays (source
 	// and rollout). Overlays found on disk are always checked too.
 	Envs []string
+	// Sources are the source environments. A source may share its
+	// PingOne environment ID with a rollout environment; two other
+	// environments may not. They need overlays too.
+	Sources []string
 	// CustomerSecrets is the customer_secrets.yml content, nil to skip.
 	CustomerSecrets []byte
 	SecretsConfig   *pipelinesecrets.Config
@@ -114,14 +118,17 @@ func CheckRoot(ctx context.Context, o CheckOptions) (*CheckReport, error) {
 		}
 	}
 	// Overlays.
-	envs := append([]string(nil), o.Envs...)
+	var envs []string
+	seen := map[string]bool{}
+	for _, e := range append(append([]string(nil), o.Envs...), o.Sources...) {
+		if !seen[e] {
+			seen[e] = true
+			envs = append(envs, e)
+		}
+	}
 	found, err := overlayFiles(repo, l)
 	if err != nil {
 		return nil, err
-	}
-	seen := map[string]bool{}
-	for _, e := range envs {
-		seen[e] = true
 	}
 	for e := range found {
 		if !seen[e] {
@@ -134,7 +141,7 @@ func CheckRoot(ctx context.Context, o CheckOptions) (*CheckReport, error) {
 	if len(envs) == 0 {
 		add(BlockMissingOverlay, "", "", "no environment overlays found ("+l.OverlayPattern+")")
 	}
-	blockers, err := ValidateOverlays(repo, l, envs)
+	blockers, err := ValidateOverlays(repo, l, envs, o.Sources)
 	if err != nil {
 		return nil, err
 	}

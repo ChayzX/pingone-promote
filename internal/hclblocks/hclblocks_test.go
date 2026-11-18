@@ -135,7 +135,13 @@ func TestManyInsertsStayFast(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if d := time.Since(start); d > 5*time.Second {
+	// A re-parse per insert takes far longer than this; the race
+	// detector alone slows the loop several times.
+	limit := 5 * time.Second
+	if raceEnabled {
+		limit *= 5
+	}
+	if d := time.Since(start); d > limit {
 		t.Fatalf("500 inserts took %s", d)
 	}
 }
