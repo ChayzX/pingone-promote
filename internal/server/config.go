@@ -214,10 +214,10 @@ func LoadConfig(path string) (Config, error) {
 
 func (c *Config) check() error {
 	if c.Tools.TerraformVersion == "" {
-		c.Tools.TerraformVersion = "1.16.7"
+		c.Tools.TerraformVersion = "1.17.2"
 	}
-	if c.Tools.TerraformVersion != "1.16.7" {
-		return errors.New("tools.terraformVersion must be 1.16.7")
+	if c.Tools.TerraformVersion != "1.17.2" {
+		return errors.New("tools.terraformVersion must be 1.17.2")
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8080"

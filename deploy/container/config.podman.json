@@ -20,7 +20,7 @@
   "layout": "default",
   "tools": {
     "terraform": "/opt/pingone-promote/tools/terraform",
-    "terraformVersion": "1.16.7",
+    "terraformVersion": "1.17.2",
     "terraformSha256": "REPLACE_WITH_THE_TERRAFORM_SHA256_FROM_STEP_4",
     "terraformer": "/opt/pingone-promote/tools/pingcli-terraformer",
     "terraformerVersion": "0.6.0",

@@ -45,8 +45,8 @@ variables:
   PINGONE_PROMOTE_REF: "0000000000000000000000000000000000000000" # the tool's pinned 40-character commit
   TERRAFORMER_VERSION: "v0.6.0"
   TERRAFORMER_COMMIT: "9aa51edd1930b1b2724183f7c56911aad0c47556" # tag v0.6.0
-  TERRAFORM_VERSION: "1.16.7"
-  TERRAFORM_SHA256: "5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b" # terraform_1.16.7_linux_amd64.zip
+  TERRAFORM_VERSION: "1.17.2"
+  TERRAFORM_SHA256: "e6f16b2f0b137ee5729caa8c4e79a3bae4ee261acd198a1fcfa8584a6296605b" # terraform_1.17.2_linux_amd64.zip
   PINGONE_PROMOTE_RUNNER_TAG: "<runner-tag>"
   # Environments: the source is exported and never rolled out to; the
   # rollout is the chain the enterprise pipeline applies, in order. Overlays

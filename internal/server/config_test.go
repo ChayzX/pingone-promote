@@ -213,7 +213,7 @@ func TestConfigDefaults(t *testing.T) {
 	if c.ApplyJobPattern != "apply:{env}" {
 		t.Fatalf("applyJobPattern default %q", c.ApplyJobPattern)
 	}
-	if c.Tools.TerraformVersion != "1.16.7" {
+	if c.Tools.TerraformVersion != "1.17.2" {
 		t.Fatalf("terraformVersion default %q", c.Tools.TerraformVersion)
 	}
 }

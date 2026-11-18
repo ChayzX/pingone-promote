@@ -1,5 +1,7 @@
 # Updating to a newer build
 
+For the upgrade from Terraform 1.16.7 to 1.17.2, install the new pinned tools, set `tools.terraformVersion` to `1.17.2`, and update `tools.terraformSha256` with the SHA-256 of the extracted Terraform executable before restarting the server.
+
 These steps replace a running `pingone-promote` container on a Mac with
 Podman ([podman-mac.md](podman-mac.md)) with a newer build. Run them in your
 clone of the repository. Unfinished drafts are lost when the container

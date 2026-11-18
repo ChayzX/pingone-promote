@@ -51,7 +51,7 @@ and exits without listening.
 | `branchPattern`, `branchExample` | Optional. People type the branch name (for example a Jira key) and it must match `branchPattern` whole, such as `CIAM-[0-9]+(-[0-9]+)?` (CIAM-1234, or CIAM-1234-1 for a second branch of one ticket); nothing is added to it. A name that already exists in GitLab is refused and the page suggests the next free one (CIAM-1234-1, CIAM-1234-2, and so on). Without it, branches are `branchPrefix` + request ID. |
 | `applyJobPattern` | Apply job name in the default-branch pipeline; must contain `{env}`. |
 | `layout` | `default` or `terraformer`. |
-| `tools.terraform`, `terraformVersion`, `terraformSha256` | Terraform path, version (must be `1.16.7`), and the SHA-256 of the **extracted binary**. |
+| `tools.terraform`, `terraformVersion`, `terraformSha256` | Terraform path, version (must be `1.17.2`), and the SHA-256 of the **extracted binary**. |
 | `tools.terraformer`, `terraformerVersion`, `terraformerSha256` | `pingcli-terraformer` path, version (`0.6.0`), SHA-256. |
 | `tools.pingcli*` | Optional; not used by the server. |
 

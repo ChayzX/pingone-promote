@@ -17,7 +17,7 @@ of `docs/coverage.md` as unverified (`Live: no`).
 3. A scratch GitLab project with the enterprise layout (`definitions/`,
    root `<env>.tfvars`, `customer_secrets.yml`), a protected default branch,
    and a token that can create branches and merge requests only.
-4. A workstation (not the server) with Terraform 1.16.7, provider
+4. A workstation (not the server) with Terraform 1.17.2, provider
    `pingidentity/pingone` 1.24.0, and a **separate** write-capable worker
    for `test`, used only to run plans in step "Plan check".
 

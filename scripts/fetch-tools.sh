@@ -8,7 +8,7 @@
 # Default DIR is ./tools. Supported: macOS and Linux, amd64 and arm64.
 #
 # Installed:
-#   terraform            1.16.7   the terraform fmt gate (the server never plans or applies)
+#   terraform            1.17.2   the terraform fmt gate (the server never plans or applies)
 #   pingcli-terraformer  0.6.0    the DaVinci exporter (ADR 0015)
 # Optional:
 #   --with-go            Go 1.27.4, to build pingone-promote from source (CI uses it)
@@ -19,7 +19,7 @@
 # Changing a version means changing its digests here in the same commit.
 set -euo pipefail
 
-TERRAFORM_VERSION=1.16.7
+TERRAFORM_VERSION=1.17.2
 TERRAFORMER_VERSION=0.6.0
 GO_VERSION=1.27.4
 PINGCLI_VERSION=1.11.0
@@ -52,10 +52,10 @@ plat="${os}_${arch}"
 digest() {
   # digest TOOL PLATFORM -> expected sha256
   case "$1/$2" in
-    terraform/darwin_amd64) echo d17d1053bcbde650a8a919b7218ef2886eac76c474306e9ecd8bd64427408741 ;;
-    terraform/darwin_arm64) echo 81e98d9186e0cd1bc88caeb2403453fdd4bdeedd574ca4dbe8fb6a2880c9c51a ;;
-    terraform/linux_amd64) echo 5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b ;;
-    terraform/linux_arm64) echo 2d6a3f1098de94f1672aaa4e6873ef91ade9eac38851d3a403e2009193208de4 ;;
+    terraform/darwin_amd64) echo 66b472dcc36cf770d83757ed4d002c476174842c05c68637b40a7e99519cf3e1 ;;
+    terraform/darwin_arm64) echo da0c7ef278a911347862758e7573a5907365e66485c2637cf5c217c5e227992e ;;
+    terraform/linux_amd64) echo e6f16b2f0b137ee5729caa8c4e79a3bae4ee261acd198a1fcfa8584a6296605b ;;
+    terraform/linux_arm64) echo 858e08c181a76b6b223e8c767a8e983922eebe2d062db949a2de66ce040c368c ;;
     terraformer/darwin_amd64) echo 306c7064885012da5b9cc5579d59a3ba929d5ebd4c879f641254b36e2e0fab9f ;;
     terraformer/darwin_arm64) echo 80a18625c03b42745a1154491d71b597e738478c8997f9c72ac81f94fe63942b ;;
     terraformer/linux_amd64) echo be0bea0f4f7ecb4e33a95f9894793ae9c70bb3480665d9d303c06021b8ae4a98 ;;

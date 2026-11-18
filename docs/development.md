@@ -70,7 +70,7 @@ Every command takes `--help`; `--version` prints the version.
 
 ```sh
 bash scripts/fetch-tools.sh --dest ./tools --with-go
-export PATH="$PWD/tools:$PWD/tools/go/bin:$PATH"     # Terraform 1.16.7, Go 1.27.4
+export PATH="$PWD/tools:$PWD/tools/go/bin:$PATH"     # Terraform 1.17.2, Go 1.27.4
 export PINGONE_PROMOTE_TERRAFORM="$PWD/tools/terraform"
 
 gofmt -l .                       # must print nothing
@@ -83,7 +83,7 @@ terraform fmt -check -recursive terraform/
 python3 -m unittest discover -s scripts -p test_release.py
 ```
 
-Without Terraform 1.16.7 on PATH some engine tests skip their formatter gate; that is not full verification. Set `PINGONE_PROMOTE_REAL_TERRAFORMER` to the real pingcli-terraformer to run its version contract test.
+Without Terraform 1.17.2 on PATH some engine tests skip their formatter gate; that is not full verification. Set `PINGONE_PROMOTE_REAL_TERRAFORMER` to the real pingcli-terraformer to run its version contract test.
 
 ## Fixtures and fakes
 

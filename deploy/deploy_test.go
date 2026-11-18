@@ -39,7 +39,7 @@ func checkExample(t *testing.T, c server.Config) {
 	if c.BranchPrefix != "CIAM-" || c.ApplyJobPattern != "apply:{env}" {
 		t.Error("branchPrefix/applyJobPattern differ from the documented example")
 	}
-	if c.Tools.TerraformVersion != "1.16.7" || c.Tools.TerraformerVersion != "0.6.0" {
+	if c.Tools.TerraformVersion != "1.17.2" || c.Tools.TerraformerVersion != "0.6.0" {
 		t.Error("tool versions differ from scripts/fetch-tools.sh")
 	}
 	if !strings.HasPrefix(c.Tools.TerraformSHA256, "REPLACE_WITH_") {

@@ -113,7 +113,7 @@ podman build --format docker -f deploy/container/Containerfile -t pingone-promot
 
 (If you use a company root certificate, copy it into
 `deploy/container/extra-ca/` first; see "certificate signed by unknown
-authority" above.) This downloads Go, Terraform 1.16.7 and pingcli-terraformer 0.6.0 for your
+authority" above.) This downloads Go, Terraform 1.17.2 and pingcli-terraformer 0.6.0 for your
 Mac's processor, checks each download against the checksum recorded in the
 repository, and builds the server. It takes several minutes. Check it:
 

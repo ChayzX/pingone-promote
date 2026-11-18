@@ -21,7 +21,7 @@ You need:
 2. **A GitLab token** that can only create branches, commits and merge requests on the one config project. Protect the project's default branch.
 3. **The config repository layout** the pipeline already uses: `definitions/`, one `<env>.tfvars` per environment at the root (for example `development.tfvars`, `testing.tfvars`), and `customer_secrets.yml`.
 4. **Your environment names**: the source environment(s) people may export from, and the rollout list (the environments the pipeline applies afterwards, in order). They must not overlap.
-5. **Pinned tools**, downloaded and checksum-verified by `scripts/fetch-tools.sh` (Terraform 1.16.7 and pingcli-terraformer 0.6.0).
+5. **Pinned tools**, downloaded and checksum-verified by `scripts/fetch-tools.sh` (Terraform 1.17.2 and pingcli-terraformer 0.6.0).
 
 The hosted server needs no CI job, CI variable or special branch in the config repository.
 
