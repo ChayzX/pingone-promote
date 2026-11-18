@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"maps"
 	"os"
 	"path"
@@ -11,16 +10,11 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"pingone-promote/internal/catalog"
-	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/gitlab"
-	"pingone-promote/internal/neutralize"
-	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/request"
 )
 
@@ -115,14 +109,8 @@ func (s *Server) envFor(project gitlab.Project, workspace, head string, req *req
 	return e
 }
 
-// noSourceIDText explains errNoSourceID to the person and the operator.
-const noSourceIDText = "This server does not know the PingOne environment ID of the source environment, so it cannot read it. It reads it from the pingone_environment_id line of the source's .tfvars file on the default branch: check that the file exists where overlayPattern says (default {env}.tfvars at the repository root, named after the source exactly as in \"sources\") and sets pingone_environment_id = \"<environment ID>\". Otherwise the operator adds it under \"sourceEnvironmentIds\" in the server configuration and restarts the server."
-
 // errBranchTaken is a typed branch name that already exists in GitLab.
 var errBranchTaken = errors.New("that Git branch already exists; type a branch name that is not used yet")
-
-// errNoSourceID is a source whose PingOne environment ID is not known.
-var errNoSourceID = errors.New("the PingOne environment ID of the source is not known")
 
 func (s *Server) env(project gitlab.Project, workspace, head, requestID string, exp request.Exporter) request.Env {
 	return request.Env{Workspace: workspace, Layout: s.layout, Rollout: s.cfg.Rollout, AllowedSources: s.cfg.Sources,
@@ -303,184 +291,6 @@ func (s *Server) runSubmit(d *Draft, req *request.Request, p *preview) func(cont
 		finish(res, res.Error != nil && res.Error.Code == request.ErrConflict)
 		return nil
 	}
-}
-
-// runSearch loads the source environment's resource list once per draft
-// and source (it is cached for a while) and filters it.
-func (s *Server) runSearch(source string) func(context.Context, func(string)) error {
-	return func(ctx context.Context, stage func(string)) error {
-		stage("Checking the GitLab project")
-		project, err := s.gl.VerifyProject(ctx)
-		if err != nil {
-			return err
-		}
-		stage("Finding the source environment")
-		id, err := s.sourceEnvironmentID(ctx, project.DefaultBranch, source)
-		if err != nil {
-			return err
-		}
-		stage("Listing the source environment's resources")
-		creds := s.creds
-		creds.ExportEnvironmentID = id
-		// Reading the list reads the source again; previews keep using
-		// the previous read until the new one is in, then reuse it.
-		var list []exporter.Resource
-		if pe, ok := s.exporter.(plainErrors); ok {
-			list, err = pe.refresh(ctx, creds)
-		} else {
-			list, err = s.exporter.CatalogAllIDs(ctx, creds)
-		}
-		if err != nil {
-			return err
-		}
-		items := make([]Item, 0, len(list))
-		for _, r := range list {
-			if selectable(r.String()) {
-				items = append(items, itemOf(r))
-			}
-		}
-		sort.Slice(items, func(i, j int) bool { return items[i].Address < items[j].Address })
-		var dv string
-		if pe, ok := s.exporter.(plainErrors); ok {
-			dv = pe.davinciProblem(creds)
-		}
-		s.drafts.mu.Lock()
-		defer s.drafts.mu.Unlock()
-		s.drafts.catalogs[source] = &catalogEntry{at: s.now(), items: items, davinci: dv}
-		if dv != "" {
-			s.log.Warn("item list read without DaVinci items", "source", source, "items", len(items))
-		} else {
-			s.log.Info("item list read", "source", source, "items", len(items))
-		}
-		return nil
-	}
-}
-
-// sourceEnvironmentID reads pingone_environment_id from the source
-// environment's tfvars on the default branch, as the engine does.
-func (s *Server) sourceEnvironmentID(ctx context.Context, branch, source string) (string, error) {
-	if id := s.cfg.envID(source); id != "" {
-		return id, nil
-	}
-	p, err := s.layout.Overlay(source)
-	if err != nil {
-		return "", err
-	}
-	f, err := s.gl.GetFile(ctx, branch, p)
-	if err != nil {
-		return "", err
-	}
-	if !f.Exists {
-		return "", fmt.Errorf("%s does not exist on the default branch, so the source environment is unknown", p)
-	}
-	o, err := overlay.ParseOverlay(f.Content, p)
-	if err != nil {
-		return "", err
-	}
-	v, ok := o.Values[neutralize.EnvironmentIDVariable]
-	if !ok || v.Type().FriendlyName() != "string" {
-		return "", fmt.Errorf("%w: %s does not set %s, and the server configuration has no sourceEnvironmentIds entry for %s", errNoSourceID, p, neutralize.EnvironmentIDVariable, source)
-	}
-	return v.AsString(), nil
-}
-
-// selectable reports whether the request accepts the address: the request
-// package decides (configuration resources only, never identity data).
-func selectable(addr string) bool {
-	r := request.Request{RequestVersion: request.Version, RequestID: "probe-request", Source: "probe", Resources: []request.ExcludeRef{{Address: addr}}}
-	return r.Validate() == nil
-}
-
-func searchItems(items []Item, query string) ([]Item, int) {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return nil, 0
-	}
-	var exact, partial []Item
-	for _, it := range items {
-		switch {
-		case strings.EqualFold(it.ID, q) || strings.EqualFold(it.Address, q) || strings.EqualFold(it.Name, q):
-			exact = append(exact, it)
-		case strings.Contains(strings.ToLower(it.Name), q) || strings.Contains(strings.ToLower(it.Address), q) || it.ID != "" && strings.Contains(strings.ToLower(it.ID), q):
-			partial = append(partial, it)
-		}
-	}
-	out := append(exact, partial...)
-	n := len(out)
-	if n > MaxSearchResults {
-		out = out[:MaxSearchResults]
-	}
-	return out, n
-}
-
-// friendlyNames name common types the way people say them; every other
-// type uses catalog.DisplayName.
-var friendlyNames = map[string]string{
-	"pingone_davinci_flow":                          "DaVinci flow",
-	"pingone_davinci_flow_deploy":                   "DaVinci flow deployment",
-	"pingone_davinci_flow_enable":                   "DaVinci flow enablement",
-	"pingone_davinci_variable":                      "DaVinci variable",
-	"pingone_davinci_connector_instance":            "DaVinci connection",
-	"pingone_davinci_application":                   "DaVinci application",
-	"pingone_davinci_application_flow_policy":       "DaVinci flow policy",
-	"pingone_application":                           "application",
-	"pingone_application_sign_on_policy_assignment": "application sign-on policy assignment",
-	"pingone_application_flow_policy_assignment":    "application flow policy assignment",
-	"pingone_notification_template_content":         "notification template",
-	"pingone_notification_policy":                   "notification policy",
-	"pingone_sign_on_policy":                        "sign-on policy",
-	"pingone_sign_on_policy_action":                 "sign-on policy step",
-	"pingone_mfa_device_policy":                     "MFA policy",
-	"pingone_mfa_fido2_policy":                      "FIDO2 policy",
-	"pingone_mfa_settings":                          "MFA settings",
-	"pingone_password_policy":                       "password policy",
-	"pingone_identity_provider":                     "external identity provider",
-	"pingone_resource":                              "resource (API)",
-	"pingone_resource_scope":                        "resource scope",
-	"pingone_schema_attribute":                      "user attribute",
-	"pingone_branding_theme":                        "branding theme",
-	"pingone_custom_domain":                         "custom domain",
-	"pingone_risk_predictor":                        "risk predictor",
-	"pingone_risk_policy":                           "risk policy",
-	"pingone_verify_policy":                         "identity verification policy",
-	"pingone_authorize_api_service":                 "API service (Authorize)",
-}
-
-// resourceLabel is how a type is named on screens.
-func resourceLabel(typ string) string {
-	if n, ok := friendlyNames[typ]; ok {
-		return n
-	}
-	return catalog.DisplayName(typ)
-}
-
-// filterItems searches by name or ID within one type, or lists every item
-// of the type when the query is empty.
-// filterItems returns the first matches of query within type typ ("" any
-// type) and how many there are. An empty query lists every item (of the
-// type), sorted by type and name.
-func filterItems(items []Item, query, typ string) ([]Item, int) {
-	var of []Item
-	for _, it := range items {
-		if typ == "" || it.Type == typ {
-			of = append(of, it)
-		}
-	}
-	if strings.TrimSpace(query) == "" {
-		sort.SliceStable(of, func(i, j int) bool {
-			a, b := resourceLabel(of[i].Type), resourceLabel(of[j].Type)
-			if a != b {
-				return a < b
-			}
-			return strings.ToLower(of[i].Name) < strings.ToLower(of[j].Name)
-		})
-		n := len(of)
-		if n > MaxListResults {
-			of = of[:MaxListResults]
-		}
-		return of, n
-	}
-	return searchItems(of, query)
 }
 
 // plainJobError is the page text for a failed background read or job.

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,34 +64,6 @@ func (s *Server) stepPage(n int) http.HandlerFunc {
 			s.showDraft(w, r, d)
 		})
 	}
-}
-
-// resolveSearch finishes a search that waited for the item list. It
-// reports whether the list is still being read.
-func (s *Server) resolveSearch(d *Draft) (waiting bool) {
-	if !d.pending {
-		return false
-	}
-	source, l := d.Source, d.pendingLoad
-	c := d.catalogs[source]
-	switch {
-	case l != nil && !l.finished():
-		return true
-	case l != nil && l.err != "" && (c == nil || d.pendingRefresh):
-		d.Results, d.ResultsTotal = nil, 0
-		d.searchProblem = "The items of " + source + " could not be read: " + l.err
-	case c == nil:
-		// The read finished without a list (a draft switched source):
-		// start one and keep waiting.
-		if d.pendingLoad = s.loadList(d, source); d.pendingLoad != nil {
-			return true
-		}
-		return false
-	default:
-		d.Results, d.ResultsTotal = filterItems(c.items, d.Query, d.TypeFilter)
-	}
-	d.pending, d.pendingLoad, d.pendingRefresh = false, nil, false
-	return false
 }
 
 // withDraft runs fn with this session's draft, holding the drafts lock.
@@ -468,48 +439,6 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request, d *Draft, back 
 
 func (s *Server) startPreview(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) { s.preview(w, r, d, draftURL(d, "")) })
-}
-
-func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
-		if !s.applyMain(w, r, d) {
-			return
-		}
-		q := strings.TrimSpace(r.PostForm.Get("q"))
-		if len(q) > 200 {
-			q = q[:200]
-		}
-		d.Query = q
-		d.TypeFilter = ""
-		if t := r.PostForm.Get("t"); t != "" && resourceLabel(t) != "" && strings.HasPrefix(t, "pingone_") {
-			d.TypeFilter = t
-		}
-		d.Updated = s.now()
-		d.searched = true
-		d.Step = 2
-		if d.Source == "" {
-			d.searchProblem = "Choose a source environment in step 1 first."
-			s.redirect(w, r, draftURL(d, "#results"))
-			return
-		}
-		// The search is answered from the item list. When the list is not
-		// in yet, the items page shows a loading notice and refreshes by
-		// itself until it is, then shows the results.
-		source := d.Source
-		d.pendingRefresh = r.PostForm.Get("refresh") == "yes"
-		if d.pendingRefresh {
-			d.pendingLoad = s.reloadList(source)
-		} else {
-			if l := d.loads[source]; l != nil && l.finished() && l.err != "" && d.catalogs[source] == nil {
-				delete(d.loads, source) // try a failed read again
-			}
-			d.pendingLoad = s.loadList(d, source)
-		}
-		d.pending = true
-		d.Results, d.ResultsTotal = nil, 0
-		s.resolveSearch(d)
-		s.redirect(w, r, draftURL(d, "#results"))
-	})
 }
 
 // pick adds an item to, or removes it from, the selected or excluded list.
@@ -1119,31 +1048,6 @@ func (s *Server) resultPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type typeOption struct {
-	Value, Label string
-	Selected     bool
-}
-
-// typeOptions lists the types to filter the search by: those in the loaded
-// list of the source environment, or nothing before the first search.
-func typeOptions(d *Draft) []typeOption {
-	c := d.catalogs[d.Source]
-	if c == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []typeOption
-	for _, it := range c.items {
-		if seen[it.Type] {
-			continue
-		}
-		seen[it.Type] = true
-		out = append(out, typeOption{Value: it.Type, Label: capitalize(resourceLabel(it.Type)), Selected: it.Type == d.TypeFilter})
-	}
-	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
-	return out
-}
-
 // isListValue reports a per-environment value that holds a list (its
 // source value is a JSON array), such as redirect URLs.
 func isListValue(d *Draft, name string) bool {
@@ -1206,92 +1110,6 @@ func countText(n int, one, many string) string {
 		return "1 " + one
 	}
 	return strconv.Itoa(n) + " " + many
-}
-
-// loadList starts reading source's item list in the background unless a
-// fresh list or a running read exists, and returns the read (nil when the
-// list is fresh). The caller holds s.drafts.mu.
-func (s *Server) loadList(_ *Draft, source string) *listLoad {
-	if source == "" {
-		return nil
-	}
-	if c := s.drafts.catalogs[source]; c != nil && s.now().Sub(c.at) < catalogMaxAge {
-		return nil
-	}
-	return s.reloadList(source)
-}
-
-// warm reads every source's item list when the server starts, and again
-// every catalogRefresh for the sources a draft used within catalogMaxAge,
-// so searches find it ready without reading idle sources all day. A list
-// being re-read stays usable until the new one is in.
-func (s *Server) warm() {
-	start := func(onlyUsed bool) {
-		s.drafts.mu.Lock()
-		defer s.drafts.mu.Unlock()
-		used := map[string]bool{}
-		for _, d := range s.drafts.byID {
-			if s.now().Sub(d.Updated) < catalogMaxAge {
-				used[d.Source] = true
-			}
-		}
-		for _, src := range s.cfg.Sources {
-			if !onlyUsed || used[src] {
-				s.reloadList(src)
-			}
-		}
-	}
-	start(false)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		t := time.NewTicker(catalogRefresh)
-		defer t.Stop()
-		for {
-			select {
-			case <-s.base.Done():
-				return
-			case <-t.C:
-				start(true)
-			}
-		}
-	}()
-}
-
-// reloadList starts a read of source's item list unless one is running,
-// and returns it. The caller holds s.drafts.mu.
-func (s *Server) reloadList(source string) *listLoad {
-	if source == "" {
-		return nil
-	}
-	if l := s.drafts.loads[source]; l != nil && !l.finished() {
-		return l
-	}
-	l := &listLoad{done: make(chan struct{})}
-	s.drafts.loads[source] = l
-	run := s.runSearch(source)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		ctx, cancel := context.WithTimeout(s.base, JobTimeout)
-		defer cancel()
-		var err error
-		select {
-		case s.listSlots <- struct{}{}:
-			err = s.safeRun(ctx, run, func(string) {})
-			<-s.listSlots
-		case <-ctx.Done():
-			err = ctx.Err()
-		}
-		s.drafts.mu.Lock()
-		if err != nil {
-			l.err = s.redact(plainJobError(err))
-			s.log.Warn("item list read failed", "error", l.err)
-		}
-		close(l.done)
-		s.drafts.mu.Unlock()
-	}()
-	return l
 }
 
 func asciiPrintable(s string) bool {

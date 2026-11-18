@@ -8,14 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"pingone-promote/internal/neutralize"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/request"
 )
 
@@ -26,13 +24,6 @@ const (
 	MaxDraftsPerSession = 20
 	DraftIdleExpiry     = 8 * time.Hour
 	MaxSelected         = 200
-	MaxSearchResults    = 50
-	// MaxListResults caps a listing with no name typed.
-	MaxListResults = 200
-	catalogMaxAge  = 30 * time.Minute
-	// catalogRefresh re-reads every source's item list in the background,
-	// so a search rarely waits.
-	catalogRefresh = 20 * time.Minute
 )
 
 // Item is one resource of the source environment.
@@ -41,24 +32,6 @@ type Item struct {
 	Type    string
 	Name    string
 	ID      string
-}
-
-func itemOf(r exporter.Resource) Item {
-	return Item{Address: r.String(), Type: r.Type, Name: variableName(r), ID: r.ID}
-}
-
-// variableName shows a DaVinci variable's context with its name: one name
-// can exist as a company and a flow instance variable.
-func variableName(r exporter.Resource) string {
-	if r.Type != neutralize.TypeVariable {
-		return r.Name
-	}
-	for _, ctx := range []string{"company", "flowInstance", "flow", "user"} {
-		if strings.HasSuffix(r.Label, "_"+ctx) {
-			return r.Name + " (" + ctx + ")"
-		}
-	}
-	return r.Name
 }
 
 // Job is the one background job a draft can have at a time.
@@ -70,14 +43,6 @@ type Job struct {
 	Stage    string
 	Err      string
 	cancel   context.CancelFunc
-}
-
-type catalogEntry struct {
-	at    time.Time
-	items []Item
-	// davinci: why the DaVinci items are missing from items ("" when
-	// they were read).
-	davinci string
 }
 
 // preview is the latest preview of a draft: its result, the inputs it was
@@ -471,21 +436,6 @@ func (s *Server) branchExampleText() string {
 		return ""
 	}
 	return ", for example " + s.cfg.BranchExample
-}
-
-// listLoad is one background read of a source's item list.
-type listLoad struct {
-	done chan struct{}
-	err  string // set before done is closed
-}
-
-func (l *listLoad) finished() bool {
-	select {
-	case <-l.done:
-		return true
-	default:
-		return false
-	}
 }
 
 // noteTypes records the declared types of a preview's variables; it
