@@ -858,11 +858,18 @@ func (m *merger) overlays() error {
 		changed := false
 
 		extra := map[string]string{}
-		if env != m.req.SourceEnv {
+		target, overridden := m.req.EnvValues[env][neutralize.EnvironmentIDVariable]
+		savedTarget := cur.Values[neutralize.EnvironmentIDVariable]
+		sameTarget := !overridden || sameEnvironmentID(savedTarget, target)
+		sharesSource := env != m.req.SourceEnv && m.targetsExportedEnvironment(env, cur.Values)
+		if env != m.req.SourceEnv && sameTarget {
 			// An item an earlier request referred to by ID variable already
 			// exists here (Git holds its ID): adopt it by import instead
 			// of creating it again.
 			for a, id := range m.knownIDs(cur) {
+				if _, exported := m.req.Export.SourceIDs[a]; sharesSource && exported {
+					continue
+				}
 				extra[a] = id
 				m.adoptedByID[a] = append(m.adoptedByID[a], env)
 			}
@@ -878,7 +885,7 @@ func (m *merger) overlays() error {
 			ids, more = m.withImportIDs(ids, extra)
 			changed = changed || more
 		}
-		if env != m.req.SourceEnv && m.targetsExportedEnvironment(env, cur.Values) {
+		if sharesSource {
 			var adopted bool
 			ids, adopted = m.sourceImportIDs(ids, env)
 			changed = changed || adopted
@@ -927,7 +934,10 @@ func (m *merger) targetsExportedEnvironment(env string, values map[string]cty.Va
 	if override, ok := m.req.EnvValues[env][key]; ok {
 		actual = override
 	}
-	source := m.req.Export.SourceValues[key]
+	return sameEnvironmentID(actual, m.req.Export.SourceValues[key])
+}
+
+func sameEnvironmentID(actual, source cty.Value) bool {
 	return actual.Type() == cty.String && actual.IsKnown() && !actual.IsNull() &&
 		source.Type() == cty.String && source.IsKnown() && !source.IsNull() &&
 		source.AsString() != "" && strings.EqualFold(actual.AsString(), source.AsString())
@@ -955,7 +965,7 @@ func (m *merger) sourceImportIDs(cur cty.Value, rollout string) (cty.Value, bool
 		if old, exists := mp[key]; exists {
 			if rollout != "" && !old.RawEquals(cty.StringVal(id)) {
 				m.res.Blockers = append(m.res.Blockers, Blocker{Env: rollout, Code: BlockConflict, Address: a,
-					Message: "The rollout targets the exported environment, but its import ID for " + a + " differs from the exported ID."})
+					Message: "The rollout targets the exported environment, but its import ID for " + a + " differs from the exported ID. Correct import_ids in the rollout overlay in Git and preview again."})
 			}
 		} else {
 			mp[key] = cty.StringVal(id)

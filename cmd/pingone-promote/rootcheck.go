@@ -34,7 +34,7 @@ per environment) offline:
 --envs lists environments that must have overlays (source and rollout);
 overlays found on disk are always checked. --sources names the source
 environments: a source may share its pingone_environment_id with a rollout
-environment, while two other environments may not.
+environment. Each rollout environment must have a distinct ID.
 
 Exit status: 0 valid, 1 problems found, 2 usage or environment error.
 `

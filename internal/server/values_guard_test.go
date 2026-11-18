@@ -52,6 +52,12 @@ func TestValuesRefuseAnotherEnvironmentsID(t *testing.T) {
 		if got := alertText(p.body); got != "" {
 			t.Errorf("%s's ID for qa: alert = %q", own, got)
 		}
+		e.srv.drafts.mu.Lock()
+		saved := e.srv.drafts.byID[strings.TrimPrefix(draft, "/drafts/")].Values["qa"]["pingone_environment_id"]
+		e.srv.drafts.mu.Unlock()
+		if saved != ids[own] {
+			t.Errorf("qa saved %q, want %q", saved, ids[own])
+		}
 	}
 }
 

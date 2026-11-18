@@ -194,6 +194,14 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 			if err == nil && fingerprint(*req2) == fp {
 				// Nothing differs: the first merge stands.
 			} else if err == nil {
+				// Autofill only changes values and import IDs. A concurrent edit to
+				// the selection needs a new preview with its own export.
+				filled := *req
+				filled.EnvValues, filled.ImportIDs = req2.EnvValues, req2.ImportIDs
+				if fingerprint(filled) != fingerprint(*req2) {
+					os.RemoveAll(snap)
+					return errors.New("The draft changed during preview. Preview again to export the current selection.")
+				}
 				stage("Merging again with the values filled in")
 				req, fp = req2, fingerprint(*req2)
 				res = request.Run(ctx, s.envFor(project, snap, head, req, replayer{f: frozen}), req)

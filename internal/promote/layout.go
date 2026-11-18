@@ -208,7 +208,7 @@ func (d DirRepo) List(dir string) ([]string, error) {
 		return nil, err
 	}
 	defer root.Close()
-	entries, err := fs.ReadDir(root.FS(), dir)
+	entries, err := fs.ReadDir(root.FS(), path.Clean(dir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

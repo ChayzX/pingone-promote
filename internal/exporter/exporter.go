@@ -589,7 +589,7 @@ func readTree(dir string, max int64) (map[string][]byte, error) {
 			return err
 		}
 		var probe [1]byte
-		if n, err := f.Read(probe[:]); n != 0 || err != io.EOF {
+		if n, err := f.Read(probe[:]); int64(len(b)) != info.Size() || n != 0 || err != io.EOF {
 			return errors.New("exporter: export output changed during read")
 		}
 		total += int64(len(b))

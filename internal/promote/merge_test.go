@@ -60,6 +60,31 @@ func TestSharedRolloutAdoptsExportedResources(t *testing.T) {
 	t.Fatal("conflicting rollout import ID was accepted")
 }
 
+// A rollout override must not adopt an ID saved for its previous tenant.
+func TestRetargetRolloutDiscardsSavedIDHint(t *testing.T) {
+	head := readTree(t, filepath.Join("testdata", "repo"))
+	addr := flowB + "-0020-Subflow"
+	hint := neutralize.ExcludedVariableName(addr)
+	head["qa.tfvars"] = append(head["qa.tfvars"], []byte("\n"+hint+" = \"old-tenant-object\"\n")...)
+	exp := neutralized(t, exportertest.FixtureDir("dev"), flowB)
+	res, err := Merge(MergeRequest{Export: exp, Head: head, Selected: selectedFor(flowB),
+		SourceEnv: "dev", Rollout: []string{"qa"}, EnvValues: map[string]map[string]cty.Value{
+			"qa": {neutralize.EnvironmentIDVariable: exp.SourceValues[neutralize.EnvironmentIDVariable]},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range res.Blockers {
+		if b.Code == BlockConflict {
+			t.Fatalf("stale ID hint caused conflict: %+v", b)
+		}
+	}
+	id := exp.SourceIDs[addr]
+	if id == "" || !bytes.Contains(res.Files["qa.tfvars"], []byte(id)) {
+		t.Fatal("rollout did not adopt the exported object")
+	}
+}
+
 func goldenFile(t *testing.T, name string, got []byte) {
 	t.Helper()
 	p := filepath.Join("testdata", name)

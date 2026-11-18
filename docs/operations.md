@@ -211,7 +211,7 @@ script prints it); your GitLab and PingOne values. Fill `secrets.env`. Then:
 
 ## Container and Kubernetes
 
-The Containerfile pins both base images by digest and updates the UBI runtime packages during the build. Rebuild the image to pick up package fixes.
+The Containerfile pins both base images by digest and updates the UBI runtime packages during the build. For a package refresh, run `podman build --no-cache --format docker -f deploy/container/Containerfile -t pingone-promote:dev .` so the package update runs again. For ordinary builds, use the cached command below.
 
     podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .
     podman run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:dev --version
