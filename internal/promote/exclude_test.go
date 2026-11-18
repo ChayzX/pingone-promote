@@ -12,6 +12,7 @@ import (
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/exporter/exportertest"
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 )
 
@@ -98,7 +99,7 @@ func TestWholeEnvironmentAddsNewKeepsGitAndIsIdempotent(t *testing.T) {
 	}
 	after := apply(head, res)
 	// Nothing is deleted and no existing block changes.
-	for _, p := range sortedKeys(head) {
+	for _, p := range mapkeys.Sorted(head) {
 		if !strings.HasPrefix(p, "definitions/") || !strings.HasSuffix(p, ".tf") {
 			continue
 		}

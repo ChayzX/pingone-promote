@@ -1,6 +1,5 @@
 """Exercise release artifacts, not just their build configuration."""
 import hashlib
-import io
 import os
 from pathlib import Path
 import platform

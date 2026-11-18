@@ -15,6 +15,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/secretscan"
 )
@@ -683,7 +684,7 @@ func (s *state) splitShared() error {
 			}
 		}
 	}
-	for _, name := range sortedSet(s.shared) {
+	for _, name := range mapkeys.Sorted(s.shared) {
 		users := usersOf[name]
 		if len(users) == 0 || (len(users) == 1 && !slices.Contains(s.in.Shared, name)) {
 			continue
@@ -724,15 +725,6 @@ func (s *state) splitShared() error {
 		}
 	}
 	return nil
-}
-
-func sortedSet(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // varRefs lists var.<name> references in block text.

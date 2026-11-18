@@ -28,6 +28,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"pingone-promote/internal/mapkeys"
 )
 
 // Config is the fixed location of PingOne secrets in Vault: only the field
@@ -280,7 +282,7 @@ func (f *File) Check(cfg Config, required []string) Report {
 			r.PatternMismatch = append(r.PatternMismatch, e.VarName)
 		}
 	}
-	for _, k := range sortedSet(need) {
+	for _, k := range mapkeys.Sorted(need) {
 		if _, ok := f.Lookup(k); ok {
 			continue
 		}
@@ -294,15 +296,6 @@ func (f *File) Check(cfg Config, required []string) Report {
 		sort.Strings(*s)
 	}
 	return r
-}
-
-func sortedSet(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // NewEntry is a secret to declare. Field defaults to VarName.

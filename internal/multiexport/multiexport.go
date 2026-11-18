@@ -12,9 +12,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/zclconf/go-cty/cty"
 	"path"
 	"regexp"
 	"slices"
@@ -23,10 +20,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+
 	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/coreexport"
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/pingone"
 	"pingone-promote/internal/secretscan"
@@ -607,7 +609,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 			}
 		}
 		if upstream {
-			for _, a := range sortedKeys(core) {
+			for _, a := range mapkeys.Sorted(core) {
 				for _, dep := range deps(c.inv.Object(a), ids) {
 					if add(dep) {
 						changed = true
@@ -616,7 +618,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 			}
 		}
 		if e.DaVinci != nil && c.dvErr == nil && (whole || len(dv) > 0) {
-			key := strings.Join(sortedKeys(dv), ",")
+			key := strings.Join(mapkeys.Sorted(dv), ",")
 			if dvExp == nil || key != dvKey {
 				dvKey = key
 				var dvExclude []string
@@ -629,15 +631,15 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 				case c.dvSrc != nil && whole:
 					dvExp, err = c.dvSrc.Whole(dvExclude)
 				case c.dvSrc != nil && upstream:
-					dvExp, err = c.dvSrc.Scoped(sortedKeys(dv), dvExclude)
+					dvExp, err = c.dvSrc.Scoped(mapkeys.Sorted(dv), dvExclude)
 				case c.dvSrc != nil:
-					dvExp, err = c.dvSrc.Selected(sortedKeys(dv), dvExclude)
+					dvExp, err = c.dvSrc.Selected(mapkeys.Sorted(dv), dvExclude)
 				case whole:
 					dvExp, err = e.DaVinci.WholeExport(ctx, creds, dvExclude)
 				case upstream:
-					dvExp, err = e.DaVinci.ScopedExport(ctx, creds, sortedKeys(dv), dvExclude)
+					dvExp, err = e.DaVinci.ScopedExport(ctx, creds, mapkeys.Sorted(dv), dvExclude)
 				default:
-					dvExp, err = e.DaVinci.SelectedExport(ctx, creds, sortedKeys(dv), dvExclude)
+					dvExp, err = e.DaVinci.SelectedExport(ctx, creds, mapkeys.Sorted(dv), dvExclude)
 				}
 				if err != nil {
 					return nil, err
@@ -651,7 +653,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 				}
 			}
 		} else if e.DaVinci == nil && len(dv) > 0 {
-			return nil, fmt.Errorf("multiexport: %s needs the DaVinci exporter, which is not configured", sortedKeys(dv)[0])
+			return nil, fmt.Errorf("multiexport: %s needs the DaVinci exporter, which is not configured", mapkeys.Sorted(dv)[0])
 		}
 		if !changed {
 			converged = true
@@ -674,7 +676,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 			exported[a] = true
 		}
 	}
-	rendered, err := coreexport.Render(coreexport.RenderInput{Inventory: c.inv, Addresses: sortedKeys(core), Exported: exported, IDs: ids,
+	rendered, err := coreexport.Render(coreexport.RenderInput{Inventory: c.inv, Addresses: mapkeys.Sorted(core), Exported: exported, IDs: ids,
 		ModuleDir: exporter.ModuleDir, ModuleName: exporter.ModuleName})
 	if err != nil {
 		return nil, err
@@ -682,7 +684,7 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 	if c.dvErr != nil {
 		// A DaVinci ID that a core object refers to would be written as a
 		// literal source ID; refuse rather than commit it.
-		for _, k := range sortedKeysS(rendered.Unresolved) {
+		for _, k := range mapkeys.Sorted(rendered.Unresolved) {
 			if davinciID.MatchString(rendered.Unresolved[k]) {
 				return nil, fmt.Errorf("multiexport: %s refers to a DaVinci item, and DaVinci could not be read: %w", k, c.dvErr)
 			}
@@ -710,15 +712,6 @@ func (e *Exporter) export(ctx context.Context, creds exporter.Credentials, seeds
 		}
 	}
 	return out, nil
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 const envIDVariable = `variable "pingone_environment_id" {
@@ -768,7 +761,7 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 		out.Warnings = append(out.Warnings, "DaVinci items were not read: "+why+". If the source environment has DaVinci, check the worker's DaVinci role and try again; only core PingOne items are in this export")
 	}
 	if len(core.Unresolved) > 0 {
-		keys := sortedKeysS(core.Unresolved)
+		keys := mapkeys.Sorted(core.Unresolved)
 		more := ""
 		if len(keys) > 5 {
 			keys, more = keys[:5], fmt.Sprintf(" and %d more", len(core.Unresolved)-5)
@@ -779,7 +772,7 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 		}
 		out.Warnings = append(out.Warnings, "These values look like IDs of "+why+", so they keep the source environment's value: "+strings.Join(keys, ", ")+more+". Check that each is the same in every environment before merging")
 	}
-	for _, t := range sortedKeysS(c.inv.Skipped) {
+	for _, t := range mapkeys.Sorted(c.inv.Skipped) {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%s was not read: %s", t, c.inv.Skipped[t]))
 	}
 	for a, id := range core.Referenced {
@@ -844,7 +837,7 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 	// The DaVinci source values for core ID variables live in the core
 	// values file already; add the ones only DaVinci blocks need.
 	var vals strings.Builder
-	for _, a := range sortedKeysS(out.Referenced) {
+	for _, a := range mapkeys.Sorted(out.Referenced) {
 		if _, fromCore := core.Referenced[a]; fromCore {
 			continue
 		}
@@ -860,15 +853,6 @@ func combine(c *cached, dvExp *exporter.Export, core *coreexport.Rendered, ids m
 	}
 	out.Warnings = append(out.Warnings, core.Warnings...)
 	return out, nil
-}
-
-func sortedKeysS(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // mergeVariables appends variable blocks whose names are not declared yet.

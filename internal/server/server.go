@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -327,6 +326,3 @@ func (s *Server) Run(ctx context.Context, ready func(addr string)) error {
 	}
 	return err
 }
-
-// discard is a logger for tests that do not capture logs.
-var discard = slog.New(slog.NewTextHandler(io.Discard, nil))

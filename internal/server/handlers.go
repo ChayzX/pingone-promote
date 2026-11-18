@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"pingone-promote/internal/catalog"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"pingone-promote/internal/catalog"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/request"
 	"pingone-promote/internal/secretscan"
@@ -788,7 +789,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 			// What was entered stays editable: a typo can be corrected,
 			// or cleared to enter it again.
 			okV, _ := fillable(d, env)
-			for _, name := range sortedKeysS(d.Values[env]) {
+			for _, name := range mapkeys.Sorted(d.Values[env]) {
 				if !okV[name] || hasField(ev.Values, name) {
 					continue
 				}
@@ -807,7 +808,7 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request) {
 				}
 				ev.Entered = append(ev.Entered, f)
 			}
-			for _, a := range sortedKeysS(d.ImportIDs[env]) {
+			for _, a := range mapkeys.Sorted(d.ImportIDs[env]) {
 				if !hasField(ev.Imports, a) {
 					f := importField(d, env, a)
 					if from := d.Filled[env][a]; from != "" {
@@ -920,19 +921,13 @@ func (s *Server) saveChoices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveValues(w http.ResponseWriter, r *http.Request) {
 	s.withDraft(w, r, func(w http.ResponseWriter, d *Draft) {
 		envs := append([]string{d.Source}, s.cfg.Rollout...)
-		values := map[string]map[string]string{}
-		imports := map[string]map[string]string{}
-		for env, m := range d.Values {
-			values[env] = map[string]string{}
-			for k, v := range m {
-				values[env][k] = v
-			}
+		values := cloneNested(d.Values)
+		imports := cloneNested(d.ImportIDs)
+		if values == nil {
+			values = make(map[string]map[string]string)
 		}
-		for env, m := range d.ImportIDs {
-			imports[env] = map[string]string{}
-			for k, v := range m {
-				imports[env][k] = v
-			}
+		if imports == nil {
+			imports = make(map[string]map[string]string)
 		}
 		for key, vals := range r.PostForm {
 			kind, rest, ok := strings.Cut(key, ":")
@@ -1213,10 +1208,6 @@ func countText(n int, one, many string) string {
 	return strconv.Itoa(n) + " " + many
 }
 
-// searchWait bounds how long a search request waits for the item list; it
-// stays under the server's write timeout.
-const searchWait = 40 * time.Second
-
 // loadList starts reading source's item list in the background unless a
 // fresh list or a running read exists, and returns the read (nil when the
 // list is fresh). The caller holds s.drafts.mu.
@@ -1303,23 +1294,6 @@ func (s *Server) reloadList(source string) *listLoad {
 	return l
 }
 
-// awaitList waits, without holding the lock, for l to finish, at most
-// searchWait. The caller holds s.drafts.mu, and holds it again on return.
-func (s *Server) awaitList(r *http.Request, l *listLoad) {
-	if l == nil || l.finished() {
-		return
-	}
-	s.drafts.mu.Unlock()
-	defer s.drafts.mu.Lock()
-	t := time.NewTimer(searchWait)
-	defer t.Stop()
-	select {
-	case <-l.done:
-	case <-t.C:
-	case <-r.Context().Done():
-	}
-}
-
 func asciiPrintable(s string) bool {
 	for _, r := range s {
 		if r <= 0x20 || r >= 0x7f {
@@ -1355,15 +1329,6 @@ func fillable(d *Draft, env string) (values, imports map[string]bool) {
 		imports[a] = true
 	}
 	return
-}
-
-func sortedKeysS(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // commitStage is the job stage that writes to GitLab.
@@ -1402,7 +1367,7 @@ func (s *Server) environmentWithID(id, env string) string {
 	if strings.EqualFold(s.cfg.EnvironmentIDs[env], id) || contains(s.cfg.Sources, env) {
 		return "" // its own ID, by the configuration, or a source
 	}
-	for _, name := range sortedNames(s.cfg.EnvironmentIDs) {
+	for _, name := range mapkeys.Sorted(s.cfg.EnvironmentIDs) {
 		if name != env && contains(s.cfg.Rollout, name) && strings.EqualFold(s.cfg.EnvironmentIDs[name], id) {
 			return name
 		}

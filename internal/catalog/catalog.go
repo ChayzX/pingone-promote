@@ -612,19 +612,6 @@ func IdentityData(typ string) bool {
 	return ok && d.Family == "identity_data"
 }
 
-// Children lists the owned child types of a type (exported with it).
-func Children(typ string) []string {
-	mustLoad()
-	var out []string
-	for i := range defs {
-		if defs[i].Parent == typ && defs[i].Owned && defs[i].Exporter != "" {
-			out = append(out, defs[i].Type)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // ImportFormat returns the import_ids format of a type (ImportID when unknown).
 func ImportFormat(typ string) string {
 	if d, ok := Get(typ); ok && d.Import != "" {

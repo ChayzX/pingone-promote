@@ -5,20 +5,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/zclconf/go-cty/cty"
-	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"net/url"
 	"os"
 	"path/filepath"
-	"pingone-promote/internal/catalog"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"unicode"
 
+	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
+
+	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/gitlab"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
@@ -674,7 +676,7 @@ func (r *runner) resolve(ctx context.Context, creds exporter.Credentials, head p
 		for _, c := range cat {
 			byAddr[c.String()] = c
 		}
-		for _, a := range sortedKeysOf(req.DependencyChoices) {
+		for _, a := range mapkeys.Sorted(req.DependencyChoices) {
 			if req.DependencyChoices[a] != string(promote.ChoiceUpdate) || includedBy[a] != "" {
 				continue
 			}
@@ -1110,13 +1112,4 @@ func describeVariables(neu *neutralize.Result) map[string]VariableOut {
 
 func builtInNote(n int) string {
 	return fmt.Sprintf("%d items that PingOne creates in every environment (default policies, system applications, predefined attributes and templates) are not copied; each environment keeps its own. To copy one, pick it", n)
-}
-
-func sortedKeysOf(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

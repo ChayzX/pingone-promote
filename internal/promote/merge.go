@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"pingone-promote/internal/catalog"
 	"regexp"
 	"sort"
 	"strconv"
@@ -14,7 +13,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
+	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
 	"pingone-promote/internal/pipelinesecrets"
@@ -814,7 +815,7 @@ func (m *merger) envs() []string {
 
 func (m *merger) overlays() error {
 	defer func() {
-		for _, a := range keysSorted(m.adoptedByID) {
+		for _, a := range mapkeys.Sorted(m.adoptedByID) {
 			m.res.Warnings = append(m.res.Warnings, a+" already exists in "+strings.Join(m.adoptedByID[a], ", ")+
 				" (Git has its ID from an earlier request): it is imported there, not created")
 		}
@@ -854,54 +855,7 @@ func (m *merger) overlays() error {
 				}
 			}
 		}
-		ids := cur.Values["import_ids"]
-		changed := false
-
-		extra := map[string]string{}
-		target, overridden := m.req.EnvValues[env][neutralize.EnvironmentIDVariable]
-		savedTarget := cur.Values[neutralize.EnvironmentIDVariable]
-		sameTarget := !overridden || sameEnvironmentID(savedTarget, target)
-		sharesSource := env != m.req.SourceEnv && m.targetsExportedEnvironment(env, cur.Values)
-		if env != m.req.SourceEnv && !sameTarget {
-			m.retargetHints(env, cur, set, sharesSource)
-			for addr := range m.knownIDs(cur) {
-				value := m.req.EnvValues[env][neutralize.ExcludedVariableName(addr)]
-				if value.Type() == cty.String && !value.IsNull() && value.AsString() != "" {
-					extra[addr] = value.AsString()
-				}
-			}
-		}
-		if env != m.req.SourceEnv && sameTarget {
-			// An item an earlier request referred to by ID variable already
-			// exists here (Git holds its ID): adopt it by import instead
-			// of creating it again.
-			for a, id := range m.knownIDs(cur) {
-				if _, exported := m.req.Export.SourceIDs[a]; sharesSource && exported {
-					continue
-				}
-				extra[a] = id
-				m.adoptedByID[a] = append(m.adoptedByID[a], env)
-			}
-		}
-		for a, id := range m.req.ImportIDs[env] {
-			extra[a] = id
-		}
-		if env == m.req.SourceEnv {
-			ids, changed = m.sourceImportIDs(ids, "")
-		}
-		if len(extra) > 0 {
-			var more bool
-			ids, more = m.withImportIDs(ids, extra)
-			changed = changed || more
-		}
-		if sharesSource {
-			var adopted bool
-			ids, adopted = m.sourceImportIDs(ids, env)
-			changed = changed || adopted
-		}
-		if changed {
-			set["import_ids"] = ids
-		}
+		m.mergeImportIDs(env, cur, set)
 		for k, val := range m.req.EnvValues[env] {
 			if m.l.FromCI(k) {
 				return fmt.Errorf("promote: %s comes from the pipeline (ciVariables); it is never written to %s", k, p)
@@ -930,116 +884,6 @@ func (m *merger) overlays() error {
 		m.view.write(p, out)
 	}
 	return nil
-}
-
-// A target edit must not leave an old tenant's adoption hints in Git for
-// a later request. Resolve them from verified source IDs for a shared
-// tenant, or block until the operator supplies target-specific values.
-func (m *merger) retargetHints(env string, cur *overlay.Overlay, set map[string]cty.Value, sharesSource bool) {
-	hints := map[string]string{}
-	if sharesSource {
-		for addr, id := range m.req.Export.SourceIDs {
-			if simpleAdoptionID(addr) {
-				hints[neutralize.ExcludedVariableName(addr)] = id
-			}
-		}
-	}
-	known := m.knownIDs(cur)
-	addresses := map[string]string{}
-	for addr := range known {
-		addresses[neutralize.ExcludedVariableName(addr)] = addr
-	}
-	for name, old := range cur.Values {
-		if name == neutralize.EnvironmentIDVariable || !strings.HasPrefix(name, "pingone_") || !strings.HasSuffix(name, "_id") ||
-			old.Type() != cty.String || old.IsNull() || old.AsString() == "" {
-			continue
-		}
-		addr := addresses[name]
-		supplied, confirmed := m.req.EnvValues[env][name]
-		if confirmed && supplied.Type() == cty.String && !supplied.IsNull() && supplied.AsString() != "" {
-			continue
-		}
-		if id := hints[name]; id != "" {
-			set[name] = cty.StringVal(id)
-			continue
-		}
-		if addr != "" {
-			if id := m.req.ImportIDs[env][addr]; id != "" {
-				set[name] = cty.StringVal(id)
-				continue
-			}
-			if cur.Values[neutralize.EnvironmentIDVariable].IsNull() {
-				ids := cur.Values["import_ids"]
-				if !ids.IsNull() && (ids.Type().IsObjectType() || ids.Type().IsMapType()) {
-					if id, ok := ids.AsValueMap()[m.l.ModuleAddress(addr)]; ok && !id.IsNull() && id.Type() == cty.String && id.AsString() != "" {
-						set[name] = id
-						continue
-					}
-				}
-			}
-		}
-		m.res.Blockers = append(m.res.Blockers, Blocker{Env: env, Code: BlockMissingValue, Address: addr, Variable: name,
-			Message: "Confirm the target-specific ID for " + name + " in " + env + " before changing the rollout target. Remove an obsolete hint from the overlay in Git."})
-	}
-}
-
-// targetsExportedEnvironment compares the effective rollout overlay with the
-// environment actually exported. Pipeline-supplied IDs are unknown here.
-func (m *merger) targetsExportedEnvironment(env string, values map[string]cty.Value) bool {
-	const key = neutralize.EnvironmentIDVariable
-	if m.l.FromCI(key) {
-		return false
-	}
-	actual := values[key]
-	if override, ok := m.req.EnvValues[env][key]; ok {
-		actual = override
-	}
-	return sameEnvironmentID(actual, m.req.Export.SourceValues[key])
-}
-
-func sameEnvironmentID(actual, source cty.Value) bool {
-	return actual.Type() == cty.String && actual.IsKnown() && !actual.IsNull() &&
-		source.Type() == cty.String && source.IsKnown() && !source.IsNull() &&
-		source.AsString() != "" && strings.EqualFold(actual.AsString(), source.AsString())
-}
-
-// sourceImportIDs adds the source IDs of newly written addresses to the
-// source overlay's import_ids, so the source environment's plan adopts the
-// resources that already exist there instead of creating them. Existing
-// keys are never changed.
-func (m *merger) sourceImportIDs(cur cty.Value, rollout string) (cty.Value, bool) {
-	mp := map[string]cty.Value{}
-	if !cur.IsNull() && cur.CanIterateElements() {
-		for it := cur.ElementIterator(); it.Next(); {
-			k, v := it.Element()
-			mp[k.AsString()] = v
-		}
-	}
-	changed := false
-	for a := range m.written {
-		id, ok := m.req.Export.SourceIDs[a]
-		key := m.l.ModuleAddress(a)
-		if !ok || !importable(a) {
-			continue
-		}
-		if old, exists := mp[key]; exists {
-			if rollout != "" && !old.RawEquals(cty.StringVal(id)) {
-				fix := "Correct import_ids in the rollout overlay in Git and preview again."
-				if m.req.ImportIDs[rollout][a] != "" {
-					fix = "Correct or clear the import ID supplied in this request and preview again."
-				}
-				m.res.Blockers = append(m.res.Blockers, Blocker{Env: rollout, Code: BlockConflict, Address: a,
-					Message: "The rollout targets the exported environment, but its import ID for " + a + " differs from the exported ID. " + fix})
-			}
-		} else {
-			mp[key] = cty.StringVal(id)
-			changed = true
-		}
-	}
-	if !changed {
-		return cur, false
-	}
-	return cty.ObjectVal(mp), true
 }
 
 // customerSecrets declares new secrets in customer_secrets.yml (additions
@@ -1173,133 +1017,6 @@ func sortBlockers(b []Blocker) {
 		}
 		return b[i].Variable+b[i].Address < b[j].Variable+b[j].Address
 	})
-}
-
-// singletonImports adopts written settings resources by environment ID.
-func (m *merger) singletonImports() error {
-	var addrs []string
-	for a := range m.written {
-		if singleton(a) && !m.head.imports[m.l.ModuleAddress(a)] {
-			addrs = append(addrs, a)
-		}
-	}
-	if len(addrs) == 0 {
-		return nil
-	}
-	sort.Strings(addrs)
-	f, err := m.file(m.l.ImportsFile)
-	if err != nil {
-		return err
-	}
-	for _, a := range addrs {
-		if err := f.AppendText(neutralize.SingletonImportBlock(m.l.ModuleName, a)); err != nil {
-			return err
-		}
-	}
-	m.save(f)
-	return nil
-}
-
-// withImportIDs sets operator-supplied adoption IDs on import_ids.
-func (m *merger) withImportIDs(cur cty.Value, extra map[string]string) (cty.Value, bool) {
-	mp := map[string]cty.Value{}
-	if !cur.IsNull() && cur.CanIterateElements() {
-		for it := cur.ElementIterator(); it.Next(); {
-			k, v := it.Element()
-			mp[k.AsString()] = v
-		}
-	}
-	changed := false
-	for a, id := range extra {
-		key := m.l.ModuleAddress(a)
-		if old, ok := mp[key]; ok && old.Type() == cty.String && old.AsString() == id {
-			continue
-		}
-		mp[key] = cty.StringVal(id)
-		changed = true
-	}
-	if !changed {
-		return cur, false
-	}
-	return cty.ObjectVal(mp), true
-}
-
-// adoption reports built-in objects that an environment has no import ID
-// for. The source environment's IDs come from the export.
-func (m *merger) adoption() ([]Blocker, error) {
-	var out []Blocker
-	for _, a := range m.req.Adopt {
-		if !importable(a) || !m.written[a] {
-			continue
-		}
-		key := m.l.ModuleAddress(a)
-		for _, env := range m.envs() {
-			p, err := m.l.Overlay(env)
-			if err != nil {
-				return nil, err
-			}
-			src, ok, err := m.view.Read(p)
-			if err != nil {
-				return nil, err
-			}
-			has := false
-			if ok {
-				o, err := overlay.ParseOverlay(src, p)
-				if err != nil {
-					return nil, err
-				}
-				if ids, ok := o.Values["import_ids"]; ok && !ids.IsNull() && ids.CanIterateElements() {
-					for it := ids.ElementIterator(); it.Next(); {
-						k, v := it.Element()
-						if k.AsString() == key && v.Type() == cty.String && v.AsString() != "" {
-							has = true
-						}
-					}
-				}
-			}
-			if !has {
-				out = append(out, Blocker{Env: env, Code: BlockMissingImport, Address: a, Variable: "import_ids",
-					Message: a + " already exists in every environment (a built-in object); enter its ID for " + env + " so it is adopted, not created"})
-			}
-		}
-	}
-	return out, nil
-}
-
-// A scalar reference can supply an import ID only for single-ID resources.
-func simpleAdoptionID(addr string) bool {
-	typ, _, _ := strings.Cut(addr, ".")
-	format := catalog.ImportFormat(typ)
-	return typ != neutralize.TypeFlowPolicy && (format == catalog.ImportID || format == "")
-}
-
-// knownIDs lists newly added addresses whose ID the environment's settings
-// already hold in the ID variable an earlier request used for them, for
-// types imported by that ID alone.
-func (m *merger) knownIDs(cur *overlay.Overlay) map[string]string {
-	out := map[string]string{}
-	for a := range m.written {
-		if _, inHead := m.head.texts[a]; inHead || !importable(a) {
-			continue
-		}
-		if !simpleAdoptionID(a) {
-			continue
-		}
-		v, ok := cur.Values[neutralize.ExcludedVariableName(a)]
-		if ok && !v.IsNull() && v.Type() == cty.String && v.AsString() != "" {
-			out[a] = v.AsString()
-		}
-	}
-	return out
-}
-
-func keysSorted(m map[string][]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // asDeclared keeps a value given as JSON (a list or object typed into the

@@ -12,6 +12,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/secretscan"
 )
 
@@ -361,16 +362,7 @@ func refsOf(text []byte) (refs, vars []string, err error) {
 			rs[root+"."+string(toks[i+2].Bytes)] = true
 		}
 	}
-	return sortedKeys(rs), sortedKeys(vs), nil
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return mapkeys.Sorted(rs), mapkeys.Sorted(vs), nil
 }
 
 // scan runs the {{global.variables.x}} dependency scan and the secret scan
@@ -398,7 +390,7 @@ func (s *state) scan() error {
 		if len(names) == 0 {
 			continue
 		}
-		s.res.GlobalVariableRefs[b.Address] = sortedKeys(names)
+		s.res.GlobalVariableRefs[b.Address] = mapkeys.Sorted(names)
 		// {{global.variables.x}} is a flow instance variable; company
 		// variables are {{global.company.variables.x}}. Either context
 		// satisfies the first, since DaVinci falls back between them.
@@ -414,14 +406,14 @@ func (s *state) scan() error {
 			}
 		}
 	}
-	s.res.MissingDependencies = sortedKeys(missing)
+	s.res.MissingDependencies = mapkeys.Sorted(missing)
 	for _, b := range s.res.Blocks {
 		for _, f := range secretscan.ScanText(b.File, b.Text) {
 			f.Name = b.Address
 			s.res.Findings = append(s.res.Findings, f)
 		}
 	}
-	for _, name := range sortedValueKeys(s.res.SourceValues) {
+	for _, name := range mapkeys.Sorted(s.res.SourceValues) {
 		v := s.res.SourceValues[name]
 		if v.Type() != cty.String {
 			continue
@@ -435,13 +427,4 @@ func (s *state) scan() error {
 		}
 	}
 	return nil
-}
-
-func sortedValueKeys(m map[string]cty.Value) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

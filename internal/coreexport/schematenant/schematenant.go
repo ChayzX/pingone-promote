@@ -12,13 +12,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/coreexport"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/pingone"
 )
 
@@ -194,7 +194,7 @@ func (st *Tenant) variants(d *catalog.Def) []variant {
 	}
 	var out []variant
 	if len(d.Hoist) > 0 {
-		for _, h := range sortedKeysS(d.Hoist) {
+		for _, h := range mapkeys.Sorted(d.Hoist) {
 			set := clone(base)
 			f, v := satisfy(d.Hoist[h], true)
 			set[f] = v
@@ -307,7 +307,7 @@ func setPath(m map[string]any, path string, v any) {
 // fill writes every configurable, non-secret attribute of one schema level
 // into dst under its API field name.
 func (st *Tenant) fill(d *catalog.Def, schema map[string]catalog.Attr, dst map[string]any, path, hoist string) {
-	for _, n := range sortedAttrNames(schema) {
+	for _, n := range mapkeys.Sorted(schema) {
 		a := schema[n]
 		full := path + n
 		if !a.Configurable() || a.Secret() || (path == "" && (n == "id" || n == "environment_id")) {
@@ -426,24 +426,6 @@ func camelName(s string) string {
 		}
 	}
 	return strings.Join(parts, "")
-}
-
-func sortedAttrNames(m map[string]catalog.Attr) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedKeysS(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // structural are terraform validate summaries that mean the generated

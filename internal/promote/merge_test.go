@@ -15,6 +15,7 @@ import (
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/exporter/exportertest"
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 )
 
@@ -190,7 +191,7 @@ func TestScopedMergeOfFlowB(t *testing.T) {
 	written := map[string]bool{flowB: true,
 		"pingone_davinci_flow.pingcli__Flow-0020-B-0020-Subflow": true, "pingone_davinci_flow_deploy.pingcli__Flow-0020-B-0020-Subflow": true,
 		"pingone_davinci_flow_enable.pingcli__Flow-0020-B-0020-Subflow": true}
-	for _, p := range sortedKeys(head) {
+	for _, p := range mapkeys.Sorted(head) {
 		if !strings.HasPrefix(p, "definitions/") {
 			continue
 		}

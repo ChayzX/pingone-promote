@@ -15,10 +15,10 @@ import (
 	"net"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 
 	"pingone-promote/internal/gitlab"
+	"pingone-promote/internal/mapkeys"
 )
 
 // Config is the non-secret configuration file (JSON).
@@ -294,7 +294,7 @@ func (c *Config) check() error {
 			return fmt.Errorf("sourceEnvironmentIds.%s must be a PingOne environment ID (a UUID)", name)
 		}
 	}
-	for _, name := range sortedNames(c.EnvironmentIDs) {
+	for _, name := range mapkeys.Sorted(c.EnvironmentIDs) {
 		id := c.EnvironmentIDs[name]
 		if !seen[name] {
 			// An extra environment (not copied from or rolled out to)
@@ -318,7 +318,7 @@ func (c *Config) check() error {
 	// source may share one with a rollout environment: it is only
 	// exported, never applied to.
 	byID := map[string]string{}
-	for _, name := range sortedNames(c.EnvironmentIDs) {
+	for _, name := range mapkeys.Sorted(c.EnvironmentIDs) {
 		if !contains(c.Rollout, name) {
 			continue
 		}
@@ -484,14 +484,6 @@ func LoadSecrets(path string) (Secrets, error) {
 	return parseSecrets(io.LimitReader(f, secretsMax+1))
 }
 
-// checkSecretsMode accepts exactly 0600 or 0400.
-func checkSecretsMode(mode os.FileMode) error {
-	if perm := mode.Perm(); perm != 0o600 && perm != 0o400 {
-		return errors.New("the secrets file must be readable by its owner only (mode 0600 or 0400, no group or other access); run chmod 600 on it")
-	}
-	return nil
-}
-
 // parseSecrets parses the NAME=value content. A value may contain '='; only
 // the first one separates the name.
 func parseSecrets(r io.Reader) (Secrets, error) {
@@ -581,13 +573,4 @@ func (c *Config) envID(name string) string {
 		return id
 	}
 	return c.SourceEnvironmentIDs[name]
-}
-
-func sortedNames(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

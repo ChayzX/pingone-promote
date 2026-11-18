@@ -16,6 +16,14 @@ func openSecretsFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
 
+// checkSecretsMode accepts exactly 0600 or 0400.
+func checkSecretsMode(mode os.FileMode) error {
+	if perm := mode.Perm(); perm != 0o600 && perm != 0o400 {
+		return errors.New("the secrets file must be readable by its owner only (mode 0600 or 0400, no group or other access); run chmod 600 on it")
+	}
+	return nil
+}
+
 // checkSecretsFileInfo enforces the owner-only mode and that the server's
 // user owns the file. A systemd credential (LoadCredential=) is the one
 // exception: systemd hands the service a root-owned copy (mode 0440 with an

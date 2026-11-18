@@ -60,7 +60,6 @@ def validate_checkout(repo, ref):
     dirty = git(repo, "status", "--porcelain", "--untracked-files=all")
     if dirty:
         raise RuntimeError("working tree is dirty; commit or remove changes before packaging:\n" + dirty)
-    return head_tree
 
 
 def brew_formula_installed(brew):
@@ -156,7 +155,7 @@ def main():
     valid_version(args.version)
 
     repo = args.repo.resolve()
-    tree = validate_checkout(repo, args.ref)
+    validate_checkout(repo, args.ref)
     brew = shutil.which("brew")
     if not brew:
         raise RuntimeError("Homebrew is not installed or is not on PATH")

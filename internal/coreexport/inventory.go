@@ -26,6 +26,7 @@ import (
 	"sync"
 
 	"pingone-promote/internal/catalog"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/pingone"
 )
@@ -281,7 +282,7 @@ func readType(ctx context.Context, r Reader, env string, d *catalog.Def, byType 
 		if !Cond(d.Match, raw) {
 			return
 		}
-		for _, f := range sortedAllowed(d.Allowed) {
+		for _, f := range mapkeys.Sorted(d.Allowed) {
 			if bad := disallowed(raw, f, d.Allowed[f]); len(bad) > 0 {
 				warn(fmt.Sprintf("%s is not copied: %s holds %s, which the Terraform provider cannot set; copy it by hand", objName(d, raw), f, strings.Join(bad, ", ")))
 				return
@@ -483,15 +484,6 @@ func configured(raw map[string]any) bool {
 		}
 	}
 	return false
-}
-
-func sortedAllowed(m map[string][]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // disallowed lists the values at a dot path (through objects and lists of

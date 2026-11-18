@@ -11,6 +11,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 )
 
@@ -312,7 +313,7 @@ func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds, exc
 	var exp *Export
 	for pass := 0; pass < 3; pass++ {
 		var err error
-		exp, err = r.Export(ctx, creds, ExportOptions{Include: sortedSet(include), Exclude: exclude, IncludeUpstream: true, Imports: true})
+		exp, err = r.Export(ctx, creds, ExportOptions{Include: mapkeys.Sorted(include), Exclude: exclude, IncludeUpstream: true, Imports: true})
 		if err != nil {
 			return nil, err
 		}
@@ -359,15 +360,6 @@ func (r *Runner) ScopedExport(ctx context.Context, creds Credentials, seeds, exc
 	return exp, nil
 }
 
-func sortedSet(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // SelectedExport exports exactly the selected items and flow companions, without expanding dependencies.
 func (r *Runner) SelectedExport(ctx context.Context, creds Credentials, seeds, exclude []string) (*Export, error) {
 	if len(seeds) == 0 {
@@ -387,5 +379,5 @@ func (r *Runner) SelectedExport(ctx context.Context, creds Credentials, seeds, e
 			}
 		}
 	}
-	return r.Export(ctx, creds, ExportOptions{Include: sortedSet(include), Exclude: exclude, Imports: true})
+	return r.Export(ctx, creds, ExportOptions{Include: mapkeys.Sorted(include), Exclude: exclude, Imports: true})
 }

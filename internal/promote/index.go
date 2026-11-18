@@ -169,15 +169,6 @@ func (ix *index) requiredOverlayVars() []string {
 	return out
 }
 
-func (ix *index) addresses() []string {
-	out := make([]string, 0, len(ix.defs))
-	for a := range ix.defs {
-		out = append(out, a)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // overlayFiles lists overlay paths and their environments.
 func overlayFiles(r Repo, l Layout) (map[string]string, error) {
 	dir := path.Dir(strings.ReplaceAll(l.OverlayPattern, "{env}", "x"))

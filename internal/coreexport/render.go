@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 
 	"pingone-promote/internal/catalog"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 )
 
@@ -61,13 +62,12 @@ type Rendered struct {
 }
 
 type renderer struct {
-	in        RenderInput
-	out       *Rendered
-	vars      map[string]string // name -> declaration
-	values    map[string]string // name -> HCL value (source)
-	obj       *Object
-	def       *catalog.Def
-	selfAddrs map[string]bool
+	in     RenderInput
+	out    *Rendered
+	vars   map[string]string // name -> declaration
+	values map[string]string // name -> HCL value (source)
+	obj    *Object
+	def    *catalog.Def
 }
 
 // Render writes the selected objects.
@@ -162,7 +162,7 @@ func (r *renderer) block() (string, error) {
 		}
 		skip[d.ParentName] = true
 	}
-	for _, attr := range sortedKeysS(d.Ancestors) {
+	for _, attr := range mapkeys.Sorted(d.Ancestors) {
 		for p := o.Parent; p != nil; p = p.Parent {
 			if p.Type == d.Ancestors[attr] {
 				b.WriteString("  " + attr + " = " + r.idExpr(p.ID, attr) + "\n")
@@ -346,7 +346,7 @@ func MissingRequired(d *catalog.Def, raw, parent map[string]any) []string {
 	// their own required attributes too (an MFA action's device policy).
 	var walk func(attrs map[string]catalog.Attr, src map[string]any, path string)
 	walk = func(attrs map[string]catalog.Attr, src map[string]any, path string) {
-		for _, n := range sortedAttrNames(attrs) {
+		for _, n := range mapkeys.Sorted(attrs) {
 			a, full := attrs[n], path+n
 			if a.Secret() || (path == "" && skip[n]) || !a.Configurable() {
 				continue
@@ -467,7 +467,7 @@ func (r *renderer) value(a catalog.Attr, v any, path string, root map[string]any
 			if !ok {
 				return "", nil
 			}
-			keys := sortedKeys(m)
+			keys := mapkeys.Sorted(m)
 			var parts []string
 			for _, k := range keys {
 				im, ok := m[k].(map[string]any)
@@ -511,15 +511,6 @@ func (r *renderer) value(a catalog.Attr, v any, path string, root map[string]any
 		return "", nil
 	}
 	return r.typed(a.Type, v, path)
-}
-
-func sortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // typed renders a value of a Terraform type expression (cty JSON form).
@@ -590,7 +581,7 @@ func (r *renderer) typed(t json.RawMessage, v any, path string) (string, error) 
 			return "", nil
 		}
 		var parts []string
-		for _, k := range sortedKeys(m) {
+		for _, k := range mapkeys.Sorted(m) {
 			e, err := r.typed(complex[1], m[k], path)
 			if err != nil {
 				return "", err
@@ -608,7 +599,7 @@ func (r *renderer) typed(t json.RawMessage, v any, path string) (string, error) 
 			return "", nil
 		}
 		var parts []string
-		for _, f := range sortedRaw(fields) {
+		for _, f := range mapkeys.Sorted(fields) {
 			fv := m[camel(f)]
 			if fv == nil {
 				fv = m[f]
@@ -629,15 +620,6 @@ func (r *renderer) typed(t json.RawMessage, v any, path string) (string, error) 
 	return r.dynamic(v, path), nil
 }
 
-func sortedRaw(m map[string]json.RawMessage) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func scalar(v any) (string, bool) {
 	switch x := v.(type) {
 	case string:
@@ -655,7 +637,7 @@ func (r *renderer) dynamic(v any, path string) string {
 	switch x := v.(type) {
 	case map[string]any:
 		var parts []string
-		for _, k := range sortedKeys(x) {
+		for _, k := range mapkeys.Sorted(x) {
 			parts = append(parts, quote(k)+" = "+r.dynamic(x[k], path))
 		}
 		return "{\n" + strings.Join(parts, "\n") + "\n}"
@@ -729,24 +711,6 @@ func quote(s string) string {
 	q = strings.ReplaceAll(q, "${", "$${")
 	q = strings.ReplaceAll(q, "%{", "%%{")
 	return q
-}
-
-func sortedKeysS(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedAttrNames(m map[string]catalog.Attr) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // AttributeValue reads a Terraform attribute path of a core type from its

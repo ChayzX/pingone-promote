@@ -365,13 +365,6 @@ func lookupAttr(raw map[string]any, path string) any {
 	return cur
 }
 
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
 // looksSecret applies request validation's rules (each element of a JSON
 // list or object included), so a value is never filled in, shown, and
 // then refused.

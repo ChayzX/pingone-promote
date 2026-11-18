@@ -18,6 +18,7 @@ import (
 
 	"pingone-promote/internal/catalog"
 	"pingone-promote/internal/exporter"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/multiexport"
 	"pingone-promote/internal/neutralize"
 )
@@ -87,7 +88,7 @@ func TestLiveTenant(t *testing.T) {
 	for _, it := range items {
 		byType[it.Type]++
 	}
-	for _, typ := range sortedKeysI(byType) {
+	for _, typ := range mapkeys.Sorted(byType) {
 		logf("  %-55s %d", typ, byType[typ])
 	}
 
@@ -290,13 +291,4 @@ func liveNeutralize(exp *exporter.Export, env string) error {
 	_, err := neutralize.Neutralize(exp.NeutralizeInput(),
 		neutralize.Options{SourceEnvironmentID: env, Excluded: ex})
 	return err
-}
-
-func sortedKeysI(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

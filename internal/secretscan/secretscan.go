@@ -36,18 +36,6 @@ func compact(key string) string {
 	return strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(key))
 }
 
-// LooksLikeSecretName is the broad rule (substring match) used to classify
-// connector and node properties: password, secret, token, key, credential...
-func LooksLikeSecretName(key string) bool {
-	lk := compact(key)
-	for _, s := range []string{"password", "passphrase", "secret", "token", "key", "credential", "authentication", "authorization", "connectionstring", "connectionuri"} {
-		if strings.Contains(lk, s) {
-			return true
-		}
-	}
-	return lk == "dsn" || lk == "auth"
-}
-
 var nonAlnum = regexp.MustCompile(`[^a-z0-9]`)
 
 var secretSuffixes = []string{"secret", "password", "passwd", "passphrase", "privatekey", "apikey", "token", "credential", "credentials", "sharedkey", "signingkey"}

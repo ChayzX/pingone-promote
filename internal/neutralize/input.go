@@ -26,11 +26,7 @@
 package neutralize
 
 import (
-	"fmt"
-	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -71,37 +67,6 @@ func (in *Input) moduleName() string {
 		return DefaultExportModuleName
 	}
 	return in.ModuleName
-}
-
-// LoadDir reads a terraformer output directory (tests and local use).
-func LoadDir(dir string) (*Input, error) {
-	in := &Input{Files: map[string][]byte{}}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if p != "." && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", p)
-		}
-		b, err := root.ReadFile(filepath.FromSlash(p))
-		if err != nil {
-			return err
-		}
-		in.Files[p] = b
-		return nil
-	})
-	return in, err
 }
 
 // resourceFiles returns the child-module resource files (one per type).

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +15,7 @@ import (
 	"pingone-promote/internal/exporter"
 	"pingone-promote/internal/exporter/exportertest"
 	"pingone-promote/internal/hclblocks"
+	"pingone-promote/internal/mapkeys"
 	"pingone-promote/internal/neutralize"
 	"pingone-promote/internal/overlay"
 )
@@ -255,15 +255,6 @@ func blockLines(t *testing.T, name string, src []byte) map[string][2]int {
 	return out
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // referenceRoot is testdata/repo after the Flow B request: the content of
 // terraform/root (the reference root).
 func referenceRoot(t *testing.T) MapRepo {
@@ -288,7 +279,7 @@ func TestReferenceRootIsCurrent(t *testing.T) {
 	if os.Getenv("PINGONE_PROMOTE_REGEN_FIXTURE") != "" {
 		writeTree(t, referenceRootDir, want)
 	}
-	for _, p := range sortedKeys(want) {
+	for _, p := range mapkeys.Sorted(want) {
 		got, err := os.ReadFile(filepath.Join(referenceRootDir, filepath.FromSlash(p)))
 		if err != nil || !bytes.Equal(got, want[p]) {
 			t.Fatalf("terraform/root/%s is stale; run PINGONE_PROMOTE_REGEN_FIXTURE=1 go test ./internal/promote -run ReferenceRoot", p)
