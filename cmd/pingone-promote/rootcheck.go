@@ -103,10 +103,10 @@ func runRootCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		o.TerraformBin = tfValidate.path
 	}
 	if *envs != "" {
-		o.Envs = strings.Split(*envs, ",")
+		o.Envs = splitList(*envs)
 	}
 	if *sources != "" {
-		o.Sources = strings.Split(*sources, ",")
+		o.Sources = splitList(*sources)
 	}
 	if *customer != "" {
 		raw, err := readBounded(*customer)

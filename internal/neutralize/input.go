@@ -76,12 +76,17 @@ func (in *Input) moduleName() string {
 // LoadDir reads a terraformer output directory (tests and local use).
 func LoadDir(dir string) (*Input, error) {
 	in := &Input{Files: map[string][]byte{}}
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if p != dir && strings.HasPrefix(d.Name(), ".") {
+			if p != "." && strings.HasPrefix(d.Name(), ".") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -89,15 +94,11 @@ func LoadDir(dir string) (*Input, error) {
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", p)
 		}
-		rel, err := filepath.Rel(dir, p)
+		b, err := root.ReadFile(filepath.FromSlash(p))
 		if err != nil {
 			return err
 		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		in.Files[filepath.ToSlash(rel)] = b
+		in.Files[p] = b
 		return nil
 	})
 	return in, err

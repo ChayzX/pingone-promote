@@ -55,7 +55,10 @@ for target in darwin/arm64 darwin/amd64 linux/amd64; do
 	cp "$ROOT/docs/gitlab-ci-integration.md" "$temp_bundle/docs/"
 	cp "$ROOT/examples/gitlab-ci/pingone-promote.yml" "$temp_bundle/examples/gitlab-ci/"
 	tar -C "$temp_bundle" -czf "$DIST/$name.tar.gz" "$name" README.md docs examples
-	(cd "$DIST" && checksum "$name.tar.gz") >> "$DIST/SHA256SUMS"
+	# Some sha256sum builds mark binary files with an asterisk. Emit a
+    # consistent manifest on every build host.
+    sum=$(cd "$DIST" && checksum "$name.tar.gz")
+    printf '%s  %s\n' "${sum%% *}" "$name.tar.gz" >> "$DIST/SHA256SUMS"
 	rm -rf "$temp_bundle"
 done
 

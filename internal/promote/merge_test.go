@@ -37,6 +37,29 @@ func mergeFlowB(t *testing.T, head MapRepo, choices map[string]Choice) *MergeRes
 	return res
 }
 
+func TestSharedRolloutAdoptsExportedResources(t *testing.T) {
+	head := readTree(t, filepath.Join("testdata", "repo"))
+	head["qa.tfvars"] = bytes.ReplaceAll(head["qa.tfvars"], []byte("22222222-2222-4222-8222-222222222222"), []byte("11111111-1111-4111-8111-111111111111"))
+	res := mergeFlowB(t, head, nil)
+	if res.Blocked() {
+		t.Fatalf("unexpected blockers: %+v", res.Blockers)
+	}
+	addr := DefaultLayout.ModuleAddress(flowB)
+	if !bytes.Contains(res.Files["qa.tfvars"], []byte(addr)) {
+		t.Fatal("shared rollout is missing the flow import")
+	}
+	if _, ok := res.Files["stage.tfvars"]; ok {
+		t.Fatal("unrelated rollout overlay changed")
+	}
+	head["qa.tfvars"] = append(head["qa.tfvars"], []byte("\nimport_ids = { \""+addr+"\" = \"different\" }\n")...)
+	for _, b := range mergeFlowB(t, head, nil).Blockers {
+		if b.Code == BlockConflict && b.Env == "qa" && b.Address == flowB {
+			return
+		}
+	}
+	t.Fatal("conflicting rollout import ID was accepted")
+}
+
 func goldenFile(t *testing.T, name string, got []byte) {
 	t.Helper()
 	p := filepath.Join("testdata", name)

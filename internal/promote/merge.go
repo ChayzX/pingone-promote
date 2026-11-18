@@ -856,9 +856,7 @@ func (m *merger) overlays() error {
 		}
 		ids := cur.Values["import_ids"]
 		changed := false
-		if env == m.req.SourceEnv {
-			ids, changed = m.sourceImportIDs(ids)
-		}
+
 		extra := map[string]string{}
 		if env != m.req.SourceEnv {
 			// An item an earlier request referred to by ID variable already
@@ -872,10 +870,18 @@ func (m *merger) overlays() error {
 		for a, id := range m.req.ImportIDs[env] {
 			extra[a] = id
 		}
+		if env == m.req.SourceEnv {
+			ids, changed = m.sourceImportIDs(ids, "")
+		}
 		if len(extra) > 0 {
 			var more bool
 			ids, more = m.withImportIDs(ids, extra)
 			changed = changed || more
+		}
+		if env != m.req.SourceEnv && m.targetsExportedEnvironment(env, cur.Values) {
+			var adopted bool
+			ids, adopted = m.sourceImportIDs(ids, env)
+			changed = changed || adopted
 		}
 		if changed {
 			set["import_ids"] = ids
@@ -910,11 +916,28 @@ func (m *merger) overlays() error {
 	return nil
 }
 
+// targetsExportedEnvironment compares the effective rollout overlay with the
+// environment actually exported. Pipeline-supplied IDs are unknown here.
+func (m *merger) targetsExportedEnvironment(env string, values map[string]cty.Value) bool {
+	const key = neutralize.EnvironmentIDVariable
+	if m.l.FromCI(key) {
+		return false
+	}
+	actual := values[key]
+	if override, ok := m.req.EnvValues[env][key]; ok {
+		actual = override
+	}
+	source := m.req.Export.SourceValues[key]
+	return actual.Type() == cty.String && actual.IsKnown() && !actual.IsNull() &&
+		source.Type() == cty.String && source.IsKnown() && !source.IsNull() &&
+		source.AsString() != "" && strings.EqualFold(actual.AsString(), source.AsString())
+}
+
 // sourceImportIDs adds the source IDs of newly written addresses to the
 // source overlay's import_ids, so the source environment's plan adopts the
 // resources that already exist there instead of creating them. Existing
 // keys are never changed.
-func (m *merger) sourceImportIDs(cur cty.Value) (cty.Value, bool) {
+func (m *merger) sourceImportIDs(cur cty.Value, rollout string) (cty.Value, bool) {
 	mp := map[string]cty.Value{}
 	if !cur.IsNull() && cur.CanIterateElements() {
 		for it := cur.ElementIterator(); it.Next(); {
@@ -926,7 +949,15 @@ func (m *merger) sourceImportIDs(cur cty.Value) (cty.Value, bool) {
 	for a := range m.written {
 		id, ok := m.req.Export.SourceIDs[a]
 		key := m.l.ModuleAddress(a)
-		if _, exists := mp[key]; ok && importable(a) && !exists {
+		if !ok || !importable(a) {
+			continue
+		}
+		if old, exists := mp[key]; exists {
+			if rollout != "" && !old.RawEquals(cty.StringVal(id)) {
+				m.res.Blockers = append(m.res.Blockers, Blocker{Env: rollout, Code: BlockConflict, Address: a,
+					Message: "The rollout targets the exported environment, but its import ID for " + a + " differs from the exported ID."})
+			}
+		} else {
 			mp[key] = cty.StringVal(id)
 			changed = true
 		}

@@ -13,6 +13,7 @@ package promote
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -169,8 +170,13 @@ func (d DirRepo) Read(p string) ([]byte, bool, error) {
 	if !safeRel(p) {
 		return nil, false, errors.New("unsafe path " + p)
 	}
-	full := filepath.Join(string(d), filepath.FromSlash(p))
-	fi, err := os.Lstat(full)
+	root, err := os.OpenRoot(string(d))
+	if err != nil {
+		return nil, false, err
+	}
+	defer root.Close()
+	name := filepath.FromSlash(p)
+	fi, err := root.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -183,13 +189,26 @@ func (d DirRepo) Read(p string) ([]byte, bool, error) {
 	if fi.Size() > 64<<20 {
 		return nil, false, errors.New(p + " exceeds the size limit")
 	}
-	b, err := os.ReadFile(full)
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, (64<<20)+1))
+	if len(b) > 64<<20 {
+		return nil, false, errors.New(p + " exceeds the size limit")
+	}
 	return b, err == nil, err
 }
 
 // List implements Repo.
 func (d DirRepo) List(dir string) ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(string(d), filepath.FromSlash(dir)))
+	root, err := os.OpenRoot(string(d))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

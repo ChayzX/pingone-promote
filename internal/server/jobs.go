@@ -196,8 +196,7 @@ func (s *Server) runPreview(d *Draft, req *request.Request) func(context.Context
 			} else if err == nil {
 				stage("Merging again with the values filled in")
 				req, fp = req2, fingerprint(*req2)
-				rec, frozen = newRecorder(s.exporter)
-				res = request.Run(ctx, s.envFor(project, snap, head, req, rec), req)
+				res = request.Run(ctx, s.envFor(project, snap, head, req, replayer{f: frozen}), req)
 				s.scrub(res)
 			} else {
 				s.log.Warn("filled-in values were refused", "error", err.Error())

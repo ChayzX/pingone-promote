@@ -556,7 +556,12 @@ func (r *Runner) Export(ctx context.Context, creds Credentials, o ExportOptions)
 func readTree(dir string, max int64) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	var total int64
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -570,16 +575,25 @@ func readTree(dir string, max int64) (map[string][]byte, error) {
 		if err != nil {
 			return err
 		}
-		total += info.Size()
-		if total > max || len(files) > 10000 {
+		if info.Size() > max-total || len(files) >= 10000 {
 			return errors.New("exporter: export output exceeds the size limit")
 		}
-		b, err := os.ReadFile(p)
+		f, err := root.Open(filepath.FromSlash(p))
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(dir, p)
-		files[filepath.ToSlash(rel)] = b
+		defer f.Close()
+		// Limit the actual read even if the file grew after directory traversal.
+		b, err := io.ReadAll(io.LimitReader(f, info.Size()))
+		if err != nil {
+			return err
+		}
+		var probe [1]byte
+		if n, err := f.Read(probe[:]); n != 0 || err != io.EOF {
+			return errors.New("exporter: export output changed during read")
+		}
+		total += int64(len(b))
+		files[p] = b
 		return nil
 	})
 	return files, err

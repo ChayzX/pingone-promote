@@ -2,16 +2,9 @@
 #
 #   podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .
 #
-# PIN BY DIGEST before any shared use. Look up the digest of the tag you
-# reviewed and pass it:
-#   podman pull docker.io/library/golang:1.27.4
-#   podman inspect --format '{{index .RepoDigests 0}}' docker.io/library/golang:1.27.4
-#   podman build --format docker --build-arg GO_IMAGE=docker.io/library/golang:1.27.4@sha256:<digest> \
-#                --build-arg RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:<digest> ...
-# The defaults below use tags so the file builds out of the box; a tag can
-# move, a digest cannot.
-ARG GO_IMAGE=docker.io/library/golang:1.27.4
-ARG RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
+# Override GO_IMAGE or RUN_IMAGE with a reviewed digest when updating.
+ARG GO_IMAGE=docker.io/library/golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf
+ARG RUN_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:baafce2d34783a28b4a472779f304e97e00f9d35c99553bc53b068b14344d9a9
 
 FROM ${GO_IMAGE} AS build
 ARG VERSION=dev
@@ -36,7 +29,8 @@ FROM ${RUN_IMAGE}
 # and GitLab and for the exporter it runs. Only *.crt files are added.
 COPY deploy/container/extra-ca/ /tmp/extra-ca/
 RUN for f in /tmp/extra-ca/*.crt; do if [ -f "$f" ]; then cp "$f" /etc/pki/ca-trust/source/anchors/; fi; done \
-    && update-ca-trust extract && rm -rf /tmp/extra-ca
+    && update-ca-trust extract && rm -rf /tmp/extra-ca \
+    && microdnf -y upgrade && microdnf clean all
 # No account is created: a numeric uid needs no /etc/passwd entry.
 COPY --from=build --chown=root:root /opt/pingone-promote /opt/pingone-promote
 # Config and secrets are mounted at run time; nothing sensitive is baked in.

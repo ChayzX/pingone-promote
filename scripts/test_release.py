@@ -114,13 +114,6 @@ class BuildMetadataTests(unittest.TestCase):
             (root / "profiles.json").write_text('{"private":"NOT_FOR_DISTRIBUTION"}')
             version = "v0.2.0-rc.1"
             subprocess.run(["sh", "scripts/build.sh"], cwd=root, env={**os.environ, "VERSION": version}, check=True, capture_output=True, text=True)
-            arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
-            system = {"Linux": "linux", "Darwin": "darwin"}[platform.system()]
-            for command in ("pingone-promote",):
-                config = root / "must-not-create"
-                result = subprocess.run([str(root / "dist" / f"{command}-{system}-{arch}"), "--version"], env={**os.environ, "XDG_CONFIG_HOME": str(config)}, check=True, capture_output=True, text=True)
-                self.assertEqual(result.stdout, f"{command} {version}\n")
-                self.assertFalse(config.exists(), "version reporting created app data")
             archives = sorted((root / "dist").glob("*.tar.gz"))
             self.assertEqual(len(archives), 3)
             sums = {}
@@ -137,6 +130,14 @@ class BuildMetadataTests(unittest.TestCase):
                     self.assertIn("docs/gitlab-ci-integration.md", members)
                     self.assertIn("examples/gitlab-ci/pingone-promote.yml", members)
                     self.assertFalse(any(name.endswith("profiles.json") or "/.git/" in name for name in members))
+            arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
+            system = {"Linux": "linux", "Darwin": "darwin"}.get(platform.system())
+            if (system, arch) in {("linux", "amd64"), ("darwin", "amd64"), ("darwin", "arm64")}:
+                command = "pingone-promote"
+                config = root / "must-not-create"
+                result = subprocess.run([str(root / "dist" / f"{command}-{system}-{arch}"), "--version"], env={**os.environ, "XDG_CONFIG_HOME": str(config)}, check=True, capture_output=True, text=True)
+                self.assertEqual(result.stdout, f"{command} {version}\n")
+                self.assertFalse(config.exists(), "version reporting created app data")
 
 
 if __name__ == "__main__":

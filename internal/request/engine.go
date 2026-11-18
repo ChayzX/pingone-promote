@@ -949,14 +949,20 @@ func (r *runner) commit(ctx context.Context, m *promote.MergeResult) {
 		files = append(files, gitlab.File{Path: p, Content: m.Files[p]})
 	}
 	if r.env.Committer == nil {
-		// Local run: write into the working tree.
+		// Anchor writes in the working tree, including through symlinked parents.
+		root, err := os.OpenRoot(r.env.Workspace)
+		if err != nil {
+			res.fail(ErrPartial, "internal", err.Error(), true)
+			return
+		}
+		defer root.Close()
 		for _, f := range files {
-			full := filepath.Join(r.env.Workspace, filepath.FromSlash(f.Path))
-			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			name := filepath.FromSlash(f.Path)
+			if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 				res.fail(ErrPartial, "internal", err.Error(), true)
 				return
 			}
-			if err := os.WriteFile(full, f.Content, 0o644); err != nil {
+			if err := root.WriteFile(name, f.Content, 0o600); err != nil {
 				res.fail(ErrPartial, "internal", err.Error(), true)
 				return
 			}

@@ -43,7 +43,7 @@ Full detail: [docs/operations.md](docs/operations.md#macos-local-test).
 
 Full detail: [docs/operations.md](docs/operations.md#container-and-kubernetes).
 
-1. Pin both base images by digest in `deploy/container/Containerfile`.
+1. Review the two pinned base image digests in `deploy/container/Containerfile`.
 2. `podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .`
 3. Get the Terraform digest: `podman run --rm --entrypoint sha256sum pingone-promote:dev /opt/pingone-promote/tools/terraform`
 4. Edit the ConfigMap in `deploy/kubernetes/deployment.yaml`: `gitlab`, `pingone`, `sources`, `rollout`, `terraformSha256`, and `allowedHosts` (your Ingress host name).

@@ -211,8 +211,7 @@ script prints it); your GitLab and PingOne values. Fill `secrets.env`. Then:
 
 ## Container and Kubernetes
 
-Pin both base images by digest before shared use (instructions at the top of
-`deploy/container/Containerfile`).
+The Containerfile pins both base images by digest and updates the UBI runtime packages during the build. Rebuild the image to pick up package fixes.
 
     podman build --format docker -f deploy/container/Containerfile -t pingone-promote:dev .
     podman run --rm --entrypoint /opt/pingone-promote/pingone-promote pingone-promote:dev --version

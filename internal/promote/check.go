@@ -296,7 +296,9 @@ func terraformValidate(ctx context.Context, o CheckOptions) (string, error) {
 				return "", err
 			}
 			dst := filepath.Join(tmp, filepath.FromSlash(p))
-			os.MkdirAll(filepath.Dir(dst), 0o700)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+				return "", err
+			}
 			if err := os.WriteFile(dst, src, 0o600); err != nil {
 				return "", err
 			}

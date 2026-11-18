@@ -82,6 +82,9 @@ spec:
       initContainers:
         - name: install-secrets
           image: pingone-promote:REPLACE_WITH_TAG_OR_DIGEST
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
           command: ["/bin/sh", "-c"]
           args:
             - umask 077 && cp /secrets-src/secrets.env /run/pingone-promote/secrets.env && chmod 0400 /run/pingone-promote/secrets.env
@@ -130,7 +133,7 @@ spec:
             periodSeconds: 30
           resources:
             requests: {cpu: 100m, memory: 256Mi}
-            limits: {memory: 1Gi}
+            limits: {cpu: "2", memory: 1Gi}
           volumeMounts:
             - name: config
               mountPath: /etc/pingone-promote
