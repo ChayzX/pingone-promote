@@ -21,6 +21,9 @@ func TestNamedBranchRequestsAreListed(t *testing.T) {
 				c.BranchPattern = "CIAM-[0-9]+(-[0-9]+)?"
 				c.EnvironmentIDs = map[string]string{"dev": firstUseSourceID, "qa": firstUseSourceID, "stage": firstUseSourceID, "prod": firstUseSourceID}
 			})
+			for _, env := range e.srv.cfg.Rollout {
+				dropLines(e, env+".tfvars", "pingone_environment_id")
+			}
 			e.gl.Edit("CIAM-88", "README.md", "someone's own branch\n")
 			b := e.browser()
 			draft := b.newDraft()
@@ -142,6 +145,7 @@ func TestJSONListTextIsNotAList(t *testing.T) {
 	f := fakeTerraformer(t)
 	e := factsServer(t, &fakeFacts{Exporter: arrayTextExporter{&exporter.Runner{Config: exporter.Config{Version: f.Version, SHA256: f.SHA256, Path: f.Path}}},
 		f: map[string]*multiexport.Facts{fillQAID: {Values: map[string]string{addr: `[ "a", "b" ]`}, Raw: map[string]map[string]any{addr: {}}}}})
+	dropLines(e, "qa.tfvars", "pingone_environment_id")
 	dropLines(e, "qa.tfvars", "davinci_variable_companyName_value")
 	dropLines(e, "qa.tfvars", "davinci_application_Web_oauth_redirect_uris")
 	b := e.browser()
