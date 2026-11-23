@@ -1,27 +1,22 @@
 /* PingOne Promote. One stylesheet, no scripts, no inline styles (the
-   Content-Security-Policy allows neither). Images come from /static only
-   (img-src 'self', so no data: URIs). No web fonts are allowed either:
-   proxima-nova is used only where it is installed, otherwise system fonts. */
+   Content-Security-Policy allows neither). System fonts only. */
 
 :root {
   color-scheme: light dark;
-  --bg: #f8f8f9;
+  --bg: #f2f4f6;
   --surface: #ffffff;
-  --sunken: #f1f1f4;
+  --sunken: #f7f8fa;
   --ink: #17212b;
   --muted: #56636f;
   --line: #d8dee4;
   --line-strong: #b4bec8;
-  --bar: #061a41;
-  --bar-line: #e53122;
-  --on-bar: #ffffff;
-  --on-bar-muted: #b9c4db;
-  --accent: #061a41;
-  --accent-hover: #14306b;
+  --bar: #12303d;
+  --on-bar: #eef4f6;
+  --on-bar-muted: #b3c7cf;
+  --accent: #0a6a86;
+  --accent-hover: #085a72;
   --on-accent: #ffffff;
-  --accent-soft: #e8ecf5;
-  --link: #3e65b2;
-  --link-hover: #2f55a4;
+  --accent-soft: #e2f0f4;
   --ok: #176f43;
   --ok-soft: #e3f3e9;
   --warn: #855600;
@@ -30,30 +25,26 @@
   --bad-soft: #fdecea;
   --add-bg: #e3f3e9;
   --del-bg: #fdecea;
-  --focus: #2f55a4;
+  --focus: #0a6a86;
   --radius: 6px;
-  --pattern: url("brand-pattern.png");
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0a1224;
-    --surface: #101a30;
-    --sunken: #0c1528;
-    --ink: #e6eaf2;
-    --muted: #9fb0cc;
-    --line: #243455;
-    --line-strong: #3d507a;
-    --bar: #061a41;
-    --bar-line: #e53122;
-    --on-bar: #ffffff;
-    --on-bar-muted: #a9b9d8;
-    --accent: #7fa3e8;
-    --accent-hover: #a2bdf0;
-    --on-accent: #06142e;
-    --accent-soft: #16264a;
-    --link: #8fb0f0;
-    --link-hover: #b3caf5;
+    --bg: #0e1317;
+    --surface: #161c22;
+    --sunken: #11171c;
+    --ink: #e5eaee;
+    --muted: #9ba8b4;
+    --line: #2a343d;
+    --line-strong: #46535f;
+    --bar: #0a1c24;
+    --on-bar: #e5eef1;
+    --on-bar-muted: #93a9b2;
+    --accent: #5ab9d6;
+    --accent-hover: #7fcbe3;
+    --on-accent: #04202a;
+    --accent-soft: #12303b;
     --ok: #6fcf97;
     --ok-soft: #12301f;
     --warn: #e7b65a;
@@ -62,8 +53,7 @@
     --bad-soft: #3b1917;
     --add-bg: #12301f;
     --del-bg: #3b1917;
-    --focus: #a2bdf0;
-    --pattern: none;
+    --focus: #7fcbe3;
   }
 }
 
@@ -71,12 +61,12 @@
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
-  font: 15px/1.5 proxima-nova, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: var(--ink);
-  background: var(--bg) var(--pattern) 0 0 / 320px 191px;
+  background: var(--bg);
 }
-a { color: var(--link); text-underline-offset: 2px; }
-a:hover { color: var(--link-hover); }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { color: var(--accent-hover); }
 p { margin: 8px 0; }
 ul { padding-left: 22px; }
 strong { font-weight: 600; }
@@ -86,11 +76,10 @@ header.top {
   display: flex;
   align-items: center;
   gap: 28px;
-  min-height: 64px;
+  min-height: 52px;
   padding: 0 24px;
   background: var(--bar);
   color: var(--on-bar);
-  border-bottom: 4px solid var(--bar-line);
 }
 header.top .brand {
   display: inline-flex;
@@ -102,8 +91,7 @@ header.top .brand {
   color: var(--on-bar);
   text-decoration: none;
 }
-header.top .brand img { display: block; flex: none; width: 97px; height: 34px; }
-header.top .brand .product { padding-left: 14px; border-left: 1px solid rgba(255, 255, 255, 0.45); }
+header.top .brand svg { flex: none; }
 header.top nav { display: flex; align-self: stretch; }
 header.top nav a {
   display: inline-flex;
@@ -129,7 +117,7 @@ footer {
   border-top: 1px solid var(--line);
 }
 
-h1 { font-size: 24px; line-height: 1.25; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.01em; }
+h1 { font-size: 24px; line-height: 1.25; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
 h2 { font-size: 17px; line-height: 1.3; font-weight: 600; margin: 0 0 10px; }
 h3 { font-size: 15px; font-weight: 600; margin: 18px 0 6px; }
 .meta { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
@@ -141,7 +129,7 @@ section {
   padding: 18px 20px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 24px 4px 24px 4px;
+  border-radius: 8px;
 }
 section > :last-child { margin-bottom: 0; }
 
