@@ -61,6 +61,45 @@ class SourceReleaseTests(unittest.TestCase):
         for name in ("pingone-promote-v0.2.0-rc.1-source.tar.gz", "SHA256SUMS", "pingone-promote.rb"):
             self.assertEqual((outputs[0] / name).read_bytes(), (outputs[1] / name).read_bytes())
 
+    def test_source_archive_ignores_local_git_settings(self):
+        reference = self.root / "reference"
+        self.assertEqual(self.command("source", "--repo", str(self.repo), "--version", "v0.2.0-rc.1", "--output", str(reference)).returncode, 0)
+        (self.repo / ".git/info/attributes").write_text("README.md export-ignore\n")
+        for mask in ("0002", "0077"):
+            output = self.root / f"umask-{mask}"
+            env = {**os.environ, "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "tar.umask", "GIT_CONFIG_VALUE_0": mask,
+                   "GIT_CONFIG_KEY_1": "core.autocrlf", "GIT_CONFIG_VALUE_1": "true"}
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/release.py"), "source", "--repo", str(self.repo), "--version", "v0.2.0-rc.1", "--output", str(output)], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            name = "pingone-promote-v0.2.0-rc.1-source.tar.gz"
+            self.assertEqual((reference / name).read_bytes(), (output / name).read_bytes())
+        with tarfile.open(reference / name) as archive:
+            self.assertEqual(archive.getmember("pingone-promote-v0.2.0-rc.1/README.md").mode, 0o644)
+            self.assertEqual(archive.getmember("pingone-promote-v0.2.0-rc.1/cmd").mode, 0o755)
+
+    def test_verify_requires_expected_artifacts_and_regular_files(self):
+        output = self.root / "release"
+        self.assertEqual(self.command("source", "--repo", str(self.repo), "--version", "v0.2.0-rc.1", "--output", str(output)).returncode, 0)
+        self.assertEqual(self.command("verify", "--directory", str(output), "--version", "v0.2.0-rc.1", "--kind", "source").returncode, 0)
+        incomplete = self.command("verify", "--directory", str(output), "--version", "v0.2.0-rc.1", "--kind", "release")
+        self.assertNotEqual(incomplete.returncode, 0)
+        self.assertIn("expected release artifacts", incomplete.stderr)
+        self.assertNotEqual(self.command("verify", "--directory", str(output), "--version", "v0.2.0-rc.2", "--kind", "source").returncode, 0)
+        (output / "nested").mkdir()
+        extra = self.command("verify", "--directory", str(output))
+        self.assertNotEqual(extra.returncode, 0)
+        self.assertIn("not a regular file", extra.stderr)
+
+    def test_failed_release_leaves_output_retryable(self):
+        output = self.root / "failed"
+        env = {**os.environ, "GO": "no-such-go-for-release-test"}
+        for _ in range(2):
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/release.py"), "release", "--repo", str(self.repo), "--version", "v0.2.0-rc.1", "--output", str(output)], capture_output=True, text=True, env=env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("must be empty", result.stderr)
+            self.assertFalse(output.exists())
+        self.assertEqual([path.name for path in self.root.iterdir() if "staging" in path.name], [])
+
     def test_source_archive_from_module_subdirectory_contains_source(self):
         module = self.repo / "tool"
         module.mkdir()

@@ -29,7 +29,9 @@ with_go=0
 with_pingcli=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dest) dest="$2"; shift 2 ;;
+    --dest)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then echo "--dest needs a directory" >&2; exit 2; fi
+      dest="$2"; shift 2 ;;
     --with-go) with_go=1; shift ;;
     --with-pingcli) with_pingcli=1; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
@@ -94,32 +96,46 @@ fetch() {
   echo "verified $3"
 }
 
+# Download and verify everything first: a checksum failure must leave the
+# destination exactly as it was.
 fetch terraform "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_${plat}.zip" terraform.zip
-(cd "$work" && unzip -o -q terraform.zip terraform)
-install -m 0755 "$work/terraform" "$dest/terraform"
-
 tf_name="pingcli-terraformer_${TERRAFORMER_VERSION}_${plat}"
 fetch terraformer "https://github.com/pingidentity/pingcli-plugin-terraformer/releases/download/v${TERRAFORMER_VERSION}/${tf_name}" "$tf_name"
-install -m 0755 "$work/$tf_name" "$dest/pingcli-terraformer"
-
 if [ "$with_pingcli" = 1 ]; then
   pc_name="pingcli_${PINGCLI_VERSION}_${plat}"
   fetch pingcli "https://github.com/pingidentity/pingcli/releases/download/v${PINGCLI_VERSION}/${pc_name}" "$pc_name"
-  install -m 0755 "$work/$pc_name" "$dest/pingcli"
 fi
-
 if [ "$with_go" = 1 ]; then
   go_name="go${GO_VERSION}.${os}-${arch}.tar.gz"
   fetch go "https://go.dev/dl/${go_name}" "$go_name"
+fi
+
+# Unpack into the work directory before touching the destination.
+(cd "$work" && unzip -o -q terraform.zip terraform)
+if [ "$with_go" = 1 ]; then
+  mkdir "$work/go-unpacked"
+  tar -C "$work/go-unpacked" -xzf "$work/$go_name"
+  # Stage the new Go next to the destination so the final swap is a rename.
+  rm -rf "$dest/.go-new"
+  mv "$work/go-unpacked/go" "$dest/.go-new"
+fi
+
+install -m 0755 "$work/terraform" "$dest/terraform"
+install -m 0755 "$work/$tf_name" "$dest/pingcli-terraformer"
+if [ "$with_pingcli" = 1 ]; then
+  install -m 0755 "$work/$pc_name" "$dest/pingcli"
+fi
+if [ "$with_go" = 1 ]; then
   rm -rf "$dest/go"
-  tar -C "$dest" -xzf "$work/$go_name"
+  mv "$dest/.go-new" "$dest/go"
 fi
 
 echo
 echo "Installed into $dest:"
-echo "  terraform            $TERRAFORM_VERSION"
+echo "  terraform            $TERRAFORM_VERSION  sha256 $(sha256_of "$dest/terraform")"
 echo "  pingcli-terraformer  $TERRAFORMER_VERSION  sha256 $(digest terraformer "$plat")"
 [ "$with_pingcli" = 1 ] && echo "  pingcli              $PINGCLI_VERSION"
 [ "$with_go" = 1 ] && echo "  go                   $GO_VERSION ($dest/go/bin)"
 echo
-echo "Put the pingcli-terraformer sha256 above in tools.terraformerSha256 of the server configuration."
+echo "Put the terraform sha256 above in tools.terraformSha256 and the"
+echo "pingcli-terraformer sha256 in tools.terraformerSha256 of the server configuration."

@@ -27,26 +27,59 @@ def valid_version(value):
     return value
 
 
-def git(repo, *args):
-    return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.PIPE)
+def git(repo, *args, **kwargs):
+    return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.PIPE, **kwargs)
+
+
+def git_path(repo, *args):
+    # Git ends path output with one newline; keep any other whitespace and
+    # decode the bytes the way the filesystem does.
+    return os.fsdecode(git(repo, *args).removesuffix(b"\n"))
+
+
+def tree_members(repo, tree):
+    """Yield (path, mode, type, object) for every entry of a Git tree.
+
+    The archive is built from Git objects directly rather than with
+    'git archive', so local settings (tar.umask, core.autocrlf,
+    .git/info/attributes, core.attributesFile) cannot change its bytes.
+    """
+    listing = git(repo, "ls-tree", "-r", "-t", "-z", "--full-tree", tree)
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        meta, path = entry.split(b"\t", 1)
+        mode, kind, obj = meta.decode().split()
+        yield os.fsdecode(path), mode, kind, obj
 
 
 def source_archive(repo, ref, version, output):
-    prefix = git(repo, "rev-parse", "--show-prefix").decode().strip().rstrip("/")
+    prefix = git_path(repo, "rev-parse", "--show-prefix").rstrip("/")
     tree = git(repo, "rev-parse", "--verify", ref + (":" + prefix if prefix else "^{tree}")).decode().strip()
-    top = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip())
-    raw = git(top, "archive", "--format=tar", tree)
     package = f"pingone-promote-{version}"
     path = output / f"{package}-source.tar.gz"
-    # Normalize Git archive metadata so exporting the same tree is byte-identical.
+    # Fix every piece of metadata so exporting the same tree is byte-identical
+    # on any machine.
     with path.open("wb") as target, gzip.GzipFile(filename="", fileobj=target, mode="wb", mtime=0) as compressed:
-        with tarfile.open(fileobj=compressed, mode="w|", format=tarfile.PAX_FORMAT) as archive, tarfile.open(fileobj=io.BytesIO(raw)) as original:
-            for member in original.getmembers():
-                member.name = package + "/" + member.name
+        with tarfile.open(fileobj=compressed, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+            for name, mode, kind, obj in tree_members(repo, tree):
+                member = tarfile.TarInfo(package + "/" + name)
                 member.uid = member.gid = member.mtime = 0
                 member.uname = member.gname = ""
-                member.pax_headers = {}
-                archive.addfile(member, original.extractfile(member) if member.isfile() else None)
+                if kind == "tree":
+                    member.type, member.mode = tarfile.DIRTYPE, 0o755
+                    archive.addfile(member)
+                elif kind == "blob" and mode in ("100644", "100755"):
+                    data = git(repo, "cat-file", "blob", obj)
+                    member.mode = 0o755 if mode == "100755" else 0o644
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+                elif kind == "blob" and mode == "120000":
+                    member.type, member.mode = tarfile.SYMTYPE, 0o777
+                    member.linkname = os.fsdecode(git(repo, "cat-file", "blob", obj))
+                    archive.addfile(member)
+                else:
+                    raise ValueError(f"unsupported Git tree entry {mode} {kind} for {name}")
     return path
 
 
@@ -74,8 +107,9 @@ def formula(version, archive, local=False):
   def caveats
     <<~EOS
       Preview release. pingone-promote is a command-line tool with the
-      subcommands check, export and request; it does not start a server.
-      The request subcommand runs in a GitLab CI job (see docs/gitlab-ci-integration.md).
+      subcommands check, export, request and serve. The request subcommand
+      runs in a GitLab CI job (see docs/gitlab-ci-integration.md); serve runs
+      the hosted server and is not started by this package.
       Deployment stays in the enterprise Terraform pipeline.
     EOS
   end
@@ -92,8 +126,18 @@ def checksums(directory):
     (directory / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in paths), encoding="utf-8", newline="\n")
 
 
-def verify(directory):
-    lines = (directory / "SHA256SUMS").read_text().splitlines()
+TARGETS = ("darwin-arm64", "darwin-amd64", "linux-amd64")
+
+
+def expected_files(version, kind):
+    names = {f"pingone-promote-{version}-source.tar.gz", "pingone-promote.rb"}
+    if kind == "release":
+        names |= {f"pingone-promote-{version}-{target}.tar.gz" for target in TARGETS}
+    return names
+
+
+def verify(directory, version=None, kind="source"):
+    lines = (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
     if not lines:
         raise ValueError("checksum manifest is empty")
     seen = set()
@@ -108,9 +152,38 @@ def verify(directory):
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError(f"checksum mismatch: {name}")
         seen.add(name)
-    actual = {path.name for path in directory.iterdir() if path.is_file() and path.name != "SHA256SUMS"}
+    actual = set()
+    for path in directory.iterdir():
+        if path.name == "SHA256SUMS":
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"release contains an entry that is not a regular file: {path.name}")
+        actual.add(path.name)
     if actual != seen:
         raise ValueError("release contains files missing from checksum manifest")
+    if version is not None and seen != expected_files(valid_version(version), kind):
+        raise ValueError(f"release does not contain exactly the expected {kind} artifacts for {version}")
+
+
+def default_umask():
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return mask
+
+
+def build_release(args, version, staging):
+    archive = source_archive(args.repo.resolve(), args.ref, version, staging)
+    (staging / "pingone-promote.rb").write_text(formula(version, archive), encoding="utf-8", newline="\n")
+    if args.command == "release":
+        with tempfile.TemporaryDirectory(prefix="pingone-release-") as temporary:
+            with tarfile.open(archive) as source:
+                source.extractall(temporary, filter="data")
+            root = Path(temporary) / f"pingone-promote-{version}"
+            subprocess.run(["sh", "scripts/build.sh"], cwd=root, env={**os.environ, "VERSION": version}, check=True)
+            for target in TARGETS:
+                shutil.copyfile(root / "dist" / f"pingone-promote-{target}.tar.gz", staging / f"pingone-promote-{version}-{target}.tar.gz")
+    checksums(staging)
+    verify(staging, version, args.command)
 
 
 def main():
@@ -129,9 +202,11 @@ def main():
     command.add_argument("--local-source", action="store_true", help="use this local archive for installation tests only")
     command = commands.add_parser("verify")
     command.add_argument("--directory", type=Path, required=True)
+    command.add_argument("--version", help="also require exactly the artifacts of this version")
+    command.add_argument("--kind", choices=("source", "release"), default="release", help="artifact set required with --version (default: release)")
     args = parser.parse_args()
     if args.command == "verify":
-        verify(args.directory)
+        verify(args.directory, args.version, args.kind)
         print("Release checksums verified")
         return
     version = valid_version(args.version)
@@ -142,23 +217,23 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(formula(version, args.archive, args.local_source), encoding="utf-8", newline="\n")
         return
-    if args.output.exists() and any(args.output.iterdir()):
+    output = args.output.absolute()
+    if output.exists() and any(output.iterdir()):
         raise ValueError("release output must be empty; existing artifacts will not be overwritten")
-    args.output.mkdir(parents=True, exist_ok=True)
-    archive = source_archive(args.repo.resolve(), args.ref, version, args.output)
-    (args.output / "pingone-promote.rb").write_text(formula(version, archive), encoding="utf-8", newline="\n")
-    if args.command == "release":
-        with tempfile.TemporaryDirectory(prefix="pingone-release-") as temporary:
-            with tarfile.open(archive) as source:
-                source.extractall(temporary, filter="data")
-            root = Path(temporary) / f"pingone-promote-{version}"
-            subprocess.run(["sh", "scripts/build.sh"], cwd=root, env={**os.environ, "VERSION": version}, check=True)
-            for target in ("darwin-arm64", "darwin-amd64", "linux-amd64"):
-                shutil.copyfile(root / "dist" / f"pingone-promote-{target}.tar.gz", args.output / f"pingone-promote-{version}-{target}.tar.gz")
-    checksums(args.output)
-    verify(args.output)
-    print(f"Created {version} release assets in {args.output}")
-
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Build and verify in a sibling directory, then move it into place, so a
+    # failed run leaves the output untouched and can simply be retried.
+    staging = Path(tempfile.mkdtemp(prefix=f".{output.name}-staging-", dir=output.parent))
+    try:
+        build_release(args, version, staging)
+        os.chmod(staging, 0o777 & ~default_umask())
+        # rename() replaces an empty directory but refuses a nonempty one, so
+        # artifacts that appeared meanwhile are never overwritten.
+        os.rename(staging, output)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    print(f"Created {version} release assets in {output}")
 
 if __name__ == "__main__":
     try:
