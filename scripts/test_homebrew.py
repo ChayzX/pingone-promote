@@ -60,6 +60,9 @@ def validate_checkout(repo, ref):
     dirty = git(repo, "status", "--porcelain", "--untracked-files=all")
     if dirty:
         raise RuntimeError("working tree is dirty; commit or remove changes before packaging:\n" + dirty)
+    # Package the validated tree ID itself, so a ref that moves later cannot
+    # change what is installed or upgraded.
+    return ref_tree
 
 
 def brew_formula_installed(brew):
@@ -108,7 +111,7 @@ def next_version(version):
 
 def release_source(repo, ref, version, destination):
     run([sys.executable, repo / "scripts" / "release.py", "source", "--version", version, "--ref", ref, "--repo", repo, "--output", destination])
-    run([sys.executable, repo / "scripts" / "release.py", "verify", "--directory", destination])
+    run([sys.executable, repo / "scripts" / "release.py", "verify", "--directory", destination, "--version", version, "--kind", "source"])
     archive = destination / f"{FORMULA_NAME}-{version}-source.tar.gz"
     formula_path = destination / f"{FORMULA_NAME}.rb"
     run([sys.executable, repo / "scripts" / "release.py", "formula", "--version", version, "--archive", archive, "--output", formula_path, "--local-source"])
@@ -126,6 +129,17 @@ def cli_probe(binary):
     result = subprocess.run([str(binary), "check"], capture_output=True, text=True, timeout=20)
     if result.returncode != 2:
         raise RuntimeError(f"check without --root must exit 2; got {result.returncode}")
+    result = subprocess.run([str(binary), "serve", "--help"], capture_output=True, text=True, timeout=20)
+    if result.returncode != 0 or "Usage: pingone-promote serve" not in result.stdout:
+        raise RuntimeError(f"serve --help must print its usage and exit 0; got {result.returncode}")
+
+
+def listed_versions(listing):
+    """Versions from 'brew list --versions NAME' output ('NAME 1.0 1.1')."""
+    words = listing.split()
+    if not words or words[0] != FORMULA_NAME:
+        raise RuntimeError(f"unexpected brew list output: {listing!r}")
+    return words[1:]
 
 
 def initialize_local_tap(tap_source, formula_path, tap_name):
@@ -155,7 +169,7 @@ def main():
     valid_version(args.version)
 
     repo = args.repo.resolve()
-    validate_checkout(repo, args.ref)
+    tree = validate_checkout(repo, args.ref)
     brew = shutil.which("brew")
     if not brew:
         raise RuntimeError("Homebrew is not installed or is not on PATH")
@@ -188,8 +202,8 @@ def main():
             second_output = root / "release-upgrade"
             tap_source = root / "tap-source"
 
-            first_formula = release_source(repo, args.ref, args.version, first_output)
-            second_formula = release_source(repo, args.ref, upgraded_version, second_output)
+            first_formula = release_source(repo, tree, args.version, first_output)
+            second_formula = release_source(repo, tree, upgraded_version, second_output)
             initialize_local_tap(tap_source, first_formula, tap_name)
 
             # The random, preflight-checked name is ours from this point on;
@@ -205,7 +219,7 @@ def main():
                 raise RuntimeError(f"Homebrew did not report {FORMULA_NAME} as installed from temporary tap {tap_name}")
 
             installed = output([brew, "list", "--formula", "--versions", FORMULA_NAME])
-            if args.version[1:] not in installed:
+            if listed_versions(installed) != [args.version[1:]]:
                 raise RuntimeError(f"installed formula does not report requested version {args.version}: {installed}")
             run([brew, "test", f"{tap_name}/{FORMULA_NAME}"])
             prefix = Path(output([brew, "--prefix", FORMULA_NAME]))
@@ -223,7 +237,8 @@ def main():
             run(["git", "-C", tap_checkout, "pull", "--ff-only"])
             run([brew, "upgrade", "--formula", f"{tap_name}/{FORMULA_NAME}"])
             upgraded = output([brew, "list", "--formula", "--versions", FORMULA_NAME])
-            if upgraded_version[1:] not in upgraded:
+            # The old keg can remain listed because install cleanup is disabled.
+            if upgraded_version[1:] not in listed_versions(upgraded):
                 raise RuntimeError(f"formula did not upgrade to {upgraded_version}: {upgraded}")
             run([brew, "test", f"{tap_name}/{FORMULA_NAME}"])
 

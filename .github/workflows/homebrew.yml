@@ -81,7 +81,7 @@ jobs:
           go vet ./...
           python3 -m unittest discover -s scripts -p test_release.py -v
           python3 scripts/release.py release --version "$RELEASE_VERSION" --ref "$RELEASE_REF" --output dist/release
-          python3 scripts/release.py verify --directory dist/release
+          python3 scripts/release.py verify --directory dist/release --version "$RELEASE_VERSION" --kind release
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: installation-preview

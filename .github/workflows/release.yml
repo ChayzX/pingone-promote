@@ -32,20 +32,24 @@ jobs:
           name: installation-preview
           path: release-assets
       - name: Verify and create a draft prerelease
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_REF: ${{ github.sha }}
         run: |
-          python3 scripts/release.py verify --directory release-assets
+          python3 scripts/release.py verify --directory release-assets --version "$RELEASE_VERSION" --kind release
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
             echo 'This release version already exists; choose a new version.' >&2
             exit 1
           fi
-          tag_commit=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION^{}" | cut -f1)
+          # Capture ls-remote on its own so a failed lookup stops the step
+          # instead of looking like "no such tag" and skipping the check.
+          tags=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" "refs/tags/$RELEASE_VERSION^{}")
+          tag_commit=$(printf '%s\n' "$tags" | awk -v ref="refs/tags/$RELEASE_VERSION^{}" '$2 == ref { print $1 }')
           if [ -z "$tag_commit" ]; then
-            tag_commit=$(git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" | cut -f1)
+            tag_commit=$(printf '%s\n' "$tags" | awk -v ref="refs/tags/$RELEASE_VERSION" '$2 == ref { print $1 }')
           fi
           if [ -n "$tag_commit" ] && [ "$tag_commit" != "$RELEASE_REF" ]; then
             echo 'This version tag points to a different source revision; choose a new version.' >&2

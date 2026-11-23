@@ -32,6 +32,13 @@ checksum() {
 	fi
 }
 
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+	TAR_FLAGS='--sort=name --owner=0 --group=0 --numeric-owner'
+else
+	# bsdtar (macOS)
+	TAR_FLAGS='--uid 0 --gid 0 --numeric-owner'
+fi
+
 for target in darwin/arm64 darwin/amd64 linux/amd64; do
 	goos=${target%/*}
 	goarch=${target#*/}
@@ -54,11 +61,16 @@ for target in darwin/arm64 darwin/amd64 linux/amd64; do
 	mkdir -p "$temp_bundle/docs" "$temp_bundle/examples/gitlab-ci"
 	cp "$ROOT/docs/gitlab-ci-integration.md" "$temp_bundle/docs/"
 	cp "$ROOT/examples/gitlab-ci/pingone-promote.yml" "$temp_bundle/examples/gitlab-ci/"
-	tar -C "$temp_bundle" -czf "$DIST/$name.tar.gz" "$name" README.md docs examples
+	# Fix permissions, times, owners and order so rebuilding the same source
+	# with the same Go toolchain gives the same archive bytes.
+	chmod -R u=rwX,go=rX "$temp_bundle"
+	find "$temp_bundle" -exec env TZ=UTC touch -h -t 198001010000.00 {} +
+	tar -C "$temp_bundle" -cf "$DIST/$name.tar" $TAR_FLAGS "$name" README.md docs examples
+	gzip -n -9 -f "$DIST/$name.tar"
 	# Some sha256sum builds mark binary files with an asterisk. Emit a
-    # consistent manifest on every build host.
-    sum=$(cd "$DIST" && checksum "$name.tar.gz")
-    printf '%s  %s\n' "${sum%% *}" "$name.tar.gz" >> "$DIST/SHA256SUMS"
+	# consistent manifest on every build host.
+	sum=$(cd "$DIST" && checksum "$name.tar.gz")
+	printf '%s  %s\n' "${sum%% *}" "$name.tar.gz" >> "$DIST/SHA256SUMS"
 	rm -rf "$temp_bundle"
 done
 
