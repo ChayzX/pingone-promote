@@ -15,7 +15,7 @@ import (
 
 // ContentSecurityPolicy is sent on every response. The pages use no
 // script at all, so script-src stays at default-src 'none'.
-const ContentSecurityPolicy = "default-src 'none'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+const ContentSecurityPolicy = "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 
 // MaxFormBytes bounds a POST body.
 const MaxFormBytes = 256 << 10
